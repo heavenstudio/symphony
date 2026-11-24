@@ -330,8 +330,11 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "pass" => {
             let slug = c.arg("slug");
             let id = c.arg("id");
-            let id: i64 = (id.trim_start_matches('#').parse())
-                .map_err(|_| Stop::Refused(format!("{id:?} is no message's number: nothing was written")))?;
+            let id: i64 = (id.trim_start_matches('#').parse()).map_err(|_| {
+                Stop::Refused(format!(
+                    "{id:?} is no message's number: nothing was written"
+                ))
+            })?;
             let held = store.pass(&slug, id, &c.actor()?)?;
             let line = held.passed.map_or(0, |passed| passed.line);
             c.say(&format!("passed on #{id} on {slug} as #{line}"));
@@ -1038,7 +1041,11 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     }
     c.say(&format!("  {}", stages::summary_line(&stages)));
     if held_messages > 0 {
-        let messages = if held_messages == 1 { "message" } else { "messages" };
+        let messages = if held_messages == 1 {
+            "message"
+        } else {
+            "messages"
+        };
         c.say(&format!("  held for people: {held_messages} {messages}"));
     }
     for line in tally.lines() {

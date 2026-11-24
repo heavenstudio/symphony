@@ -24,7 +24,9 @@ fn held() -> (Case, String, String, Held) {
         .add_person("ana", &[], &[Power::Speak], &orchestrator)
         .unwrap();
     c.ok(&worker, &["inbox"]);
-    let said = store.for_person("ana").say_or_hold_as("tools/x", "ana", WORDS, None);
+    let said = store
+        .for_person("ana")
+        .say_or_hold_as("tools/x", "ana", WORDS, None);
     let Ok(Said::Held(held)) = said else {
         panic!("not held: {said:?}")
     };
@@ -36,7 +38,10 @@ fn an_agents_reads_carry_how_many_are_held_and_nothing_of_their_words() {
     let (c, worker, orchestrator, held) = held();
     let marker = format!("a message is held for people: #{}", held.id);
     let shown = c.ok(&worker, &["show", "tools/x"]);
-    assert!(shown.contains("\n  held for people: 1 message\n"), "{shown}");
+    assert!(
+        shown.contains("\n  held for people: 1 message\n"),
+        "{shown}"
+    );
     assert!(shown.contains(&marker), "{shown}");
     let json = c.ok(&worker, &["show", "tools/x", "--json"]);
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -58,7 +63,10 @@ fn an_agents_reads_carry_how_many_are_held_and_nothing_of_their_words() {
     ana.say_or_hold_as("tools/x", "ana", "and the footer", None)
         .unwrap();
     let shown = c.ok(&worker, &["show", "tools/x"]);
-    assert!(shown.contains("\n  held for people: 2 messages\n"), "{shown}");
+    assert!(
+        shown.contains("\n  held for people: 2 messages\n"),
+        "{shown}"
+    );
 }
 
 #[test]
@@ -84,15 +92,21 @@ fn a_pass_puts_the_words_before_the_tasks_agents_once_and_a_second_is_refused() 
     let refused = c.run_as(&worker, &["pass", "tools/x", &id], "");
     assert_eq!(refused.code, 1, "{}", refused.out);
     assert!(
-        refused
-            .err
-            .contains(&format!("passed on already, by {orchestrator}: nothing was written")),
+        refused.err.contains(&format!(
+            "passed on already, by {orchestrator}: nothing was written"
+        )),
         "{}",
         refused.err
     );
     for (args, said) in [
-        (vec!["pass", "tools/x", "x1"], "\"x1\" is no message's number"),
-        (vec!["pass", "tools/x", "999999"], "no message #999999 is held on tools/x"),
+        (
+            vec!["pass", "tools/x", "x1"],
+            "\"x1\" is no message's number",
+        ),
+        (
+            vec!["pass", "tools/x", "999999"],
+            "no message #999999 is held on tools/x",
+        ),
     ] {
         let ran = c.run_as(&worker, &args, "");
         assert_eq!(ran.code, 1, "{args:?}: {}", ran.out);

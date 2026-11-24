@@ -1003,7 +1003,8 @@ fn on_task(
             })
         }
         symphony_api::TASK_PASS_ROUTE => {
-            let id = (payload["id"].as_i64()).ok_or("id must be a held message's number".to_string())?;
+            let id =
+                (payload["id"].as_i64()).ok_or("id must be a held message's number".to_string())?;
             store.pass(slug, id, actor.name())?;
             Ok(json!({"ok":true}))
         }

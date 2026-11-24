@@ -629,8 +629,8 @@ async fn a_person_holding_administer_changes_the_board_and_one_without_it_is_ref
 /// What `client` reads of `slug`'s task page: whether they may pass a held message on, and the
 /// thread's entries.
 async fn task_read(served: &Served, client: &str, slug: &str) -> (bool, Vec<TaskEntry>) {
-    let (status, page) = (served.asked(client, "GET", &format!("/api/task-page?slug={slug}"), ""))
-        .await;
+    let (status, page) =
+        (served.asked(client, "GET", &format!("/api/task-page?slug={slug}"), "")).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     let page: symphony_api::TaskPage = serde_json::from_str(&page).unwrap();
     let path = format!("/api/task-history?slug={slug}");
@@ -666,10 +666,18 @@ async fn a_message_of_one_who_may_not_direct_agents_is_held_and_one_who_may_pass
     assert!(!marker.message.text.contains(words), "{marker:?}");
     let held = marker.held.as_ref().unwrap();
     assert_eq!(
-        (held.id, held.author.as_str(), held.text.as_str(), held.passed_by.as_deref()),
+        (
+            held.id,
+            held.author.as_str(),
+            held.text.as_str(),
+            held.passed_by.as_deref()
+        ),
         (id, "ana", words, None)
     );
-    assert!(task_read(&served, HERE, "tools/x").await.0, "the machine's person passes");
+    assert!(
+        task_read(&served, HERE, "tools/x").await.0,
+        "the machine's person passes"
+    );
     let pass = serde_json::json!({"slug": "tools/x", "id": id}).to_string();
     let (status, body) = (served.asked(LAPTOP, "POST", symphony_api::TASK_PASS_ROUTE, &pass)).await;
     assert_eq!(
@@ -703,7 +711,10 @@ async fn a_message_of_one_who_may_not_direct_agents_is_held_and_one_who_may_pass
     let (status, body) = (served.asked(LAPTOP, "POST", "/api/task-message", &message)).await;
     assert_eq!((status, body.as_str()), (StatusCode::OK, r#"{"ok":true}"#));
     let line = store.thread_rows("tools/x").unwrap().pop().unwrap();
-    assert_eq!((line.sender.as_str(), line.text.as_str()), ("ana", "and the footer"));
+    assert_eq!(
+        (line.sender.as_str(), line.text.as_str()),
+        ("ana", "and the footer")
+    );
     assert_eq!(store.held_count("tools/x").unwrap(), 0);
 }
 

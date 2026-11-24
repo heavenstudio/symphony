@@ -86,11 +86,7 @@ impl Store {
             }),
         );
         addressed(&mut vars, slug, to);
-        let body = || {
-            Statement::from(pg::hold())
-                .posting()
-                .naming(&pg::TABLES)
-        };
+        let body = || Statement::from(pg::hold()).posting().naming(&pg::TABLES);
         self.retrying(|| self.transact(body(), vars.clone()))
     }
 
@@ -168,7 +164,8 @@ fn addressed(vars: &mut Value, slug: &str, to: Option<&str>) {
     let role = to.and_then(|to| to.strip_prefix('@'));
     if let Some(role) = role.filter(|role| !ROLES.contains(role)) {
         let roles: Vec<String> = ROLES.iter().map(|r| format!("@{r}")).collect();
-        vars["no_role"] = format!("{REFUSED}no role @{role}; use one of {}", roles.join(", ")).into();
+        vars["no_role"] =
+            format!("{REFUSED}no role @{role}; use one of {}", roles.join(", ")).into();
     }
     if let Some(handle) = to.filter(|to| *to != OWNER && role.is_none()) {
         vars["handle"] = handle.into();

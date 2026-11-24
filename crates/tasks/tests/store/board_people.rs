@@ -230,7 +230,10 @@ fn a_refused_change_says_why_and_writes_nothing() {
 #[test]
 fn direct_agents_is_given_read_and_taken_as_every_power_is() {
     let f = board();
-    let crew = f.store.add_group("crew", &[Power::DirectAgents], BY).unwrap();
+    let crew = f
+        .store
+        .add_group("crew", &[Power::DirectAgents], BY)
+        .unwrap();
     assert_eq!(crew.powers, [Power::DirectAgents]);
     f.store
         .add_person("ana", &[], &[Power::Speak, Power::DirectAgents], BY)
@@ -246,12 +249,21 @@ fn direct_agents_is_given_read_and_taken_as_every_power_is() {
     assert!(holds("ana"), "given her own");
     assert!(holds("bob"), "given by his group");
     assert!(!holds("cid"));
-    let granted = f.store.grant(Holder::Person("cid"), &[Power::DirectAgents], BY);
-    let granted = granted.unwrap().expect("a grant of a power not held changes the board");
-    assert_eq!((granted.did, granted.powers), (Did::Grant, vec![Power::DirectAgents]));
+    let granted = f
+        .store
+        .grant(Holder::Person("cid"), &[Power::DirectAgents], BY);
+    let granted = granted
+        .unwrap()
+        .expect("a grant of a power not held changes the board");
+    assert_eq!(
+        (granted.did, granted.powers),
+        (Did::Grant, vec![Power::DirectAgents])
+    );
     assert!(holds("cid"));
     for name in ["ana", "cid"] {
-        let taken = f.store.revoke(Holder::Person(name), &[Power::DirectAgents], BY);
+        let taken = f
+            .store
+            .revoke(Holder::Person(name), &[Power::DirectAgents], BY);
         assert_eq!(taken.unwrap().powers, [Power::DirectAgents]);
         assert!(!holds(name), "{name} lost it");
     }
@@ -263,7 +275,11 @@ fn direct_agents_is_given_read_and_taken_as_every_power_is() {
         listed(&f.store),
         [
             ("ana".into(), vec![Power::Read, Power::Speak], vec![]),
-            ("bob".into(), vec![Power::Read, Power::Speak], vec!["crew".into()]),
+            (
+                "bob".into(),
+                vec![Power::Read, Power::Speak],
+                vec!["crew".into()]
+            ),
             ("cid".into(), vec![Power::Read, Power::Speak], vec![]),
         ]
     );

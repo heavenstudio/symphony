@@ -43,7 +43,10 @@ fn held(page: &mut Chrome) -> Value {
     page.reveal("[id=\"thread-region-visual/in-progress\"]");
     page.reveal("#message-4");
     assert!(
-        page.wait_for("document.querySelector('#message-4 .entry') !== null", SHOWN),
+        page.wait_for(
+            "document.querySelector('#message-4 .entry') !== null",
+            SHOWN
+        ),
         "the held message was never drawn: {}",
         page.eval("document.querySelector('#task-thread')?.textContent")
     );
@@ -97,7 +100,10 @@ fn pass_on_posts_once_and_the_line_its_words_became_marks_it_passed() {
     super::wait_for_feed(&site).expect("the page never followed the feed");
     page.eval("document.querySelector('#message-4 button').click()");
     assert!(
-        page.wait_for("document.querySelector('#message-4 button').disabled", SHOWN),
+        page.wait_for(
+            "document.querySelector('#message-4 button').disabled",
+            SHOWN
+        ),
         "Pass on stays pressed until the feed brings the pass"
     );
     assert_eq!(

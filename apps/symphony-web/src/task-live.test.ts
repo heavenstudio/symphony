@@ -565,15 +565,21 @@ describe("what the feed leaves of a task's thread", () => {
     const marker = { ...anEntry(2, "w/a", "board"), held: words };
     const thread = { entries: [anEntry(1), marker], before: null, gap: null };
     const passed = { ...words, passed_by: "owner" };
-    const heard = hearThread("w/a", thread, [message({ ...anEntry(5, "w/a", "ana"), held: passed })]);
+    const heard = hearThread("w/a", thread, [
+      message({ ...anEntry(5, "w/a", "ana"), held: passed }),
+    ]);
     const entries = heard?.value?.entries ?? [];
     expect(ids(entries)).toEqual([1, 2, 5]);
     expect(entries[0]).toBe(thread.entries[0]);
     expect(entries[1]?.held).toEqual(passed);
     // A line that names a held message not passed on, or one not shown, changes nothing.
     const other = { ...anEntry(3, "w/a", "ana"), held: { ...words, id: 8, passed_by: "owner" } };
-    expect(hearThread("w/a", thread, [message(marker), message({ ...anEntry(2), held: words })])).toBeNull();
-    expect(hearThread("w/a", { ...thread, entries: [anEntry(1), marker, other] }, [message(other)])).toBeNull();
+    expect(
+      hearThread("w/a", thread, [message(marker), message({ ...anEntry(2), held: words })]),
+    ).toBeNull();
+    expect(
+      hearThread("w/a", { ...thread, entries: [anEntry(1), marker, other] }, [message(other)]),
+    ).toBeNull();
   });
 
   it("is nothing for a thread not drawn, or an event with none of its messages", () => {

@@ -11,8 +11,8 @@ use super::common::{Fixture, HOST, NOW, Seed, database, refused};
 use super::dispatch_later::{ids, listen};
 use symphony_board::held::{Held, MARKER, Said};
 use symphony_board::people::{Holder, Power};
-use symphony_board::stamps::read::reads_as_approve;
 use symphony_board::schema::{ADDED, HELD};
+use symphony_board::stamps::read::reads_as_approve;
 use symphony_board::{Opening, Schema, Store};
 
 /// The words every case holds, which no agent's read may carry.
@@ -58,7 +58,10 @@ impl Board {
 
     /// `ana`'s message on `tools/x`, held.
     fn held(&self, to: Option<&str>) -> Held {
-        match self.person("ana").say_or_hold_as("tools/x", "ana", WORDS, to) {
+        match self
+            .person("ana")
+            .say_or_hold_as("tools/x", "ana", WORDS, to)
+        {
             Ok(Said::Held(held)) => held,
             other => panic!("not held: {other:?}"),
         }
@@ -105,21 +108,30 @@ fn a_held_message_reaches_no_agent_and_the_boards_line_says_only_that_it_is_held
         (held.slug.as_str(), held.author.as_str(), held.text.as_str()),
         ("tools/x", "ana", WORDS)
     );
-    assert_eq!((held.to.as_deref(), held.passed.as_ref()), (Some("@executor"), None));
+    assert_eq!(
+        (held.to.as_deref(), held.passed.as_ref()),
+        (Some("@executor"), None)
+    );
 
     // The thread carries the board's line, numbered as the row is keyed, and nothing of it.
     let rows = b.f.store.thread_rows("tools/x").unwrap();
     let line = rows.last().unwrap();
     assert_eq!(line.id, held.id);
     assert_eq!(
-        (line.sender.as_str(), line.recipient.as_deref(), line.kind.as_str()),
+        (
+            line.sender.as_str(),
+            line.recipient.as_deref(),
+            line.kind.as_str()
+        ),
         ("board", Some("owner"), "msg")
     );
     assert_eq!(line.text, format!("{MARKER}#{}", held.id));
     assert!(!line.person, "the board's line is no person's");
     let thread = b.thread("tools/x");
     assert!(
-        thread.iter().all(|text| !text.contains(WORDS) && !text.contains("ana")),
+        thread
+            .iter()
+            .all(|text| !text.contains(WORDS) && !text.contains("ana")),
         "{thread:?}"
     );
 
@@ -130,7 +142,9 @@ fn a_held_message_reaches_no_agent_and_the_boards_line_says_only_that_it_is_held
     for (listener, handle) in [(&to_worker, &b.worker), (&to_orchestrator, &b.orchestrator)] {
         let heard = listener.drain(&b.f, BY, handle);
         assert!(
-            heard.iter().all(|line| !line.contains(WORDS) && !line.contains(MARKER)),
+            heard
+                .iter()
+                .all(|line| !line.contains(WORDS) && !line.contains(MARKER)),
             "{handle}: {heard:?}"
         );
         assert!(!ids(&heard).contains_key(&held.id), "{handle}: {heard:?}");
@@ -139,13 +153,19 @@ fn a_held_message_reaches_no_agent_and_the_boards_line_says_only_that_it_is_held
     // An agent is told how many are held; people read them whole; the owner is asked.
     assert_eq!(b.f.store.held_count("tools/x").unwrap(), 1);
     assert_eq!(b.f.store.held_count("tools/y").unwrap(), 0);
-    assert_eq!(b.f.store.held_on("tools/x").unwrap(), [held.clone()]);
+    assert_eq!(
+        b.f.store.held_on("tools/x").unwrap(),
+        std::slice::from_ref(&held)
+    );
     assert_eq!(b.waiting(), [format!("{MARKER}#{}", held.id)]);
     let told: Vec<i64> = (b.f.store.to_owner(10).unwrap().into_iter())
         .map(|m| m.id)
         .collect();
     assert!(told.contains(&held.id), "{told:?}");
-    assert!(b.f.store.asks(None).unwrap().is_empty(), "a held message opens no ask");
+    assert!(
+        b.f.store.asks(None).unwrap().is_empty(),
+        "a held message opens no ask"
+    );
 }
 
 #[test]
@@ -166,7 +186,12 @@ fn passed_on_the_words_reach_the_tasks_agents_once_under_both_names_and_ask() {
     let line = rows.last().unwrap();
     assert_eq!(line.id, mark.line);
     assert_eq!(
-        (line.sender.as_str(), line.person, line.text.as_str(), line.recipient.as_deref()),
+        (
+            line.sender.as_str(),
+            line.person,
+            line.text.as_str(),
+            line.recipient.as_deref()
+        ),
         ("ana", true, text.as_str(), None)
     );
     // It reaches the executor as a person's word does, once, by its callback.
@@ -213,7 +238,7 @@ fn a_person_who_may_direct_agents_passes_on_and_a_reply_after_the_line_answers_i
         ("ana", true, Some(b.worker.as_str()))
     );
     assert_eq!(line.text, format!("[passed on by stefano] {WORDS}"));
-    assert_eq!(b.inbox(&b.worker), [line.text.clone()]);
+    assert_eq!(b.inbox(&b.worker), std::slice::from_ref(&line.text));
 
     // A line still held waits on the owner until a person's line follows it.
     let other = b.held(None);
@@ -230,7 +255,10 @@ fn who_may_direct_agents_writes_as_the_owner_does_and_only_a_persons_words_are_h
     let b = board();
     for (store, name) in [(b.person("stefano"), "stefano"), (b.f.other(), "owner")] {
         assert!(store.may_direct_agents(name).unwrap(), "{name}");
-        match store.say_or_hold_as("tools/x", name, "go on", None).unwrap() {
+        match store
+            .say_or_hold_as("tools/x", name, "go on", None)
+            .unwrap()
+        {
             Said::Line(line) => assert_eq!(line.sender, name),
             held => panic!("{name}'s words held: {held:?}"),
         }
@@ -292,8 +320,16 @@ fn a_hold_or_a_pass_that_cannot_be_made_writes_nothing() {
     ];
     assert!(refusals[0].contains("tools/none"), "{}", refusals[0]);
     assert!(refusals[1].contains("an empty message says nothing"));
-    assert!(refusals[2].starts_with("no role @nobody"), "{}", refusals[2]);
-    assert!(refusals[3].contains("no session 'gone-heron-1'"), "{}", refusals[3]);
+    assert!(
+        refusals[2].starts_with("no role @nobody"),
+        "{}",
+        refusals[2]
+    );
+    assert!(
+        refusals[3].contains("no session 'gone-heron-1'"),
+        "{}",
+        refusals[3]
+    );
     assert_eq!(b.f.store.thread_rows("tools/x").unwrap().len(), before);
     assert_eq!(b.f.store.held_on("tools/x").unwrap(), []);
 
@@ -305,7 +341,10 @@ fn a_hold_or_a_pass_that_cannot_be_made_writes_nothing() {
         ("tools/x", held.id, "nobody-heron-9"),
     ] {
         let why = refused(b.f.store.pass(slug, id, by));
-        assert!(why.ends_with("nothing was written") || why.contains("nobody-heron-9"), "{why}");
+        assert!(
+            why.ends_with("nothing was written") || why.contains("nobody-heron-9"),
+            "{why}"
+        );
     }
     assert_eq!(b.f.store.thread_rows("tools/x").unwrap().len(), rows);
     assert_eq!(b.f.store.held_count("tools/x").unwrap(), 1);
@@ -343,7 +382,14 @@ fn a_board_made_without_the_step_reads_no_held_message() {
     let step = i64::try_from(step).unwrap();
     let before = Opening::write().at(Schema::of_this_contract(step));
     let open = |how: &Opening| {
-        Store::opening_on(db.another(), Box::new(|| NOW), Box::new(|_| false), HOST, how).unwrap()
+        Store::opening_on(
+            db.another(),
+            Box::new(|| NOW),
+            Box::new(|_| false),
+            HOST,
+            how,
+        )
+        .unwrap()
     };
     let writer = open(&before);
     let worker = writer

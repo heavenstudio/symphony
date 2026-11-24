@@ -40,8 +40,13 @@ pub(crate) fn needs(route: &str) -> Needs {
         symphony_api::TASK_ACTION_ROUTE
         | symphony::save::WORKFLOW_APPLY
         | symphony_api::SETTING_WRITE_PATH => DECIDE,
-        "/api/comment" | "/api/message" | "/api/ask" | "/api/ask-reply" | "/api/quick-chat"
-        | "/api/quick-task" | symphony_api::TASK_PASS_ROUTE => SPEAK_TO_AGENTS,
+        "/api/comment"
+        | "/api/message"
+        | "/api/ask"
+        | "/api/ask-reply"
+        | "/api/quick-chat"
+        | "/api/quick-task"
+        | symphony_api::TASK_PASS_ROUTE => SPEAK_TO_AGENTS,
         "/api/task-message" | symphony_api::UPLOAD_PATH => SPEAK,
         symphony_api::ATTEMPT_CONTROL_ROUTE | symphony_api::ATTEMPT_VIEW_ROUTE => DIRECT_ATTEMPTS,
         symphony_api::PEOPLE_CHANGE_PATH => ADMINISTER,
