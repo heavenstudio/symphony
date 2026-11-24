@@ -8,7 +8,7 @@ use crate::workflow::activate::tests::{BACK, MAPPED, TWO, custom};
 use crate::workflow::tests::Scratch;
 use crate::workflow::{Committed, Custom, Host, follow};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Mutex};
 /// A board of one task in each open status, a blocked one that came from in_progress, and a done
 /// and a cancelled one the activation leaves to the board's writers.
 fn board() -> Fixture {
@@ -795,19 +795,7 @@ fn of_an_admission_and_a_return_at_once_one_wins_and_the_board_is_whole() {
         .unwrap();
     let worker = f.session("worker");
     let amber = crate::workflow::agent_session(&worker);
-    let next = f
-        .store
-        .workflow_actions("sim/ready", &amber, &Host::local())
-        .unwrap();
-    let request = symphony_api::workflow::OperationRequest {
-        project: f.store.database().database().into(),
-        task: "sim/ready".into(),
-        edge: "claim".into(),
-        expected: next.snapshot,
-        input_revisions: BTreeMap::new(),
-        idempotency_key: "claim".into(),
-        inputs: BTreeMap::new(),
-    };
+    let request = claim_request(&f, &amber);
     let other = f.other();
     let barrier = Arc::new(Barrier::new(2));
     let back = dropped(BACK);
@@ -823,7 +811,9 @@ fn of_an_admission_and_a_return_at_once_one_wins_and_the_board_is_whole() {
         (claim.join().unwrap(), back.join().unwrap())
     });
     // The return is written either way: before the claim, which is then refused as the
-    // workflow it was read under is gone, or after it, planned again from the claimed task.
+    // workflow it was read under is gone, or after it, planned again from the claimed task. A
+    // claim written first is answered as taken, even where its next actions are read after the
+    // return (the next test drives that order).
     assert_eq!(returned, Ok(Followed::Returned { generation: 2 }));
     assert_eq!(f.store.workflow_active().unwrap(), None);
     let task = f.store.get("sim/ready").unwrap();
@@ -859,6 +849,125 @@ fn of_an_admission_and_a_return_at_once_one_wins_and_the_board_is_whole() {
         }
         Err(other) => panic!("{other:?}"),
     }
+}
+
+/// `principal`'s claim of sim/ready, at the snapshot the board previews for it now.
+fn claim_request(
+    f: &Fixture,
+    principal: &symphony_plugin::execution::Principal,
+) -> symphony_api::workflow::OperationRequest {
+    let next = f
+        .store
+        .workflow_actions("sim/ready", principal, &Host::local())
+        .unwrap();
+    symphony_api::workflow::OperationRequest {
+        project: f.store.database().database().into(),
+        task: "sim/ready".into(),
+        edge: "claim".into(),
+        expected: next.snapshot,
+        input_revisions: BTreeMap::new(),
+        idempotency_key: "claim".into(),
+        inputs: BTreeMap::new(),
+    }
+}
+
+/// The race above, in the one order that once answered a refusal while the claim stood, driven
+/// with no timing: the claim's write commits, the return is planned again from the claimed task
+/// and written, and only then does the claim read the next actions it answers with, a read that
+/// finds no workflow active. The claim stands, so it is answered as taken, its next actions the
+/// snapshot its write left with no edge open.
+#[test]
+fn a_claim_whose_next_actions_read_meets_a_return_is_answered_as_taken() {
+    let f = board();
+    let two = mapped();
+    f.store.activate_workflow(&two, &Host::local()).unwrap();
+    let worker = f.session("worker");
+    let amber = crate::workflow::agent_session(&worker);
+    let request = claim_request(&f, &amber);
+    let (watch, other) = (f.other(), f.other());
+    let returned = Arc::new(Mutex::new(None));
+    let kept = Arc::clone(&returned);
+    let once = std::sync::Once::new();
+    // The claimer's first clock read once its write has committed is in that write's own answer
+    // (`Store::written`), which comes before the read of its next actions.
+    let claimer = f.busy(move || {
+        if !once.is_completed() && watch.get("sim/ready").unwrap().status == "in_progress" {
+            once.call_once(|| {
+                let back = other.follow_committed(&dropped(BACK), &Host::local());
+                *kept.lock().unwrap() = Some(back);
+            });
+        }
+    });
+    let claimed = claimer.apply_operation(&amber, &Host::local(), &request);
+    assert_eq!(
+        *returned.lock().unwrap(),
+        Some(Ok(Followed::Returned { generation: 2 }))
+    );
+    let claimed = claimed.expect("the claim stands, so it is answered as taken");
+    assert_eq!(claimed.transition, Transition::id_of("sim/ready", 2));
+    let left = &claimed.next.snapshot;
+    assert_eq!(
+        (
+            &left.workflow,
+            left.activation_generation,
+            left.task_revision
+        ),
+        (&two.revision, 1, 2)
+    );
+    assert_eq!(left.at, pair("build", "working"));
+    assert_eq!(claimed.next.actions, Vec::new());
+    // The board says what the answer says: claimed, then returned with its executor.
+    assert_eq!(f.store.workflow_active().unwrap(), None);
+    let task = f.store.get("sim/ready").unwrap();
+    let held = (task.roles.iter()).any(|r| r.handle == worker && r.role == "executor");
+    assert_eq!((task.status.as_str(), held), ("in_progress", true));
+    assert_eq!(
+        task.fields["_board"]["workflow_retired"]["revision"],
+        json!(3)
+    );
+    assert_eq!(events(&f), 15);
+}
+
+/// A repeat of a claim, answered from its receipt, writes nothing. A return between the read
+/// that found the receipt and the read of its next actions refuses it, just as a repeat sent
+/// after the return is refused. The claim it repeats stands, and the first answer said so.
+#[test]
+fn a_repeated_claim_whose_next_actions_read_meets_a_return_is_refused_as_after_it() {
+    let f = board();
+    f.store
+        .activate_workflow(&mapped(), &Host::local())
+        .unwrap();
+    let worker = f.session("worker");
+    let amber = crate::workflow::agent_session(&worker);
+    let request = claim_request(&f, &amber);
+    let first = f.store.apply_operation(&amber, &Host::local(), &request);
+    assert_eq!(
+        first.map(|taken| taken.transition),
+        Ok(Transition::id_of("sim/ready", 2))
+    );
+    let other = f.other();
+    let once = std::sync::Once::new();
+    // The repeater's first clock read is in admission's decision (`Store::lapsing`), after the
+    // read that found the receipt with the workflow still active.
+    let repeater = f.busy(move || {
+        once.call_once(|| {
+            let back = other.follow_committed(&dropped(BACK), &Host::local());
+            assert_eq!(back, Ok(Followed::Returned { generation: 2 }));
+        });
+    });
+    let why = refused(repeater.apply_operation(&amber, &Host::local(), &request));
+    assert!(
+        why.starts_with("unsupported_activation: no custom workflow is active"),
+        "{why}"
+    );
+    assert_eq!(
+        refused(f.store.apply_operation(&amber, &Host::local(), &request)),
+        why
+    );
+    let task = f.store.get("sim/ready").unwrap();
+    let held = (task.roles.iter()).any(|r| r.handle == worker && r.role == "executor");
+    assert_eq!((task.status.as_str(), held), ("in_progress", true));
+    assert_eq!(events(&f), 15);
 }
 
 #[test]

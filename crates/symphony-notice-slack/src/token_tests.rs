@@ -1,68 +1,6 @@
 use super::*;
 use crate::stand_in::{TOKEN, folder, keep};
 
-/// The machine folder by the variables `set`, on macOS when `macos`.
-fn found(set: &[(&str, &str)], macos: bool) -> Result<PathBuf, String> {
-    machine_folder(
-        |name| {
-            (set.iter())
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| OsString::from(value))
-        },
-        macos,
-    )
-}
-
-#[test]
-fn the_machine_folder_is_the_one_named_else_the_platforms() {
-    let named = [("SYMPHONY_MACHINE_DIR", "/m"), ("HOME", "/h")];
-    assert_eq!(found(&named, true), Ok("/m".into()));
-    assert_eq!(found(&named, false), Ok("/m".into()));
-    assert_eq!(
-        found(&[("HOME", "/h")], true),
-        Ok("/h/Library/Application Support/Symphony".into())
-    );
-    assert_eq!(
-        found(&[("HOME", "/h"), ("XDG_DATA_HOME", "/d")], false),
-        Ok("/d/symphony".into())
-    );
-    assert_eq!(
-        found(&[("HOME", "/h")], false),
-        Ok("/h/.local/share/symphony".into())
-    );
-}
-
-#[test]
-fn an_empty_variable_is_unset_and_a_relative_one_is_passed_over() {
-    let set = [
-        ("SYMPHONY_MACHINE_DIR", ""),
-        ("XDG_DATA_HOME", "data"),
-        ("HOME", "/h"),
-    ];
-    assert_eq!(found(&set, false), Ok("/h/.local/share/symphony".into()));
-    assert_eq!(
-        found(&[("SYMPHONY_MACHINE_DIR", ""), ("HOME", "/h")], true),
-        Ok("/h/Library/Application Support/Symphony".into())
-    );
-}
-
-#[test]
-fn a_relative_machine_folder_or_no_home_is_refused() {
-    assert_eq!(
-        found(&[("SYMPHONY_MACHINE_DIR", "m"), ("HOME", "/h")], true),
-        Err("SYMPHONY_MACHINE_DIR names m, not an absolute folder".into())
-    );
-    for set in [&[][..], &[("HOME", "h")], &[("HOME", "")]] {
-        for macos in [true, false] {
-            assert_eq!(
-                found(set, macos),
-                Err("the machine folder needs HOME, an absolute folder".into()),
-                "{set:?} {macos}"
-            );
-        }
-    }
-}
-
 #[test]
 fn a_secret_is_one_token_of_printable_characters() {
     assert_eq!(Secret::new("  xoxb-1-2\n").unwrap().expose(), "xoxb-1-2");
@@ -222,4 +160,58 @@ fn a_file_that_is_no_token_is_refused_without_its_content() {
 
     keep(&machine, "\n");
     assert!(read(&machine).unwrap_err().ends_with(": it is empty"));
+}
+
+#[test]
+fn a_token_written_as_settings_is_refused_without_its_content() {
+    let machine = folder("as-settings");
+    for written in [
+        format!("{TOKEN} = 1\n"),
+        format!("token = \"{TOKEN}\"\n"),
+        format!("{TOKEN}\n{TOKEN}\n"),
+    ] {
+        keep(&machine, &written);
+        let why = read(&machine).unwrap_err();
+        assert!(
+            why.ends_with(": it holds more than one token of printable characters"),
+            "{why}"
+        );
+        assert!(!why.contains(TOKEN), "{written:?}: {why}");
+    }
+}
+
+#[test]
+fn a_link_in_the_place_of_the_folder_or_the_file_is_refused_unread() {
+    // What the link leads to is a folder and a token kept as they should be: the link alone is
+    // refused.
+    let elsewhere = folder("link-target");
+    keep(&elsewhere, TOKEN);
+    let kept = elsewhere.join("notices");
+
+    let machine = folder("linked-folder");
+    std::os::unix::fs::symlink(&kept, machine.join("notices")).unwrap();
+    let why = read(&machine).unwrap_err();
+    assert_eq!(
+        why,
+        format!(
+            "no token was read: {} is a link; keep the folder itself there",
+            machine.join("notices").display()
+        )
+    );
+
+    let machine = folder("linked-file");
+    keep(&machine, "");
+    let file = machine.join("notices/slack.token");
+    fs::remove_file(&file).unwrap();
+    std::os::unix::fs::symlink(kept.join("slack.token"), &file).unwrap();
+    let why = read(&machine).unwrap_err();
+    assert_eq!(
+        why,
+        format!(
+            "no token was read: {} is a link; keep the file itself there",
+            file.display()
+        )
+    );
+    assert!(!why.contains(TOKEN), "{why}");
+    assert_eq!(read(&elsewhere).unwrap().expose(), TOKEN);
 }

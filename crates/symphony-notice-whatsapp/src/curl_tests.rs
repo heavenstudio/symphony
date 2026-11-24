@@ -73,6 +73,7 @@ fn the_config_quotes_every_value_and_sends_no_expect() {
     let body = r#"{"text":"a \"quoted\" \\ back"}"#;
     let lines = [
         format!(r#"url = "{URL}""#),
+        r#"noproxy = "*""#.into(),
         r#"request = "POST""#.into(),
         format!(r#"header = "Authorization: Bearer {TOKEN_TEXT}""#),
         r#"header = "Content-Type: application/json""#.into(),
@@ -151,17 +152,67 @@ fn a_curl_that_is_not_there_is_never_sent() {
 }
 
 #[test]
-fn a_curl_that_does_not_start_is_later() {
+fn a_curl_this_user_may_not_run_is_never_sent() {
+    // A file in curl's place that is not executable, or a folder: each fails the same on every
+    // hand.
     let scratch = Scratch::new();
-    let unrunnable = scratch.path().join("curl");
-    std::fs::write(&unrunnable, "").unwrap();
-    mode(&unrunnable, 0o600);
-    let Err(Unsent::Later(why)) = post_by(&unrunnable, "{}") else {
-        panic!("a curl that does not start is later");
-    };
-    assert!(
-        why.starts_with(&format!("{} did not start: ", unrunnable.display()))
-            && why.ends_with("; nothing was sent"),
-        "{why}"
+    let file = scratch.path().join("curl");
+    std::fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
+    mode(&file, 0o600);
+    for unrunnable in [file.as_path(), scratch.path()] {
+        let Err(Unsent::Never(why)) = post_by(unrunnable, "{}") else {
+            panic!("{} is a curl never run", unrunnable.display());
+        };
+        assert!(
+            why.starts_with(&format!("{} did not start: ", unrunnable.display()))
+                && why.ends_with("; nothing was sent"),
+            "{why}"
+        );
+    }
+}
+
+#[test]
+fn a_fault_curl_meets_again_is_never_sent_and_any_other_is_later() {
+    let scratch = Scratch::new();
+    for exit in [1, 2, 3, 4, 26, 48, 60, 64, 77] {
+        let program = curl(
+            &scratch,
+            &format!("echo \"curl: ({exit}) failed with Bearer {TOKEN_TEXT}\" >&2\nexit {exit}"),
+        );
+        let Err(Unsent::Never(why)) = post_by(&program, "{}") else {
+            panic!("{exit} is a notice never sent");
+        };
+        assert!(
+            why.starts_with("curl could not make the request (")
+                && why.contains("will not on a second hand: curl: (")
+                && why.contains("failed with Bearer [hidden]")
+                && why.ends_with("; nothing was sent"),
+            "{exit}: {why}"
+        );
+        assert!(!why.contains(TOKEN_TEXT));
+    }
+    for exit in [8, 16, 18, 35, 55, 56, 67, 92] {
+        let program = curl(&scratch, &format!("exit {exit}"));
+        let Err(Unsent::Later(why)) = post_by(&program, "{}") else {
+            panic!("{exit} is a notice not sent this time");
+        };
+        assert!(
+            why.ends_with("it may have taken the notice"),
+            "{exit}: {why}"
+        );
+    }
+}
+
+#[test]
+fn a_proxy_the_environment_names_is_never_used() {
+    // curl takes a proxy from `https_proxy`, `ALL_PROXY` and their kin; `*` turns it off for every
+    // host, so the token goes to the API's host alone.
+    let config = config(URL, &token(), "{}");
+    let lines: Vec<&str> = config.lines().collect();
+    assert_eq!(lines.get(1), Some(&r#"noproxy = "*""#), "{config}");
+    assert_eq!(
+        lines.iter().filter(|line| line.contains("proxy")).count(),
+        1,
+        "{config}"
     );
 }

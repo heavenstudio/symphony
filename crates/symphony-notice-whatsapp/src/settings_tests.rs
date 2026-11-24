@@ -1,6 +1,5 @@
 use super::*;
 use crate::scratch::{Scratch, mode};
-use std::collections::BTreeMap;
 
 /// A token as a test writes one: no real token is in the tree.
 const TOKEN_TEXT: &str = "EAAG-test-token-not-a-real-one";
@@ -47,41 +46,6 @@ fn with(key: &str, value: &str) -> Result<Settings, String> {
         None => lines.insert(1, line),
     }
     read(&lines.join("\n"))
-}
-
-#[test]
-fn the_machine_folder_is_found_by_the_servers_rule() {
-    let cases: [&[(&str, &str)]; 9] = [
-        &[("SYMPHONY_MACHINE_DIR", "/machine"), ("HOME", "/home/ana")],
-        &[("SYMPHONY_MACHINE_DIR", "machine")],
-        &[("SYMPHONY_MACHINE_DIR", ""), ("HOME", "/home/ana")],
-        &[("HOME", "/home/ana")],
-        &[("HOME", "/home/ana"), ("XDG_DATA_HOME", "/data")],
-        &[("HOME", "/home/ana"), ("XDG_DATA_HOME", "data")],
-        &[("XDG_DATA_HOME", "/data")],
-        &[("HOME", "home")],
-        &[],
-    ];
-    for case in cases {
-        let vars: BTreeMap<&str, &str> = case.iter().copied().collect();
-        let var = |name: &str| vars.get(name).map(OsString::from);
-        for macos in [true, false] {
-            assert_eq!(
-                machine_folder(var, macos),
-                symphony_board::project::machine_folder(var, macos),
-                "{case:?} on macOS {macos}"
-            );
-        }
-    }
-    let home = |name: &str| (name == "HOME").then(|| OsString::from("/home/ana"));
-    assert_eq!(
-        machine_folder(home, true).unwrap(),
-        Path::new("/home/ana/Library/Application Support/Symphony")
-    );
-    assert_eq!(
-        machine_folder(home, false).unwrap(),
-        Path::new("/home/ana/.local/share/symphony")
-    );
 }
 
 #[test]
@@ -174,10 +138,9 @@ fn the_api_and_the_token_file_have_defaults_and_a_kind_with_no_template_takes_ot
 #[test]
 fn a_key_it_does_not_know_or_a_file_that_does_not_read_is_refused_without_its_value() {
     let pasted = format!("{LEAST}\ntoken = \"{TOKEN_TEXT}\"\n");
-    let refused = read(&pasted).unwrap_err();
-    assert!(
-        refused.starts_with("line ") && refused.contains("unknown field `token`"),
-        "{refused}"
+    assert_eq!(
+        read(&pasted).unwrap_err(),
+        "line 8: a key this program does not know"
     );
     for broken in [
         format!("phone_number_id = \"{TOKEN_TEXT}\n"),
@@ -191,7 +154,67 @@ fn a_key_it_does_not_know_or_a_file_that_does_not_read_is_refused_without_its_va
         assert!(!refused.contains(TOKEN_TEXT), "{broken:?}: {refused}");
     }
     let unknown = with("templates.digest", r#""symphony_digest""#).unwrap_err();
-    assert!(unknown.contains("unknown field `digest`"), "{unknown}");
+    assert_eq!(unknown, "line 7: a key this program does not know");
+}
+
+#[test]
+fn a_token_written_as_a_key_is_refused_by_its_line_and_never_said() {
+    let head = "phone_number_id = \"1234567890\"\nlanguage = \"pt_BR\"\n";
+    let other = "a key this program does not know";
+    for (text, line) in [
+        (format!("{TOKEN_TEXT} = 1\n{LEAST}"), 1),
+        (
+            format!("{head}{TOKEN_TEXT} = 1\n[templates]\nother = \"x\"\n"),
+            3,
+        ),
+        (format!("{LEAST}{TOKEN_TEXT} = 1\n"), 7),
+        (format!("{LEAST}\"{TOKEN_TEXT}\" = \"x\"\n"), 7),
+        (
+            format!("{head}[templates]\nother = \"x\"\n[{TOKEN_TEXT}]\n"),
+            5,
+        ),
+        (
+            format!("{head}{TOKEN_TEXT}.other = \"x\"\n[templates]\nother = \"x\"\n"),
+            3,
+        ),
+        (
+            format!("{head}templates.{TOKEN_TEXT} = \"x\"\ntemplates.other = \"x\"\n"),
+            3,
+        ),
+        (
+            format!("{head}templates = {{ other = \"x\", {TOKEN_TEXT} = 1 }}\n"),
+            3,
+        ),
+    ] {
+        let refused = read(&text).unwrap_err();
+        assert_eq!(refused, format!("line {line}: {other}"), "{text}");
+    }
+}
+
+#[test]
+fn a_key_of_its_own_where_it_is_not_one_is_named() {
+    let head = "phone_number_id = \"1234567890\"\nlanguage = \"pt_BR\"\n";
+    for (text, line, key) in [
+        (format!("card = \"symphony_card\"\n{LEAST}"), 1, "card"),
+        (format!("{LEAST}language = \"en\"\n"), 7, "language"),
+        (
+            format!("{head}other = \"x\"\n[templates]\nother = \"x\"\n"),
+            3,
+            "other",
+        ),
+        (
+            format!("{head}templates.api = \"x\"\ntemplates.other = \"x\"\n"),
+            3,
+            "api",
+        ),
+    ] {
+        let refused = read(&text).unwrap_err();
+        assert_eq!(
+            refused,
+            format!("line {line}: `{key}` is not a key where it is written"),
+            "{text}"
+        );
+    }
 }
 
 #[test]
@@ -236,6 +259,12 @@ fn a_value_of_another_type_is_refused_by_its_key_and_never_said() {
             format!("line {line}: {key} holds a value of another type than it takes")
         );
     }
+    // A key of its own made a table names a key that is not its own (`code`), so none is said.
+    let text = format!("phone_number_id = \"1234567890\"\nlanguage.code = {token}\n");
+    assert_eq!(
+        read(&format!("{text}[templates]\nother = \"x\"\n")).unwrap_err(),
+        "line 2: a value is of another type than its key takes"
+    );
 }
 
 #[test]
@@ -382,6 +411,7 @@ fn the_token_is_read_from_its_file_its_owners_alone_and_never_said() {
         ("", "is empty"),
         (" \n\t", "is empty"),
         ("two tokens", more),
+        (&format!("{TOKEN_TEXT} = 1"), more),
         ("one\nper line", more),
         ("quo\"te", more),
         ("back\\slash", more),
@@ -423,4 +453,48 @@ fn a_token_file_the_settings_name_is_held_to_the_same() {
     assert!(settings.token().unwrap_err().ends_with("chmod 600 it"));
     mode(&file, 0o400);
     assert_eq!(settings.token().unwrap().expose(), TOKEN_TEXT);
+}
+
+#[test]
+fn a_link_in_the_place_of_the_folder_or_a_file_is_refused_unread() {
+    // What each link leads to is kept as it should be: the link alone is refused.
+    let elsewhere = Scratch::new();
+    let kept = elsewhere.notices(&[("whatsapp.toml", LEAST), ("whatsapp.token", TOKEN_TEXT)]);
+    let settings = Settings::load(&kept).unwrap();
+    assert_eq!(settings.token().unwrap().expose(), TOKEN_TEXT);
+
+    let scratch = Scratch::new();
+    std::os::unix::fs::symlink(&kept, scratch.path().join("notices")).unwrap();
+    assert_eq!(
+        folder(scratch.path()).unwrap_err(),
+        format!(
+            "{} is a link; keep the folder itself there",
+            scratch.path().join("notices").display()
+        )
+    );
+
+    let scratch = Scratch::new();
+    let notices = scratch.notices(&[]);
+    for name in ["whatsapp.toml", "whatsapp.token"] {
+        std::os::unix::fs::symlink(kept.join(name), notices.join(name)).unwrap();
+    }
+    let link = |name: &str| {
+        format!(
+            "{} is a link; keep the file itself there",
+            notices.join(name).display()
+        )
+    };
+    assert_eq!(Settings::load(&notices).unwrap_err(), link("whatsapp.toml"));
+    let settings = Settings::read(LEAST, &notices).unwrap();
+    let refused = settings.token().unwrap_err();
+    assert_eq!(refused, link("whatsapp.token"));
+    assert!(!refused.contains(TOKEN_TEXT));
+
+    let named = scratch.path().join("meta.token");
+    std::os::unix::fs::symlink(kept.join("whatsapp.token"), &named).unwrap();
+    let settings = with("token_file", &format!("\"{}\"", named.display())).unwrap();
+    assert_eq!(
+        settings.token().unwrap_err(),
+        format!("{} is a link; keep the file itself there", named.display())
+    );
 }

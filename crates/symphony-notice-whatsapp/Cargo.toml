@@ -21,11 +21,6 @@ symphony-notice = { path = "../symphony-notice" }
 # Its settings file.
 toml.workspace = true
 
-[dev-dependencies]
-# The machine folder's rule, which the plugin repeats rather than links: its tests hold the two the
-# same.
-symphony-board = { path = "../tasks" }
-
 [lints]
 workspace = true
 

@@ -3,16 +3,24 @@
 //! `curl` reads the whole request from its standard input (`--config -`): the URL, the method,
 //! the headers with the token among them, and the body. So the token is in no argument, no URL
 //! and no environment variable of any process, and `-q` keeps a `~/.curlrc` from adding to the
-//! request. No redirect is followed, so the token goes to the one host named and nowhere else.
-//! What `curl` says when it fails is redacted before anything else sees it.
+//! request. No redirect is followed and no proxy is used, whatever proxy variable the server's
+//! environment sets, so the token goes to the one host named and nowhere else. What `curl` says
+//! when it fails is redacted before anything else sees it.
 
 use crate::token::Secret;
 use std::io::{ErrorKind, Write as _};
 use std::process::{Command, Stdio};
-use symphony_notice::Unsent;
+use symphony_notice::{Unsent, unstarted};
 
 /// The most seconds one call may take.
 const SECONDS: &str = "30";
+
+/// curl's exits that say a fault a second hand meets again, so the notice is never sent: 1 a
+/// protocol this curl lacks or `--proto` refuses, 2 curl failed to initialise, 3 a URL that does
+/// not parse, 4 a feature this build lacks, 26 a config line this curl does not take, 48 an option
+/// libcurl does not know, 60 a certificate that does not verify, 64 TLS required and not offered,
+/// 77 CA certificates that cannot be read. Any other exit is worth handing again.
+const LASTING: [i32; 9] = [1, 2, 3, 4, 26, 48, 60, 64, 77];
 
 /// Slack's answer: its HTTP status and its body.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +66,7 @@ impl Curl {
         };
         [
             line("url", &format!("{}/{method}", self.api)),
+            line("noproxy", "*"),
             line("request", "POST"),
             line(
                 "header",
@@ -74,8 +83,9 @@ impl Curl {
     ///
     /// # Errors
     ///
-    /// [`Unsent::Never`] when `curl` cannot be started; [`Unsent::Later`] when it ran and no
-    /// answer came, the host unreached or the call timed out.
+    /// [`Unsent::Never`] when `curl` is not there or fails by one of [`LASTING`], and one that did
+    /// not start as [`unstarted`] says; [`Unsent::Later`] when it ran and no answer came, the host
+    /// unreached or the call timed out.
     pub(crate) fn post(&self, method: &str, body: &str) -> Result<Answer, Unsent> {
         let mut child = Command::new(&self.program)
             .args([
@@ -98,18 +108,19 @@ impl Curl {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| {
-                Unsent::Never(if error.kind() == ErrorKind::NotFound {
-                    format!(
-                        "{} is not on PATH: this program reaches Slack through curl, so install it",
-                        self.program
-                    )
+                let program = &self.program;
+                if error.kind() == ErrorKind::NotFound {
+                    Unsent::Never(format!(
+                        "{program} is not on PATH: this program reaches Slack through curl, so install it"
+                    ))
                 } else {
-                    format!("{} did not start: {error}", self.program)
-                })
+                    unstarted(&error, format!("{program} did not start: {error}"))
+                }
             })?;
-        // The request is small enough for the pipe, so writing it all before reading curl's
-        // output never waits on curl; dropping the handle closes its standard input. A curl that
-        // did not read it all has no URL and exits failed, which its status says below.
+        // curl reads the whole of its config before it connects or writes anything, so writing it
+        // all before reading curl's output never waits on curl, however long it is; dropping the
+        // handle closes its standard input. A curl that did not read it all exits failed, which
+        // its status says below.
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(self.config(method, body).as_bytes());
         }
@@ -118,11 +129,16 @@ impl Curl {
             .map_err(|error| Unsent::Later(format!("curl was not waited for: {error}")))?;
         let said = |bytes: &[u8]| self.token.redact(String::from_utf8_lossy(bytes).trim());
         if !done.status.success() {
-            return Err(Unsent::Later(format!(
-                "curl reached no answer from Slack ({}): {}",
-                done.status,
-                said(&done.stderr)
-            )));
+            let (status, stderr) = (done.status, said(&done.stderr));
+            return Err(match done.status.code() {
+                Some(code) if LASTING.contains(&code) => Unsent::Never(format!(
+                    "curl could not make the call to Slack ({status}), and will not on a second \
+                     hand: {stderr}"
+                )),
+                _ => Unsent::Later(format!(
+                    "curl reached no answer from Slack ({status}): {stderr}"
+                )),
+            });
         }
         let out = String::from_utf8_lossy(&done.stdout);
         let (body, status) = out.rsplit_once('\n').unwrap_or(("", &out));
