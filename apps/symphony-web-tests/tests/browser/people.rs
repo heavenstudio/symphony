@@ -209,6 +209,11 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
 #[test]
 fn the_person_at_the_machine_names_themselves_asked_once_more_and_the_header_names_them() {
     let site = served(&sample());
+    let owner = symphony_api::PersonName {
+        name: "owner".into(),
+        shown: "owner".into(),
+    };
+    site.serve_to(owner, "/people#you");
     let mut after = sample();
     after["mine"] = json!({"name": "stefano", "display": "Stefano", "git": ["stefano-b"]});
     site.set_json(symphony_api::PROFILE_PATH, &after);
@@ -225,10 +230,14 @@ fn the_person_at_the_machine_names_themselves_asked_once_more_and_the_header_nam
     }
     screen(&mut chrome, 1440, 900, false);
     open(&mut chrome, &site, "people");
+    let header = r#"(() => {
+        const link = document.querySelector('.app-you');
+        return [link.textContent, new URL(link.href).pathname + new URL(link.href).hash];
+    })()"#;
     assert_eq!(
-        chrome.eval("document.querySelector('.app-you') === null"),
-        json!(true),
-        "the stand-in's page names no reader"
+        chrome.eval(header),
+        json!(["owner", "/people#you"]),
+        "the header names the reader as the server named them"
     );
     type_into(&mut chrome, "Your short name", "stefano");
     type_into(&mut chrome, "Your display name", "Stefano");
@@ -273,13 +282,12 @@ fn the_person_at_the_machine_names_themselves_asked_once_more_and_the_header_nam
                     form: document.querySelector("form[aria-label='Your name']") === null,
                     href: new URL(link.href).pathname + new URL(link.href).hash,
                     label: link.getAttribute('aria-label'),
-                    title: link.title,
                 };
             })()"#
         ),
         json!({
             "you": ["Stefano", "stefano"], "form": true, "href": "/people#you",
-            "label": "Stefano, your profile", "title": "stefano",
+            "label": "Stefano, your profile",
         })
     );
     for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
@@ -496,10 +504,25 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
     }
     let site = served(&reader);
     site.set_json(symphony_api::PROFILE_PATH, &reader);
+    let cy = symphony_api::PersonName {
+        name: "cy".into(),
+        shown: "Cy Moreau".into(),
+    };
+    site.serve_to(cy, "/people#person-cy");
     let Some(mut chrome) = chrome() else { return };
     for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
         screen(&mut chrome, width, height, mobile);
         open(&mut chrome, &site, "people");
+        assert_eq!(
+            chrome.eval(
+                r#"(() => {
+                    const link = document.querySelector('.app-you');
+                    return [link.textContent, link.getAttribute('aria-label'), new URL(link.href).pathname + new URL(link.href).hash];
+                })()"#
+            ),
+            json!(["Cy Moreau", "Cy Moreau, your profile", "/people#person-cy"]),
+            "the header names cy and links to their own card"
+        );
         assert_eq!(
             chrome.eval(
                 r#"(() => {
