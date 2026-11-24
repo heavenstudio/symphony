@@ -8,10 +8,14 @@
 //!   group told once while it waits and again once it waits again; an agent's question to the
 //!   person at the machine on a task, and a reviewer's verdict, each line once. Who is told is
 //!   [`symphony_board::people::ownership::told`]: the members of the thing's group, or the person it
-//!   is written to. Each is reached by the way their profile chose for that kind and their address
-//!   for it ([`symphony_board::people::Profiles::reach`]); a kind with no way, a way with no
-//!   address, or one no program is named for, sends nothing, as the page and the Mac app show every
-//!   notice anyway.
+//!   is written to. The board's line of a message held for people (`symphony_board::held`) tells
+//!   `held` to those who may pass it on, of whose its task is else of the board, never its author,
+//!   and no one once it is passed on (`crate::live`'s `told_lines`). Each is reached by the way
+//!   their profile chose for that kind, a held message by the question's
+//!   ([`symphony::notices::Kind::chosen_as`]), and their address for it
+//!   ([`symphony_board::people::Profiles::reach`]); a kind with no way, a way with no address, or
+//!   one no program is named for, sends nothing, as the page and the Mac app show every notice
+//!   anyway.
 //! - **Once**: the project's record ([`record`]) keeps the newest board line looked at, the cards
 //!   waiting with who was told of each, and each notice not settled yet. The first look takes what
 //!   stands as told: turning notices on sends nothing of the past.

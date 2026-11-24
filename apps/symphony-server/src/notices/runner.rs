@@ -1,7 +1,9 @@
 //! What tells a project's people of its notices, one look and one hand at a time
 //! ([`super`]): a look makes a notice for each person newly told of a card that waits or of a board
 //! line after the record's, and the hand of each one due runs its program, again after a `75`
-//! within [`MOST_HANDS`], each step written to the record before the next.
+//! within [`MOST_HANDS`], each step written to the record before the next. A notice goes by the
+//! way its person's profile chose for its kind ([`Kind::chosen_as`]: a held message by a
+//! question's).
 
 use std::path::{Path, PathBuf};
 use symphony::notices::{Key, Kind, Programs, line};
@@ -35,16 +37,18 @@ pub(crate) struct Waiting {
 }
 
 /// A board line after the record's that tells: an agent's question to the person at the machine,
-/// or a reviewer's verdict.
+/// a reviewer's verdict, or the board's line of a held message.
 #[derive(Clone, Debug)]
 pub(crate) struct Line {
     /// Its id on the board.
     pub id: i64,
     pub kind: Kind,
-    /// Its task's page under the project, `/task/SLUG`.
+    /// Its page under the project: its task's, `/task/SLUG`, and a held message's place on it,
+    /// `/task/SLUG#message-ID`.
     pub page: String,
-    /// Whose its task is.
-    pub owning: Owning,
+    /// Who is told of it, by short name: whose its task is (`ownership::told`), and of a held
+    /// message who may pass it on.
+    pub told: Vec<String>,
 }
 
 /// What one look reads.
@@ -164,7 +168,7 @@ impl Runner {
         let mut record = before.clone();
         let mut begun: Option<String> = None;
         let mut make = |record: &mut Record, person: &str, kind: Kind, page: &str| {
-            let Some(reach) = profiles.reach(person, kind.word()) else {
+            let Some(reach) = profiles.reach(person, kind.chosen_as()) else {
                 return;
             };
             if programs.program(reach.way()).is_none() {
@@ -188,8 +192,8 @@ impl Runner {
         };
         let after = record.line;
         for line in look.lines.iter().filter(|line| line.id > after) {
-            for person in told(look.people, &line.owning) {
-                make(&mut record, &person, line.kind, &line.page);
+            for person in &line.told {
+                make(&mut record, person, line.kind, &line.page);
             }
         }
         record.line = record.line.max(look.latest);
@@ -251,7 +255,7 @@ impl Runner {
             );
             let kind = Kind::of(&notice.kind);
             let reach = kind
-                .and_then(|kind| profiles.reach(&notice.person, kind.word()))
+                .and_then(|kind| profiles.reach(&notice.person, kind.chosen_as()))
                 .filter(|reach| {
                     reach.way() == notice.way && self.key.digest(reach.address()) == notice.digest
                 });

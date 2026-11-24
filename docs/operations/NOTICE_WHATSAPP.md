@@ -43,7 +43,9 @@ for the messages.
    | `symphony_verdict` | `A reviewer gave a verdict on the Symphony: {{1}}` | `verdict` |
 
    The one for any kind is needed; the others are optional, and a kind without its own is sent
-   by it. All of them are approved in one language, which the settings name (`en_US`).
+   by it. A `held` notice (a person's words wait on you to pass on) has no template of its own:
+   it goes by `symphony_waits`, as a build before it sent it. All of them are approved in one
+   language, which the settings name (`en_US`).
 
 ## The person's agreement, and what it costs
 

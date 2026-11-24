@@ -120,6 +120,11 @@ fn every_key_is_read_and_the_api_loses_a_slash_at_its_end() {
     assert_eq!(settings.template(Kind::Question), "symphony_question");
     assert_eq!(settings.template(Kind::Verdict), "symphony_verdict");
     assert_eq!(settings.template(Kind::Other), "symphony_waits");
+    assert_eq!(
+        settings.template(Kind::Held),
+        "symphony_waits",
+        "a held message has no template of its own, a question's among them"
+    );
 }
 
 #[test]
