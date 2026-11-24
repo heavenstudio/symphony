@@ -42,9 +42,6 @@ pub struct PeoplePage {
     pub administers: bool,
     /// Whether the one reading is the person at the machine, who writes any profile.
     pub machine: bool,
-    /// The powers the board gives no one yet, each with why: the page draws them as not yet
-    /// givable, and the board refuses a grant of one in the same words.
-    pub withheld: Vec<WithheldPower>,
     /// The one reading's short name on the board; none for the person at the machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub you: Option<String>,
@@ -130,16 +127,6 @@ pub struct NoticeWay {
     /// and the Mac app show every notice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub way: Option<String>,
-}
-
-/// A power the board gives no one yet.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
-pub struct WithheldPower {
-    /// Its word, as `direct_agents`.
-    pub power: String,
-    /// Why no one is given it yet, as the board's refusal of a grant says it after the power.
-    pub why: String,
 }
 
 /// A group of the board.

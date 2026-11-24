@@ -10,7 +10,6 @@ import {
   addressesSaid,
   Choose,
   doneLine,
-  givable,
   kindName,
   listed,
   logLine,
@@ -139,7 +138,6 @@ describe("the read", () => {
       revision: 0,
       administers: true,
       machine: true,
-      withheld: SAMPLE.withheld,
       you: null,
       problem: null,
       mine: unnamed,
@@ -153,7 +151,6 @@ describe("the read", () => {
     // sign-in service.
     const { mine: _, signins: __, ...theirs } = SAMPLE;
     expect(readPeople({ ...theirs, signins: [] })).toEqual({ ...theirs, you: null, problem: null });
-    expect(SAMPLE.withheld.map((power) => power.power)).toEqual(["direct_agents"]);
     expect(readPeople({ ...SAMPLE, you: "cy", problem: "down" })).toMatchObject({
       you: "cy",
       problem: "down",
@@ -179,9 +176,6 @@ describe("the read", () => {
       [["log", 0, "did"], 2],
       [["log", 0, "group"], 2],
       [["log", 0, "powers"], "decide"],
-      [["withheld"], undefined],
-      [["withheld", 0, "power"], 1],
-      [["withheld", 0, "why"], undefined],
       [["revision"], undefined],
       [["administers"], "yes"],
       [["machine"], undefined],
@@ -698,64 +692,50 @@ describe("a person's and a group's powers", () => {
     ]);
   });
 
-  it("offers no control for a power the board gives no one yet, and draws one held as held", () => {
+  it("gives and takes direct agents as every other power, held by a group or of one's own", () => {
     const toggled: unknown[] = [];
-    const withheld = SAMPLE.withheld;
     const toggle = (word: string, given: boolean) => toggled.push([word, given]);
-    const tags = PowerTags({
-      held: ana().powers,
-      own: ana().own,
-      label: "ana",
+    const grouped = PowerTags({
+      held: ["read", "direct_agents"],
+      own: [],
+      label: "bo",
       busy: false,
       toggle,
-      withheld,
     });
-    const html = renderToStaticMarkup(tags);
-    expect(html).not.toContain("direct agents");
-    expect(html.match(/<button /g)).toHaveLength(POWERS.length - 1);
-    fire(tags, labelled("administer for ana"), "onClick");
-    expect(toggled).toEqual([["administer", false]]);
-    // Held by a group or given already (a board from before the rule), it is drawn held, with no
-    // control to give or take it.
-    for (const [own, state] of [
-      [[], "group"],
-      [["direct_agents"], "own"],
-    ] as const) {
-      const held = renderToStaticMarkup(
-        <PowerTags
-          held={["read", "direct_agents"]}
-          own={own}
-          label="bo"
-          busy={false}
-          toggle={toggle}
-          withheld={withheld}
-        />,
-      );
-      expect(held).toContain(`<li class="people-power" data-held="${state}">direct agents</li>`);
-      expect(held).not.toContain('aria-label="direct agents for bo"');
-    }
+    expect(renderToStaticMarkup(grouped)).toContain(
+      'data-held="group" aria-pressed="false" aria-label="direct agents for bo" title="Held by a group; give bo direct agents of their own"',
+    );
+    fire(grouped, labelled("direct agents for bo"), "onClick");
+    const given = PowerTags({
+      held: ["read", "direct_agents"],
+      own: ["direct_agents"],
+      label: "cy",
+      busy: false,
+      toggle,
+    });
+    expect(renderToStaticMarkup(given)).toContain(
+      'data-held="own" aria-pressed="true" aria-label="direct agents for cy" title="Take direct agents from cy"',
+    );
+    fire(given, labelled("direct agents for cy"), "onClick");
+    expect(toggled).toEqual([
+      ["direct_agents", false],
+      ["direct_agents", true],
+    ]);
   });
 
-  it("toggles a form's choice of every power the board gives, and sends none it gives no one", () => {
+  it("chooses a form's powers as toggles, with no line beside them", () => {
     const chosen: string[][] = [];
     const choice = (
-      <Choose
-        chosen={["read"]}
-        label="the new person"
-        withheld={SAMPLE.withheld}
-        onChoose={(powers) => chosen.push(powers)}
-      />
+      <Choose chosen={["read"]} label="the new person" onChoose={(powers) => chosen.push(powers)} />
     );
     const html = renderToStaticMarkup(choice);
-    expect(html).not.toContain("direct agents");
-    expect(html).not.toContain("people-hint");
+    expect(html).not.toContain("<p");
     const tags = elementOf(choice.type(choice.props), (element) => element.type === PowerTags);
     const toggle = tags?.props.toggle as (word: string, given: boolean) => void;
     toggle("speak", false);
     toggle("read", true);
-    expect(chosen).toEqual([["read", "speak"], []]);
-    expect(givable(["read", "direct_agents", "speak"], SAMPLE.withheld)).toEqual(["read", "speak"]);
-    expect(givable(["direct_agents"], [])).toEqual(["direct_agents"]);
+    toggle("direct_agents", false);
+    expect(chosen).toEqual([["read", "speak"], [], ["read", "direct_agents"]]);
   });
 
   it("asks before a removal as the task page's Cancel does: an outlined control, then a named confirmation", () => {
@@ -798,7 +778,6 @@ describe("a person's and a group's powers", () => {
     const { sent, writes } = writing();
     const drawn = Person({ person: ana(), page: SAMPLE, writes });
     const tags = elementOf(drawn, (element) => element.type === PowerTags);
-    expect(tags?.props.withheld).toBe(SAMPLE.withheld);
     const removal = elementOf(drawn, (element) => element.type === Remove);
     expect([removal?.props.question, removal?.props.keep]).toEqual([
       "Take ana off the board?",
@@ -904,6 +883,9 @@ describe("the page", () => {
     expect(html).toContain('aria-label="Notices of ana"');
     expect(html).toContain('aria-label="Notices of cy"');
     expect(html).not.toContain('aria-label="Notices of bo"');
+    // Direct agents is given as every power is: no line says otherwise. The group's removal asks.
+    expect(html).not.toContain("given to no one");
+    expect(html).toContain('aria-label="direct agents for ana"');
     expect(html).toContain(">Remove the group</button>");
   });
 
@@ -1156,7 +1138,7 @@ describe("a form's powers", () => {
   const submitted = { preventDefault() {} };
   const submit = (element: Found) => typeof element.props.onSubmit === "function";
 
-  it("adds someone else with no power the board gives no one, a sign-in only where one is taken", () => {
+  it("adds someone else with the powers chosen, direct agents among them, a sign-in only where one is taken", () => {
     const { sent, writes } = writing();
     hooks.on = true;
     hooks.states = ["ana", "", "tailscale:ana@example.com", "", "", ["read", "direct_agents"]];
@@ -1168,7 +1150,7 @@ describe("a form's powers", () => {
       {
         action: "add",
         name: "ana",
-        powers: ["read"],
+        powers: ["read", "direct_agents"],
         groups: [],
         signins: ["tailscale:ana@example.com"],
         git: [],
@@ -1177,16 +1159,16 @@ describe("a form's powers", () => {
     ]);
   });
 
-  it("makes a group with no power the board gives no one", () => {
+  it("makes a group with the powers chosen, direct agents among them", () => {
     const { sent, writes } = writing();
     hooks.on = true;
     hooks.states = ["design", ["decide", "direct_agents"]];
-    fire(AddGroup({ page: SAMPLE, writes }), submit, "onSubmit", submitted);
+    fire(AddGroup({ writes }), submit, "onSubmit", submitted);
     expect(sent).toEqual([
       [
         "people-add-group",
         "/api/people-change",
-        { action: "group-add", name: "design", powers: ["decide"] },
+        { action: "group-add", name: "design", powers: ["decide", "direct_agents"] },
       ],
     ]);
   });

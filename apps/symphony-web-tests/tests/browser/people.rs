@@ -1,22 +1,22 @@
 //! The People page (apps/symphony-web/src/people.tsx, the web client's `people` kind), the release
 //! client against the stand-in server answering its read (`/api/people`) with the wire's own
 //! sample: on a desk and a phone the person at the machine's own section first, then every person,
-//! group and change drawn within the screen's width, the page lit in the header after Settings, a
-//! power the board gives no one yet offered by no control, each field labelled, and nothing sent
-//! on opening; the person at the machine naming themselves from that section, asked once more
-//! before it is sent (`/api/people-profile`), the header then naming them and linking to it; an
-//! add of someone else from its form (its fields cleared once it is done) and a power's toggle
-//! posted as one change each (`/api/people-change`), the page drawn from the write's answer and
-//! what it did said on the part that sent it, a refusal in the server's words, and no form
-//! sending a power given to no one; a person put in a group, a group made and a
+//! group and change drawn within the screen's width, the page lit in the header after Settings,
+//! direct agents a power to give as every other is, each field labelled, and nothing sent on
+//! opening; the person at the machine naming themselves from that section, asked once more before
+//! it is sent (`/api/people-profile`), the header then naming them and linking to it; an add of
+//! someone else from its form (its fields cleared once it is done) and a power's toggle posted as
+//! one change each (`/api/people-change`), direct agents given at a press on a desk and a phone as
+//! any power is, the page drawn from the write's answer and what it did said on the part that sent
+//! it, and a refusal in the server's words; a person put in a group, a group made and a
 //! removal (asked by a named confirmation, kept or confirmed) each posted as one change; a reader
 //! without administer, who is not the person at the machine, shown no section of theirs to name
 //! and no control but their own profile's and notices', which post to
 //! `/api/people-profile`, and no one's addresses but their own; a person's notices set on their
 //! card, what changed posted alone; and a read that fails said in the page's place.
 //!
-//! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page and a person's notices being
-//! set are saved there, whole, at each width and in each scheme: a visitor who is not the person at the machine reaches a server only
+//! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page, a person's notices being set
+//! and direct agents given are saved there, whole, at each width and in each scheme: a visitor who is not the person at the machine reaches a server only
 //! under another Tailscale login, so their page is pictured from the stand-in server.
 use super::{SHOWN, chrome, chrome::Chrome, site, site::Site, texts};
 use serde_json::{Value, json};
@@ -156,8 +156,10 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
                         log: [...document.querySelectorAll('.people-log li')].map(li => li.value),
                         newest: document.querySelector('.people-log li').textContent.endsWith('owner put cy on the board, holding read'),
                         adds: document.querySelectorAll('form[aria-label="Add someone else"], form[aria-label="Make a group"]').length,
-                        // Given to no one yet: no control offers it, and no word explains it.
-                        withheld: [...page.querySelectorAll('button')].filter(b => /^direct agents/.test(b.getAttribute('aria-label') ?? '')).length,
+                        // Given as every power is, and no line beside a form says otherwise: what is
+                        // said is what a write did, and whom the person at the machine writes as.
+                        direct: (b => [b.getAttribute('aria-disabled'), b.title, getComputedStyle(b).opacity])(ana.querySelector("button[aria-label='direct agents for ana']")),
+                        lines: document.querySelectorAll('.people-form p:not(.people-said, .people-state)').length,
                         hints: page.querySelectorAll('.people-hint').length,
                         // The person at the machine, named by no profile yet, is shown the form that names them.
                         you: [document.querySelector('#you .people-state')?.textContent, [...document.querySelectorAll('#you label')].map(l => l.textContent)],
@@ -174,7 +176,8 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
                 "log": [5, 4, 3, 2, 1],
                 "newest": true,
                 "adds": 2,
-                "withheld": 0,
+                "direct": [null, "Give ana direct agents", "1"],
+                "lines": 0,
                 "hints": 0,
                 "you": [
                     "You write as owner.",
@@ -378,13 +381,6 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
         "[...document.querySelectorAll(\"form[aria-label='Add someone else'] input\")].every(i => i.value === '')",
         SHOWN
     ));
-    // Direct agents, given to no one yet, is offered by no control on anyone's card.
-    assert_eq!(
-        chrome.eval(
-            "document.querySelector(\"#person-bo [aria-label='direct agents for bo']\") === null"
-        ),
-        json!(true)
-    );
     // A power's toggle is one change of the person's own; a refusal is said on their card.
     let refusal = "Forbidden: ana may not administer on this board";
     site.refuse_route(symphony_api::PEOPLE_CHANGE_PATH, Some(refusal));
@@ -402,6 +398,58 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
         ["", ""],
         "said on the part that sent it alone: not on ana's card, nor her notices"
     );
+}
+
+/// Direct agents is given at a press as any power is, on a desk and a phone: one change of bo's
+/// own, the page drawn from its answer, the toggle pressed and what it did said on bo's card.
+#[test]
+fn direct_agents_is_given_at_a_press_as_any_power_is() {
+    for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
+        let site = served(&sample());
+        let mut given = sample();
+        given["people"][1]["powers"] = json!(["read", "direct_agents", "administer"]);
+        given["people"][1]["own"] = json!(["direct_agents", "administer"]);
+        given["log"].as_array_mut().unwrap().push(json!({
+            "n": 6, "at": 1_763_025_100.0, "by": "owner", "did": "grant", "name": "bo",
+            "powers": ["direct_agents"],
+        }));
+        given["revision"] = json!(6);
+        site.set_json(symphony_api::PEOPLE_CHANGE_PATH, &given);
+        let Some(mut chrome) = chrome() else { return };
+        screen(&mut chrome, width, height, mobile);
+        open(&mut chrome, &site, "people");
+        let button = "#person-bo button[aria-label='direct agents for bo']";
+        click(&mut chrome, button);
+        assert_eq!(
+            said(&mut chrome, "person-bo", false),
+            "owner gave bo direct agents.",
+            "{width}"
+        );
+        assert!(chrome.wait_for(
+            &format!(
+                "document.querySelector({}).getAttribute('aria-pressed') === 'true'",
+                json!(button)
+            ),
+            SHOWN
+        ));
+        assert_eq!(
+            site.posts(),
+            [(
+                symphony_api::PEOPLE_CHANGE_PATH.to_string(),
+                json!({"action": "grant", "name": "bo", "powers": ["direct_agents"]})
+            )]
+        );
+        assert_eq!(
+            chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
+            json!(true),
+            "{width}"
+        );
+        shot(
+            &mut chrome,
+            &format!("direct-agents-given-{width}"),
+            (width, height, mobile),
+        );
+    }
 }
 
 /// A press of the mouse on the option `text` of the select open now, once its list is placed.

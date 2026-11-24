@@ -353,7 +353,7 @@ impl Site {
                 symphony_api::PEOPLE_PATH,
                 serde_json::json!({
                     "people": [], "groups": [], "log": [], "revision": 0,
-                    "administers": true, "machine": true, "withheld": []
+                    "administers": true, "machine": true
                 }),
             ),
         ] {

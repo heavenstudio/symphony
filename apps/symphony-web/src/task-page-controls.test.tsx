@@ -1,5 +1,6 @@
 // What a task page's controls do when they are used: the owner's priority and cancel, the
-// composer's message and landing, the brief's next part, and the page's own wiring. Each component
+// composer's message and landing, a held message's pass, the brief's next part, and the page's own
+// wiring. Each component
 // is called as React would draw it, its hooks answered here (`runtime`): the states a test gives,
 // a spy for each setter, its refs kept from one draw to the next as one mounted component's are,
 // and its effects held for the test to run. The handlers it draws are then used as a click would.
@@ -16,6 +17,7 @@ import type { LiveTask } from "./task-live";
 import {
   Brief,
   Composer,
+  HeldMessage,
   LiveTaskPage,
   NOTHING_READ,
   OwnerControls,
@@ -23,8 +25,8 @@ import {
   TaskPageView,
 } from "./task-page";
 import { aRole, memoryStorage, reply, server, turn, until } from "./testing";
-import type { TaskOffer } from "./wire";
-import { TASK_ACTION_ROUTE } from "./wire";
+import type { HeldWords, TaskEntry, TaskOffer } from "./wire";
+import { TASK_ACTION_ROUTE, TASK_PASS_ROUTE } from "./wire";
 import { CHECKING } from "./words";
 
 /** The hooks of the component drawn while `on`; React's own otherwise. */
@@ -632,6 +634,98 @@ describe("the composer used", () => {
       asked.at(-1)?.answer(answer);
       await read(answer);
       expect([calls(drawn.result), calls(drawn.busy)], `${status}`).toEqual([[], [[true]]]);
+    }
+  });
+});
+
+describe("a held message passed on", () => {
+  const words: HeldWords = { id: 4, author: "ana", text: "Cut", to: "@executor", passed_by: null };
+  /** The board's line for `words`, on `w/a`. */
+  const line: TaskEntry = {
+    message: {
+      id: 4,
+      slug: "w/a",
+      sender: "board",
+      recipient: "owner",
+      kind: "msg",
+      text: "a message is held for people: #4",
+      ts: 1,
+      person: false,
+    },
+    stamp: "2026-11-24 10:00",
+    blocks: [],
+    held: words,
+  };
+  /** The held message drawn for one who may pass it on, its states the ones given. */
+  const held = (states: unknown[] = []) =>
+    draw(HeldMessage, { entry: line, held: words, passes: true }, states);
+  /** The setters, by their state's name. */
+  const named = (set: Mock[]) => {
+    const [busy, told] = set;
+    return { busy, told };
+  };
+  /** The props of the one Pass on control `node` draws, by what it says. */
+  const control = (node: ReactNode, words: string) => {
+    const found = all(node, (each) => each.props.children === words && "onClick" in each.props);
+    expect(found, words).toHaveLength(1);
+    return found[0]?.props ?? {};
+  };
+
+  it("posts its number once and stays pressed until the feed brings the line it became", async () => {
+    const asked = server();
+    const drawn = held();
+    const set = named(drawn.set);
+    button(drawn.node, "Pass on")();
+    button(drawn.node, "Pass on")();
+    expect(asked.map((one) => [one.url, one.body])).toEqual([
+      [TASK_PASS_ROUTE, { slug: "w/a", id: 4 }],
+    ]);
+    expect(calls(set.busy)).toEqual([[true]]);
+    const answer = reply(200, { ok: true, line: 9 });
+    asked[0]?.answer(answer);
+    await read(answer);
+    expect([calls(set.busy), calls(set.told)]).toEqual([[[true]], [[""]]]);
+    expect(control(held([true]).node, "Pass on").disabled).toBe(true);
+  });
+
+  it("says a refusal in the server's words, and may be pressed again", async () => {
+    const asked = server();
+    const drawn = held();
+    const set = named(drawn.set);
+    button(drawn.node, "Pass on")();
+    const refusal = "Forbidden: ana may not direct agents on this board";
+    const answer = reply(403, { error: refusal });
+    asked[0]?.answer(answer);
+    await read(answer);
+    expect([calls(set.busy), calls(set.told)]).toEqual([[[true], [false]], [[refusal]]]);
+    const told = held([false, refusal]);
+    const status = all(told.node, (each) => each.props.role === "status");
+    expect(status.map((each) => each.props.children)).toEqual([refusal]);
+    button(told.node, "Pass on")();
+    expect(asked).toHaveLength(2);
+  });
+
+  it("asks nothing out of date, and drops its answer once its page is gone", async () => {
+    const asked = server();
+    STALE.set(true);
+    const stale = held();
+    expect(control(stale.node, CHECKING).disabled).toBe(true);
+    button(stale.node, CHECKING)();
+    expect(asked).toEqual([]);
+    expect(stale.set.every((setter) => setter.mock.calls.length === 0)).toBe(true);
+    STALE.set(false);
+    for (const status of [200, 500]) {
+      const mount = new AbortController();
+      runtime.signal = mount.signal;
+      runtime.refs = [];
+      const gone = held();
+      const set = named(gone.set);
+      button(gone.node, "Pass on")();
+      mount.abort();
+      const answer = reply(status, {});
+      asked.at(-1)?.answer(answer);
+      await read(answer);
+      expect([calls(set.busy), calls(set.told)], `${status}`).toEqual([[[true]], []]);
     }
   });
 });

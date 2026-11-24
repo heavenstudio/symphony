@@ -164,12 +164,12 @@ fn read_strictly<T: serde::de::DeserializeOwned>(read: Value) -> Result<T, Error
 }
 
 /// The tables a snapshot's restore reads beside the dump's ([`Store::carried`]): what the board's
-/// commands keep for sessions and programs, who is on the board and which group a thing belongs
-/// to, and no copy derives. Of
+/// commands keep for sessions and programs, who is on the board, which group a thing belongs to
+/// and the words held for people, and no copy derives. Of
 /// `counter` every row is read but the ones the copy makes for itself ([`own`]): the task holds,
 /// each recipient's place in its outbox (the number its next line is keyed by), and the fences,
 /// which only ever count up.
-pub const CARRIED: [&str; 13] = [
+pub const CARRIED: [&str; 14] = [
     "callback_state",
     "callback_lease",
     "callback_event",
@@ -183,6 +183,7 @@ pub const CARRIED: [&str; 13] = [
     "people_group",
     "people_log",
     "ownership",
+    "held_message",
 ];
 
 /// How far a restored lease's revision is moved on where the cluster it replaces could not be

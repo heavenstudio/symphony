@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde_json::json;
+use symphony_board::people::Power;
 use symphony_board::workflow::local_actor;
 use symphony_plugin::execution::{Principal, PrincipalKind};
 use symphony_plugin::vocabulary::TaskOffer;
@@ -192,6 +193,8 @@ fn seeded(f: &Fixture, by: &str) {
 fn a_person_a_host_admitted_is_the_sender_and_mover_the_board_records_and_the_plugins_sender() {
     let (f, tree) = (Fixture::empty(), Tree::new());
     seeded(&f, "owner");
+    // She holds what the server asks of each write, her message reaching the agents among them.
+    give_ana(&f, &[Power::Speak, Power::Decide, Power::DirectAgents]);
     // Work an executor holds blocked, which the action releases back to review.
     let worker = f.session("worker");
     f.store.claim("sim/held", &worker).unwrap();
@@ -282,6 +285,80 @@ fn the_machines_person_under_their_name_is_the_sender_and_mover_on_a_board_namin
         )),
         "{:?}",
         thread(&f, "sim/held")
+    );
+}
+
+/// `ana` on the board, holding `powers`.
+fn give_ana(f: &Fixture, powers: &[Power]) {
+    f.store.add_person("ana", &[], powers, "owner").unwrap();
+}
+
+/// A task's message from a person who may not direct agents is held for people
+/// ([`symphony_board::held`]): the save answers the number of the board's line for it, which says
+/// only that it is held, and a pass of that number by one who may writes her words under both
+/// names. A pass of no held message is refused, with nothing written.
+#[test]
+fn a_message_of_one_who_may_not_direct_agents_is_held_and_answers_its_number() {
+    let (f, tree) = (Fixture::empty(), Tree::new());
+    seeded(&f, "owner");
+    give_ana(&f, &[Power::Speak]);
+    let actor = ana("ana");
+    let store = board_for(&f, &actor);
+    let plugins = || Plugins::new(vec![&SIGNING]);
+    let message = json!({"slug": "sim/a", "text": "Ready when you are", "to": ""});
+    let said = ok(on_task(
+        &store,
+        plugins,
+        &tree.root,
+        &actor,
+        "/api/task-message",
+        &message,
+    ));
+    let id = said["held"].as_i64().expect("held");
+    let lines = thread(&f, "sim/a");
+    assert_eq!(
+        lines.last(),
+        Some(&(
+            "board".to_string(),
+            format!("a message is held for people: #{id}")
+        ))
+    );
+    let owner = local_actor();
+    let owners = f.other();
+    for (pass, refused) in [
+        (json!({"slug": "sim/a", "id": id + 1}), true),
+        (json!({"slug": "sim/a", "id": id}), false),
+    ] {
+        let passed = on_task(
+            &owners,
+            plugins,
+            &tree.root,
+            &owner,
+            symphony_api::TASK_PASS_ROUTE,
+            &pass,
+        );
+        let said = passed.as_ref().err().map(|failure| failure.error.as_str());
+        assert_eq!(said.is_some(), refused, "{pass}: {said:?}");
+    }
+    let refusal = on_task(
+        &owners,
+        plugins,
+        &tree.root,
+        &owner,
+        symphony_api::TASK_PASS_ROUTE,
+        &json!({"slug": "sim/a"}),
+    );
+    assert_eq!(
+        refusal.unwrap_err().error,
+        "id must be a held message's number"
+    );
+    let lines = thread(&f, "sim/a");
+    assert_eq!(
+        lines.last(),
+        Some(&(
+            "ana".to_string(),
+            "[passed on by owner] Ready when you are".to_string()
+        ))
     );
 }
 

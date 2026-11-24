@@ -51,6 +51,7 @@ import { failed as failedRead, ready, Trouble } from "./trouble";
 import { drawnHeight, drawnStyle, NearViewport, rememberDrawn, Settle, Skeleton } from "./viewport";
 import type {
   Block,
+  HeldWords,
   TaskPage as Page,
   Role,
   SessionGo,
@@ -58,7 +59,7 @@ import type {
   TaskEntry,
   TaskOffer,
 } from "./wire";
-import { TASK_ACTION_ROUTE, TASK_HAND_ROUTE } from "./wire";
+import { TASK_ACTION_ROUTE, TASK_HAND_ROUTE, TASK_PASS_ROUTE } from "./wire";
 import { CHECKING } from "./words";
 import { statusWords, WorkPhases } from "./work-phases";
 
@@ -85,9 +86,79 @@ export function voice(message: TaskEntry["message"]): "owner" | "system" | "agen
   return message.kind === "system" ? "system" : "agent";
 }
 
-/** A message of a task's thread: its time, who sent it to whom, and its text or blocks. */
-export const TaskMessage = memo(function TaskMessage({ entry }: { entry: TaskEntry }) {
+/**
+ * A message held for people, at the board's line for it: its time, who wrote it to whom, its
+ * state and, while it is held, its words and Pass on for one who may press it (`passes`). Passed
+ * on, its words are the line they became, further down.
+ */
+export function HeldMessage({
+  entry,
+  held,
+  passes,
+}: {
+  entry: TaskEntry;
+  held: HeldWords;
+  passes: boolean;
+}) {
+  const mount = useMount();
+  const [busy, setBusy] = useState(false);
+  const working = useRef(false);
+  const [told, setTold] = useState("");
+  const stale = useStore(STALE);
+  const passed = held.passed_by ?? null;
+  const pass = async () => {
+    if (working.current || STALE.get()) return;
+    working.current = true;
+    setBusy(true);
+    try {
+      await post(url(TASK_PASS_ROUTE), { slug: entry.message.slug, id: held.id });
+      // The feed brings the line its words became, which marks this one passed: until then it
+      // stays pressed.
+      if (mount.aborted) return;
+      setTold("");
+    } catch (error) {
+      if (mount.aborted) return;
+      setTold(said(error));
+      working.current = false;
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="entry owner" data-held={passed === null ? "held" : "passed"}>
+      <time>{entry.stamp}</time>{" "}
+      <span className="from">
+        {held.author}
+        {held.to !== undefined && held.to !== null && ` → ${held.to}`}
+      </span>
+      <b className="entry-held">{passed === null ? "held" : `passed on by ${passed}`}</b>
+      {passed === null && <div className="entry-text literal">{held.text}</div>}
+      {passed === null && passes && (
+        <div className="row">
+          <Button size="xs" disabled={busy || stale} onClick={() => void pass()}>
+            {stale ? CHECKING : "Pass on"}
+          </Button>
+        </div>
+      )}
+      {told !== "" && <p role="status">{told}</p>}
+    </div>
+  );
+}
+
+/** A message of a task's thread: its time, who sent it to whom, and its text or blocks; the
+ * board's line for a message held for people is that message (`HeldMessage`), for one who may
+ * pass it on (`passes`) with its control. */
+export const TaskMessage = memo(function TaskMessage({
+  entry,
+  passes = false,
+}: {
+  entry: TaskEntry;
+  passes?: boolean;
+}) {
   const { message } = entry;
+  const held = entry.held ?? null;
+  if (held !== null && held.id === message.id) {
+    return <HeldMessage entry={entry} held={held} passes={passes} />;
+  }
   const who = voice(message);
   // Its writer drawn by the one rule a card's thread draws them by too: no agent's handle is a
   // person's name, so an agent's line is drawn as written.
@@ -984,7 +1055,7 @@ export function TaskDetail({
           error: thread.error === null ? null : said(thread.error),
           earlier: async () => (await onHistory(true)) ?? null,
           latest: async () => (await onHistory(false)) ?? null,
-          render: (entry) => <TaskMessage entry={entry} />,
+          render: (entry) => <TaskMessage entry={entry} passes={page?.passes ?? false} />,
         }}
       />
       {page !== null ? (
@@ -1036,7 +1107,7 @@ export function TaskDetail({
                   height={100}
                   ghost={<GhostEntry />}
                 >
-                  <TaskMessage entry={entry} />
+                  <TaskMessage entry={entry} passes={page?.passes ?? false} />
                 </NearViewport>
               ))}
             </ul>

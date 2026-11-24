@@ -150,24 +150,32 @@ fn powers_and_groups_change_by_name_and_a_change_of_nothing_writes_nothing() {
             "ana holds decide no more (change 5)",
         ),
         (
-            vec!["grant", "--group", "staff", "administer"],
-            "the group staff is given administer (change 6)",
+            vec!["grant", "ana", "direct-agents"],
+            "ana is given direct agents (change 6)",
         ),
         (
-            vec!["revoke", "--group", "staff", "administer"],
-            "the group staff holds administer no more (change 7)",
+            vec!["revoke", "ana", "direct_agents"],
+            "ana holds direct agents no more (change 7)",
+        ),
+        (
+            vec!["grant", "--group", "staff", "administer", "direct_agents"],
+            "the group staff is given direct agents, administer (change 8)",
+        ),
+        (
+            vec!["revoke", "--group", "staff", "administer", "direct_agents"],
+            "the group staff holds direct agents, administer no more (change 9)",
         ),
         (
             vec!["leave", "ana", "staff"],
-            "ana is not in staff now (change 8)",
+            "ana is not in staff now (change 10)",
         ),
         (
             vec!["group", "remove", "staff"],
-            "the group staff is removed (change 9), and its members are out of it",
+            "the group staff is removed (change 11), and its members are out of it",
         ),
         (
             vec!["remove", "ana"],
-            "ana is on this board no more (change 10): their lines stay theirs, and their \
+            "ana is on this board no more (change 12): their lines stay theirs, and their \
              profile stays the machine's",
         ),
     ] {
@@ -175,7 +183,7 @@ fn powers_and_groups_change_by_name_and_a_change_of_nothing_writes_nothing() {
         full.extend(args.iter().copied());
         assert_eq!(c.ok(&me, &full), format!("{said}\n"), "{args:?}");
     }
-    assert_eq!(c.ok(&me, &["people", "log"]).lines().count(), 10);
+    assert_eq!(c.ok(&me, &["people", "log"]).lines().count(), 12);
 }
 
 #[test]
@@ -209,11 +217,6 @@ fn a_sign_in_is_one_persons_and_a_refusal_writes_nothing_anywhere() {
         ),
         fails(&c, &me, &["people", "add", "bob", "--signin", "tailscale"]),
         fails(&c, &me, &["people", "add", "bob", "--power", "admin"]),
-        fails(
-            &c,
-            &me,
-            &["people", "add", "bob", "--power", "direct-agents"],
-        ),
         fails(&c, &me, &["people", "add", "Bob"]),
         fails(&c, &me, &["people", "add", &me]),
         fails(&c, &me, &["people", "grant", "ana"]),
@@ -255,38 +258,33 @@ fn a_sign_in_is_one_persons_and_a_refusal_writes_nothing_anywhere() {
         said(1)
     );
     assert!(said(2).contains("\"admin\" is no power"), "{}", said(2));
-    assert!(
-        said(3).contains("direct agents is given to no one yet"),
-        "{}",
-        said(3)
-    );
-    assert!(said(4).contains("is no short name"), "{}", said(4));
+    assert!(said(3).contains("is no short name"), "{}", said(3));
     // The session's handle is a pair the board names sessions by: no person's name, on a board or
     // in a profile.
-    for at in [5, 15] {
+    for at in [4, 14] {
         assert!(
             said(at).contains(&format!("{me} is a name a session's handle can take")),
             "{}",
             said(at)
         );
     }
-    assert!(said(6).contains("name at least one power"), "{}", said(6));
+    assert!(said(5).contains("name at least one power"), "{}", said(5));
     assert!(
-        said(7).contains("this board keeps no group staff"),
+        said(6).contains("this board keeps no group staff"),
+        "{}",
+        said(6)
+    );
+    assert!(
+        said(7).contains("holds none of those powers as its own"),
         "{}",
         said(7)
     );
     assert!(
-        said(8).contains("holds none of those powers as its own"),
+        said(10).contains("people takes list, log, add NAME"),
         "{}",
-        said(8)
+        said(10)
     );
-    assert!(
-        said(11).contains("people takes list, log, add NAME"),
-        "{}",
-        said(11)
-    );
-    for at in [13, 14] {
+    for at in [12, 13] {
         assert!(
             said(at).contains("grant and revoke take NAME POWER…, or --group GROUP POWER…"),
             "{}",

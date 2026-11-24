@@ -39,6 +39,7 @@ export const UPLOAD_ACCEPT =
   "image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log,.docx,.xlsx,.pptx";
 export const QUICK_TASK_TITLE_MAX = 200;
 export const TASK_ACTION_ROUTE = "/api/task-action";
+export const TASK_PASS_ROUTE = "/api/task-pass";
 export const TASK_TOKENS_PATH = "/api/task-tokens";
 export const TASK_COSTS_PATH = "/api/task-costs";
 export const TASK_COSTS_MOST = 200;
@@ -834,11 +835,6 @@ export type PeoplePage = {
    */
   machine: boolean;
   /**
-   * The powers the board gives no one yet, each with why: the page draws them as not yet
-   * givable, and the board refuses a grant of one in the same words.
-   */
-  withheld: Array<WithheldPower>;
-  /**
    * The one reading's short name on the board; none for the person at the machine.
    */
   you?: string | null;
@@ -925,17 +921,6 @@ export type NoticeWay = {
 };
 
 export type GroupRow = { name: string; powers: Array<string> };
-
-export type WithheldPower = {
-  /**
-   * Its word, as `direct_agents`.
-   */
-  power: string;
-  /**
-   * Why no one is given it yet, as the board's refusal of a grant says it after the power.
-   */
-  why: string;
-};
 
 export type PeopleLogLine = {
   /**
@@ -2590,12 +2575,47 @@ export type TaskPage = {
    */
   attempts?: number;
   /**
+   * The one reading may pass a held message on ([`TASK_PASS_ROUTE`]): the person at the machine,
+   * or a person holding speak and direct agents.
+   */
+  passes: boolean;
+  /**
    * Whose the task is ([`Owner`]): none on a board that names nobody.
    */
   owner?: Owner | null;
 };
 
-export type TaskEntry = { message: Message; stamp: string; blocks: Array<Block> };
+export type TaskEntry = {
+  message: Message;
+  stamp: string;
+  blocks: Array<Block>;
+  /**
+   * The message held for people this line is of: on the board's line that says it is held,
+   * `id` its own, and on the line its words became once passed on, `id` the board's line. Only
+   * a person's read of the thread carries it; none on every other line.
+   */
+  held?: HeldWords | null;
+};
+
+export type HeldWords = {
+  /**
+   * The number of the board's line that says it is held, which a pass names.
+   */
+  id: number;
+  /**
+   * Who wrote it, by their short name.
+   */
+  author: string;
+  text: string;
+  /**
+   * Whom it was written to: a role, a session's handle, or nobody.
+   */
+  to?: string | null;
+  /**
+   * Who passed it on: none while it is held.
+   */
+  passed_by?: string | null;
+};
 
 export type Message = {
   id: number;

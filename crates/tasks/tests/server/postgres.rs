@@ -12,28 +12,28 @@ use symphony_board::sys::{self, command, pid_alive};
 
 /// How long a server's processes are given to be gone once it has stopped: they end at once, its
 /// supervisor's shells behind it.
-const GONE: Duration = test_time::backstop(Duration::from_secs(10));
+pub(crate) const GONE: Duration = test_time::backstop(Duration::from_secs(10));
 
 /// The folder of the machine's PostgreSQL programs, configured or discovered on PATH.
-fn programs() -> PathBuf {
+pub(crate) fn programs() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     postgres::discover_programs(&root).unwrap()
 }
 
 /// The folder of the board of the test named `name`, under the temporary folder.
-fn folder(name: &str) -> PathBuf {
+pub(crate) fn folder(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("pg-{}-{name}", std::process::id()))
 }
 
 /// A board of a test's own under the temporary folder, its PostgreSQL stopped and its folder
 /// removed when it goes, however the test ends.
-struct Board {
-    dir: PathBuf,
-    pg: Postgres,
+pub(crate) struct Board {
+    pub(crate) dir: PathBuf,
+    pub(crate) pg: Postgres,
 }
 
 impl Board {
-    fn new(name: &str) -> Board {
+    pub(crate) fn new(name: &str) -> Board {
         Board::at(&folder(name))
     }
 
@@ -63,12 +63,12 @@ impl Board {
     }
 
     /// The board's home, as its PostgreSQL was made on it.
-    fn home(&self) -> Home {
+    pub(crate) fn home(&self) -> Home {
         Home::at(&self.dir.join("board"))
     }
 
     /// What `sql` answers over the server's socket, through one connection of `psql`'s.
-    fn psql(&self, serving: &Serving, sql: &str) -> String {
+    pub(crate) fn psql(&self, serving: &Serving, sql: &str) -> String {
         let said = sys::output(
             command(self.pg.program("psql"))
                 .args(["-X", "-A", "-t", "-q", "-v", "ON_ERROR_STOP=1", "-h"])
@@ -86,7 +86,7 @@ impl Board {
 
     /// The processes whose command line names this board's data: its server's, and its
     /// supervisor's shells.
-    fn processes(&self) -> Vec<String> {
+    pub(crate) fn processes(&self) -> Vec<String> {
         let data = self.pg.data().display().to_string();
         let said = sys::output(command("ps").args(["-axww", "-o", "pid=,command="])).unwrap();
         String::from_utf8_lossy(&said.stdout)
@@ -97,7 +97,7 @@ impl Board {
     }
 
     /// Wait until no process names this board's data.
-    fn none_left(&self) {
+    pub(crate) fn none_left(&self) {
         test_time::until_true("the board's PostgreSQL processes gone", GONE, || {
             self.processes().is_empty()
         })
@@ -628,7 +628,7 @@ fn helper_started() -> Serving {
 }
 
 /// `signal` (`STOP`, `CONT`) sent to process `pid` by `kill`.
-fn signalled(pid: i64, signal: &str) {
+pub(crate) fn signalled(pid: i64, signal: &str) {
     let sent = sys::output(
         command("kill")
             .arg(format!("-{signal}"))

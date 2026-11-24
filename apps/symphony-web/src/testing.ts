@@ -192,6 +192,7 @@ export function aTaskPage(task: Task, more: Partial<TaskPage> = {}): TaskPage {
     brief_revision: "",
     sessions: {},
     local: false,
+    passes: false,
     gates: null,
     ...more,
   };

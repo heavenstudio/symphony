@@ -49,11 +49,11 @@ fn deciding_speaking_to_agents_uploading_and_directing_attempts_need_what_the_ru
     for route in [
         "/api/comment",
         "/api/message",
-        "/api/task-message",
         "/api/ask",
         "/api/ask-reply",
         "/api/quick-chat",
         "/api/quick-task",
+        symphony_api::TASK_PASS_ROUTE,
     ] {
         assert_eq!(
             needs(route),
@@ -61,10 +61,11 @@ fn deciding_speaking_to_agents_uploading_and_directing_attempts_need_what_the_ru
             "{route}"
         );
     }
-    assert_eq!(
-        needs(symphony_api::UPLOAD_PATH),
-        Needs::Powers(&[Power::Speak])
-    );
+    // A task's message is speaking alone: the board holds it when its writer may not direct
+    // agents.
+    for route in ["/api/task-message", symphony_api::UPLOAD_PATH] {
+        assert_eq!(needs(route), Needs::Powers(&[Power::Speak]), "{route}");
+    }
     // A hand-over needs only being on the board: the board refuses one by a non-member.
     for route in [
         symphony_api::PROFILE_PATH,
@@ -98,7 +99,16 @@ fn a_refusal_names_the_person_and_the_first_power_they_lack() {
     );
     assert_eq!(
         refused("ana", &speaks, needs("/api/comment")).as_deref(),
-        Some("Forbidden: this board holds no words for agents from ana yet")
+        Some("Forbidden: ana may not direct agents on this board")
+    );
+    assert_eq!(
+        refused("ana", &speaks, needs("/api/task-message")),
+        None,
+        "her message is held"
+    );
+    assert_eq!(
+        refused("ana", &speaks, needs(symphony_api::TASK_PASS_ROUTE)).as_deref(),
+        Some("Forbidden: ana may not direct agents on this board")
     );
     assert_eq!(
         refused("ana", &Powers::default(), needs("/api/comment")).as_deref(),
@@ -108,7 +118,7 @@ fn a_refusal_names_the_person_and_the_first_power_they_lack() {
     assert_eq!(refused("ana", &decides, needs("/api/task-priority")), None);
     assert_eq!(
         refused("ana", &decides, needs(symphony_api::ATTEMPT_CONTROL_ROUTE)).as_deref(),
-        Some("Forbidden: this board holds no words for agents from ana yet")
+        Some("Forbidden: ana may not direct agents on this board")
     );
     assert_eq!(
         refused("ana", &Powers::all(), Needs::Machine).as_deref(),

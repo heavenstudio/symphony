@@ -128,8 +128,9 @@ impl Runner {
 
     /// Takes `look` in at `now`: a notice made for each person newly told, reached by
     /// `profiles` by a way `programs` names a program for; `origin` (`http://HOST:PORT`) begins
-    /// each link. The first look makes none: what waits then, and the lines before it, are told
-    /// already. A first look with no cards read waits for one that has them.
+    /// each link, asked once by a look that makes one and never by one that makes none. The first
+    /// look makes none: what waits then, and the lines before it, are told already. A first look
+    /// with no cards read waits for one that has them.
     ///
     /// # Errors
     ///
@@ -161,6 +162,7 @@ impl Runner {
             return Ok(());
         };
         let mut record = before.clone();
+        let mut begun: Option<String> = None;
         let mut make = |record: &mut Record, person: &str, kind: Kind, page: &str| {
             let Some(reach) = profiles.reach(person, kind.word()) else {
                 return;
@@ -171,7 +173,11 @@ impl Runner {
             record.pending.push(Pending {
                 id: new_id(),
                 kind: kind.word().into(),
-                link: format!("{}/{}{page}", origin(), self.project),
+                link: format!(
+                    "{}/{}{page}",
+                    begun.get_or_insert_with(&mut *origin),
+                    self.project
+                ),
                 person: person.into(),
                 way: reach.way().into(),
                 digest: self.key.digest(reach.address()),

@@ -28,6 +28,7 @@ mod detached;
 mod finish;
 mod gates;
 mod handover;
+mod held;
 mod machine_work;
 // Each run's scratch in a folder of its own under the temp folder, swept when a killed run left it.
 #[path = "../../../chrome-devtools/src/harness_scratch.rs"]

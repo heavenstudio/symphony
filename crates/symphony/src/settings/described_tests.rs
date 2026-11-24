@@ -327,9 +327,15 @@ fn shell(script: &str, within: Duration) -> Result<Vec<u8>, String> {
     run(sys::command("sh").args(["-c", script]), "sh", within)
 }
 
+/// The time a test that reads an answer gives it: the page's own as the test's backstop, so a
+/// loaded machine's stall never stands for the answer.
+fn answering() -> Duration {
+    test_time::backstop(ANSWERS_IN)
+}
+
 #[test]
 fn a_command_that_exits_0_answers_what_it_printed() {
-    let answer = shell("echo '{}'; echo said >&2", Duration::from_secs(60));
+    let answer = shell("echo '{}'; echo said >&2", answering());
     assert_eq!(answer, Ok(b"{}\n".to_vec()));
 }
 
@@ -338,16 +344,13 @@ fn a_command_that_fails_says_its_code_and_its_first_line_on_stderr() {
     assert_eq!(
         shell(
             "echo out; printf '\\n  no file\\nmore\\n' >&2; exit 3",
-            Duration::from_secs(60)
+            answering()
         ),
         Err("sh exited 3: no file".into())
     );
+    assert_eq!(shell("exit 4", answering()), Err("sh exited 4".into()));
     assert_eq!(
-        shell("exit 4", Duration::from_secs(60)),
-        Err("sh exited 4".into())
-    );
-    assert_eq!(
-        shell("kill -9 $$", Duration::from_secs(60)),
+        shell("kill -9 $$", answering()),
         Err("sh was killed".into())
     );
 }
@@ -357,7 +360,7 @@ fn a_program_that_does_not_start_says_so() {
     let gone = run(
         &mut sys::command("/nonexistent/symphony-github"),
         "symphony-github describe",
-        Duration::from_secs(60),
+        answering(),
     )
     .unwrap_err();
     assert!(
@@ -455,9 +458,7 @@ fn a_program_that_answers_within_its_machines_time_is_its_own_entry() {
         "answering",
         r#"printf '{"id":"elsewhere","name":"GitHub","about":"Its words."}\n'"#,
     );
-    let machine = scratch
-        .machine()
-        .answering_in(test_time::backstop(ANSWERS_IN));
+    let machine = scratch.machine().answering_in(answering());
     let entry = program(&machine, &scratch.0.join("main"), &GITHUB);
     assert_eq!(
         (entry.id.as_str(), entry.about.as_str()),

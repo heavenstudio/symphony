@@ -378,14 +378,21 @@ pub fn owner_approves(post: &Message) -> bool {
 /// name is never a session's handle, nor a handle a person's name
 /// ([`crate::people::refused_name`], [`crate::Store::register`]), a person's name stays their
 /// profile's across a removal ([`crate::people::Profiles`]), and the board's own lines are
-/// `system`.
+/// `system`. A person who may not decide writes no line that reads as one
+/// ([`crate::Store::say_or_hold_as`]), so a grant of decide finds none of theirs to count.
 pub fn approves_by(post: &Message, deciders: &[String]) -> bool {
-    let first = (post.text.trim_start())
+    let whose = post.sender == OWNER || deciders.contains(&post.sender);
+    whose && post.kind != "system" && reads_as_approve(&post.text)
+}
+
+/// Whether a line saying `text` reads as an approve under a decider's name: its first word, before
+/// a space or a colon, is `approve`, in any case.
+pub fn reads_as_approve(text: &str) -> bool {
+    (text.trim_start())
         .split(|c: char| c.is_whitespace() || c == ':')
         .next()
-        .unwrap_or_default();
-    let whose = post.sender == OWNER || deciders.contains(&post.sender);
-    whose && post.kind != "system" && first.eq_ignore_ascii_case(APPROVE)
+        .unwrap_or_default()
+        .eq_ignore_ascii_case(APPROVE)
 }
 
 /// The `owner` stamp at `tip`, the one reader every caller goes by: met by the owner's approve

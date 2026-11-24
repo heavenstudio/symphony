@@ -131,6 +131,7 @@ fn constants() -> String {
             api::QUICK_TASK_TITLE_MAX.to_string(),
         ),
         ("TASK_ACTION_ROUTE", text(api::TASK_ACTION_ROUTE)),
+        ("TASK_PASS_ROUTE", text(api::TASK_PASS_ROUTE)),
         ("TASK_TOKENS_PATH", text(api::TASK_TOKENS_PATH)),
         ("TASK_COSTS_PATH", text(api::TASK_COSTS_PATH)),
         ("TASK_COSTS_MOST", api::TASK_COSTS_MOST.to_string()),
@@ -268,7 +269,6 @@ fn page_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::Addresses>(cfg),
         declared::<api::NoticeWay>(cfg),
         declared::<api::GroupRow>(cfg),
-        declared::<api::WithheldPower>(cfg),
         declared::<api::PeopleLogLine>(cfg),
         declared::<api::PeopleAction>(cfg),
         declared::<api::PeopleChange>(cfg),
@@ -441,6 +441,7 @@ fn task_declarations(cfg: &Config) -> Vec<Declared> {
         // agents page's types).
         declared::<api::TaskPage>(cfg),
         declared::<api::TaskEntry>(cfg),
+        declared::<api::HeldWords>(cfg),
         declared::<api::Message>(cfg),
         declared::<api::TaskHistory>(cfg),
         declared::<api::TaskBrief>(cfg),
@@ -1479,7 +1480,6 @@ fn people_samples() -> serde_json::Map<String, Value> {
         json!(api::PeoplePage {
             administers: true,
             machine: true,
-            withheld: withheld(),
             mine: Some(api::MachineProfile::default()),
             ..api::PeoplePage::default()
         }),
@@ -1490,7 +1490,6 @@ fn people_samples() -> serde_json::Map<String, Value> {
         json!(api::PeoplePage {
             administers: true,
             machine: true,
-            withheld: withheld(),
             mine: Some(api::MachineProfile {
                 name: Some("stefano".into()),
                 display: "Stefano".into(),
@@ -2759,23 +2758,11 @@ fn people() -> api::PeoplePage {
         revision: 5,
         administers: true,
         machine: true,
-        withheld: withheld(),
         you: None,
         problem: None,
         mine: Some(api::MachineProfile::default()),
         signins: words(&["tailscale"]),
     }
-}
-
-/// The powers the board gives no one yet: direct agents, as `symphony_board::people::Power`
-/// says it.
-fn withheld() -> Vec<api::WithheldPower> {
-    vec![api::WithheldPower {
-        power: "direct_agents".into(),
-        why: "until a board speaks to its agents for a person, asking them for work is the person \
-              at the machine's"
-            .into(),
-    }]
 }
 
 /// A Settings page of every shape an entry takes: one with a state, a need met and one not, a

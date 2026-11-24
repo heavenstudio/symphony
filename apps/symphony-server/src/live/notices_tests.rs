@@ -1,12 +1,13 @@
 //! The one server's notices for a project, on a scratch board and a temporary machine folder whose
 //! `notices/programs.toml` names a fake program: a card that starts waiting, an agent's question to
 //! the person at the machine and a reviewer's verdict reach each member of the thing's group once,
-//! by their way, and nobody else; a board that names nobody tells no one; and the worker hands what
-//! a wake finds and ends at the stop.
+//! by their way, and nobody else; a held message's line tells as such a question, its author among
+//! those told when of the group, and its pass, a person's line, tells no one; a board that names
+//! nobody tells no one; and the worker hands what a wake finds and ends at the stop.
 
 use super::super::Hub;
-use super::{Read, Said};
-use crate::notices::hand::{Bounds, Running};
+use super::{Said, Turns};
+use crate::notices::hand::Bounds;
 use crate::notices::runner::Runner;
 use crate::testing::board::{Fixture, Seed};
 use crate::testing::{Tree, repository_holding, store_on};
@@ -166,27 +167,19 @@ fn profiles() -> Profiles {
     }
 }
 
-/// One turn at a time, as the worker takes them.
-#[derive(Default)]
-struct Passes {
-    runner: Option<Runner>,
-    last: Option<Read>,
-    said: Said,
-    running: Running,
+/// The worker's turns of the project `symphony`, taken one at a time by the test.
+fn turns() -> Turns {
+    Turns::new(
+        "symphony",
+        bounds(),
+        Box::new(|| ORIGIN.to_string()),
+        Arc::default(),
+    )
 }
 
-impl Passes {
+impl Turns {
     fn pass(&mut self, hub: &Hub) {
-        let mut origin = || ORIGIN.to_string();
-        hub.notice_turn(
-            &mut self.runner,
-            &mut self.last,
-            &self.running,
-            bounds(),
-            &mut origin,
-            &mut self.said,
-            "symphony",
-        );
+        hub.notice_turn(self);
     }
 
     /// The runner's cursor: none before a runner opened its record and looked.
@@ -211,7 +204,7 @@ fn ask_everything(telling: &Telling) {
 #[test]
 fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_by_their_way() {
     let telling = Telling::new(false);
-    let mut passes = Passes::default();
+    let mut passes = turns();
     passes.pass(&telling.hub);
     assert!(passes.cursor().is_some(), "the first look");
     assert!(telling.told().is_empty(), "nothing of what stood");
@@ -265,10 +258,41 @@ fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_b
     );
 }
 
+/// A message held for people (`symphony_board::held`) is told of by the board's line for it, a
+/// question to the person at the machine that no person wrote: each member of the task's group is
+/// told, its author too when one of them, a link alone. Its pass is a person's line, which tells no
+/// one.
+#[test]
+fn a_held_messages_line_tells_its_tasks_group_as_a_question_and_its_pass_tells_no_one() {
+    let telling = Telling::new(false);
+    let mut passes = Passes::default();
+    passes.pass(&telling.hub);
+    let ana = telling.f.other().for_person("ana");
+    let held = (ana.hold_words("app/x", "ana", "Cut the header", None)).unwrap();
+    telling.hub.observe(&telling.f.store);
+    passes.pass(&telling.hub);
+    let task = format!("{ORIGIN}/symphony/task/app/x");
+    let told = |kind: &str, way: &str, address: &str| {
+        (kind.into(), way.into(), address.into(), task.clone())
+    };
+    assert_eq!(
+        telling.told(),
+        [
+            told("question", "slack", ANA_SLACK),
+            told("question", "email", BO_EMAIL)
+        ],
+        "ana and bo are design's; cy is engineering's"
+    );
+    (telling.f.store.pass("app/x", held.id, "owner")).unwrap();
+    telling.hub.observe(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 2, "the pass is a person's line");
+}
+
 #[test]
 fn a_board_that_names_nobody_tells_no_one() {
     let telling = Telling::new(true);
-    let mut passes = Passes::default();
+    let mut passes = turns();
     passes.pass(&telling.hub);
     ask_everything(&telling);
     passes.pass(&telling.hub);
@@ -297,6 +321,66 @@ fn the_worker_hands_what_a_wake_finds_and_ends_at_the_stop() {
     assert!(worker.thread.lock().unwrap().is_none(), "joined");
     assert!(worker.running.stopping());
     telling.hub.wake_notices();
+}
+
+#[test]
+fn a_second_start_starts_no_second_worker() {
+    let telling = Telling::new(false);
+    let hub = &telling.hub;
+    hub.start_notices_with("symphony", bounds(), Box::new(|| ORIGIN.to_string()));
+    let second = Arc::new(());
+    let held = Arc::clone(&second);
+    hub.start_notices_with(
+        "symphony",
+        bounds(),
+        Box::new(move || {
+            let _ = &held;
+            ORIGIN.to_string()
+        }),
+    );
+    assert_eq!(
+        Arc::strong_count(&second),
+        1,
+        "its origin is let go as it returns: no worker took it"
+    );
+    hub.stop_notices();
+}
+
+#[test]
+fn a_hub_dropped_without_a_stop_ends_its_worker_and_lets_the_record_go() {
+    let Telling {
+        tree,
+        root,
+        f: _board,
+        hub,
+        gate: _gate,
+    } = Telling::new(false);
+    let alive = Arc::new(());
+    let held = Arc::clone(&alive);
+    hub.start_notices_with(
+        "symphony",
+        bounds(),
+        Box::new(move || {
+            let _ = &held;
+            ORIGIN.to_string()
+        }),
+    );
+    let record = root.join("artifacts/notices.json");
+    test_time::until_true("the worker's first look", hand_bound(), || record.is_file())
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    drop(hub);
+    // Its wake went with the hub: the worker ends and lets its turns go, its origin before its
+    // runner, whose lock is then waited for on its own.
+    test_time::until_true("the worker's turns let go", hand_bound(), || {
+        Arc::strong_count(&alive) == 1
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    let machine = tree.path("machine");
+    test_time::until_true("the record's lock let go", hand_bound(), || {
+        let key = symphony::notices::Key::of(&machine).unwrap();
+        Runner::open(&root, "symphony", key).is_ok()
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
 }
 
 /// A wall-clock backstop a stall alone reaches: six fake programs' runs on a loaded machine.
@@ -333,7 +417,7 @@ fn what_the_machine_folder_does_not_let_it_trust_tells_no_one_said_once() {
         said.0
     );
     chmod(&key, 0o600);
-    let mut passes = Passes::default();
+    let mut passes = turns();
     // Profiles that do not read: no look, said.
     let profiles = machine.join("people.json");
     let kept = std::fs::read(&profiles).unwrap();
@@ -382,7 +466,7 @@ fn a_fault_is_said_once_until_it_changes_or_clears() {
 fn a_replacement_tells_nothing_until_its_gate_opens_then_tells_from_the_record_as_it_stands() {
     let telling = Telling::new(false);
     // The generation being replaced: its runner holds the record and tells.
-    let mut old = Passes::default();
+    let mut old = turns();
     old.pass(&telling.hub);
     assert!(old.cursor().is_some());
     // The replacement's hub on the same project, its gate held until its hand-off commits.
@@ -394,7 +478,7 @@ fn a_replacement_tells_nothing_until_its_gate_opens_then_tells_from_the_record_a
     replacement.connect_reader = Box::new(move |_| Ok(store_on(&board)));
     replacement.refresh_page("", &telling.root).unwrap();
     replacement.gate_recorders(Arc::clone(&gate));
-    let mut new = Passes::default();
+    let mut new = turns();
     let record = telling.root.join("artifacts/notices.json");
     let before = std::fs::read(&record).unwrap();
     ask_everything(&telling);

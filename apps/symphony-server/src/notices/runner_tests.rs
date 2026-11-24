@@ -237,6 +237,57 @@ fn the_first_look_takes_what_stands_as_told_and_waits_for_the_cards() {
     );
 }
 
+/// How many times a look of `cards` and `lines` through `latest` asks its origin.
+fn origins_asked(
+    runner: &mut Runner,
+    people: &People,
+    cards: Vec<Waiting>,
+    lines: Vec<Line>,
+    latest: i64,
+) -> usize {
+    let look = Look {
+        people,
+        cards: Some(cards),
+        lines,
+        latest,
+    };
+    let mut asked = 0;
+    let mut origin = || {
+        asked += 1;
+        ORIGIN.to_string()
+    };
+    (runner.look(&look, &profiles(), &programs(), 0.0, &mut origin)).unwrap();
+    asked
+}
+
+#[test]
+fn a_look_asks_its_origin_once_where_it_makes_notices_and_never_where_it_makes_none() {
+    let tree = Tree::new();
+    let people = people();
+    let mut runner = started(&tree, &people, vec![]);
+    // A card and a verdict, each for ana and bo: four notices, one origin.
+    let cards = vec![card(&people, "one", "design")];
+    let verdict = vec![task_line(&people, 11, Kind::Verdict, "design")];
+    assert_eq!(
+        origins_asked(&mut runner, &people, cards.clone(), verdict, 11),
+        1
+    );
+    let pending = &record(&runner).pending;
+    assert_eq!(pending.len(), 4);
+    assert!(
+        (pending.iter()).all(|notice| notice.link.starts_with(&format!("{ORIGIN}/symphony/"))),
+        "{pending:?}"
+    );
+    // Nothing new, and a card for cy alone, whose way no program is named for: none asked.
+    assert_eq!(
+        origins_asked(&mut runner, &people, cards.clone(), vec![], 11),
+        0
+    );
+    let cy = [cards, vec![card(&people, "two", "cy")]].concat();
+    assert_eq!(origins_asked(&mut runner, &people, cy, vec![], 11), 0);
+    assert_eq!(record(&runner).pending.len(), 4);
+}
+
 #[test]
 fn a_card_waiting_on_a_group_tells_each_member_once_by_their_way_and_nobody_without_one() {
     let tree = Tree::new();

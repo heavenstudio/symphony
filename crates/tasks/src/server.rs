@@ -137,6 +137,9 @@ pub struct Home {
     lock_wait: Option<Duration>,
     /// Where a test cuts a restore's switch ([`Home::stopping_after`]).
     cut: Option<moving::Cut>,
+    /// The slots its servers that end with their starter take ([`postgres::Slots`]); none: the
+    /// machine's.
+    slots: Option<postgres::Slots>,
 }
 
 impl Home {
@@ -159,6 +162,7 @@ impl Home {
             tell: std::sync::Arc::new(|line| eprintln!("{line}")),
             lock_wait: None,
             cut: None,
+            slots: None,
         }
     }
 
@@ -233,6 +237,15 @@ impl Home {
     pub fn supervised(self, supervised: bool) -> Home {
         Home {
             supervised: Some(supervised),
+            ..self
+        }
+    }
+
+    /// The slots its servers that end with their starter take, one each for its life: `slots`, a
+    /// test's, in place of the machine's ([`postgres::Slots::machine`]).
+    pub fn slots(self, slots: postgres::Slots) -> Home {
+        Home {
+            slots: Some(slots),
             ..self
         }
     }
