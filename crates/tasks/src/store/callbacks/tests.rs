@@ -777,8 +777,15 @@ fn a_visit_with_nothing_to_observe_reaches_its_recipient_and_takes_no_lease() {
 
 /// The look kept for older dispatchers says each child of unknown liveness as the board does: one
 /// no longer on it has left. Every other child keeps its health, and only the unknown are named.
+///
+/// The two children off the board are named by "zinc", no adjective of the generator's lists, and
+/// every handle a register gives, numbered or not, begins with one: neither is ever `here`.
 #[test]
 fn a_stored_look_says_the_unknown_children_as_the_board_does() {
+    let (gone, stale) = ("zinc-otter", "zinc-wren");
+    for name in [gone, stale] {
+        assert!(!crate::store::could_be_handle(name), "{name}");
+    }
     let fixture = crate::store_fixture::Fixture::empty();
     let store = &fixture.store;
     let here = fixture.session("worker");
@@ -786,16 +793,13 @@ fn a_stored_look_says_the_unknown_children_as_the_board_does() {
     let mut legacy = nothing_seen();
     legacy.children = BTreeMap::from([
         (here.clone(), crate::Health::Unknown),
-        ("zinc-otter".into(), crate::Health::Unknown),
-        ("amber-wren".into(), crate::Health::Stale),
+        (gone.into(), crate::Health::Unknown),
+        (stale.into(), crate::Health::Stale),
     ]);
     let (stored, unknown) = store.stored_look(&board, &legacy);
-    assert_eq!(
-        unknown,
-        BTreeSet::from([here.clone(), "zinc-otter".to_string()])
-    );
-    assert_eq!(stored.children["zinc-otter"], crate::Health::Left);
-    assert_eq!(stored.children["amber-wren"], crate::Health::Stale);
+    assert_eq!(unknown, BTreeSet::from([here.clone(), gone.to_string()]));
+    assert_eq!(stored.children[gone], crate::Health::Left);
+    assert_eq!(stored.children[stale], crate::Health::Stale);
     assert_eq!(stored.children[&here], fixture.health(&here));
 }
 
