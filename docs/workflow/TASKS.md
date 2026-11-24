@@ -2367,7 +2367,9 @@ as it did before. That person stays `owner`, with every power, once others are n
 - **A profile is the machine's**, not the board's: `people.json` in the machine folder, with its
   lock `people.lock`, both mode 600, holding each person's display name, sign-ins
   (`SERVICE:SUBJECT`, each one person's alone, matched ignoring case), git handles, emails, chat
-  and preferences. A board and its copies hold none of it. The board's log and the server's log
+  and preferences. A git handle is not one person's alone: a person writes their own, and
+  nothing checks that no other profile holds it, so nothing decides by a git handle alone whose
+  commit or write something is (a plugin is told them as the sender's, never as proof). A board and its copies hold none of it. The board's log and the server's log
   lines name the short name, never a sign-in's subject or an email. An add holds the lock from
   its check of the sign-ins through the board's change and the profile's write, so of two adds
   of one sign-in at once the second is refused, with nothing written.
@@ -2418,10 +2420,15 @@ the powers they hold, their own told apart from their groups' by a word as well 
 groups, the services they sign in by and their git handles; its groups; and its log, newest
 first. It shows no sign-in's subject, no email and no chat address to anyone. Its controls are
 drawn for whoever holds `administer`, as the person at the machine always does: a person added
-with a display name, sign-ins, git handles, powers and groups, put in a group or taken out of
-one, given a power or one taken back, taken off the board; a group made, given a power or
-removed. Each is one change of the log, the command's own, named as the actor who made it
-(`owner` for the person at the machine). `administer` is read from the board as the change
+with a display name, git handles, powers and groups (and sign-ins, by the person at the machine
+alone), put in a group or taken out of one, given a power or one taken back, taken off the
+board; a group made, given a power or removed. A power the board gives no one yet (direct
+agents, until step 5 of [the way from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner))
+is drawn not pressable, faded, with the board's reason as its title and said once in each add
+form, in the words its refusal of a grant says. Taking a person off the board and removing a
+group, which a press cannot take back, ask first as a task's Cancel does: a named confirmation,
+then Confirm removal or Keep. Each change is one change of the log, the command's own, named as
+the actor who made it (`owner` for the person at the machine). `administer` is read from the board as the change
 arrives, so one from someone without it is a 403, `Forbidden: ana may not administer on this
 board`, with nothing written. The page is the project's own board's: a worktree's server and a
 hosted visitor are refused it ([the server guide](../../apps/symphony-server/README.md)).
@@ -2430,10 +2437,23 @@ Who writes a profile:
 
 - the person at the machine writes any profile, its sign-ins among them;
 - a person writes their own display name and git handles, from their own row, and no sign-in;
-- a board's admin makes a profile only for someone the machine holds none of: someone who has
-  one is added as their profile is, and an add that names a display name, a sign-in or a git
-  handle for them is refused, with nothing written. An existing profile's sign-ins are the person
-  at the machine's alone, as a sign-in says who a visitor is on every board of the machine.
+- a board's admin makes a profile only for someone the machine holds none of, with a display
+  name and git handles and no sign-in: someone who has one is added as their profile is, and an
+  add that names a display name or a git handle for them is refused, with nothing written;
+- a sign-in is the person at the machine's alone to give, to a new profile as to an existing
+  one, as a sign-in says who a visitor is on every board of the machine holding the name, now
+  or later: one an admin of another board gave could take a name a board holds with no profile
+  (a board moved from another machine, a failed take-back), or one a board adds later. A person
+  an admin adds reaches no board until the person at the machine gives them a sign-in.
+
+A refusal to anyone but the person at the machine names no other person and no profile: an
+admin's add of a sign-in is refused before any profile is read, and their add of a display name
+for a name the machine holds says only that an admin names one for a name new to the machine.
+Whether it is refused still tells whether the machine holds a profile of that name, as the page
+does once the person is added, since a profile is one per machine. A failure (the profiles not
+locked or written, the board not reached) is told to anyone but the person at the machine
+without its cause, which can name the machine folder's path or the board's, and with what
+stands; the server's log keeps it whole, and the page's problem line is said the same way.
 
 Nothing keeps a board's last `administer`: the person at the machine always administers. A
 process on the machine reaches the save routes as the machine's person, so the page's write is
