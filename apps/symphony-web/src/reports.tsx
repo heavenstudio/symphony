@@ -43,6 +43,7 @@ import {
   REPORTS_PATH,
   type ReportMark,
 } from "./wire";
+import { MONTHS, twoDigits, WEEKDAYS } from "./words";
 
 const HOUR = 3_600;
 const DAY = 86_400;
@@ -851,17 +852,12 @@ function fixedCharts(page: Page, hidden: string[]): [string, ChartData[]][] {
   ]);
 }
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
 /** The UTC date of `at`: its weekday's name, its day, its month's name and its hour. */
 function date(at: number): [string, number, string, number] {
   const day = new Date(Math.floor(at / DAY) * DAY * 1000);
   const hour = Math.floor((((at % DAY) + DAY) % DAY) / HOUR);
   return [WEEKDAYS[day.getUTCDay()] ?? "", day.getUTCDate(), MONTHS[day.getUTCMonth()] ?? "", hour];
 }
-
-const twoDigits = (n: number) => String(n).padStart(2, "0");
 
 /** A period as the readout and the table name it. */
 export function period(grain: Grain, start: number): string {

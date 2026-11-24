@@ -820,3 +820,69 @@ describe("a chart of dots", () => {
     ).not.toContain("chart-legend");
   });
 });
+
+describe("every shape of chart", () => {
+  /** The card's caption, as every shape opens: its title, which names the figure, and its note. */
+  const opens = (figure: string, id: string, title: string, note: string) =>
+    `<figure class="${figure}" id="chart-${id}" aria-labelledby="chart-${id}-title"><figcaption>` +
+    `<h3 id="chart-${id}-title">${title}</h3><p class="chart-note">${note}</p></figcaption>`;
+  /** Its table's button, closed, which every shape ends with. */
+  const ends = (label: string) =>
+    `<button class="chart-table-toggle" type="button" aria-expanded="false">${label}</button></figure>`;
+
+  it("opens with its title and note and ends with its table's button, closed", () => {
+    const periods = card(openChart(), null);
+    expect(periods.startsWith(opens("chart", "open", "Open work", "A test chart."))).toBe(true);
+    expect(periods.endsWith(ends("Show the table"))).toBe(true);
+    const rows = rowsCard(dearest([row("a/b", [3, 1])], true), null);
+    expect(
+      rows.startsWith(opens("chart hchart side", "dearest", "Dearest tasks", "The dearest first.")),
+    ).toBe(true);
+    expect(rows.endsWith(ends("Show all 2 as a table"))).toBe(true);
+    const dots = dotsCard({ ...spread([dot("a/b", 10, 1)]), tableToggle: "Show all 1" }, null);
+    expect(
+      dots.startsWith(
+        opens("chart dchart", "spread", "Every task, cost against size", "Both on a log scale."),
+      ),
+    ).toBe(true);
+    expect(dots.endsWith(ends("Show all 1"))).toBe(true);
+  });
+
+  it("has the same legend, a button a series, each with its shape's swatch", () => {
+    const legend = (title: string, swatches: [string, string][]) =>
+      `<ul class="chart-legend" aria-label="${title}: series shown">${swatches
+        .map(
+          ([swatch, name]) =>
+            `<li><button class="chart-key" type="button" aria-pressed="true">${swatch}${name}</button></li>`,
+        )
+        .join("")}</ul>`;
+    const swatch = (className: string, colour: string) =>
+      `<span class="${className}" style="--c:${colour}" aria-hidden="true"></span>`;
+    const lines = chart("count", [series("Done", "bar", [1]), series("Lead", "line", [2])]);
+    expect(card(lines, null)).toContain(
+      legend("Test", [
+        [swatch("swatch", "var(--chart-1)"), "Done"],
+        [swatch("swatch line", "var(--chart-2)"), "Lead"],
+      ]),
+    );
+    expect(rowsCard(dearest([row("a/b", [3, 1])]), null)).toContain(
+      legend("Dearest tasks", [
+        [swatch("swatch", "var(--chart-1)"), "First round"],
+        [swatch("swatch", "var(--chart-2)"), "Review rounds"],
+      ]),
+    );
+    expect(dotsCard(spread([dot("a/b", 10, 1)]), null)).toContain(
+      legend("Every task, cost against size", [
+        [swatch("swatch dot", "var(--chart-1)"), "feature"],
+        [swatch("swatch dot", "var(--chart-none)"), "No kind"],
+      ]),
+    );
+  });
+
+  it("says in its plot's place what the window cannot show, with no legend or table", () => {
+    const html = card({ ...openChart(), instead: "Switch to Days." }, null, NO_AXIS);
+    expect(html).toBe(
+      `${opens("chart", "open", "Open work", "A test chart.")}<p class="chart-instead">Switch to Days.</p></figure>`,
+    );
+  });
+});
