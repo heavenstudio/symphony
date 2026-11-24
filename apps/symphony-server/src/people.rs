@@ -7,6 +7,8 @@
 //!
 //! No answer names a sign-in's subject, an email or a chat address: a sign-in is said by its
 //! service. A hosted visitor reads none of it, as the board's people are this machine's gate's.
+//! A failure is told to anyone but the person at the machine without its cause, which can name
+//! the machine folder's path or the board's ([`told`]): the server's log keeps it whole.
 
 use crate::api::{answered, error};
 use crate::front::{Admitted, Shared};
@@ -93,7 +95,11 @@ pub(crate) async fn write(
         let store = symphony::taskview::connect(&root).map_err(|why| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
-                format!("the task board cannot be reached: {why}"),
+                told(
+                    &asker,
+                    format!("the task board cannot be reached: {why}"),
+                    "the task board cannot be reached",
+                ),
             )
         })?;
         let machine = machine.as_deref();
@@ -134,11 +140,13 @@ pub(crate) fn page(
 ) -> PeoplePage {
     let mut problems = Vec::new();
     let (people, log) = board.unwrap_or_else(|why| {
-        problems.push(format!("the board's people could not be read: {why}"));
+        let unread = "the board's people could not be read";
+        problems.push(told(asker, format!("{unread}: {why}"), unread));
         Default::default()
     });
     let profiles = profiles.unwrap_or_else(|why| {
-        problems.push(format!("the machine's profiles could not be read: {why}"));
+        let unread = "the machine's profiles could not be read";
+        problems.push(told(asker, format!("{unread}: {why}"), unread));
         Profiles::default()
     });
     let words = |powers: &[Power]| {
@@ -211,19 +219,44 @@ fn bad(why: String) -> Failed {
     (StatusCode::BAD_REQUEST, why)
 }
 
-/// A board's refusal (400) or failure (503), in its words.
-fn board(error: symphony_board::Error) -> Failed {
-    match error {
+/// What `asker` is told of a failure: `whole`, its cause in it, for the person at the machine;
+/// for anyone else `bare`, as a cause can name the machine folder's path or the board's, and the
+/// server's log keeps the whole for the person at the machine.
+fn told(asker: &Asker, whole: String, bare: impl Into<String>) -> String {
+    if asker.machine {
+        return whole;
+    }
+    eprintln!("· told {} no more than it failed: {whole}", asker.name);
+    bare.into()
+}
+
+/// A board's refusal (400) or failure (503), as `asker` is told it.
+fn board(asker: &Asker) -> impl Fn(symphony_board::Error) -> Failed + '_ {
+    move |error| match error {
         symphony_board::Error::Refused(why) => bad(why),
-        failed => (StatusCode::SERVICE_UNAVAILABLE, failed.to_string()),
+        failed => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            told(asker, failed.to_string(), "the board could not be changed"),
+        ),
     }
 }
 
-/// A profile's change refused (400) or failed (503), in its words.
-fn stopped(stopped: Stopped) -> Failed {
-    match stopped {
+/// A profile's change refused (400) or failed (503), as `asker` is told it: a person it left on
+/// the board is taken off from this page.
+fn stopped(asker: &Asker) -> impl Fn(Stopped) -> Failed + '_ {
+    move |stopped| match stopped {
         Stopped::Refused(why) => bad(why),
-        Stopped::Failed(why) => (StatusCode::SERVICE_UNAVAILABLE, why),
+        Stopped::Failed(failure) => {
+            let remedy = |name: &str| format!("taking {name} off the board takes it back");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                told(
+                    asker,
+                    failure.told(true, remedy),
+                    failure.told(false, remedy),
+                ),
+            )
+        }
     }
 }
 
@@ -290,15 +323,19 @@ fn changed(
                 writer,
                 by,
             )
-            .map_err(stopped)?;
+            .map_err(stopped(asker))?;
         }
-        PeopleAction::Remove => drop(store.remove_person(name, by).map_err(board)?),
-        PeopleAction::Join => drop(store.join_group(name, group()?, by).map_err(board)?),
-        PeopleAction::Leave => drop(store.leave_group(name, group()?, by).map_err(board)?),
-        PeopleAction::Grant => drop(store.grant(holder, &given, by).map_err(board)?),
-        PeopleAction::Revoke => drop(store.revoke(holder, &given, by).map_err(board)?),
-        PeopleAction::GroupAdd => drop(store.add_group(name, &given, by).map_err(board)?),
-        PeopleAction::GroupRemove => drop(store.remove_group(name, by).map_err(board)?),
+        PeopleAction::Remove => drop(store.remove_person(name, by).map_err(board(asker))?),
+        PeopleAction::Join => drop(store.join_group(name, group()?, by).map_err(board(asker))?),
+        PeopleAction::Leave => drop(
+            store
+                .leave_group(name, group()?, by)
+                .map_err(board(asker))?,
+        ),
+        PeopleAction::Grant => drop(store.grant(holder, &given, by).map_err(board(asker))?),
+        PeopleAction::Revoke => drop(store.revoke(holder, &given, by).map_err(board(asker))?),
+        PeopleAction::GroupAdd => drop(store.add_group(name, &given, by).map_err(board(asker))?),
+        PeopleAction::GroupRemove => drop(store.remove_group(name, by).map_err(board(asker))?),
     }
     Ok(())
 }
@@ -318,7 +355,7 @@ fn profiled(machine: Option<&Path>, asked: &ProfileWrite, asker: &Asker) -> Resu
         signins: signins(&asked.signins)?,
         git: asked.git.clone(),
     };
-    change::profile(&folder(machine)?, &asked.name, &given, writer).map_err(stopped)?;
+    change::profile(&folder(machine)?, &asked.name, &given, writer).map_err(stopped(asker))?;
     Ok(())
 }
 

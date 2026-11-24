@@ -3,11 +3,17 @@
 //! two refuse and say the same.
 //!
 //! A profile is every board's on the machine ([`super::Profiles`]), so who writes one is said by
-//! [`Writer`]: the person at the machine writes any; a board's admin who is not that person makes
-//! one only for someone who has none, as they add them, since a sign-in decides who acts under the
-//! name on every board and a git handle whose commits their saves are; a person writes their own
-//! display name and git handles. A sign-in is one person's, checked under the profiles' lock where the profiles are
-//! written, so two writes at once cannot give one sign-in to two people.
+//! [`Writer`]: the person at the machine writes any, and alone gives a sign-in, as a sign-in decides
+//! who acts under the name on every board holding it, now or later; a board's admin who is not
+//! that person makes one only for someone who has none, as they add them, with no sign-in; a
+//! person writes their own display name and git handles. A sign-in is one person's, checked under
+//! the profiles' lock where the profiles are written, so two writes at once cannot give one
+//! sign-in to two people.
+//!
+//! A refusal to anyone but the person at the machine names no other person and no profile: what
+//! another board's people hold is not theirs to learn. A failure keeps its cause apart
+//! ([`Failure`]), as a cause can name the machine folder's path, which only the person at the
+//! machine is shown.
 
 use super::{Change, Power, Profile, Profiles, Signin};
 use crate::Store;
@@ -37,7 +43,7 @@ pub enum Writer {
     /// The person at the machine, at its terminal or on its pages: any profile.
     Machine,
     /// Someone a board named, writing a profile not their own: as that board's admin adding a
-    /// person who has none, they make it, and they write no other.
+    /// person who has none, they make it with no sign-in, and they write no other.
     Other,
     /// The person themself: their own display name and git handles.
     Own,
@@ -47,14 +53,52 @@ pub enum Writer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stopped {
     Refused(String),
-    Failed(String),
+    Failed(Failure),
+}
+
+/// A change that failed: what stands, said to anyone, and its cause apart.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Failure {
+    /// What failed and what stands, with no cause.
+    pub said: String,
+    /// Why, as the machine folder or the board said it: it can name the folder's path, so only
+    /// the person at the machine is shown it.
+    pub why: String,
+    /// The person the change left on the board where taking its change back failed too, whom a
+    /// removal of them takes off: each caller names its own way to it.
+    pub left: Option<String>,
+}
+
+impl Failure {
+    fn new(said: impl Into<String>, why: impl ToString) -> Failure {
+        Failure {
+            said: said.into(),
+            why: why.to_string(),
+            left: None,
+        }
+    }
+
+    /// What it says: its cause in brackets where `cause`, and, for the person left on the board,
+    /// `remedy` of their name after.
+    pub fn told(&self, cause: bool, remedy: impl FnOnce(&str) -> String) -> String {
+        let mut told = self.said.clone();
+        if cause {
+            told = format!("{told} ({})", self.why);
+        }
+        if let Some(left) = &self.left {
+            told = format!("{told}: {}", remedy(left));
+        }
+        told
+    }
 }
 
 impl From<crate::Error> for Stopped {
     fn from(error: crate::Error) -> Stopped {
         match error {
             crate::Error::Refused(why) => Stopped::Refused(why),
-            crate::Error::Db(_) => Stopped::Failed(error.to_string()),
+            crate::Error::Db(_) => {
+                Stopped::Failed(Failure::new("the board could not be changed", error))
+            }
         }
     }
 }
@@ -69,11 +113,10 @@ pub struct Added {
 /// Puts `name` on the board of `store` in `groups` with `powers`, as `by`'s change, and their
 /// profile in the machine folder `dir` made or given `given` as `writer` may (a person a board
 /// named adds as its admin, [`Writer::Other`]). The profiles' lock is held from their read to
-/// their write, the board's change between, so a sign-in another profile holds, a profile an
-/// admin may not write and whatever the board
-/// refuses ([`Store::add_person`]) are refused with nothing written, and no two adds give one
-/// sign-in to two people. A profile that cannot be written takes the board's change back, saying
-/// so.
+/// their write, the board's change between, so a sign-in another profile holds, a profile or a
+/// sign-in an admin may not write and whatever the board refuses ([`Store::add_person`]) are
+/// refused with nothing written, and no two adds give one sign-in to two people. A profile that
+/// cannot be written takes the board's change back, saying so.
 #[allow(clippy::too_many_arguments)]
 pub fn add(
     store: &Store,
@@ -104,16 +147,31 @@ pub fn add(
         Err(why) => why,
     };
     let Some(line) = taken else {
-        return Err(Stopped::Failed(format!(
-            "the machine's profiles could not be locked or read ({why}): nothing was written"
+        return Err(Stopped::Failed(Failure::new(
+            "the machine's profiles could not be locked or read, so nothing was written",
+            why,
         )));
     };
-    let undone = store.remove_person(name, by).map(|_| "taken back");
-    Err(Stopped::Failed(format!(
-        "{name}'s profile could not be written ({why}): the board's change {} is {}",
-        line.n,
-        undone.unwrap_or("still on the board, which a removal of them takes back")
-    )))
+    Err(Stopped::Failed(match store.remove_person(name, by) {
+        Ok(_) => Failure::new(
+            format!(
+                "{name}'s profile could not be written, so the board's change {} is taken back",
+                line.n
+            ),
+            why,
+        ),
+        Err(_) => Failure {
+            left: Some(name.into()),
+            ..Failure::new(
+                format!(
+                    "{name}'s profile could not be written, and the board's change {} still \
+                     stands",
+                    line.n
+                ),
+                why,
+            )
+        },
+    }))
 }
 
 /// The machine's profile of `name` in `dir` made or given `given`, as `writer` may, on no board:
@@ -147,22 +205,38 @@ pub fn profile(dir: &Path, name: &str, given: &Given, writer: Writer) -> Result<
         fill(profiles, name, given);
         Ok(Ok(*profiles != before))
     })
-    .map_err(|why| Stopped::Failed(format!("{name}'s profile could not be written ({why})")))?
+    .map_err(|why| {
+        Stopped::Failed(Failure::new(
+            format!("{name}'s profile could not be written, so nothing changed"),
+            why,
+        ))
+    })?
     .map_err(Stopped::Refused)
 }
 
 /// Why `writer` may not add `name` with `given` to a board over `profiles`: none where they may.
-/// Anyone but the person at the machine adds as the board's admin, making a profile only for a
-/// person who has none.
+/// Anyone but the person at the machine adds as the board's admin: they give no sign-in, which
+/// would decide who acts as `name` on every board holding it, now or later, and make a profile
+/// only for a person who has none. Their refusals name no profile and no other person.
 fn addable(profiles: &Profiles, name: &str, given: &Given, writer: Writer) -> Result<(), String> {
-    if writer != Writer::Machine && profiles.get(name).is_some() && !given.is_empty() {
+    if writer == Writer::Machine {
+        return taken_signins(profiles, name, &given.signins);
+    }
+    if !given.signins.is_empty() {
+        return Err(
+            "a sign-in is the person at the machine's to give, as it says who acts under a name \
+             on every board of the machine: add them with none, so nothing was written"
+                .into(),
+        );
+    }
+    if profiles.get(name).is_some() && !given.is_empty() {
         return Err(format!(
-            "{name} has a profile on this machine, which only the person at the machine \
-             changes: add them with no display name, sign-in or git handle and they keep \
-             theirs, so nothing was written"
+            "an admin's add gives a display name or git handles only to a name new to the \
+             machine: add {name} with none, and they or the person at the machine write theirs, \
+             so nothing was written"
         ));
     }
-    taken_signins(profiles, name, &given.signins)
+    Ok(())
 }
 
 /// Refused where one of `signins` is another profile's than `name`'s: a sign-in is one person's.
