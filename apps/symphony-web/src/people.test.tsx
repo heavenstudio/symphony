@@ -23,7 +23,6 @@ import {
   PeoplePage,
   PeopleView,
   Person,
-  POWERS,
   PowerTags,
   powerName,
   powerState,
@@ -869,11 +868,8 @@ describe("the page", () => {
     expect(html).toContain('<label for="people-add-name">Short name</label>');
     expect(html).toContain('<label for="people-group-name">Group name</label>');
     expect(html).toContain("<summary>Make a profile</summary>");
-    // No word explains the page's controls, nor a power the board gives no one; the group's
-    // removal asks.
+    // No word explains the page's controls.
     expect(html).not.toContain("people-hint");
-    expect(html).not.toContain("Direct agents is given to no one yet");
-    expect(html).not.toContain("direct agents for");
     // The person at the machine sees every address and writes every person's notices it is sent.
     expect(html).toContain(
       '<p class="people-reach people-addresses">Notices reach them by email ana@example.com · Slack U024BE7LH</p>',

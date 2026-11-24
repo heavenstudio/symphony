@@ -172,7 +172,7 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
             ),
             json!({
                 "reach": "Signs in by tailscale, github · git ana-lima",
-                "held": ["read:own", "speak:own", "decide:group", "administer:none"],
+                "held": ["read:own", "speak:own", "decide:group", "direct agents:none", "administer:none"],
                 "log": [5, 4, 3, 2, 1],
                 "newest": true,
                 "adds": 2,

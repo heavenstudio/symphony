@@ -284,14 +284,20 @@ fn the_person_at_the_machine_under_their_name_is_never_held_and_passes_on() {
     assert!(rui.may_direct_agents("rui").unwrap());
     for said in ["go on", "approve the wide page"] {
         match rui.say_or_hold_as("tools/x", "rui", said, None).unwrap() {
-            Said::Line(line) => assert_eq!((line.sender.as_str(), line.text.as_str()), ("rui", said)),
+            Said::Line(line) => {
+                assert_eq!((line.sender.as_str(), line.text.as_str()), ("rui", said))
+            }
             held => panic!("{said}: held {held:?}"),
         }
     }
     let why = refused(rui.hold_words("tools/x", "rui", WORDS, None));
     assert!(why.starts_with("only a person's words are held"), "{why}");
     let held = b.held(None);
-    let mark = rui.pass("tools/x", held.id, "rui").unwrap().passed.expect("marked passed");
+    let mark = rui
+        .pass("tools/x", held.id, "rui")
+        .unwrap()
+        .passed
+        .expect("marked passed");
     assert_eq!(mark.by, "rui");
     let rows = b.f.store.thread_rows("tools/x").unwrap();
     let line = rows.last().unwrap();
