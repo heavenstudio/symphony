@@ -84,6 +84,7 @@ fn a_board_with_nobody_named_gives_every_card_and_task_to_the_person_at_the_mach
     let why = refused(f.store.hand_task("app/x", "design", "owner"));
     assert!(why.contains("names nobody"), "{why}");
     assert!(f.store.task_deciders(&filed).is_empty());
+    assert_eq!(f.store.refused_task_decide("app/x", "ana").unwrap(), None);
     let stamp = f.store.task_stamp("app/x").unwrap().unwrap();
     assert!(stamp.task_deciders(&filed).is_empty());
 }
@@ -517,6 +518,16 @@ fn a_tasks_deciders_are_those_of_its_owner_who_hold_decide_and_its_stamp_follows
     assert!(f.store.task_deciders_of("app/missing").is_empty());
     let stamp = f.store.task_stamp("app/x").unwrap().unwrap();
     assert_eq!(stamp.task_deciders(&task), ["bo"]);
+    // Why one may not decide it, in the board's words: none for one who may.
+    assert_eq!(f.store.refused_task_decide("app/x", "bo").unwrap(), None);
+    assert_eq!(
+        f.store
+            .refused_task_decide("app/x", "ana")
+            .unwrap()
+            .as_deref(),
+        Some("ana is no member of the group engineering, whose it is, so may not decide it")
+    );
+    assert!(f.store.refused_task_decide("app/missing", "bo").is_err());
 
     // A remap moves who decides it, and the stamp tells the task from the one read before.
     f.store
