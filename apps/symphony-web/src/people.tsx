@@ -7,13 +7,14 @@
 //
 // Its controls are the read's to give. Where it says the reader administers (the person at the
 // machine, or a person holding administer), each person's powers are toggles that grant or revoke
-// their own, their groups are joined and left, they are taken off the board, a group is made,
-// given powers and removed, and a person is added (PEOPLE_CHANGE_PATH). A power the board gives no
-// one yet (the read's `withheld`) is drawn as not yet givable, its reason the board's. A removal
-// asks first, as the task page's Cancel does. A profile's form is shown on the reader's own card,
-// and on every card for the person at the machine, the one who gives a sign-in (PROFILE_PATH):
-// the add's sign-in field is theirs alone too. Each write answers the page as it left it, which the page draws: no
-// read follows it, and what the write did is said on the part that sent it, in the log's words.
+// their own, their groups are joined and left, they are taken off the board, a group is made, given
+// powers and removed, and a person is added (PEOPLE_CHANGE_PATH). A power the board gives no one
+// yet (the read's `withheld`) is drawn as not yet givable, its reason the board's. A removal asks
+// first, as the task page's Cancel does. A profile's form is shown on the reader's own card, and on
+// every card for the person at the machine, the one who gives a sign-in (PROFILE_PATH): the add's
+// sign-in field is theirs alone too. Each write answers the page as it left it, which the page
+// draws: no read follows it, and what the write did is said on the part that sent it, in the log's
+// words.
 
 import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "./button";
@@ -420,17 +421,14 @@ export function Remove({
   keep,
   busy,
   onRemove,
-  asking: asked = false,
 }: {
   label: string;
   question: string;
   keep: string;
   busy: boolean;
   onRemove: () => void;
-  /** Whether it opens asking: for its tests. */
-  asking?: boolean;
 }) {
-  const [asking, setAsking] = useState(asked);
+  const [asking, setAsking] = useState(false);
   if (!asking) {
     return (
       <Button type="button" size="xs" disabled={busy} onClick={() => setAsking(true)}>

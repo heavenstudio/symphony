@@ -42,6 +42,8 @@ serde = { version = "1", features = ["derive"] }
 # (docs/workflow/CHECKS.md), and a worktree's board tests reuse the dependencies the main checkout's build of
 # `tasks` compiled.
 serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }
+# The field of `people.json` that does not parse, said instead of the value it holds (src/people.rs).
+serde_path_to_error.workspace = true
 # The project file: `[project] id` (src/project.rs), and `[board] on_review`, the command a task
 # moving to review starts (src/on_review.rs).
 toml.workspace = true

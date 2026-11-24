@@ -1,5 +1,8 @@
+/* biome-ignore-all lint/correctness/useHookAtTopLevel: the useState mocked here answers for a
+ * component called outside a render while a test turns it on, and calls React's own otherwise. */
+
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
   addition,
   Choose,
@@ -27,8 +30,32 @@ import {
 import { asking, CASES, elementOf, type Found, fire, reply, server } from "./testing";
 import type { PeoplePage as Page, PeopleChange, PeopleLogLine, ProfileWrite } from "./wire";
 
+/**
+ * React's `useState` while `on` is false; while it is true, a stand-in a component is drawn by as
+ * a function: each call gives the next of `states` (its initial past them) and a spy setter, kept
+ * in `setters`, as task-page-controls.test.tsx draws its controls.
+ */
+const hooks = vi.hoisted(() => ({ on: false, states: [] as unknown[], setters: [] as Mock[] }));
+
+vi.mock("react", async (original) => {
+  const actual = await original<typeof import("react")>();
+  return {
+    ...actual,
+    useState: (initial: unknown) => {
+      if (!hooks.on) return actual.useState(initial);
+      const value = hooks.states.length > 0 ? hooks.states.shift() : initial;
+      const set = vi.fn();
+      hooks.setters.push(set);
+      return [value, set];
+    },
+  };
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  hooks.on = false;
+  hooks.states = [];
+  hooks.setters = [];
 });
 
 const SAMPLE = CASES.samples.people as Page;
@@ -531,22 +558,39 @@ describe("a person's and a group's powers", () => {
   });
 
   it("asks before a removal as the task page's Cancel does: an outlined control, then a named confirmation", () => {
+    const removed: string[] = [];
     const props = {
       label: "Take off the board",
       question: "Take cy off the board?",
       keep: "Keep cy",
       busy: false,
-      onRemove: () => {},
+      onRemove: () => removed.push("cy"),
     };
-    expect(renderToStaticMarkup(<Remove {...props} />)).toBe(
+    const pressed = (text: string) => (element: Found) => element.props.children === text;
+    hooks.on = true;
+    // Its outlined control, pressed: it asks, and sends nothing.
+    const control = Remove(props);
+    expect(renderToStaticMarkup(control)).toBe(
       '<button class="dx-button" data-style="outline" data-size="xs" type="button">Take off the board</button>',
     );
-    expect(renderToStaticMarkup(<Remove {...props} asking />)).toBe(
+    fire(control, pressed("Take off the board"), "onClick");
+    const [asks] = hooks.setters;
+    expect(asks?.mock.calls).toEqual([[true]]);
+    expect(removed).toEqual([]);
+    // Drawn asking, as that press left it: the named confirmation, kept, then confirmed.
+    hooks.states = [true];
+    const confirmation = Remove(props);
+    expect(renderToStaticMarkup(confirmation)).toBe(
       '<div class="people-confirm" role="group" aria-label="Take off the board: confirmation">' +
         "<span>Take cy off the board?</span>" +
         '<button class="dx-button" data-style="destructive" data-size="xs" type="button">Confirm removal</button>' +
         '<button class="dx-button" data-style="outline" data-size="xs" type="button">Keep cy</button></div>',
     );
+    const set = hooks.setters.at(-1);
+    fire(confirmation, pressed("Keep cy"), "onClick");
+    expect([set?.mock.calls, removed]).toEqual([[[false]], []]);
+    fire(confirmation, pressed("Confirm removal"), "onClick");
+    expect([set?.mock.calls, removed]).toEqual([[[false], [false]], ["cy"]]);
   });
 
   it("sends a person's grant, revoke, join, leave and removal for an admin, by the person's part", () => {
