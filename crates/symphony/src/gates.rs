@@ -1059,7 +1059,7 @@ pub fn answer_from(
         runs,
         branch,
         ours: &|| stamps::family(store, &record.slug),
-        deciders: &|| store.deciders(),
+        deciders: &|| store.task_deciders(record),
     };
     Ok(put_together(&read, root, pending, kept))
 }
@@ -1075,8 +1075,8 @@ struct Read<'a> {
     /// The task and the work under it ([`stamps::family`]), asked only when a gate reads their
     /// runs.
     ours: &'a dyn Fn() -> Vec<String>,
-    /// The people who hold decide on the board ([`symphony_board::Store::deciders`]), asked only
-    /// when the task needs its `owner` stamp.
+    /// The people of the task's owner who hold decide ([`symphony_board::Store::task_deciders`]),
+    /// asked only when the task needs its `owner` stamp.
     deciders: &'a dyn Fn() -> Vec<String>,
 }
 

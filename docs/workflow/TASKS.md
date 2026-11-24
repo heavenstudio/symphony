@@ -2401,13 +2401,26 @@ as it did before. That person stays `owner`, with every power, once others are n
   `direct_agents`; a change of the board's people needs `administer`, and a profile's write from the
   People page and a hand-over ([below](#which-group-a-thing-belongs-to)) being on the board;
   anything else is the person at the machine's alone. A refusal is a
-  403 naming the power, `Forbidden: ana may not decide on this board`, and nothing is written. A
-  custom workflow's `owner` capability is held by each person holding `decide`, as by the person at
-  the machine.
-- **The `owner` stamp** is met by the approve of the owner or of anyone holding `decide` on the
-  board, on the thread or on the cards, named as theirs: `Approved by ana at 1a2b3c4`. Who
-  decides is read when the stamp is read. A revoke withdraws an approve its person gave, and a
-  grant made after an approve counts that approve too. That is safe: while she lacked `decide`
+  403 naming the power, `Forbidden: ana may not decide on this board`, and nothing is written.
+- **Deciding a thing is its owner's** ([below](#which-group-a-thing-belongs-to)): a card's
+  verdict, a task's priority, field, cancel, action and workflow edge, and a setting (the Settings
+  page's owner) are a person's while they hold `decide` and are a member of its group or the
+  person it is written for, and always the person at the machine's. Anyone else is refused once
+  the body is read, a 403 in the board's words with nothing written: `Forbidden: bo is no member
+  of the group design, whose it is, so may not decide it: nothing was written`. On a board that
+  names people and maps no group a thing keeps, it is the person at the machine's, and the refusal
+  says which group to map: `… so ana may not decide it until an admin maps one (just tasks-people
+  map PLACE GROUP)`. A page draws the deciding controls (a card's verdicts, a task's priority,
+  cancel and approve, the Settings page's writes) for those who decide the thing alone, with the
+  wire's `decides` on its owner; a card's message, Later and a hand-over stay as they were. A
+  custom workflow's `owner` capability on a task is held by those who decide it, as by the person
+  at the machine.
+- **The `owner` stamp** is met by the approve of the owner or of anyone who decides the task (who
+  holds `decide` and is of its group or the person it is written for), on the thread or on the
+  cards, named as theirs: `Approved by ana at 1a2b3c4`. Who decides is read when the stamp is
+  read, and a task's stamp carries the map's lines, so a remap is read at once. A revoke or a
+  remap withdraws an approve its person gave, and a grant or a map made after an approve counts
+  that approve too. That is safe: while she lacked `decide`
   the server refused her verdicts and her approve, and no route writes her words to the agents
   yet, so no line of hers that reads as an approve was written through the Symphony while she
   could not decide. A line committed into a document by hand is its committer's, as an owner's
@@ -2448,7 +2461,7 @@ owner](../product/analysis/users-and-identity.md#the-way-from-one-owner). It is,
    at the machine;
 2. **its place's group**, from the board's map: a card's document folder, the deepest one mapped
    (`folder:docs/design`), or a task's area, the word before its slug's first `/` (`area:app`);
-   the Settings page (`settings`) is a place for the settings work to come;
+   the Settings page (`settings`) is a place, whose group changes the settings;
 3. **the board's default** group (`default`), where one is mapped;
 4. otherwise the person at the machine.
 

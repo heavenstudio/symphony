@@ -281,21 +281,21 @@ fn a_member_of_its_group_hands_it_and_a_non_member_is_refused() {
     let people = named_board();
     let map = map(&[("area:app", "design")]);
     let owning_task = owning(&people, &map, None, &Thing::Task("app/x".into()).places());
-    assert!(may_hand(&people, &owning_task, "ana", false));
+    assert!(of_owner(&people, &owning_task, "ana", false));
     assert_eq!(
         refused_hand(&people, &owning_task, "engineering", "ana", false),
         None
     );
-    assert!(!may_hand(&people, &owning_task, "bo", false));
+    assert!(!of_owner(&people, &owning_task, "bo", false));
     assert_eq!(
         refused_hand(&people, &owning_task, "engineering", "bo", false).as_deref(),
         Some("bo is no member of the group design, whose it is, so may not hand it on")
     );
     assert!(
-        may_hand(&people, &owning_task, "owner", true),
+        of_owner(&people, &owning_task, "owner", true),
         "the machine's person"
     );
-    assert!(!may_hand(&people, &owning_task, "nobody", false));
+    assert!(!of_owner(&people, &owning_task, "nobody", false));
 }
 
 #[test]
@@ -303,10 +303,10 @@ fn a_thing_written_to_a_person_is_theirs_to_hand_and_the_machines_its_alone() {
     let people = named_board();
     let places = Thing::Task("app/x".into()).places();
     let hers = owning(&people, &Map::default(), Some("ana"), &places);
-    assert!(may_hand(&people, &hers, "ana", false));
-    assert!(!may_hand(&people, &hers, "bo", false));
+    assert!(of_owner(&people, &hers, "ana", false));
+    assert!(!of_owner(&people, &hers, "bo", false));
     let machines = owning(&people, &Map::default(), None, &places);
-    assert!(!may_hand(&people, &machines, "ana", false));
+    assert!(!of_owner(&people, &machines, "ana", false));
     assert_eq!(
         refused_hand(&people, &machines, "design", "ana", false).as_deref(),
         Some(
@@ -368,4 +368,124 @@ fn what_a_name_names_is_the_boards_rows() {
     assert_eq!(named(&people, "ana"), Some(Kind::Person));
     assert_eq!(named(&people, "owner"), Some(Kind::Machine));
     assert_eq!(named(&people, "marketing"), None);
+}
+
+/// A board naming ana (design, decide), bo (engineering, decide), cy (design, no decide) and dee
+/// (no group, decide), with both groups.
+fn deciding_board() -> People {
+    let mut people = board(
+        &[
+            ("ana", &["design"]),
+            ("bo", &["engineering"]),
+            ("cy", &["design"]),
+            ("dee", &[]),
+        ],
+        &["design", "engineering"],
+    );
+    for member in &mut people.members {
+        if member.name != "cy" {
+            member.powers = vec![Power::Decide];
+        }
+    }
+    people
+}
+
+#[test]
+fn a_member_of_its_group_who_holds_decide_decides_it_and_the_machines_person_always() {
+    let people = deciding_board();
+    let places = Thing::Task("app/x".into()).places();
+    let designs = owning(&people, &map(&[("area:app", "design")]), None, &places);
+    assert!(may_decide(&people, &designs, "ana", false));
+    assert!(!may_decide(&people, &designs, "bo", false), "another group");
+    assert!(!may_decide(&people, &designs, "cy", false), "no decide");
+    assert!(!may_decide(&people, &designs, "dee", false), "in no group");
+    assert!(may_decide(&people, &designs, "owner", true));
+    assert_eq!(deciders(&people, &designs), ["ana"]);
+
+    let hers = owning(&people, &Map::default(), Some("dee"), &places);
+    assert!(may_decide(&people, &hers, "dee", false));
+    assert!(!may_decide(&people, &hers, "ana", false));
+    assert_eq!(deciders(&people, &hers), ["dee"]);
+    let cys = owning(&people, &Map::default(), Some("cy"), &places);
+    assert!(
+        deciders(&people, &cys).is_empty(),
+        "written to one who holds no decide"
+    );
+
+    let machines = owning(&people, &Map::default(), None, &places);
+    assert!(deciders(&people, &machines).is_empty());
+    assert!(!may_decide(&people, &machines, "ana", false));
+    assert!(may_decide(&people, &machines, "owner", true));
+}
+
+#[test]
+fn nobody_decides_beside_the_machines_person_on_a_board_naming_nobody() {
+    let empty = board(&[], &["design"]);
+    let places = Thing::Task("app/x".into()).places();
+    let machines = owning(&empty, &map(&[("area:app", "design")]), None, &places);
+    assert!(deciders(&empty, &machines).is_empty());
+    assert_eq!(
+        refused_decide(&empty, &machines, &places, "owner", true),
+        None
+    );
+    assert_eq!(
+        refused_decide(&empty, &machines, &places, "ana", false),
+        None
+    );
+}
+
+#[test]
+fn a_refusal_to_decide_says_whose_it_is_and_on_the_machines_the_way_out() {
+    let people = deciding_board();
+    let task = Thing::Task("app/x".into()).places();
+    let designs = owning(&people, &map(&[("area:app", "design")]), None, &task);
+    assert_eq!(refused_decide(&people, &designs, &task, "ana", false), None);
+    assert_eq!(
+        refused_decide(&people, &designs, &task, "owner", true),
+        None
+    );
+    assert_eq!(
+        refused_decide(&people, &designs, &task, "bo", false).as_deref(),
+        Some("bo is no member of the group design, whose it is, so may not decide it")
+    );
+    let hers = owning(&people, &Map::default(), Some("ana"), &task);
+    assert_eq!(
+        refused_decide(&people, &hers, &task, "bo", false).as_deref(),
+        Some("it is ana's, so bo may not decide it: only ana or the person at the machine does")
+    );
+    let written = owning(&people, &Map::default(), Some("owner"), &task);
+    assert_eq!(
+        refused_decide(&people, &written, &task, "ana", false).as_deref(),
+        Some(
+            "it is written for the person at the machine, so ana may not decide it: only the \
+             person at the machine does"
+        )
+    );
+    let machines = owning(&people, &Map::default(), None, &task);
+    assert_eq!(
+        refused_decide(&people, &machines, &task, "ana", false).as_deref(),
+        Some(
+            "it is the person at the machine's, as this board maps no group it keeps to the area \
+             app or to the board's default, so ana may not decide it until an admin maps one \
+             (just tasks-people map PLACE GROUP)"
+        )
+    );
+    let deepest = card("docs/design/palette/north.md").places();
+    let card_machines = owning(&people, &Map::default(), None, &deepest);
+    let why = refused_decide(&people, &card_machines, &deepest, "ana", false).unwrap();
+    assert!(
+        why.contains("to the folder docs/design/palette or to"),
+        "{why}"
+    );
+    let settings = owning(&people, &Map::default(), None, &[Place::Settings]);
+    let why = refused_decide(&people, &settings, &[Place::Settings], "ana", false).unwrap();
+    assert!(
+        why.contains("to the Settings page or to the board's default"),
+        "{why}"
+    );
+    let nowhere = refused_decide(&people, &machines, &[], "ana", false).unwrap();
+    assert!(
+        nowhere.contains("keeps to the board's default, so"),
+        "{nowhere}"
+    );
 }

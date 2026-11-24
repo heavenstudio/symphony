@@ -1,5 +1,6 @@
-// A task's page (`/task/SLUG`): its head (slug, title, state, who filed it, the owner's priority and
-// cancel, its facts, its roles and their sessions, its builds and tests), its gates, its subtasks,
+// A task's page (`/task/SLUG`): its head (slug, title, state, who filed it, its priority and, for
+// whoever decides it (owner.tsx's `decides`), the controls that set it and cancel the task, its
+// facts, its roles and their sessions, its builds and tests), its gates, its subtasks,
 // its timeline, its brief, its changes, its execution attempts where it has some (attempts.tsx, a
 // chunk of their own), its thread and the composer under it. Each part is drawn from its own
 // read (task-live.ts's parts, in the page's store) as soon as that read is there, and is its own
@@ -20,7 +21,7 @@ import { taskKind } from "./kind";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
 import type { NextActionsProps } from "./nextactions";
-import { OwnerLine } from "./owner";
+import { decides, OwnerLine } from "./owner";
 import { PartsContext, type Shown, usePart } from "./parts";
 import { href, scoped } from "./project";
 import { getJson, post, said } from "./request";
@@ -708,7 +709,11 @@ export function TaskHead({ page, scope, connected }: TaskHeadProps) {
       <div className="task-state row">
         <span className={`state pill st-${task.status}`}>{statusWords(task.status)}</span>
         <span className="by">{`filed by ${task.created_by}`}</span>
-        <OwnerControls slug={slug} priority={task.priority} status={task.status} />
+        {decides(page.owner) ? (
+          <OwnerControls slug={slug} priority={task.priority} status={task.status} />
+        ) : (
+          <span className="priority">{`p${task.priority}`}</span>
+        )}
       </div>
       {task.workflow && (
         <WorkflowPart scope={scope} slug={slug} place={task.workflow} updated={task.updated} />
@@ -785,7 +790,9 @@ export function TaskDetail({
   onChildren,
 }: TaskDetailProps) {
   const offer = usePart(offerPart(scope, slug)).value;
-  const approval = offer !== undefined && offer.payload !== null ? offer : null;
+  // The landing the task offers is its approve, deciding it: offered to whoever decides it alone.
+  const approval =
+    offer !== undefined && offer.payload !== null && decides(page?.owner) ? offer : null;
   // The heights this browser last drew the head and the brief at, for their mock-ups: the task's
   // own in a window as wide, else those of the last task it drew there.
   const [heights] = useState(() => ({

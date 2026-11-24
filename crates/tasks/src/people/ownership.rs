@@ -13,11 +13,16 @@
 //! more, goes to the default, and with no default mapped to the person at the machine. On a board
 //! with nobody named every thing is the person at the machine's, whatever is mapped or written.
 //!
-//! Any member of a thing's group hands it to another group or a person ([`may_hand`]): the
-//! person a thing is written to, a member of its group, and the person at the machine always. The
-//! log keeps who did ([`Did::Hand`]).
+//! Whoever is of a thing's owner ([`of_owner`]: the person at the machine always, the person it is
+//! written to, a member of its group) hands it to another group or a person, the log keeping who
+//! did ([`Did::Hand`]), and decides it (docs/product/analysis/users-and-identity.md, "Who in a group
+//! decides", "Who acts on a task", "Who changes settings"): a card's verdict, a task's move,
+//! priority, field, cancel and approve, the Settings page's changes, each while they hold the
+//! decide power the write needs as well ([`may_decide`], [`refused_decide`]). The approve that
+//! meets a task's `owner` stamp is then one of its deciders' ([`deciders`]). On a board with nobody
+//! named nothing of this is asked: every thing is the person at the machine's.
 
-use super::People;
+use super::{People, Power};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -404,9 +409,10 @@ pub fn owning(people: &People, map: &Map, written: Option<&str>, places: &[Place
     owning
 }
 
-/// Whether `actor` may hand a thing `owning` says whose it is on a board of `people`: the person
-/// at the machine always (`machine`), the person it is written to, and a member of its group.
-pub fn may_hand(people: &People, owning: &Owning, actor: &str, machine: bool) -> bool {
+/// Whether `actor` is of the owner `owning` says a thing has on a board of `people`: the person at
+/// the machine always (`machine`), the person it is written to, and a member of its group. Who may
+/// hand it on ([`refused_hand`]) and, holding decide, decide it ([`may_decide`]).
+pub fn of_owner(people: &People, owning: &Owning, actor: &str, machine: bool) -> bool {
     if machine {
         return true;
     }
@@ -442,7 +448,7 @@ pub fn refused_hand(
             "this board holds no group or person {to} to hand it to"
         ));
     }
-    if !may_hand(people, owning, actor, machine) {
+    if !of_owner(people, owning, actor, machine) {
         let name = &owning.name;
         return Some(match owning.kind {
             Kind::Group => {
@@ -461,6 +467,67 @@ pub fn refused_hand(
         });
     }
     None
+}
+
+/// Whether `actor` may decide a thing `owning` says whose it is on a board of `people`: the person
+/// at the machine always (`machine`); anyone else while they are of its owner ([`of_owner`]) and
+/// hold the decide power.
+pub fn may_decide(people: &People, owning: &Owning, actor: &str, machine: bool) -> bool {
+    machine
+        || (of_owner(people, owning, actor, false) && people.powers_of(actor).holds(Power::Decide))
+}
+
+/// The people whose approve meets the `owner` stamp of a thing `owning` says whose it is, on a
+/// board of `people`, beside the person at the machine's: those who may decide it
+/// ([`may_decide`]). None on a board with nobody named, and none for a thing that is the person at
+/// the machine's.
+pub fn deciders(people: &People, owning: &Owning) -> Vec<String> {
+    (people.holding(Power::Decide).into_iter())
+        .filter(|name| of_owner(people, owning, name, false))
+        .collect()
+}
+
+/// Why `actor` may not decide a thing in `places` (the deciding first, [`Thing::places`]) that
+/// `owning` says whose it is on a board of `people` (`machine`: the actor is the person at the
+/// machine): none where they may, and none on a board with nobody named, where every thing is the
+/// person at the machine's. Refused: an actor who is no member of its group, or not the person it
+/// is written for; and on a thing that is the person at the machine's, the way out said, as it is
+/// the first refusal a board that names people and maps nothing meets. The decide power is the
+/// write's own to need, refused before this is asked.
+pub fn refused_decide(
+    people: &People,
+    owning: &Owning,
+    places: &[Place],
+    actor: &str,
+    machine: bool,
+) -> Option<String> {
+    if people.members.is_empty() || of_owner(people, owning, actor, machine) {
+        return None;
+    }
+    let name = &owning.name;
+    Some(match (owning.kind, owning.by) {
+        (Kind::Group, _) => {
+            format!("{actor} is no member of the group {name}, whose it is, so may not decide it")
+        }
+        (Kind::Person, _) => format!(
+            "it is {name}'s, so {actor} may not decide it: only {name} or the person at the \
+             machine does"
+        ),
+        (Kind::Machine, By::Named) => format!(
+            "it is written for the person at the machine, so {actor} may not decide it: only the \
+             person at the machine does"
+        ),
+        (Kind::Machine, _) => {
+            let place = (places.first())
+                .map(|place| format!("{} or to ", place.said()))
+                .unwrap_or_default();
+            format!(
+                "it is the person at the machine's, as this board maps no group it keeps to \
+                 {place}the board's default, so {actor} may not decide it until an admin maps one \
+                 (just tasks-people map PLACE GROUP)"
+            )
+        }
+    })
 }
 
 #[cfg(test)]

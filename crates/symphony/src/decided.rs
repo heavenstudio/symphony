@@ -216,8 +216,8 @@ fn fnv(text: &str) -> u64 {
 }
 
 /// Why the land's `owner` stamp stands on `tip`, read from the task's `thread` and the cards its
-/// branch posted in the main checkout `root` as the land reads it, on a board whose `deciders`
-/// hold decide ([`symphony_board::stamps::read::owner_at_by`]): [`approved_why`] or
+/// branch posted in the main checkout `root` as the land reads it, `deciders` the people of the
+/// task's owner who hold decide ([`symphony_board::stamps::read::owner_at_by`]): [`approved_why`] or
 /// [`approved_cards_why`]; none while it does not.
 pub fn approves(thread: &[Message], tip: &str, root: &Path, deciders: &[String]) -> Option<String> {
     let reading = symphony_board::stamps::read::owner_at_by(thread, tip, root, deciders);
@@ -362,7 +362,7 @@ fn approve(store: &Store, root: &Path, slug: &str, block: &Blocked, looked: &mut
     };
     match store
         .thread(slug)
-        .map(|thread| approves(&thread, &tip, root, &store.deciders()))
+        .map(|thread| approves(&thread, &tip, root, &store.task_deciders_of(slug)))
     {
         Ok(Some(why)) => resume(store, slug, block, &why, looked),
         Ok(None) => {}

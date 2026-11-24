@@ -400,5 +400,7 @@ fn a_board_made_without_the_step_reads_nobody_and_takes_no_change() {
         .unwrap();
     let stamp = writer.task_stamp("sim/look").unwrap().unwrap();
     assert!(stamp.deciders().is_empty());
+    let task = writer.get("sim/look").unwrap();
+    assert!(stamp.task_deciders(&task).is_empty());
     assert_eq!(writer.additions().unwrap(), additions);
 }

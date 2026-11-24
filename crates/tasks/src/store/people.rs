@@ -279,9 +279,9 @@ impl Store {
         Ok(changed.expect("a group's removal always changes the board"))
     }
 
-    /// The people who hold decide on the board, whose approve meets the `owner` stamp as the
-    /// owner's does ([`crate::stamps::read::owner_at_by`]): none where the board's people cannot
-    /// be read, so the stamp is the owner's alone then.
+    /// The people who hold decide anywhere on the board: none where the board's people cannot be
+    /// read. A task's `owner` stamp counts the approve of those of them who are of its owner
+    /// ([`Store::task_deciders`]), not of all of them.
     pub fn deciders(&self) -> Vec<String> {
         (self.people())
             .map(|people| people.holding(Power::Decide))
@@ -294,6 +294,18 @@ impl Store {
     pub fn host_for(&self, principal: &Principal) -> Result<Host, Error> {
         if principal.issuer == crate::workflow::PEOPLE {
             return Ok(Host::local_with(&self.people()?));
+        }
+        Ok(Host::local())
+    }
+
+    /// The host a workflow operation `principal` asks on the task `slug` is judged on:
+    /// [`Host::local`], and for a person the board named [`Host::local_granting`] the task's
+    /// deciders ([`Store::task_deciders`]), so a custom workflow's owner edges admit only those of
+    /// the task's owner who hold decide. Refused for a slug no task has, where a person asks.
+    pub fn host_on(&self, principal: &Principal, slug: &str) -> Result<Host, Error> {
+        if principal.issuer == crate::workflow::PEOPLE {
+            let task = self.get(slug)?;
+            return Ok(Host::local_granting(&self.task_deciders(&task)));
         }
         Ok(Host::local())
     }

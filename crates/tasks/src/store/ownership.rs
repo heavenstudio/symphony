@@ -15,7 +15,9 @@ use super::statement::Statement;
 use super::work::{OWNER, no_task};
 use super::{Error, Failure, REFUSED, Store, Task, refused};
 use crate::people::People;
-use crate::people::ownership::{By, Did, Line, Map, Owning, Place, Thing, owning, refused_hand};
+use crate::people::ownership::{
+    By, Did, Line, Map, Owning, Place, Thing, deciders, owning, refused_hand,
+};
 use crate::schema;
 use serde_json::{Value, json};
 
@@ -72,6 +74,33 @@ impl Store {
     /// Whose the task `task` is.
     pub fn task_owning(&self, task: &Task) -> Result<Owning, Error> {
         self.owning(&Thing::Task(task.slug.clone()), task.group())
+    }
+
+    /// The people whose approve meets the `owner` stamp of the task `task` beside the person at the
+    /// machine's: those of its owner who hold decide ([`deciders`]), read now, the map only on a
+    /// board that names someone. None where the board's people or its map cannot be read, so an
+    /// approve they would count is not counted, as [`Store::deciders`] reads none then.
+    pub fn task_deciders(&self, task: &Task) -> Vec<String> {
+        let read = || -> Result<Vec<String>, Error> {
+            let people = self.people()?;
+            if people.members.is_empty() {
+                return Ok(Vec::new());
+            }
+            let map = self.ownership_map()?;
+            let places = Thing::Task(task.slug.clone()).places();
+            Ok(deciders(
+                &people,
+                &owning(&people, &map, task.group(), &places),
+            ))
+        };
+        read().unwrap_or_default()
+    }
+
+    /// [`Store::task_deciders`] of the task `slug`: none for a slug no task has.
+    pub fn task_deciders_of(&self, slug: &str) -> Vec<String> {
+        (self.get(slug).ok())
+            .map(|task| self.task_deciders(&task))
+            .unwrap_or_default()
     }
 
     /// Maps `place` to the group `group` as `by`'s change: none, and nothing written, where it maps

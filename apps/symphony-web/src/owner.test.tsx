@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { handOver, OwnerLine, ownerLabel, readCardOwners, readOwner } from "./owner";
+import { decides, handOver, OwnerLine, ownerLabel, readCardOwners, readOwner } from "./owner";
 import type { Owner } from "./wire";
 
 const DESIGN: Owner = {
@@ -9,14 +9,24 @@ const DESIGN: Owner = {
   by: "map",
   said: "from the area app",
   hand_to: ["engineering", "ana", "owner"],
+  decides: true,
 };
 
 describe("whose a thing is, as the server says it", () => {
-  it("reads an owner, its names to hand it to empty when left out", () => {
+  it("reads an owner, its names to hand it to empty and its deciding false when left out", () => {
     expect(readOwner(DESIGN)).toEqual(DESIGN);
-    const { hand_to: _, ...bare } = DESIGN;
-    expect(readOwner(bare)).toEqual({ ...bare, hand_to: [] });
+    const { hand_to: _, decides: _decides, ...bare } = DESIGN;
+    expect(readOwner(bare)).toEqual({ ...bare, hand_to: [], decides: false });
     expect(readOwner({ ...DESIGN, hand_to: null })).toEqual({ ...DESIGN, hand_to: [] });
+    expect(readOwner({ ...DESIGN, decides: null })).toEqual({ ...DESIGN, decides: false });
+    expect(readOwner({ ...DESIGN, decides: false })).toEqual({ ...DESIGN, decides: false });
+  });
+
+  it("decides a thing where the server says so, and where it said no owner at all", () => {
+    expect(decides(DESIGN)).toBe(true);
+    expect(decides({ ...DESIGN, decides: false })).toBe(false);
+    expect(decides(null)).toBe(true);
+    expect(decides(undefined)).toBe(true);
   });
 
   it("is none for a field it draws that cannot be read", () => {
@@ -27,6 +37,7 @@ describe("whose a thing is, as the server says it", () => {
       { ...DESIGN, said: [] },
       { ...DESIGN, hand_to: "ana" },
       { ...DESIGN, hand_to: ["ana", 2] },
+      { ...DESIGN, decides: "yes" },
       null,
       "design",
     ]) {
