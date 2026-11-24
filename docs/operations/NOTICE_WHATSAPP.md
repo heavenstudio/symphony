@@ -14,11 +14,9 @@ for the messages.
 
 ## What works today, and what waits
 
-- **Nothing hands it a notice yet.** Who is told of what, and by which way, is step 4 of
-  [the way from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner), and
-  so is the server's part of the hand-off, whose settings will name this program for the way
-  `whatsapp`. Until then the program runs only when a message is written on its stdin by hand,
-  as its tests write one.
+- **The machine's one server hands it each notice by WhatsApp** once it is
+  [named for the way `whatsapp`](#naming-it-for-the-server): who is told of what, and when a notice
+  is handed again, are [the server's part](../engineering/NOTICES.md#the-servers-part).
 - **A notice carries a link alone**, so the message says what kind of thing waits on the person
   and links to it. What a notice carries outside the Symphony is a later round's card.
 - **It sends through the WhatsApp Cloud API**, the Graph API's `/{phone number id}/messages`, and
@@ -67,8 +65,8 @@ for the messages.
 tools/cargo.sh build --release -p symphony-notice-whatsapp
 ```
 
-The program is `.target/release/symphony-notice-whatsapp`; keep it where the server's settings
-will name it. It needs `curl` on `PATH`, which it reaches Meta through. No proxy is used, whatever
+The program is `.target/release/symphony-notice-whatsapp`; keep it where the machine will name
+it ([below](#naming-it-for-the-server)). It needs `curl` on `PATH`, which it reaches Meta through. No proxy is used, whatever
 proxy variable the server's environment sets (`noproxy = "*"`), so the token goes to the API's host
 alone.
 
@@ -120,6 +118,17 @@ are refused by their line, never by what it holds: a missing key and a value of 
 shape are named by their key, and a key the program does not know is said only to be one, or, where
 it is one of the program's own keys written in the wrong table, named. The token file holds the one
 token and nothing else.
+
+## Naming it for the server
+
+The machine folder's `notices/programs.toml` names each way's program by its absolute path, the
+file its owner's alone and written by nobody else
+([the server's part](../engineering/NOTICES.md#the-servers-part)). A copy kept outside the
+checkout outlives the next build:
+
+```toml
+whatsapp = "/Users/ana/.local/bin/symphony-notice-whatsapp"
+```
 
 ## What it answers
 
