@@ -3,7 +3,7 @@
 //! to the binary; without it only board commands reach the beat path.
 //! The beats cases pin binding behaviour and session-liveness duration.
 
-use crate::{env, run};
+use crate::{BEAT_WAIT_VAR, env, run};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
@@ -129,6 +129,24 @@ fn through_just_tasks_a_beat_binds_nothing_and_the_hooks_binds_its_session() {
     assert_eq!(bound_to(&env, "dead-beef"), json!(h));
     assert!(folder.join("dead-beef").is_file());
     let _ = fs::remove_dir_all(&folder);
+}
+
+/// A beat waits on the board its own two seconds but where a test sets them (every case here is
+/// given the tests' backstop, `crate::env`). Set to run out at once, it cannot start a connection
+/// and gives up quietly, binding nothing; the same call with the backstop binds its session.
+#[test]
+fn a_beat_waits_on_the_board_as_its_setting_says_and_gives_up_quietly() {
+    let env = env();
+    let h = ok(&env, &["register", "--kind", "worker"]);
+    let event = bash(&format!("just tasks inbox --as {h}"))
+        .session("dead-beef")
+        .0;
+    let mut at_once = env.clone();
+    at_once.vars.insert(BEAT_WAIT_VAR.into(), "0".into());
+    beat(&at_once, &event);
+    assert_eq!(bound_to(&env, "dead-beef"), Value::Null);
+    beat(&env, &event);
+    assert_eq!(bound_to(&env, "dead-beef"), json!(h));
 }
 
 /// A hook event, as Claude Code sends it on stdin.

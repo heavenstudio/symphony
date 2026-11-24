@@ -1225,6 +1225,9 @@ fn ago(case: &Case, seconds: f64) -> Case {
 
 /// The beat hook's events for a board command naming `handle`, run from `cwd` and ended (so it
 /// leaves no busy mark): by the subagent `agent`, else by the full Claude Code session `claude`.
+/// The hook says nothing of a beat it gave up on, so the board is read for what they left: the
+/// handle bound to that key, and a subagent placed in `cwd` (a full session's binding keeps no
+/// checkout).
 fn bind(case: &Case, handle: &str, agent: Option<&str>, claude: &str, cwd: &Path) {
     for hook in ["PreToolUse", "PostToolUse"] {
         let mut event = serde_json::json!({"hook_event_name": hook, "tool_name": "Bash",
@@ -1236,6 +1239,14 @@ fn bind(case: &Case, handle: &str, agent: Option<&str>, claude: &str, cwd: &Path
         let ran = crate::run(&case.env, &["beat"], &event.to_string());
         assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{event}");
     }
+    let bound = case.store().agent_bindings().unwrap().remove(handle);
+    let left = bound.map(|bound| (bound.agent, bound.worktree));
+    let worktree = agent.map_or("", |_| cwd.to_str().unwrap());
+    assert_eq!(
+        left,
+        Some((agent.unwrap_or(claude).to_owned(), worktree.to_owned())),
+        "{handle}'s binding"
+    );
 }
 
 /// What a run of `true` with `vars`, in `cwd`, records on `case`'s board, once it finished.
