@@ -122,8 +122,8 @@ both, so a mailbox that drops a repeated Message-ID shows it once; many do not.
 | Exit | When |
 | --- | --- |
 | `0` | the mail server took the mail |
-| `75` | not sent this time: the mail server answered a `4xx` (busy, a limit, a login it cannot check now), or it was not reached, a TLS handshake did not finish, it stopped answering, a minute passed, or `curl` failed in any other way that may clear |
-| `1` | not sent, and handing it again will not send it: the mail server answered a `5xx` (the login, `from`, the address or the message refused); the notice is by another way than `email`, or its address is no plain `local@domain`; the settings are missing or refused; `curl` failed in a way a second hand meets again (the certificate refused, STARTTLS not offered, CA certificates it cannot read, a protocol, feature or option this `curl` lacks: its exits 1, 2, 3, 4, 26, 48, 60, 64 and 77); `curl` is not on `PATH`; or the message is not one it reads ([NOTICES](../engineering/NOTICES.md#the-hand-off)) |
+| `75` | not sent this time: the mail server answered a `4xx` (busy, a limit, a login it cannot check now), or it was not reached, a TLS handshake did not finish, it stopped answering, a minute passed, the machine ran short of processes, memory or open files to start `curl`, or `curl` failed in any other way that may clear |
+| `1` | not sent, and handing it again will not send it: the mail server answered a `5xx` (the login, `from`, the address or the message refused); the notice is by another way than `email`, or its address is no plain `local@domain`; the settings are missing or refused; `curl` failed in a way a second hand meets again (the certificate refused, STARTTLS not offered, CA certificates it cannot read, a protocol, feature or option this `curl` lacks: its exits 1, 2, 3, 4, 26, 48, 60, 64 and 77); `curl` is not on `PATH` or may not be run (not executable); or the message is not one it reads ([NOTICES](../engineering/NOTICES.md#the-hand-off)) |
 
 Stderr says which, in one line, with `curl`'s own line where it has one:
 

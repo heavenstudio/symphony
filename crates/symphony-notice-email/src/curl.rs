@@ -16,7 +16,7 @@
 
 use std::io::{ErrorKind, Write as _};
 use std::process::{Command, Stdio};
-use symphony_notice::{Notice, Unsent};
+use symphony_notice::{Notice, Unsent, unstarted};
 
 use crate::mail::Mail;
 use crate::settings::{FOLDER, SETTINGS, Settings, TOKEN, Tls};
@@ -24,7 +24,8 @@ use crate::settings::{FOLDER, SETTINGS, Settings, TOKEN, Tls};
 /// The longest one send may take, connecting, logging in and handing the mail over.
 const MOST_SECONDS: &str = "60";
 
-/// Sends `mail` of `notice` by the mail server `settings` name, running `program` as `curl`.
+/// Sends `mail` of `notice` by the mail server `settings` name, running `program` as `curl`. A
+/// `curl` that is not there is [`Unsent::Never`], and one that did not start as [`unstarted`] says.
 pub(crate) fn send(
     program: &str,
     settings: &Settings,
@@ -55,7 +56,7 @@ pub(crate) fn send(
                     "{program} is not on PATH: the email plugin sends through curl, so install it"
                 ))
             } else {
-                Unsent::Later(format!("{program} did not start: {error}"))
+                unstarted(&error, format!("{program} did not start: {error}"))
             }
         })?;
     // curl reads the whole of its config before it connects, so writing it all first is safe.

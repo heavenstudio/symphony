@@ -115,16 +115,20 @@ fn a_curl_that_cannot_start_is_never_sent() {
     let dir = folder("not-runnable");
     let program = program(&dir, "exit 0");
     fs::set_permissions(&program, fs::Permissions::from_mode(0o600)).unwrap();
-    let said = curl("https://slack.com/api")
-        .program(&program)
-        .post("chat.postMessage", "{}");
-    let Err(Unsent::Never(why)) = said else {
-        panic!("{said:?}");
-    };
-    assert!(
-        why.starts_with(&format!("{program} did not start: ")),
-        "{why}"
-    );
+    // A file in curl's place that is not executable, or a folder: each fails the same on every
+    // hand.
+    for unrunnable in [program.as_str(), dir.to_str().unwrap()] {
+        let said = curl("https://slack.com/api")
+            .program(unrunnable)
+            .post("chat.postMessage", "{}");
+        let Err(Unsent::Never(why)) = said else {
+            panic!("{unrunnable}: {said:?}");
+        };
+        assert!(
+            why.starts_with(&format!("{unrunnable} did not start: ")),
+            "{why}"
+        );
+    }
 }
 
 #[test]

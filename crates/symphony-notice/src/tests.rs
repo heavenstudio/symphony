@@ -576,3 +576,31 @@ fn the_machine_folder_is_the_servers() {
     }
     assert_eq!(MACHINE_DIR, symphony_board::project::MACHINE_DIR);
 }
+
+#[test]
+fn a_program_that_did_not_start_is_later_where_the_machine_ran_short_and_never_else() {
+    use std::io::{Error, ErrorKind};
+    let said = |error: Error| unstarted(&error, "curl did not start".into());
+    let later = Unsent::Later("curl did not start".into());
+    let never = Unsent::Never("curl did not start".into());
+    // EAGAIN (a process limit), ENOMEM, ENFILE and EMFILE, ETXTBSY: the room comes back.
+    for short in [
+        Error::from(ErrorKind::WouldBlock),
+        Error::from(ErrorKind::OutOfMemory),
+        Error::from_raw_os_error(23),
+        Error::from_raw_os_error(24),
+        Error::from_raw_os_error(26),
+    ] {
+        assert_eq!(said(short), later);
+    }
+    // Not there, not to be run by this user (EACCES), no program (ENOEXEC), or anything else.
+    for lasting in [
+        Error::from(ErrorKind::NotFound),
+        Error::from_raw_os_error(13),
+        Error::from_raw_os_error(8),
+        Error::from(ErrorKind::InvalidInput),
+        Error::other("a reason of its own"),
+    ] {
+        assert_eq!(said(lasting), never);
+    }
+}

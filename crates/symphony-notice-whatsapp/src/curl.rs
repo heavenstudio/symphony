@@ -8,7 +8,7 @@
 use crate::settings::Secret;
 use std::io::Write as _;
 use std::process::{Command, Stdio};
-use symphony_notice::Unsent;
+use symphony_notice::{Unsent, unstarted};
 
 /// The longest the request may take, connecting included, before it is a notice not sent this
 /// time.
@@ -33,7 +33,7 @@ pub(crate) struct Answer {
 ///
 /// No answer is [`Unsent::Later`], saying whether the request may have reached the API; a `curl`
 /// that is not there, or that fails by one of [`LASTING`], is [`Unsent::Never`], as handing the
-/// notice again finds the same again.
+/// notice again finds the same again, and one that did not start is as [`unstarted`] says.
 pub(crate) fn post(program: &str, url: &str, token: &Secret, body: &str) -> Result<Answer, Unsent> {
     let started = Command::new(program)
         .args([
@@ -66,9 +66,8 @@ pub(crate) fn post(program: &str, url: &str, token: &Secret, body: &str) -> Resu
             )));
         }
         Err(error) => {
-            return Err(Unsent::Later(format!(
-                "{program} did not start: {error}; nothing was sent"
-            )));
+            let why = format!("{program} did not start: {error}; nothing was sent");
+            return Err(unstarted(&error, why));
         }
     };
     let config = config(url, token, body);

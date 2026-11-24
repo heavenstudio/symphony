@@ -315,3 +315,27 @@ fn a_mail_server_that_offers_no_starttls_where_it_is_needed_is_told_nothing() {
         );
     }
 }
+
+#[test]
+fn a_curl_this_user_may_not_run_is_never_sent() {
+    // A file in curl's place that is not executable, or a folder: each fails the same on every
+    // hand, so the notice is never sent and nothing reaches the mail server.
+    let dir = Scratch::new("unrunnable");
+    let file = dir.join("curl");
+    fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    let settings = settings("unrunnable-settings", "smtp://127.0.0.1:1", None);
+    let to = To::new("email", "ana@example.com").unwrap();
+    let notice = Notice::new("n", symphony_notice::Kind::Card, "p", "https://h/", to).unwrap();
+    for unrunnable in [file.as_path(), &dir] {
+        let program = unrunnable.to_str().unwrap();
+        let sent = send(program, &settings, &notice, &mail());
+        let Err(Unsent::Never(why)) = sent else {
+            panic!("{program}: {sent:?}");
+        };
+        assert!(
+            why.starts_with(&format!("{program} did not start: ")),
+            "{why}"
+        );
+    }
+}

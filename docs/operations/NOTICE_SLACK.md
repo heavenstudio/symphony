@@ -90,15 +90,15 @@ Its exit status, with why on stderr when it did not send:
 - **`75`**, worth handing again: Slack limits the rate (HTTP 429, `ratelimited`), is down or slow
   (HTTP 5xx, `service_unavailable`, `internal_error`, `fatal_error`, `request_timeout`), or is
   moving the workspace into an Enterprise organization (`team_added_to_org`); `curl` reached no
-  answer (not reached, out of time, cut off); or Slack's answer said neither that it sent nor that
-  it did not.
+  answer (not reached, out of time, cut off), or the machine ran short of processes, memory or open
+  files to start it; or Slack's answer said neither that it sent nor that it did not.
 - **`1`**, never sent, and handing it again will not send it: the message is not one it takes
   (by the contract), the notice goes by another way than `slack`, the address is no member id, no
-  token was read (stderr names the path and what to do), `curl` is not on `PATH`, `curl` failed
-  in a way a second hand meets again (a certificate that does not verify, CA certificates it
-  cannot read, a protocol, feature or option this `curl` lacks: its exits 1, 2, 3, 4, 26, 48, 60,
-  64 and 77), Slack answered another HTTP status, or Slack refused it with any other error. The
-  ones met most:
+  token was read (stderr names the path and what to do), `curl` is not on `PATH` or may not be
+  run (not executable), `curl` failed in a way a second hand meets again (a certificate that does
+  not verify, CA certificates it cannot read, a protocol, feature or option this `curl` lacks: its
+  exits 1, 2, 3, 4, 26, 48, 60, 64 and 77), Slack answered another HTTP status, or Slack refused it
+  with any other error. The ones met most:
 
 | Slack's word | What to do |
 |---|---|

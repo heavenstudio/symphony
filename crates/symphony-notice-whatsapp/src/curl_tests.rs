@@ -152,19 +152,23 @@ fn a_curl_that_is_not_there_is_never_sent() {
 }
 
 #[test]
-fn a_curl_that_does_not_start_is_later() {
+fn a_curl_this_user_may_not_run_is_never_sent() {
+    // A file in curl's place that is not executable, or a folder: each fails the same on every
+    // hand.
     let scratch = Scratch::new();
-    let unrunnable = scratch.path().join("curl");
-    std::fs::write(&unrunnable, "").unwrap();
-    mode(&unrunnable, 0o600);
-    let Err(Unsent::Later(why)) = post_by(&unrunnable, "{}") else {
-        panic!("a curl that does not start is later");
-    };
-    assert!(
-        why.starts_with(&format!("{} did not start: ", unrunnable.display()))
-            && why.ends_with("; nothing was sent"),
-        "{why}"
-    );
+    let file = scratch.path().join("curl");
+    std::fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
+    mode(&file, 0o600);
+    for unrunnable in [file.as_path(), scratch.path()] {
+        let Err(Unsent::Never(why)) = post_by(unrunnable, "{}") else {
+            panic!("{} is a curl never run", unrunnable.display());
+        };
+        assert!(
+            why.starts_with(&format!("{} did not start: ", unrunnable.display()))
+                && why.ends_with("; nothing was sent"),
+            "{why}"
+        );
+    }
 }
 
 #[test]

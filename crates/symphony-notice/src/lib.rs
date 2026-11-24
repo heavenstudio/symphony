@@ -14,7 +14,8 @@
 //! field and its rule, never the value found, so a plugin that says why on stderr repeats no
 //! address and no link. A plugin's `main` is [`take`]: the one notice on stdin, handed to its send,
 //! and the exit status saying what came of it. A plugin keeps what it needs in the machine folder,
-//! which [`machine_folder`] finds by the server's rule.
+//! which [`machine_folder`] finds by the server's rule, and [`unstarted`] says what came of a notice
+//! whose sending program did not start.
 
 #![forbid(unsafe_code)]
 
@@ -333,6 +334,24 @@ fn take_from(
     // Nothing is left to say it on when stderr is gone: the status still says it.
     let _ = writeln!(errors, "{why}");
     status
+}
+
+/// What came of a notice whose sending program (a plugin's `curl`) did not start for `error`, with
+/// `why` saying so. It is [`Unsent::Later`] where the machine ran short for a moment, as a second
+/// hand may find the room: of processes (`EAGAIN`), memory, open files, or the program being
+/// written as it was started (an upgrade). It is [`Unsent::Never`] for anything else: a program
+/// that is not there, that the server's user may not run, or that is no program at all fails the
+/// same on every hand.
+pub fn unstarted(error: &io::Error, why: String) -> Unsent {
+    use io::ErrorKind::{ExecutableFileBusy, OutOfMemory, WouldBlock};
+    // ENFILE and EMFILE, the same numbers on Linux and macOS, have no stable kind of their own.
+    let short = matches!(error.kind(), WouldBlock | OutOfMemory | ExecutableFileBusy)
+        || matches!(error.raw_os_error(), Some(23 | 24));
+    if short {
+        Unsent::Later(why)
+    } else {
+        Unsent::Never(why)
+    }
 }
 
 /// The variable that names the machine folder, as the server reads it.

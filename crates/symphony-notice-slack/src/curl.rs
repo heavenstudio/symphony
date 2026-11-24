@@ -10,7 +10,7 @@
 use crate::token::Secret;
 use std::io::{ErrorKind, Write as _};
 use std::process::{Command, Stdio};
-use symphony_notice::Unsent;
+use symphony_notice::{Unsent, unstarted};
 
 /// The most seconds one call may take.
 const SECONDS: &str = "30";
@@ -83,8 +83,9 @@ impl Curl {
     ///
     /// # Errors
     ///
-    /// [`Unsent::Never`] when `curl` cannot be started or fails by one of [`LASTING`];
-    /// [`Unsent::Later`] when it ran and no answer came, the host unreached or the call timed out.
+    /// [`Unsent::Never`] when `curl` is not there or fails by one of [`LASTING`], and one that did
+    /// not start as [`unstarted`] says; [`Unsent::Later`] when it ran and no answer came, the host
+    /// unreached or the call timed out.
     pub(crate) fn post(&self, method: &str, body: &str) -> Result<Answer, Unsent> {
         let mut child = Command::new(&self.program)
             .args([
@@ -107,14 +108,14 @@ impl Curl {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| {
-                Unsent::Never(if error.kind() == ErrorKind::NotFound {
-                    format!(
-                        "{} is not on PATH: this program reaches Slack through curl, so install it",
-                        self.program
-                    )
+                let program = &self.program;
+                if error.kind() == ErrorKind::NotFound {
+                    Unsent::Never(format!(
+                        "{program} is not on PATH: this program reaches Slack through curl, so install it"
+                    ))
                 } else {
-                    format!("{} did not start: {error}", self.program)
-                })
+                    unstarted(&error, format!("{program} did not start: {error}"))
+                }
             })?;
         // curl reads the whole of its config before it connects or writes anything, so writing it
         // all before reading curl's output never waits on curl, however long it is; dropping the
