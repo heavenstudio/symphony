@@ -60,6 +60,7 @@ fn the_request_and_its_token_go_on_stdin_and_the_answer_is_its_status_and_body()
         let at = args.iter().position(|arg| *arg == flag).unwrap();
         assert_eq!(args[at + 1], value);
     }
+    assert!(args.contains(&"--globoff"), "{args:?}");
     assert!(
         !args
             .iter()

@@ -2,7 +2,7 @@
 //! its settings, `notices/whatsapp.toml`, and its token, `notices/whatsapp.token` unless the
 //! settings name another file. The folder is its owner's alone (mode 700) and so is each file
 //! (mode 600), each refused otherwise before anything in it is read. A refusal names the file and
-//! what is wrong with it, never what the file holds.
+//! what is wrong with it, with a key of the settings and its line, never a value the file holds.
 
 use serde::Deserialize;
 use std::ffi::OsString;
@@ -137,17 +137,7 @@ impl Settings {
 
     /// The settings `text` holds, a token file it names none of found in `folder`.
     pub(crate) fn read(text: &str, folder: &Path) -> Result<Settings, String> {
-        // toml's own rendering of an error quotes the line it is on, which may hold anything an
-        // operator pasted there; its message and the line's number alone say no value.
-        let file: Written = toml::from_str(text).map_err(|error| {
-            let line = (error.span())
-                .and_then(|at| text.get(..at.start))
-                .map(|before| before.matches('\n').count() + 1);
-            match line {
-                Some(line) => format!("line {line}: {}", error.message()),
-                None => error.message().to_string(),
-            }
-        })?;
+        let file: Written = toml::from_str(text).map_err(|error| unread(text, &error))?;
         let id = &file.phone_number_id;
         if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_digit()) {
             return Err(
@@ -226,6 +216,52 @@ impl Settings {
     pub(crate) fn token(&self) -> Result<Secret, String> {
         let text = private(&self.token_file)?;
         Secret::new(&text).map_err(|why| format!("{} {why}", self.token_file.display()))
+    }
+}
+
+/// Every key the settings file has, a template's among them.
+const KEYS: [&str; 9] = [
+    "phone_number_id",
+    "language",
+    "templates",
+    "token_file",
+    "api",
+    "other",
+    "card",
+    "question",
+    "verdict",
+];
+
+/// What a settings `text` that does not read is refused with: the line, and what is wrong there,
+/// naming a key and never a value.
+///
+/// toml's own rendering of an error quotes the line it is on, which may hold anything an operator
+/// pasted there, so its message alone is said, and only where it holds no value of the file's: a
+/// value of another type than its key takes (`invalid type: integer `106540352242922`, expected a
+/// string`) is said by the key the line names instead, where the key is one of [`KEYS`].
+fn unread(text: &str, error: &toml::de::Error) -> String {
+    let line = (error.span())
+        .and_then(|at| text.get(..at.start))
+        .map(|before| before.matches('\n').count() + 1);
+    let message = error.message();
+    let quotes_a_value = ["invalid type", "invalid value", "unknown variant"]
+        .iter()
+        .any(|serde_says| message.starts_with(serde_says));
+    let said = if quotes_a_value {
+        let key = (line.and_then(|line| text.lines().nth(line - 1)))
+            .and_then(|written| written.split_once('='))
+            .map(|(key, _)| key.trim())
+            .filter(|key| key.split('.').all(|part| KEYS.contains(&part.trim())));
+        match key {
+            Some(key) => format!("`{key}` holds a value of another type than it takes"),
+            None => "a value is of another type than its key takes".into(),
+        }
+    } else {
+        message.to_string()
+    };
+    match line {
+        Some(line) => format!("line {line}: {said}"),
+        None => said,
     }
 }
 

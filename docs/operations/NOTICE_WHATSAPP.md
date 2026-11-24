@@ -108,11 +108,11 @@ verdict = "symphony_verdict"
 | `templates.other` | none | the template a kind with no template of its own is sent by |
 | `templates.card`, `templates.question`, `templates.verdict` | `templates.other` | each kind's own template |
 | `token_file` | `notices/whatsapp.token` | the absolute path of the file holding the token, held to the same mode 600 |
-| `api` | `https://graph.facebook.com/v27.0` | the Graph API and its version; an `https` URL alone |
+| `api` | `https://graph.facebook.com/v27.0` | the Graph API and its version: an `https` URL, or `http://127.0.0.1:PORT` for a test's stand-in |
 
 A template's name is Meta's: lowercase letters, digits and underscores. A key the program does
-not know, a missing one and a value of another shape are each refused by name, with the line they
-are on and never the value found there. The token file holds the one token and nothing else.
+not know, a missing one and a value of another type or shape are each refused by the key's name,
+with the line they are on and never the value found there. The token file holds the one token and nothing else.
 
 ## What it answers
 

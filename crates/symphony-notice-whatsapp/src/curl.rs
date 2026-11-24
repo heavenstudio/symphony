@@ -37,6 +37,8 @@ pub(crate) fn post(program: &str, url: &str, token: &Secret, body: &str) -> Resu
             SECONDS,
             "--max-redirs",
             "0",
+            // `{}` and `[]` in a URL are curl's globs, which would make one request several.
+            "--globoff",
             "--proto",
             "=http,https",
             "--write-out",

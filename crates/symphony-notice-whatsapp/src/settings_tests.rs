@@ -179,13 +179,63 @@ fn a_key_it_does_not_know_or_a_file_that_does_not_read_is_refused_without_its_va
         refused.starts_with("line ") && refused.contains("unknown field `token`"),
         "{refused}"
     );
-    let broken = format!("phone_number_id = \"{TOKEN_TEXT}\n");
-    for text in [pasted, broken] {
-        let refused = read(&text).unwrap_err();
-        assert!(!refused.contains(TOKEN_TEXT), "{refused}");
+    for broken in [
+        format!("phone_number_id = \"{TOKEN_TEXT}\n"),
+        format!("phone_number_id = {TOKEN_TEXT}\n"),
+        format!("{TOKEN_TEXT}\n"),
+        format!("phone_number_id = \"1\" \"{TOKEN_TEXT}\"\n"),
+        format!(r#"language = '''{TOKEN_TEXT}"#),
+        pasted,
+    ] {
+        let refused = read(&broken).unwrap_err();
+        assert!(!refused.contains(TOKEN_TEXT), "{broken:?}: {refused}");
     }
     let unknown = with("templates.digest", r#""symphony_digest""#).unwrap_err();
     assert!(unknown.contains("unknown field `digest`"), "{unknown}");
+}
+
+#[test]
+fn a_value_of_another_type_is_refused_by_its_key_and_never_said() {
+    let token = format!("\"{TOKEN_TEXT}\"");
+    let tokens = format!("[{token}]");
+    let table = format!("{{ name = {token} }}");
+    let head = "phone_number_id = \"1234567890\"\nlanguage = \"pt_BR\"\n";
+    let cases = [
+        (
+            with("phone_number_id", "106540352242922"),
+            2,
+            "`phone_number_id`",
+        ),
+        (with("language", &tokens), 3, "`language`"),
+        (with("api", "true"), 2, "`api`"),
+        (with("token_file", &table), 2, "`token_file`"),
+        (with("templates.other", "5"), 6, "`other`"),
+        (with("templates.card", &tokens), 7, "`card`"),
+        (
+            read(&format!("{head}templates = {token}\n")),
+            3,
+            "`templates`",
+        ),
+        (
+            read(&format!("{head}templates.other = 106540352242922\n")),
+            3,
+            "`templates.other`",
+        ),
+        (
+            read(&format!(
+                "{head}[templates]\nother = \"x\"\ncard = {table}\n"
+            )),
+            5,
+            "`card`",
+        ),
+    ];
+    for (read, line, key) in cases {
+        let refused = read.unwrap_err();
+        assert_eq!(
+            refused,
+            format!("line {line}: {key} holds a value of another type than it takes")
+        );
+    }
 }
 
 #[test]
