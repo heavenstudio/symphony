@@ -75,16 +75,16 @@ pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates
 pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 pub use links::{app_path, linkable};
 pub use listing::{ListedCard, ListedProject, PROJECTS_PATH, ProjectList, TaskAsks, TaskVerdict};
+pub use people::{
+    GroupRow, PEOPLE_CHANGE_PATH, PEOPLE_PATH, PROFILE_PATH, PeopleAction, PeopleChange,
+    PeopleLogLine, PeoplePage, PersonRow, ProfileWrite,
+};
 pub use report_page::{Grain, REPORTS_LANDED_PATH, REPORTS_PATH, ReportBucket, ReportsPage};
 pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
 pub use runs::{
     End, FailedTest, PIPELINES, RUN_LOG_MOST, RUN_LOG_PATH, RUN_LOG_TAIL, RUN_PATH, RUN_SCHEMA,
     RUNS_DAYS, RUNS_FILE_BYTES, RUNS_PAGE, RUNS_PATH, RUNS_READ_BYTES, RunLine, RunLog, RunPage,
     RunsPage, Suite, TRIGGERS, fold, run_day, run_name,
-};
-pub use people::{
-    GroupRow, PEOPLE_CHANGE_PATH, PEOPLE_PATH, PROFILE_PATH, PeopleAction, PeopleChange,
-    PeopleLogLine, PeoplePage, PersonRow, ProfileWrite,
 };
 pub use runs_rollup::{RUNS_DAY_SCHEMA, RUNS_ROLLUP, RunsDay};
 pub use schema_updates::{

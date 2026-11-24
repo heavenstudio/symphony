@@ -584,7 +584,11 @@ async fn a_hosted_visitor_reads_no_one_and_changes_no_one() {
     let served = Served::new(&[("ana", &[Power::Speak])]);
     for (method, path, body) in [
         ("GET", PEOPLE_PATH, ""),
-        ("POST", PEOPLE_CHANGE_PATH, r#"{"action":"remove","name":"ana"}"#),
+        (
+            "POST",
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"remove","name":"ana"}"#,
+        ),
     ] {
         let app = crate::front::router(served.shared.clone())
             .layer(MockConnectInfo(HERE.parse::<SocketAddr>().unwrap()));
@@ -604,7 +608,10 @@ async fn a_hosted_visitor_reads_no_one_and_changes_no_one() {
         let said = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
-        assert!(!String::from_utf8_lossy(&said).contains("ana"), "{method} {path}");
+        assert!(
+            !String::from_utf8_lossy(&said).contains("ana"),
+            "{method} {path}"
+        );
     }
     assert_eq!(served.log().len(), 1, "ana is still on the board");
 }

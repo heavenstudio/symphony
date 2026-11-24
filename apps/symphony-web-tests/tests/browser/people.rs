@@ -4,7 +4,8 @@
 //! the page lit in the header after Settings, and nothing sent on opening; an add from its form
 //! and a power's toggle posted as one change each (`/api/people-change`), the page drawn from the
 //! write's answer and what it did said on the part that sent it, a refusal in the server's words;
-//! a reader without administer shown no control but their own profile's, which posts to
+//! a person put in a group, a group made and a removal (asked once, sent at its second press) each
+//! posted as one change; a reader without administer shown no control but their own profile's, which posts to
 //! `/api/people-profile`; and a read that fails said in the page's place.
 //!
 //! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page is saved there, whole, at each
@@ -240,6 +241,99 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
         texts(&mut chrome, "#person-ana .people-said"),
         [""],
         "said on the part that sent it alone"
+    );
+}
+
+/// A press of the mouse on the option `text` of the select open now, once its list is placed.
+fn pick(chrome: &mut Chrome, text: &str) {
+    super::components::popup_ready(chrome);
+    let point = chrome.eval(&format!(
+        "(() => {{ const option = [...document.querySelectorAll('[role=listbox] [role=option]')].find(o => o.textContent.trim() === {}); const box = option.getBoundingClientRect(); return {{x: box.x + box.width / 2, y: box.y + box.height / 2}}; }})()",
+        json!(text)
+    ));
+    for kind in ["mousePressed", "mouseReleased"] {
+        chrome.call(
+            "Input.dispatchMouseEvent",
+            json!({"type": kind, "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1}),
+        );
+    }
+}
+
+/// The button of `part` reading `text`, pressed.
+fn press(chrome: &mut Chrome, part: &str, text: &str) {
+    let pressed = chrome.eval(&format!(
+        "(() => {{ const button = [...document.querySelectorAll('#{part} button')].find(b => b.textContent === {} && !b.disabled); button?.click(); return !!button; }})()",
+        json!(text)
+    ));
+    assert_eq!(pressed, json!(true), "no {text} to press on {part}");
+}
+
+#[test]
+fn a_person_put_in_a_group_a_group_made_and_a_removal_are_each_one_change() {
+    let site = served(&sample());
+    // What the server answers: bo in staff, the log's sixth change.
+    let mut after = sample();
+    after["people"][1]["groups"] = json!(["staff"]);
+    after["log"].as_array_mut().unwrap().push(json!({
+        "n": 6, "at": 1_763_025_000.0, "by": "owner", "did": "join", "name": "bo", "group": "staff",
+    }));
+    after["revision"] = json!(6);
+    site.set_json(symphony_api::PEOPLE_CHANGE_PATH, &after);
+    let Some(mut chrome) = chrome() else { return };
+    screen(&mut chrome, 1440, 900, false);
+    open(&mut chrome, &site, "people");
+    click(&mut chrome, "[aria-label='Put bo in a group']");
+    pick(&mut chrome, "staff");
+    assert_eq!(
+        said(&mut chrome, "person-bo", false),
+        "owner put bo in staff."
+    );
+    // In the group now, bo is drawn in it and offered no group to join (the select's list, in the
+    // page's overlay, keeps its label: bo's row is asked).
+    assert_eq!(
+        chrome.eval(
+            "[document.querySelector(\"#person-bo [aria-label='Put bo in a group']\") === null, document.querySelector(\"#person-bo [aria-label='Take bo out of staff']\") !== null]"
+        ),
+        json!([true, true])
+    );
+    // A group made, with the powers chosen for it.
+    type_into(&mut chrome, "Group name", "crew");
+    click(
+        &mut chrome,
+        "#people-add-group button[aria-label='speak for the new group']",
+    );
+    assert!(chrome.wait_for(
+        "[...document.querySelectorAll('#people-add-group button')].some(b => b.textContent === 'Make the group' && !b.disabled)",
+        SHOWN
+    ));
+    press(&mut chrome, "people-add-group", "Make the group");
+    // The answer holds no new change, so the part says nothing was written.
+    assert_eq!(
+        said(&mut chrome, "people-add-group", false),
+        "It holds that already: nothing was written."
+    );
+    // A removal asks once, and is sent at its second press.
+    press(&mut chrome, "person-cy", "Take off the board");
+    assert_eq!(site.posts().len(), 2, "the first press sends nothing");
+    press(&mut chrome, "person-cy", "Take off the board: yes");
+    assert!(chrome.wait_for(
+        "document.querySelector('#person-cy .people-said[data-refused]') !== null",
+        SHOWN
+    ));
+    let change = symphony_api::PEOPLE_CHANGE_PATH.to_string();
+    assert_eq!(
+        site.posts(),
+        [
+            (
+                change.clone(),
+                json!({"action": "join", "name": "bo", "group": "staff"})
+            ),
+            (
+                change.clone(),
+                json!({"action": "group-add", "name": "crew", "powers": ["speak"]})
+            ),
+            (change, json!({"action": "remove", "name": "cy"})),
+        ]
     );
 }
 

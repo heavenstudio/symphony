@@ -153,8 +153,8 @@ fn a_project_page_takes_its_theme_and_the_header_its_client_pages_draw_under_its
              aria-label=\"Pages\"><a href=\"/lantern/\">Home</a><a \
              href=\"/lantern/queue\">Queue</a><a href=\"/lantern/docs/\">Docs</a><a \
              href=\"/lantern/tasks\">Board</a><a href=\"/lantern/reports\">Reports</a><a \
-             href=\"/lantern/settings\">Settings</a><a href=\"/lantern/runs\">Runs</a><a \
-             href=\"/lantern/agents\">Agents</a></nav><nav \
+             href=\"/lantern/settings\">Settings</a><a href=\"/lantern/people\">People</a><a \
+             href=\"/lantern/runs\">Runs</a><a href=\"/lantern/agents\">Agents</a></nav><nav \
              class=\"crumbs\" aria-label=\"Breadcrumbs\"><span>not found</span></nav>"
         )),
         "{page}"

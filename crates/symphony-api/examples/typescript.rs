@@ -2642,8 +2642,8 @@ fn people() -> api::PeoplePage {
             ..api::PersonRow::default()
         }
     };
-    let line = |n: i64, did: &str, name: &str, group: Option<&str>, powers: &[&str]| {
-        api::PeopleLogLine {
+    let line =
+        |n: i64, did: &str, name: &str, group: Option<&str>, powers: &[&str]| api::PeopleLogLine {
             n,
             at: 1_763_000_000.0 + 3600.0 * n as f64,
             by: "owner".into(),
@@ -2651,15 +2651,20 @@ fn people() -> api::PeoplePage {
             name: name.into(),
             group: group.map(Into::into),
             powers: words(powers),
-        }
-    };
+        };
     api::PeoplePage {
         people: vec![
             api::PersonRow {
                 signins: words(&["tailscale", "github"]),
                 git: words(&["ana-lima"]),
                 profile: true,
-                ..person("ana", "Ana Lima", &["read", "speak", "decide"], &["speak"], &["staff"])
+                ..person(
+                    "ana",
+                    "Ana Lima",
+                    &["read", "speak", "decide"],
+                    &["speak"],
+                    &["staff"],
+                )
             },
             person("bo", "bo", &["read", "administer"], &["administer"], &[]),
             api::PersonRow {
