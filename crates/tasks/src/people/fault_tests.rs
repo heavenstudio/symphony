@@ -101,6 +101,37 @@ fn a_token_cut_short_or_written_wrong_is_a_fault_in_its_value() {
     assert_eq!(syntax(r#"["]}", 1 2]"#), []);
 }
 
+/// A leading surrogate's escape with no trailing one after it is a fault in its string, where
+/// serde_json reads the quote after it as the trailing escape's backslash: the string's member or
+/// item, never its container's close.
+#[test]
+fn a_leading_surrogate_before_a_quote_is_a_fault_in_its_string() {
+    for text in [
+        r#"{"a": "\ud800"}"#,
+        r#"{"a": "b\uDBFF"}"#,
+        r#"{"a": "\uDa00", "b": 1}"#,
+        r#"{"a": "\ud800x"}"#,
+        r#"{"a": "\ud800\"}"#,
+        r#"{"a": "\ud800\u0041"}"#,
+        r#"{"a": "\udc00"}"#,
+        // Four bytes that split a letter are no escape.
+        r#"{"a": "\u000ü"}"#,
+    ] {
+        assert_eq!(syntax(text), [key("a")], "{text}");
+    }
+    assert_eq!(syntax(r#"[1, "\ud800"]"#), [Step::Item(1)]);
+    // At a key it is the object's, as every fault at a key is.
+    assert_eq!(syntax(r#"{"\ud800": 1}"#), []);
+    // A whole pair, and the escapes either side of the surrogates, close their string.
+    for text in [
+        r#"["\ud800\udc00" 1]"#,
+        r#"["\uD7FF" 1]"#,
+        r#"["\ue000" 1]"#,
+    ] {
+        assert_eq!(syntax(text), [], "{text}");
+    }
+}
+
 /// A key is said as serde_json reads it, its escapes read, and a fault before any value, or after
 /// the text's one value, is at no step.
 #[test]
@@ -161,6 +192,25 @@ fn a_fault_of_data_is_the_value_just_read_or_its_objects_at_a_key() {
     assert_eq!(profiles(r#""ana""#), []);
     assert_eq!(profiles("4"), []);
     assert_eq!(profiles("[4]"), [Step::Item(0)]);
+}
+
+/// A member no profile takes, which serde_json skips unvisited, is read into like any other.
+#[test]
+fn a_member_no_profile_takes_is_read_into() {
+    assert_eq!(
+        profiles(r#"{"signins": [{"service" 1}]}"#),
+        [key("signins"), Step::Item(0)]
+    );
+    assert_eq!(
+        profiles(r#"{"people": [{"name": "ana", "x": [1, {"y": tru}]}]}"#),
+        [
+            key("people"),
+            Step::Item(0),
+            key("x"),
+            Step::Item(1),
+            key("y")
+        ]
+    );
 }
 
 /// serde_json counts a fault's column in the bytes of its line, a letter of several bytes and a

@@ -4,6 +4,11 @@
 //! The text is read again only when it does not parse, up to the line and column serde_json names,
 //! by JSON's own grammar: a reader that tracks its path as it reads (serde_path_to_error) links a
 //! second reader of every profile into each binary that reads them.
+//!
+//! A member the file's object, a profile or a sign-in does not take is read into like any other.
+//! serde_json skips its value without visiting it, so that reader stopped at its key; where the key
+//! is one of a profile's field names, the field said now goes on into it: a fault in a top-level
+//! `"signins": [{"service" 1}]` is at `signins[0]`, where that reader said `signins`.
 
 use serde_json::Value;
 use serde_json::error::Category;
@@ -171,14 +176,24 @@ fn scalar(bytes: &[u8], at: usize) -> Option<usize> {
     }
 }
 
-/// Where the string whose opening quote is at `at` ends, after its closing quote. An escape is
-/// read whole, `\u`'s four bytes with it whatever they are, as serde_json reads them.
+/// Where the string whose opening quote is at `at` ends, after its closing quote: none where it is
+/// cut short, or where a leading surrogate's `\u` escape (D800 to DBFF) stands directly before a
+/// quote, which serde_json reads where the trailing surrogate's `\` goes and faults at, the string
+/// still open. Any other escape is read whole, `\u`'s four bytes with it whatever they are.
 fn string(bytes: &[u8], at: usize) -> Option<usize> {
     let mut i = at + 1;
     loop {
         match bytes.get(i)? {
             b'"' => return Some(i + 1),
-            b'\\' if bytes.get(i + 1) == Some(&b'u') => i += 6,
+            b'\\' if bytes.get(i + 1) == Some(&b'u') => {
+                let leading = (bytes.get(i + 2..i + 6))
+                    .and_then(|hex| u16::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok())
+                    .is_some_and(|n| (0xD800..=0xDBFF).contains(&n));
+                if leading && bytes.get(i + 6) == Some(&b'"') {
+                    return None;
+                }
+                i += 6;
+            }
             b'\\' => i += 2,
             _ => i += 1,
         }
