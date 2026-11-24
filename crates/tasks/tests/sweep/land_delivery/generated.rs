@@ -1065,3 +1065,271 @@ fn a_check_that_passed_on_a_tip_is_not_run_again_while_its_generated_task_waits(
     round(&r, None).1.unwrap();
     assert_eq!(ran(), 2);
 }
+
+// -- dispatched as it is filed ---------------------------------------------------------------------
+
+/// A round as the board runs one, `vars` in its environment: what it said, and how it ended.
+fn round_with(r: &Repo, vars: &[(&str, &str)]) -> (String, Result<String, String>) {
+    let mut out = Vec::new();
+    let result = regenerate::run_by(&r.board.store, &landing(r, vars), &mut out, None);
+    (String::from_utf8(out).unwrap(), result)
+}
+
+/// The dispatch a write started, as the stand-in recorded it (`land SLUG --dispatch --as ACTOR|…`),
+/// run here in its place with `host` answering: who it acted as, and how it ended.
+fn replayed(r: &Repo, start: &str, host: &Host) -> (String, Result<String, String>) {
+    let words: Vec<&str> = start.split('|').next().unwrap().split(' ').collect();
+    let &["land", slug, "--dispatch", "--as", actor] = &words[..] else {
+        panic!("not a dispatch: {start}");
+    };
+    let mut out = Vec::new();
+    let ended = symphony_board::land::dispatch_by(
+        &r.board.store,
+        &landing(r, &[]),
+        slug,
+        actor,
+        &mut out,
+        host,
+    );
+    (actor.to_string(), ended.map_err(refusal))
+}
+
+/// A repository delivering by pull request whose bundle is behind its source, with a stand-in for
+/// the `tasks` a write starts detached, and an orchestrator the board gives the regenerator's task
+/// as it is filed (live past its first live line, and orchestrating another task): the repository,
+/// its host, the environment that starts a dispatch, where the stand-in records each start, and
+/// the orchestrator.
+fn dispatching() -> (Repo, PathBuf, Vec<(String, String)>, PathBuf, String) {
+    let (r, bare) = generating(true);
+    let (program, record) = stand_in(&r);
+    let on = vec![
+        ("TASKS_DISPATCH".to_string(), "on".to_string()),
+        ("TASKS_BIN".to_string(), program.to_string_lossy().into_owned()),
+    ];
+    let orch = r.board.session("orchestrator");
+    r.task("sim/other");
+    (r.board.store)
+        .take_role("sim/other", &orch, "orchestrator")
+        .unwrap();
+    r.board.advance(symphony_board::health::LIVE_SECONDS + 1.0);
+    r.board.store.touch(&orch).unwrap();
+    (r, bare, on, record, orch)
+}
+
+fn vars(on: &[(String, String)]) -> Vec<(&str, &str)> {
+    on.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect()
+}
+
+#[test]
+fn a_task_it_files_is_dispatched_as_one_moved_to_review_and_merged_once_approved_with_no_land() {
+    let (r, bare, on, record, orch) = dispatching();
+    let on = vars(&on);
+    let (said, result) = round_with(&r, &on);
+    result.unwrap_or_else(|why| panic!("{why}\n{said}"));
+    let made_as = pending(&r).unwrap();
+    let slug = made_as.slug.as_str();
+    let task = r.board.store.get(slug).unwrap();
+    assert_eq!(task.status, "review");
+    assert_eq!(task.holders("orchestrator"), [orch.as_str()]);
+    // Started as a move to review starts one, with the land's mark, once the round let go of its
+    // lock: as its orchestrator, as the session that filed it has left.
+    let starts = started(&record, 1);
+    assert_eq!(
+        starts,
+        [format!("land {slug} --dispatch --as {orch}|dispatch|unset")]
+    );
+    assert!(
+        said.contains(&format!(
+            "regenerate: {slug}: its dispatch to the host started detached (its lines go to"
+        )),
+        "{said}"
+    );
+    // Its mark names who moved it, so a write dispatches it before a pull request binds.
+    let mark = lands(&r).join(format!(
+        "{}.dispatching",
+        symphony_board::land::file_stem(slug)
+    ));
+    assert_eq!(fs::read_to_string(&mark).unwrap(), task.created_by);
+    // A later round finds it dispatched: it starts nothing again.
+    let (said, result) = round_with(&r, &on);
+    assert!(result.unwrap().contains("awaiting delivery"), "{said}");
+    assert!(!said.contains("its dispatch"), "{said}");
+    // That dispatch, run: its pull request opened with nothing assessed, eligible pending, and
+    // the host's merge armed.
+    let host = Host::new(&r, &bare);
+    let (actor, ended) = replayed(&r, &starts[0], &host);
+    assert_eq!(actor, orch);
+    let line = ended.unwrap();
+    assert!(line.contains("dispatched"), "{line}");
+    assert_eq!(host.verbs(), ["publish", "arm"]);
+    let published = host.request("publish");
+    assert_eq!(
+        (published["head"].as_str(), &published["operation"]),
+        (Some(made_as.head.as_str()), &json!("generated"))
+    );
+    assert_eq!(published["snapshot"]["eligible"], false);
+    assert!(host.is_armed());
+    assert!(!mark.exists(), "bound, its binding dispatches it from now on");
+    // Its assessor's needs dispatch it again, by its binding: still pending on its review.
+    let assessor = r.board.session("reviewer");
+    let needs = [
+        "needs",
+        slug,
+        "review",
+        "--tip",
+        &made_as.head,
+        "--why",
+        "the outputs alone",
+    ];
+    let (code, out, err) = tasks(&r, &assessor, &needs, &on);
+    assert_eq!(code, 0, "{out}{err}");
+    let starts = started(&record, 2);
+    let (actor, ended) = replayed(&r, &starts[1], &host);
+    assert_eq!(actor, assessor);
+    ended.unwrap();
+    assert_eq!(host.request("publish")["snapshot"]["eligible"], false);
+    // A fresh reviewer's approve naming its head: published eligible, which the host merges by.
+    let reviewer = r.board.session("reviewer");
+    r.board.store.take_role(slug, &reviewer, "reviewer").unwrap();
+    let approve = format!("{}: the outputs alone", made_as.head);
+    let (code, out, err) = tasks(&r, &reviewer, &["verdict", slug, "approve", &approve], &on);
+    assert_eq!(code, 0, "{out}{err}");
+    let starts = started(&record, 3);
+    let (actor, ended) = replayed(&r, &starts[2], &host);
+    assert_eq!(actor, reviewer);
+    ended.unwrap();
+    assert_eq!(host.request("publish")["snapshot"]["eligible"], true);
+    // Nobody ran a land: no merge was asked, the host's own armed merge is what lands it, and the
+    // watcher's round closes the task.
+    assert!(!host.verbs().iter().any(|verb| verb == "merge"), "{:?}", host.verbs());
+    let watching = symphony_board::land::dispatch::Watching {
+        transport: Some(&host),
+        clock: &symphony_board::land::dispatch::seconds,
+        rest: &|_| {},
+        rounds: Some(1),
+    };
+    let mut out = Vec::new();
+    symphony_board::land::dispatch::watch(&r.board.store, &landing(&r, &[]), &mut out, &watching)
+        .unwrap();
+    assert_eq!(status(&r, slug), "done", "{}", String::from_utf8_lossy(&out));
+    assert_eq!(
+        Receipt::read(&lands(&r), slug).unwrap().operation,
+        "generated"
+    );
+    assert_eq!(git(&bare, &["show", "main:gen/out.txt"]), "a");
+}
+
+#[test]
+fn a_dispatch_of_a_task_it_files_that_does_not_start_is_said_on_its_thread_and_made_by_the_next_write()
+{
+    let (r, _bare, on, record, _) = dispatching();
+    // No `tasks` to start: said to its orchestrator as the board's own line, as the session that
+    // filed it has left, and its mark left.
+    let missing = r.dir.join("no-such-tasks").to_string_lossy().into_owned();
+    let (said, result) = round_with(&r, &[("TASKS_DISPATCH", "on"), ("TASKS_BIN", &missing)]);
+    result.unwrap_or_else(|why| panic!("{why}\n{said}"));
+    let made_as = pending(&r).unwrap();
+    let slug = made_as.slug.as_str();
+    let thread = r.board.store.thread(slug).unwrap();
+    let not = format!("land {slug}: its dispatch to the host did not start: {missing}: ");
+    let post = (thread.into_iter())
+        .find(|post| post.text.starts_with(&not))
+        .unwrap_or_else(|| panic!("{:?}", r.board.said(slug)));
+    assert!(
+        post.text.ends_with(&format!(
+            "; `just land {slug} --dispatch` dispatches it, as a later write to it does"
+        )),
+        "{}",
+        post.text
+    );
+    assert_eq!(
+        (post.sender.as_str(), post.recipient.as_deref()),
+        ("board", Some("@orchestrator"))
+    );
+    assert!(
+        said.contains(&format!(
+            "regenerate: {slug}: its dispatch to the host did not start"
+        )),
+        "{said}"
+    );
+    // The next write to it dispatches it by its mark: its assessor's needs.
+    let assessor = r.board.session("reviewer");
+    let needs = ["needs", slug, "review", "--tip", &made_as.head, "--why", "w"];
+    let (code, out, err) = tasks(&r, &assessor, &needs, &vars(&on));
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        started(&record, 1),
+        [format!("land {slug} --dispatch --as {assessor}|dispatch|unset")]
+    );
+}
+
+#[test]
+fn a_dispatch_of_a_task_it_files_that_stops_is_said_on_its_thread_by_its_orchestrator() {
+    let (r, bare, on, record, orch) = dispatching();
+    round_with(&r, &vars(&on)).1.unwrap();
+    let slug = pending(&r).unwrap().slug;
+    let starts = started(&record, 1);
+    // An input changed on the host's main before it ran: what it delivers is stale, refused before
+    // anything is published, and said on its thread to its orchestrator, as whom it acts.
+    on_main(&r, "src/b.txt", "b\n");
+    let host = Host::new(&r, &bare);
+    let (actor, ended) = replayed(&r, &starts[0], &host);
+    assert_eq!(actor, orch);
+    let why = ended.unwrap_err();
+    assert!(why.contains("is stale"), "{why}");
+    assert!(
+        host.verbs().iter().all(|verb| verb != "publish"),
+        "{:?}",
+        host.verbs()
+    );
+    let post = r.board.store.thread(&slug).unwrap().pop().unwrap();
+    assert!(post.text.contains(&why), "{}", post.text);
+    assert_eq!(
+        (post.sender.as_str(), post.recipient.as_deref()),
+        (orch.as_str(), Some("@orchestrator"))
+    );
+}
+
+#[test]
+fn a_task_a_round_cut_short_left_claimed_is_dispatched_once_the_next_moves_it_to_review() {
+    use symphony_board::NewTask;
+    let (r, _bare, kept) = cut_after_the_record();
+    let (program, record) = stand_in(&r);
+    let bin = program.to_string_lossy().into_owned();
+    let store = &r.board.store;
+    let filer = r.board.session("filer");
+    store
+        .create(&NewTask::new(&kept.slug, "Regenerate", &filer))
+        .unwrap();
+    store.claim(&kept.slug, &filer).unwrap();
+    let branch = format!("refs/heads/{}", kept.slug);
+    git(&r.root, &["update-ref", &branch, &kept.head]);
+    let (said, result) = round_with(&r, &[("TASKS_DISPATCH", "on"), ("TASKS_BIN", &bin)]);
+    assert!(result.unwrap().contains("awaiting delivery"), "{said}");
+    assert_eq!(status(&r, &kept.slug), "review");
+    // No orchestrator holds it: its dispatch acts as the session that moved it.
+    assert_eq!(
+        started(&record, 1),
+        [format!("land {} --dispatch --as {filer}|dispatch|unset", kept.slug)]
+    );
+}
+
+#[test]
+fn a_later_round_dispatches_no_task_bound_to_its_pull_request_or_cancelled() {
+    let (r, bare, on, record, orch) = dispatching();
+    let on = vars(&on);
+    round_with(&r, &on).1.unwrap();
+    let slug = pending(&r).unwrap().slug;
+    let host = Host::new(&r, &bare);
+    replayed(&r, &started(&record, 1)[0], &host).1.unwrap();
+    // Bound: its writes dispatch it by its binding, and a round starts nothing.
+    let (said, result) = round_with(&r, &on);
+    assert!(result.unwrap().contains("awaiting delivery"), "{said}");
+    assert!(!said.contains("its dispatch"), "{said}");
+    // Cancelled, by somebody: its inputs stay, a round waits and starts nothing.
+    r.board.store.move_to(&slug, "cancelled", &orch).unwrap();
+    let (said, result) = round_with(&r, &on);
+    assert!(result.unwrap().contains("was cancelled"), "{said}");
+    assert!(!said.contains("its dispatch"), "{said}");
+    assert_eq!(fs::read_to_string(&record).unwrap().lines().count(), 1);
+}
