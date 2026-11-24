@@ -224,7 +224,8 @@ once the land's `owner` stamp stands on the tip of its branch (`refs/heads/SLUG`
 reader ([Needed stamps](#needed-stamps)): an owner's approve on the task's thread naming the tip,
 `unblocked: the owner approved 1a2b3c4; back to review`, or the owner's approve of every card
 the branch posted, committed, with nothing after it but the owner's lines and merges of the
-default branch, `unblocked: the owner approved card NAME, at 1a2b3c4; back to review`; an approve
+default branch, `unblocked: the owner approved card NAME, at 1a2b3c4; back to review`; a
+decider's ([People](#people)) is said as theirs, `unblocked: ana approved 1a2b3c4`; an approve
 of another commit, or an owner's line no commit carries, ends nothing. The machine's one server
 judges both on its board clock,
 from the cards its pages hold and the board it read that tick (`crates/symphony/src/decided.rs`):
@@ -1618,7 +1619,8 @@ why.
   default) or uploaded (`/artifacts/uploads/`, the owner's or an agent's `symphony attach`):
   met; missing while the newest such post names another commit or none, or there is none.
 - **owner**: the owner's approve naming the tip, a line of the owner's whose first word is
-  `approve`: met; held until then. Needed or not, it is held while a card the task posted
+  `approve`, or of a person holding `decide` on the board ([People](#people)): met; held until
+  then. Needed or not, it is held while a card the task posted
   waits on the owner, by the sign-off lane's rule above. Until the task page is ported
   ([the design](analysis/needed-stamps.md#the-task-page)), its approval offers the stamp:
   where no plugin's board action offers anything, the Symphony's own, `owner-approve`,
@@ -1652,7 +1654,8 @@ The server keeps what its own gates are read from, each part by what tells it ha
 
 - the task, its thread and the tasks under it, by the task's stamp on the board
   (`Store::task_stamp`): its row, links, roles and executors' recorded branches, the tasks
-  right under it and its thread's newest line, in one small read;
+  right under it and its thread's newest line, in one small read, which brings the board's
+  [people](#people) too, so who holds decide for its `owner` stamp is read with it;
 - the recorder's runs, by their files: the history and each operation's record are read again
   once the file is another, by its length, when it changed and its inode, and an unfinished
   operation's lease is asked on every read;
@@ -1660,8 +1663,8 @@ The server keeps what its own gates are read from, each part by what tells it ha
 - whether the tip holds work of its own, by that tip and the default branch's.
 
 So a read with nothing new asks the board once, for the stamp, resolves the three refs, and reads
-nothing else again; a post, a role, a recorded run, a new tip or a commit on the default branch
-shows at the next read. One thing shows later: a task moved under one of the task's subtasks
+nothing else again; a post, a role, a recorded run, a new tip, a commit on the default branch or
+a change of the board's people shows at the next read. One thing shows later: a task moved under one of the task's subtasks
 joins the runs its `tests` stamp counts at the task's next post, role, status or subtask. The
 land reads its own, never what the page keeps.
 
@@ -1753,8 +1756,10 @@ landing](#the-default-landing)).
   register, that the merge base of T with the default branch holds no copy of in any document, the
   owner's lines and its mark aside, as the pages read a branch's posted cards), each card it posted
   has `approved` as its newest owner verdict at T, committed (a reject, a question, pending,
-  dismissed or none, on any of them, and it does not; a person a board named decides no stamp, so
-  her approve is none and her later word that is no approve stops it), and nothing came after the
+  dismissed or none, on any of them, and it does not; a person a board named decides as the owner
+  does while she holds `decide` there ([People](#people)), and her approve is then named hers;
+  one who holds none decides nothing, so her approve is none, and anyone's later word that is no
+  approve stops it), and nothing came after the
   newest of those approves but the owner's lines: every commit on T's first-parent line after the
   one the owner's page showed when the owner gave it (the commit before the first that carries the
   approve) adds the owner's lines under those cards and nothing else, or is a merge of the default
@@ -2326,6 +2331,75 @@ server reads the board and its writes are refused:
 
 From the restart, saves open asks, and the open verdict tasks wait as they were
 until the last step turns them.
+
+## People
+
+A board names the people who reach it besides the person at the machine, the groups they are in
+and what each may do ([where people are kept](../product/analysis/users-and-identity.md#where-people-are-kept)).
+With nobody named, the person at the machine holds every power and everything reads and writes
+as it did before. That person stays `owner`, with every power, once others are named.
+
+- **The rows** are the board's own, beside its tasks, in schema 28's additive step `PEOPLE`: a
+  person (`people`, by short name: their groups and the powers they hold themselves), a group
+  (`people_group`: its powers) and a log of every change (`people_log`, numbered from 1, the
+  newest the board's people revision). A change writes the log's next line and its rows at once,
+  or nothing: two made at once each take a number of their own, the second read again and decided
+  again. A copy carries the three tables. A board made without the step reads nobody and refuses
+  a change, `people are not on this board yet`, with nothing written.
+- **The powers** are `read`, `speak`, `decide`, `direct_agents` and `administer`. Every power
+  includes read, and a person holds their own and their groups'. A person listed with none reaches
+  nothing. `direct_agents` is given to no one yet: it is refused as a grant, a person's or a
+  group's, until a board holds the words of someone who may not direct agents (step 5 of [the way
+  from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner)), so every
+  route that reaches the agents stays the person at the machine's. `administer` guards nothing
+  yet: the command is the terminal's.
+- **One name space.** A person's name and a group's are short names, as a line writes them
+  ([REVIEW](REVIEW.md#card-history)), never `owner`, `agent`, `board` or
+  `unknown`, never another person's or group's, and never a handle any session on the board was
+  given. A session registering is given no handle a person or group holds, and the command line
+  writes as sessions alone, so a thread line under a person's name is theirs, written through the
+  Symphony. A name stays theirs across a removal, as their profile keeps it: nothing removes a
+  profile, and `people add` of a name that has one adds that same person, so a removed person's
+  lines are never read as another's.
+- **A profile is the machine's**, not the board's: `people.json` in the machine folder, with its
+  lock `people.lock`, both mode 600, holding each person's display name, sign-ins
+  (`SERVICE:SUBJECT`, each one person's alone, matched ignoring case), git handles, emails, chat
+  and preferences. A board and its copies hold none of it. The board's log and the server's log
+  lines name the short name, never a sign-in's subject or an email.
+- **Who reaches a board.** A visitor under another Tailscale login is the profile holding that
+  `tailscale` sign-in, on each board that gives its short name a power, as that name
+  ([the server guide](../../apps/symphony-server/README.md#who-a-request-is-from)).
+- **What each write needs**, read from the board as the write arrives, so a revoke holds from the
+  next one: a card's verdict and its note, Later, a task's priority, field, cancel and action (the
+  approve that is the `owner` stamp among them), a workflow's edge and a setting need `decide`; a
+  comment, a message, a task's message, an ask, its reply, the quick chat and a quick task need
+  `speak` and `direct_agents`; an upload needs `speak`; an attempt's controls need `decide` and
+  `direct_agents`; anything else is the person at the machine's alone. A refusal is a 403 naming
+  the power, `Forbidden: ana may not decide on this board`, and nothing is written. A custom
+  workflow's `owner` capability is held by each person holding `decide`, as by the person at the
+  machine.
+- **The `owner` stamp** is met by the approve of the owner or of anyone holding `decide` on the
+  board, on the thread or on the cards, named as theirs: `Approved by ana at 1a2b3c4`. Who
+  decides is read when the stamp is read. A revoke withdraws an approve its person gave, and a
+  grant made after an approve counts that approve too. That is safe: while she lacked `decide`
+  the server refused her verdicts and her approve, and no route writes her words to the agents
+  yet, so no line of hers that reads as an approve was written through the Symphony while she
+  could not decide. A line committed into a document by hand is its committer's, as an owner's
+  line written so already is.
+
+`just tasks people … --as HANDLE` changes them, each change a line of the log naming `--as`; a
+change of nothing writes nothing, and a refusal says why and writes nothing, on the board or in
+the machine folder:
+
+- `list [--json]`: each person, their powers, groups and the services they sign in by, never a
+  subject; `log [--json]`: the changes in order.
+- `add NAME [--display D] [--signin SERVICE:SUBJECT]… [--git H]… [--power P]… [--group G]…`: the
+  board's row, and the profile, written or added to. `remove NAME`: the row goes, their lines stay
+  theirs and their profile the machine's.
+- `join NAME GROUP`, `leave NAME GROUP`, `grant NAME POWER…`, `revoke NAME POWER…`, `grant --group
+  GROUP POWER…`, `revoke --group GROUP POWER…`, `group add GROUP [POWER…]`, `group remove GROUP`
+  (its members are out of it).
+- `profile NAME [--display D] [--signin …]… [--git H]…`: the profile alone, on no board.
 
 ## Sessions
 

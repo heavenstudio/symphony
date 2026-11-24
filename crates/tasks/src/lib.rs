@@ -74,6 +74,7 @@ pub mod on_land;
 pub mod on_review;
 pub mod orchestration;
 pub mod order;
+pub mod people;
 pub mod pg;
 pub mod port;
 pub mod project;

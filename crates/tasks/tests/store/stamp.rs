@@ -2,6 +2,7 @@
 //! has changed, another after each thing that changes them.
 
 use crate::common::{Fixture, Seed, under};
+use symphony_board::people::{Holder, Power};
 use symphony_board::{NewLaunch, TaskStamp};
 
 fn stamp(f: &Fixture, slug: &str) -> TaskStamp {
@@ -9,6 +10,53 @@ fn stamp(f: &Fixture, slug: &str) -> TaskStamp {
         .task_stamp(slug)
         .unwrap()
         .expect("the task has a stamp")
+}
+
+/// The stamp carries who decides on the board, so a reader of the `owner` stamp asks no more of
+/// the board while nothing changed: a change of who decides, by a person's own power or a
+/// group's, moves every task's stamp, and a change of who is on the board that gives no one
+/// decide moves it too, as the people read with it are another.
+#[test]
+fn a_tasks_stamp_names_who_decides_and_moves_when_that_changes() {
+    let f = Fixture::new(Seed::default());
+    f.task("sim/jump");
+    let by = f.session("worker");
+    let first = stamp(&f, "sim/jump");
+    assert!(
+        first.deciders().is_empty(),
+        "with nobody named, the owner alone"
+    );
+    f.store
+        .add_person("ana", &[], &[Power::Decide], &by)
+        .unwrap();
+    let ana = stamp(&f, "sim/jump");
+    assert_ne!(ana, first);
+    assert_eq!(ana.deciders(), ["ana"]);
+    f.store.add_group("staff", &[Power::Decide], &by).unwrap();
+    f.store
+        .add_person("bob", &["staff".into()], &[Power::Speak], &by)
+        .unwrap();
+    assert_eq!(
+        stamp(&f, "sim/jump").deciders(),
+        ["ana", "bob"],
+        "by bob's group"
+    );
+    f.store
+        .revoke(Holder::Person("ana"), &[Power::Decide], &by)
+        .unwrap();
+    let revoked = stamp(&f, "sim/jump");
+    assert_eq!(
+        revoked.deciders(),
+        ["bob"],
+        "a revoke holds at the next read"
+    );
+    f.store
+        .add_person("cleo", &[], &[Power::Speak], &by)
+        .unwrap();
+    let cleo = stamp(&f, "sim/jump");
+    assert_ne!(cleo, revoked);
+    assert_eq!(cleo.deciders(), ["bob"]);
+    assert_eq!(stamp(&f, "sim/jump"), cleo, "and it stands");
 }
 
 #[test]

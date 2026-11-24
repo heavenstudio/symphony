@@ -282,11 +282,19 @@ fn the_owners_approve_counts_where_it_names_the_tip() {
     let tip = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
     let other = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
     let nowhere = Path::new("/nowhere");
-    let approves = |thread: &[Message]| approves(thread, tip, nowhere);
+    let approves = |thread: &[Message]| approves(thread, tip, nowhere, &[]);
     assert_eq!(
         approves(&[post(1, "owner", "msg", &format!("approve {tip}"))]).as_deref(),
         Some("the owner approved 1a2b3c4")
     );
+    // A decider's approve counts while they decide, and is said as theirs.
+    let hers = [post(1, "ana", "msg", &format!("approve {tip}"))];
+    let deciders = ["ana".to_string()];
+    assert_eq!(
+        super::approves(&hers, tip, nowhere, &deciders).as_deref(),
+        Some("ana approved 1a2b3c4")
+    );
+    assert_eq!(approves(&hers), None, "no decide, no approve");
     for thread in [
         vec![post(1, "owner", "msg", &format!("approve {other}"))],
         vec![post(1, "orch", "msg", &format!("approve {tip}"))],

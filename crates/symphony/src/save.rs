@@ -336,7 +336,10 @@ impl Saves {
                 owner,
             )?,
         };
-        let host = symphony_board::workflow::Host::local();
+        let host = store.host_for(owner).map_err(|e| Refused {
+            failure: Failure::from(e),
+            guard: None,
+        })?;
         match store.apply_attested(owner, &host, &request, &attestations) {
             Ok(result) => Ok(json!({"ok": true, "result": result})),
             Err(refused) => {

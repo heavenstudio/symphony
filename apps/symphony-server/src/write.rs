@@ -76,6 +76,11 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
             "Forbidden: the Host or Origin header does not name this app",
         );
     }
+    if !crate::front::Admitted::machine(request.extensions())
+        && let Some(refused) = unpermitted(shared, request.uri().path(), &route, &actor).await
+    {
+        return refused;
+    }
     if route == symphony_api::UPLOAD_PATH {
         return upload(shared, request).await;
     }
@@ -154,6 +159,46 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
         ),
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
+}
+
+/// The refusal of `actor`'s write to `route` (at `path`), a visitor a board named and not the
+/// person at the machine, where they lack what it needs ([`crate::powers`]): none where they hold
+/// it. Their powers are read from the board's rows now, before the write's body is read, so a
+/// power revoked since a page was opened holds at once, and a board that cannot be read refuses.
+/// The server's log line names them by their short name alone.
+async fn unpermitted(
+    shared: &Arc<Shared>,
+    path: &str,
+    route: &str,
+    actor: &symphony_plugin::Actor,
+) -> Option<Response> {
+    let needs = crate::powers::needs(route);
+    let (root, name) = (shared.root.clone(), actor.name().to_string());
+    let asked = name.clone();
+    let held = crate::spawn::blocking(move || {
+        let people = symphony::taskview::connect(&root)?.people();
+        people
+            .map(|people| people.powers_of(&asked))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|held| held);
+    let held = match held {
+        Ok(held) => held,
+        Err(why) => {
+            eprintln!(
+                "· refused a write to {path} by {name}: the board's people were not read: {why}"
+            );
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("the task board cannot be reached to read who may write: {why}"),
+            ));
+        }
+    };
+    let refused = crate::powers::refused(&name, &held, needs)?;
+    eprintln!("· refused a write to {path} by {name}: {refused}");
+    Some(error(StatusCode::FORBIDDEN, refused))
 }
 
 /// The owner's workflow operation (`symphony::save::WORKFLOW_APPLY`): its result, or its refusal

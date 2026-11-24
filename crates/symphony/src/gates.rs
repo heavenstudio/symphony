@@ -1035,6 +1035,7 @@ pub fn answer(
         runs: &runs,
         branch: task.branch.clone(),
         ours: &|| task.ours(store).to_vec(),
+        deciders: &|| task.deciders(store),
     };
     Ok(put_together(&read, root, pending, kept))
 }
@@ -1058,6 +1059,7 @@ pub fn answer_from(
         runs,
         branch,
         ours: &|| stamps::family(store, &record.slug),
+        deciders: &|| store.deciders(),
     };
     Ok(put_together(&read, root, pending, kept))
 }
@@ -1073,6 +1075,9 @@ struct Read<'a> {
     /// The task and the work under it ([`stamps::family`]), asked only when a gate reads their
     /// runs.
     ours: &'a dyn Fn() -> Vec<String>,
+    /// The people who hold decide on the board ([`symphony_board::Store::deciders`]), asked only
+    /// when the task needs its `owner` stamp.
+    deciders: &'a dyn Fn() -> Vec<String>,
 }
 
 /// The gates of the task `read` holds, in the project at `root`: the Symphony's own from what was
@@ -1127,8 +1132,15 @@ fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) ->
                 vec![record.slug.clone()]
             };
             let folder = read::folder(&project.artifacts, &record.slug);
-            let by_cards =
-                |tip: &str| (kept.inputs).posted(root, &record.slug, tip, default_tip.as_deref());
+            let deciders = if needed.iter().any(|need| need == symphony_api::gates::OWNER) {
+                (read.deciders)()
+            } else {
+                Vec::new()
+            };
+            let by_cards = |tip: &str| {
+                let default_tip = default_tip.as_deref();
+                (kept.inputs).posted(root, &record.slug, tip, default_tip, &deciders)
+            };
             let evidence = stamps::Evidence {
                 thread,
                 runs,
@@ -1137,6 +1149,7 @@ fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) ->
                 branch: &branch,
                 tip: at.as_deref(),
                 cards: &posted,
+                deciders: &deciders,
                 posted: &by_cards,
             };
             stamps::stamps(record, &catalogue, &evidence)

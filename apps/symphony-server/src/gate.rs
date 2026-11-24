@@ -23,9 +23,9 @@
 //! What a visitor reaches is each board's word ([`Gate::member`], the roster): the actor their
 //! writes there take, or none for a board that has not added them, which is then to them a project
 //! the server does not hold. The person at the machine is on every board, as the gate's person
-//! ([`Gate::person`], [`symphony_board::workflow::local_actor`]). Until a board holds people
-//! (docs/product/analysis/users-and-identity.md, "The way from one owner", step 3) the roster adds
-//! nobody else to any board.
+//! ([`Gate::person`], [`symphony_board::workflow::local_actor`]). The gate on this machine's own
+//! Tailscale asks the machine's profiles and each board's people ([`crate::roster`]); a gate made
+//! without a roster adds nobody else to any board.
 
 use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
@@ -180,7 +180,7 @@ impl Gate {
     }
 
     /// The same gate, asking `roster` which boards have added a visitor who is not the person at
-    /// the machine: a test host's, until a board holds people.
+    /// the machine: the machine's people ([`crate::roster::of`]), or a test host's.
     #[must_use]
     pub fn with_roster(self, roster: Roster) -> Gate {
         Gate { roster, ..self }
@@ -206,12 +206,14 @@ impl Gate {
     }
 
     /// [`Gate::tailscale`], each `tailscale whois` given `patience` to answer where the server gives
-    /// it [`CLI_TIMEOUT`]: a test's, on a machine whose load a deadline must not judge.
+    /// it [`CLI_TIMEOUT`]: a test's, on a machine whose load a deadline must not judge. Its roster
+    /// is the people of the machine folder the environment names ([`crate::roster`]).
     pub fn tailscale_within(patience: Duration) -> Gate {
         Gate::new(
             Arc::new(move |ip: &str| whois_by(find_tailscale(), ip, patience)),
             Arc::new(Instant::now),
         )
+        .with_roster(crate::roster::of_this_machine())
     }
 
     /// Host validation for the routes served here. A loopback client can still be a browser

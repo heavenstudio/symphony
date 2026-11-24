@@ -171,8 +171,14 @@ impl Store {
             .as_ref()
             .map(|parent| format!("{REFUSED}no parent session {}", repr(parent)));
         let (handle, found) = self.retrying(|| {
-            let handles = Statement::from(pg::HANDLES);
-            let taken: Vec<String> = self.read_together(handles, json!({}))?;
+            // A person's or a group's name is never a session's handle, so a line under it is
+            // never read as the other's ([`crate::people::refused_name`] keeps out the reverse).
+            let taken = self.request(Statement::from(pg::TAKEN), json!({}))?;
+            let taken: Vec<String> = (taken.last().cloned())
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| Failure::Stop(Error::Db(format!("the names taken: {e}"))))?
+                .unwrap_or_default();
             let handle = self
                 .new_handle(&taken.into_iter().collect())
                 .map_err(Failure::Stop)?;

@@ -218,13 +218,17 @@ pub struct Evidence<'a> {
     /// The main checkout, where the `owner` stamp reads the cards the task's branch posted
     /// ([`read::owner_at`]).
     pub main: PathBuf,
+    /// The people who hold decide on the board, whose approve meets the `owner` stamp as the
+    /// owner's does ([`read::owner_at_by`]): read only when `owner` is needed, and none where the
+    /// board's people cannot be read, so the owner's approve alone meets it then.
+    pub deciders: Vec<String>,
 }
 
 impl<'a> Evidence<'a> {
     /// The evidence of the task `slug`, its `thread` read, for the stamps `needed`: the runs of the
     /// work folder the recorder keeps for `env`'s board ([`recorded::folder`]) and the tasks whose
     /// runs are the task's, both read only when `tests` is needed; the artifacts folder the main
-    /// checkout `main` names.
+    /// checkout `main` names; the board's deciders, read only when `owner` is.
     pub fn of(
         store: &Store,
         env: &Env,
@@ -242,12 +246,18 @@ impl<'a> Evidence<'a> {
             (Vec::new(), vec![slug.to_string()])
         };
         let artifacts = crate::project::artifacts(main).unwrap_or_else(|| "artifacts".into());
+        let deciders = if needed.has(OWNER) {
+            store.deciders()
+        } else {
+            Vec::new()
+        };
         Evidence {
             thread,
             runs,
             ours,
             folder: read::folder(&artifacts, slug),
             main: main.to_path_buf(),
+            deciders,
         }
     }
 }
@@ -302,7 +312,7 @@ pub fn standing(
                 evidence.ours.iter().any(|ours| ours == task)
             }),
             PICTURES => read::pictures(evidence.thread, tip, &evidence.folder),
-            OWNER => read::owner_at(evidence.thread, tip, &evidence.main),
+            OWNER => read::owner_at_by(evidence.thread, tip, &evidence.main, &evidence.deciders),
             _ => continue,
         };
         if reading.met {

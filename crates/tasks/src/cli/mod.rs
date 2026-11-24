@@ -99,9 +99,10 @@ impl Env {
 /// agent identity; owner saves call the store directly, and so do a person's
 /// ([`crate::Store::for_person`]), which the command line never makes: a name it is given is a
 /// session's handle, refused by the board where no session holds it. A word no person is given
-/// ([`symphony_docs::syntax::RESERVED_NAMES`]) is refused here, before the board is read; a
-/// person's own name is refused once a board holds people, with their powers (step 3 of
-/// docs/product/analysis/users-and-identity.md).
+/// ([`symphony_docs::syntax::RESERVED_NAMES`]) is refused here, before the board is read. A
+/// person's or a group's name is refused by the board as any name no session holds: no session is
+/// ever given one ([`crate::people::refused_name`], `Store::register`), so no line the command
+/// line writes reads as a person's.
 fn check_actor(actor: &str) -> Result<(), crate::Error> {
     if actor == "owner" {
         return Err(crate::Error::Refused(
