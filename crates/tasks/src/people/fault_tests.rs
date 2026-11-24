@@ -194,9 +194,21 @@ fn a_fault_of_data_is_the_value_just_read_or_its_objects_at_a_key() {
     assert_eq!(profiles("[4]"), [Step::Item(0)]);
 }
 
-/// A member no profile takes, which serde_json skips unvisited, is read into like any other.
+/// A member no profile takes, which serde_json skips unvisited, is read into like any other, its
+/// strings closed at their quote whatever surrogate stands before it, as serde_json skips them.
 #[test]
 fn a_member_no_profile_takes_is_read_into() {
+    for (text, at) in [
+        (
+            r#"{"people": [{"name": "ana", "x": "\ud800", "signins": 4}]}"#,
+            vec![key("people"), Step::Item(0), key("signins")],
+        ),
+        (r#"{"x": "\ud800", "people": 4}"#, vec![key("people")]),
+        (r#"{"signins": "\ud800", "people": 4}"#, vec![key("people")]),
+        (r#"{"signins": "\ud800"} x"#, vec![]),
+    ] {
+        assert_eq!(profiles(text), at, "{text}");
+    }
     assert_eq!(
         profiles(r#"{"signins": [{"service" 1}]}"#),
         [key("signins"), Step::Item(0)]
