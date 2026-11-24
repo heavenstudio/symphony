@@ -52,6 +52,17 @@ async fn asked_from(shared: &Arc<Shared>, client: &str) -> (StatusCode, String) 
 /// machine's, and whose roster adds that login to the board at `added` alone, as Ana.
 fn laptop_gate(added: &Path, ana: &Actor) -> crate::gate::Gate {
     let (added, ana) = (added.to_path_buf(), ana.clone());
+    laptop_with(Arc::new(
+        move |root: &Path, visitor: &crate::gate::Visitor| {
+            let her = matches!(visitor, crate::gate::Visitor::Login(login) if login.name == "ana@example.com");
+            (her && root == added).then(|| ana.clone())
+        },
+    ))
+}
+
+/// A gate whose whois names a colleague's laptop at [`LAPTOP`], under a login other than this
+/// machine's, and whose roster is `roster`.
+fn laptop_with(roster: crate::gate::Roster) -> crate::gate::Gate {
     crate::gate::Gate::new(
         Arc::new(|address: &str| {
             Ok((address == LAPTOP_IP).then(|| {
@@ -63,10 +74,7 @@ fn laptop_gate(added: &Path, ana: &Actor) -> crate::gate::Gate {
     .with_status(Arc::new(|| {
         Ok(r#"{"Self": {"DNSName": "studio.tail.ts.net.", "UserID": 11}}"#.to_string())
     }))
-    .with_roster(Arc::new(move |root: &Path, visitor: &crate::gate::Visitor| {
-        let her = matches!(visitor, crate::gate::Visitor::Login(login) if login.name == "ana@example.com");
-        (her && root == added).then(|| ana.clone())
-    }))
+    .with_roster(roster)
 }
 
 const LAPTOP_IP: &str = "100.101.102.104";
@@ -198,6 +206,86 @@ async fn a_person_is_refused_each_write_whose_power_she_lacks_and_nothing_is_wri
         .unwrap();
     let (status, _) = asked_from(&shared, LAPTOP).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+/// The machine's own roster ([`crate::roster::of`]): Ana's login is her profile's sign-in in the
+/// machine folder, and the board at the project gives her decide, so her save is hers, shown as
+/// her profile shows her; with her power revoked she reaches the board no more.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_machines_roster_puts_a_profiles_login_on_a_board_that_gives_her_a_power() {
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
+    let machine = tree.root.join("machine");
+    symphony_board::people::Profiles::change(&machine, |profiles| {
+        profiles.people.push(symphony_board::people::Profile {
+            name: "ana".into(),
+            display: "Ana Lima".into(),
+            signins: vec![symphony_board::people::Signin::parse(
+                "tailscale:ana@example.com",
+            )?],
+            ..Default::default()
+        });
+        Ok(())
+    })
+    .unwrap();
+    let _board = Board::holding(&root, &[Power::Decide]);
+    let gate = laptop_with(crate::roster::of(machine));
+    let visitor = crate::gate::Visitor::Login(crate::gate::Login {
+        id: 12,
+        name: "ana@example.com".into(),
+        display: "whoever Tailscale says".into(),
+    });
+    let ana = gate.member(&root, &visitor).expect("on the board");
+    assert_eq!(
+        (ana.name(), ana.sender.display.as_str()),
+        ("ana", "Ana Lima")
+    );
+    let shared = Shared::new(1, 8123, &root, None, gate);
+    let (status, body) = asked_from(&shared, LAPTOP).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    shared.saves.get().unwrap().close();
+    let page = std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap();
+    assert!(
+        page.lines()
+            .any(|l| l.ends_with("] ana · question — Which one?")),
+        "{page}"
+    );
+    let store = symphony_board::cli::connect(&symphony_board::cli::Env {
+        vars: Default::default(),
+        cwd: root.clone(),
+    })
+    .unwrap();
+    store
+        .revoke(Holder::Person("ana"), &[Power::Decide], "owner")
+        .unwrap();
+    assert!(
+        laptop_with(crate::roster::of(tree.root.join("machine")))
+            .member(&root, &visitor)
+            .is_none()
+    );
+}
+
+/// A person's write on a project whose board cannot be read is refused as the board unreached,
+/// 503, and nothing is written: no failed read lets a write through.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_persons_write_where_the_board_cannot_be_read_is_refused_and_writes_nothing() {
+    let ana = Actor::new(
+        Sender::new("ana", "Ana Lima", vec![]),
+        symphony_board::workflow::person("ana"),
+    );
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
+    let shared = Shared::new(1, 8123, &root, None, laptop_gate(&root, &ana));
+    let (status, body) = asked_from(&shared, LAPTOP).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        body.contains("the task board cannot be reached to read who may write"),
+        "{body}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap(),
+        PAGE
+    );
 }
 
 /// `body` posted at `route` through the router of `shared` from Ana's laptop: the status and body.

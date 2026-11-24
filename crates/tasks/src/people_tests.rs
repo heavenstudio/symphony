@@ -248,6 +248,22 @@ fn profiles_and_their_lock_are_the_machine_accounts_alone_and_kept_as_written() 
     assert_eq!(left, [FILE, LOCK]);
 }
 
+/// Profiles that cannot be read, or written, say where and leave nothing beside them: a folder
+/// where the file would be is neither read as none nor written over.
+#[test]
+fn profiles_that_cannot_be_read_or_written_say_where_and_leave_no_temporary_file() {
+    let machine = Machine::new("blocked");
+    fs::create_dir_all(machine.0.join(FILE)).unwrap();
+    let read = Profiles::read(&machine.0).unwrap_err();
+    assert!(read.contains(FILE), "{read}");
+    let written = Profiles::default().write(&machine.0).unwrap_err();
+    assert!(written.contains(FILE), "{written}");
+    let left: Vec<String> = (fs::read_dir(&machine.0).unwrap())
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, [FILE], "no temporary file is left");
+}
+
 #[test]
 fn a_lock_made_open_by_another_is_held_to_the_mode_and_a_change_of_nothing_writes_nothing() {
     let machine = Machine::new("loose");

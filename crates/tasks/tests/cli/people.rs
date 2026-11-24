@@ -32,6 +32,10 @@ fn a_person_is_added_with_a_profile_of_their_own_and_listed_by_what_they_hold() 
         "nobody is on this board but the person at the machine, who holds every power\n"
     );
     assert_eq!(
+        c.ok(&me, &["people", "log"]),
+        "no change was made to this board's people\n"
+    );
+    assert_eq!(
         c.ok(&me, &["people", "group", "add", "staff", "speak"]),
         "the group staff is on this board (change 1), holding speak\n"
     );
@@ -227,6 +231,12 @@ fn a_sign_in_is_one_persons_and_a_refusal_writes_nothing_anywhere() {
         ),
         fails(&c, &me, &["people", "frobnicate"]),
         fails(&c, &me, &["people", "add"]),
+        fails(&c, &me, &["people", "grant"]),
+        fails(
+            &c,
+            &me,
+            &["people", "grant", "--group", "a", "--group", "b", "decide"],
+        ),
     ];
     assert!(refusals.iter().all(|(code, _)| *code == 1), "{refusals:?}");
     let said = |at: usize| refusals[at].1.as_str();
@@ -265,6 +275,13 @@ fn a_sign_in_is_one_persons_and_a_refusal_writes_nothing_anywhere() {
         "{}",
         said(11)
     );
+    for at in [13, 14] {
+        assert!(
+            said(at).contains("grant and revoke take NAME POWER…, or --group GROUP POWER…"),
+            "{}",
+            said(at)
+        );
+    }
     assert_eq!(
         (
             c.ok(&me, &["people", "list", "--json"]),
@@ -343,4 +360,27 @@ fn a_persons_name_is_no_handle_the_command_line_writes_as() {
         before,
         "nothing is on the thread"
     );
+}
+
+/// A profile that cannot be written once the board took the person takes the board's change back,
+/// so the board names no one whose sign-ins the machine does not hold.
+#[test]
+fn a_person_whose_profile_cannot_be_written_is_taken_off_the_board_again() {
+    let (c, me, machine) = case("people-unwritten");
+    // A folder where the lock would be: the profiles read as none, and no change of them is made.
+    std::fs::create_dir_all(machine.join(symphony_board::people::LOCK)).unwrap();
+    let (code, said) = fails(&c, &me, &["people", "add", "ana", "--power", "decide"]);
+    assert_eq!(code, 2, "a failure, not a refusal: {said}");
+    assert!(
+        said.contains("ana's profile could not be written"),
+        "{said}"
+    );
+    assert!(said.contains("is taken back"), "{said}");
+    assert_eq!(
+        c.ok(&me, &["people", "list"]),
+        "nobody is on this board but the person at the machine, who holds every power\n"
+    );
+    let log = c.ok(&me, &["people", "log"]);
+    assert_eq!(log.lines().count(), 2, "the add and its taking back: {log}");
+    assert!(!machine.join(symphony_board::people::FILE).exists());
 }

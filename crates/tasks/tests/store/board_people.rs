@@ -209,6 +209,7 @@ fn a_refused_change_says_why_and_writes_nothing() {
         refused(f.store.grant(Holder::Group("crew"), &[Power::Decide], BY)),
         refused(f.store.revoke(Holder::Person("ana"), &[Power::Decide], BY)),
         refused(f.store.remove_group("crew", BY)),
+        refused(f.store.revoke(Holder::Group("staff"), &[Power::Speak], BY)),
     ];
     for why in &refusals {
         assert!(why.ends_with("nothing was written"), "{why}");
@@ -233,6 +234,7 @@ fn a_refused_change_says_why_and_writes_nothing() {
     assert!(refusals[13].starts_with("ana is in no group staff"));
     assert!(refusals[14].starts_with("name at least one power"));
     assert!(refusals[17].starts_with("the person ana holds none of those powers"));
+    assert!(refusals[19].starts_with("the group staff holds none of those powers"));
     assert_eq!((f.store.people().unwrap(), logged(&f.store)), before);
 }
 

@@ -362,6 +362,49 @@ fn a_hold_on_the_owners_approve_ends_on_his_approve_of_the_card_its_branch_poste
     );
 }
 
+/// A person the board gives decide ends the hold by her approve of the card its branch posted, as
+/// the owner's does, and the line names her: before the board gives her decide the same committed
+/// approve leaves it held, and the grant that follows counts it.
+#[test]
+fn a_hold_on_the_owners_approve_ends_on_a_deciders_approve_of_the_card_named_as_hers() {
+    use symphony_board::people::{Holder, Power};
+    let tree = Tree::new();
+    let root = project(&tree, "");
+    let worktree = branch_posting_the_card(&tree, &root);
+    let (f, orch) = board("review", true);
+    f.store
+        .hold_blocked_on(
+            SLUG,
+            &orch,
+            Some(On {
+                thing: "check:owner",
+                why: None,
+            }),
+        )
+        .unwrap();
+    f.store
+        .add_person("ana", &[], &[Power::Speak], &orch)
+        .unwrap();
+    let hers = format!("{LAYOUT}  [2026-11-20 05:00] ana · approved — wider it is\n");
+    std::fs::write(worktree.join(DOC), register(&hers)).unwrap();
+    git(&worktree, &["commit", "-qam", "Ana's approve of layout"]);
+    assert!(!look(&hub(&root, true), &f), "she holds no decide");
+    assert_eq!(status(&f), "blocked");
+    f.store
+        .grant(Holder::Person("ana"), &[Power::Decide], &orch)
+        .unwrap();
+    let tip = symphony_board::sweep::git::rev(&root, SLUG).expect("the branch is there");
+    assert!(look(&hub(&root, true), &f));
+    assert_eq!(status(&f), "review");
+    assert_eq!(
+        lines(&f, "unblocked: "),
+        [format!(
+            "unblocked: ana approved card layout, at {}; back to review",
+            &tip[..7]
+        )]
+    );
+}
+
 /// A hold whose task has no branch of its name (a landing of another branch's) names no tip: it
 /// stays, and the look says nothing went wrong.
 #[test]
