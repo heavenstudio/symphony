@@ -6,7 +6,8 @@
 //! says that answer on the wire ([`symphony_api::Owner`]), with whom the reader may hand it to.
 //!
 //! On a board that names nobody nothing is said: every thing is the person at the machine's, and
-//! the page draws as it did before there were groups.
+//! the page draws as it did before there were groups. What waits on one reader of them, of a
+//! page's queue, board and pending list, is [`theirs`].
 
 use std::collections::BTreeMap;
 use symphony_api::{CardOwners, Owner};
@@ -15,6 +16,8 @@ use symphony_board::people::ownership::{self, By, Kind, Map, Owning, Place, Thin
 use symphony_docs::syntax::card_for;
 
 use crate::register::{Decision, State};
+
+pub mod theirs;
 
 /// `owning` as the wire says it to `actor` (`machine`: the person at the machine), `open` whether
 /// the thing still waits on someone: whom they may hand it to, the board's groups, then its

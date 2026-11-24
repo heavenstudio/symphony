@@ -717,7 +717,8 @@ function DocSection({
   const [editing, setEditing] = useState(false);
   const cardOwners = useContext(CardOwnersContext);
   const owner = card !== null ? (cardOwners?.owners[card.slug] ?? null) : null;
-  // Its verdicts are its deciders' alone; its message, and Later in the queue, everyone's.
+  // Its verdicts and its Later, a move in its deciders' queues, are theirs alone; its message
+  // everyone's.
   const decidesCard = decides(owner);
   const settled = isSettled(card);
   const summary = settledSummary(section) ?? [];
@@ -726,7 +727,7 @@ function DocSection({
   const slug = card?.slug ?? null;
   const target = useAnchor();
   const later =
-    card !== null && (card.group === "decide" || card.group === "confirm") ? (
+    card !== null && decidesCard && (card.group === "decide" || card.group === "confirm") ? (
       <PostponeControls
         path={path}
         scope={scope}

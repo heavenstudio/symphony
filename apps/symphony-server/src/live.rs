@@ -88,6 +88,9 @@ fn cpu_millis() -> Option<f64> {
 pub(crate) struct Event {
     pub version: u64,
     pub json: String,
+    /// What of the page waits before and after it, where that moved while its board names
+    /// someone: what a named reader's feed sends in place of its regions of it ([`theirs`]).
+    pub waits: Option<(Arc<theirs::Waits>, Arc<theirs::Waits>)>,
 }
 
 pub(crate) struct Page {
@@ -125,6 +128,11 @@ pub(crate) struct Page {
     /// The branches whose worktree the scan that page read could not read
     /// ([`branches::Scan::failed`]): where their cards are, `held` does not say.
     unscanned: Arc<BTreeSet<String>>,
+    /// Who decides each card its queue holds as waiting, main's own on a branch's page: none on a
+    /// board that names nobody ([`theirs`]).
+    pub deciders: Option<Arc<symphony::owners::theirs::Deciders>>,
+    /// What of it waits as its last event left it, while its board names someone.
+    waits: Option<Arc<theirs::Waits>>,
 }
 
 pub(crate) struct Hub {
@@ -194,6 +202,16 @@ pub(crate) struct Hub {
     /// The owner's open asks as the board last gave them, which the agent queue's cards are told
     /// ([`Hub::note_asks`]); none until the board is read.
     queue_asks: Mutex<Arc<Vec<symphony_board::Ask>>>,
+    /// The board's people and map as its last look read them ([`Hub::people_read`]), which the
+    /// pages read who decides their cards with ([`theirs`]); none before the first.
+    people: Mutex<
+        Option<
+            Arc<(
+                symphony_board::people::People,
+                symphony_board::people::ownership::Map,
+            )>,
+        >,
+    >,
     /// The shared server's hourly roll-up of the project into its day files ([`reports::Rollup`]);
     /// none on a private server, which writes none.
     pub(crate) reports: Mutex<Option<reports::Rollup>>,
@@ -425,6 +443,7 @@ impl Hub {
             owner_asks: Mutex::new(None),
             decided: Mutex::new(None),
             queue_asks: Mutex::default(),
+            people: Mutex::default(),
             reports: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
@@ -929,7 +948,15 @@ impl Hub {
         }
     }
 
-    pub fn folder(&self, scope: &str, rel: &str) -> Result<symphony_api::Folder, String> {
+    /// The folder `rel` of `scope`'s checkout, each entry counting the cards under it that wait on
+    /// `reader`, a person a board named: of the queue's cards those they decide ([`theirs`]), and
+    /// every one for anyone else.
+    pub fn folder(
+        &self,
+        scope: &str,
+        rel: &str,
+        reader: Option<&str>,
+    ) -> Result<symphony_api::Folder, String> {
         let root = self.checkout(scope).ok_or("this worktree was removed")?;
         let board = self.tasks_read().ok();
         let mut folder = symphony::docview::folder(
@@ -940,7 +967,17 @@ impl Hub {
         )?;
         let pages = self.pages.read().recover();
         if let Some(main) = pages.get("") {
-            symphony::docview::count_waiting(&mut folder, &main.queue.waiting);
+            match reader {
+                Some(name) => {
+                    let theirs = symphony::owners::theirs::queue(
+                        &main.queue,
+                        main.deciders.as_deref(),
+                        name,
+                    );
+                    symphony::docview::count_waiting(&mut folder, &theirs.waiting);
+                }
+                None => symphony::docview::count_waiting(&mut folder, &main.queue.waiting),
+            }
         }
         Ok(folder)
     }
@@ -1304,7 +1341,15 @@ impl Hub {
             .map(|(rel, _, _)| rel)
             .collect();
         let rendered = self.render_again(root, scope, followed);
+        // Who decides main's cards, read before the pages are locked: a branch's page takes main's.
+        let deciders = scope.is_empty().then(|| self.deciders_of(&snapshot.queue));
         let mut pages = self.pages.write().recover();
+        let deciders = match deciders {
+            Some(Ok(read)) => read,
+            // Before the board's first look, a page keeps the ones it had.
+            Some(Err(())) => pages.get(scope).and_then(|page| page.deciders.clone()),
+            None => pages.get("").and_then(|main| main.deciders.clone()),
+        };
         // Preferences can change while a watched source snapshot is being prepared.
         if scope.is_empty() {
             if let Ok(waiting) = snapshot.order.waiting(
@@ -1402,30 +1447,32 @@ impl Hub {
             page.held = snapshot.held;
             page.said = snapshot.said;
             page.unscanned = unscanned;
+            page.deciders = deciders;
             self.publish(page, changes);
         } else {
             snapshot.board.version = 1;
-            pages.insert(
-                scope.into(),
-                Page {
-                    board: snapshot.board,
-                    queue: snapshot.queue,
-                    pending: snapshot.pending,
-                    activity,
-                    order: snapshot.order,
-                    history: VecDeque::new(),
-                    documents: BTreeMap::new(),
-                    copied: BTreeMap::new(),
-                    renews_from: 0,
-                    stale: BTreeSet::new(),
-                    outlines: Mutex::default(),
-                    missing: BTreeSet::new(),
-                    read_at,
-                    held: snapshot.held,
-                    said: snapshot.said,
-                    unscanned,
-                },
-            );
+            let mut page = Page {
+                board: snapshot.board,
+                queue: snapshot.queue,
+                pending: snapshot.pending,
+                activity,
+                order: snapshot.order,
+                history: VecDeque::new(),
+                documents: BTreeMap::new(),
+                copied: BTreeMap::new(),
+                renews_from: 0,
+                stale: BTreeSet::new(),
+                outlines: Mutex::default(),
+                missing: BTreeSet::new(),
+                read_at,
+                held: snapshot.held,
+                said: snapshot.said,
+                unscanned,
+                deciders,
+                waits: None,
+            };
+            theirs::begin(&mut page);
+            pages.insert(scope.into(), page);
         }
         Ok(())
     }
@@ -1488,7 +1535,8 @@ impl Hub {
     }
 
     fn publish(&self, page: &mut Page, changes: Vec<Value>) {
-        if changes.is_empty() {
+        let waits = theirs::moved(page);
+        if changes.is_empty() && waits.is_none() {
             return;
         }
         page.board.version += 1;
@@ -1499,6 +1547,7 @@ impl Hub {
         page.history.push_back(Event {
             version,
             json: Value::Object(data).to_string(),
+            waits,
         });
         while page.history.len() > HISTORY {
             page.history.pop_front();
@@ -2613,6 +2662,7 @@ mod retry;
 mod retry_tests;
 mod startup;
 mod task_asks;
+pub(crate) mod theirs;
 
 #[cfg(test)]
 mod decided_tests;
@@ -2957,7 +3007,7 @@ mod tests {
         hub.ensure_page("design~policy").unwrap();
         assert_eq!(pending(&hub, "design~policy"), ["main-card", "branch-card"]);
         for scope in ["", "design~policy"] {
-            let folder = hub.folder(scope, "docs").unwrap();
+            let folder = hub.folder(scope, "docs", None).unwrap();
             let entry = folder
                 .entries
                 .iter()
@@ -3043,7 +3093,7 @@ mod tests {
             3
         );
         assert_eq!(
-            hub.folder("design~policy", "docs")
+            hub.folder("design~policy", "docs", None)
                 .unwrap()
                 .entries
                 .iter()
@@ -3139,7 +3189,7 @@ mod tests {
         hub.ensure_page("design~policy").unwrap();
         for scope in ["", "design~policy"] {
             let waiting = |rel: &str, path: &str| {
-                let folder = hub.folder(scope, rel).unwrap();
+                let folder = hub.folder(scope, rel, None).unwrap();
                 let found = folder.entries.iter().find(|e| e.path.ends_with(path));
                 found.unwrap().waiting
             };

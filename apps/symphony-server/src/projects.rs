@@ -164,6 +164,10 @@ pub(crate) struct Served {
     router: Router,
     /// Why this server does not serve it, when it does not.
     pub refused: Option<String>,
+    /// On a request's copy, the person its board named who asks, by short name: what waits on
+    /// them is what the list counts and names of it (`crate::live::theirs`). None for the person
+    /// at the machine and on the server's own copy.
+    pub reader: Option<String>,
 }
 
 impl Projects {
@@ -427,6 +431,7 @@ impl Projects {
             refused,
             shared,
             entry,
+            reader: None,
         }
     }
 
@@ -551,15 +556,21 @@ async fn dispatch(
     else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    // From here on a project the visitor is not on is one this server does not hold.
-    let served: Vec<Served> = reached.iter().map(|(served, _)| served.clone()).collect();
+    let machine = visitor == Visitor::Machine;
+    // From here on a project the visitor is not on is one this server does not hold, and what
+    // waits in each is what waits on them.
+    let served: Vec<Served> = (reached.iter())
+        .map(|(served, actor)| Served {
+            reader: (!machine).then(|| actor.name().to_string()),
+            ..served.clone()
+        })
+        .collect();
     let admitted = |project: &Served| {
         reached
             .iter()
             .find(|(served, _)| Arc::ptr_eq(&served.shared, &project.shared))
             .map(|(_, actor)| crate::front::Admitted::of(&visitor, actor.clone()))
     };
-    let machine = visitor == Visitor::Machine;
     if path == symphony_api::FRONT_PATH {
         if !machine {
             return crate::front::machines_alone();
@@ -842,21 +853,15 @@ fn listed(project: &Served) -> symphony_api::ListedProject {
     listed.unwell = hub.standing().unwell();
     listed.writes = hub.writes();
     // A writer's panic leaves at worst a page between two of its regions' updates, as the list's.
-    let pages = hub.pages.read().recover();
-    if let Some(page) = pages.get("") {
-        listed.version = Some(page.board.version);
-        listed.waiting = Some(page.board.counts.waiting);
-        listed.next = page
-            .board
-            .next
-            .first()
-            .map(|card| symphony_api::ListedCard {
-                title: card.title.clone(),
-                href: format!("/{id}{}", card.href()),
-            });
+    if let Some(board) = hub.main_board(project.reader.as_deref()) {
+        listed.version = Some(board.version);
+        listed.waiting = Some(board.counts.waiting);
+        listed.next = (board.next.first()).map(|card| symphony_api::ListedCard {
+            title: card.title.clone(),
+            href: format!("/{id}{}", card.href()),
+        });
     }
     listed.asks = hub.task_asks();
-    drop(pages);
     listed
 }
 
@@ -882,12 +887,11 @@ fn list(served: &[Served]) -> String {
         .iter()
         .map(|project| {
             let hub = project.shared.api.get();
-            let counts = hub.and_then(|hub| {
-                // A writer's panic leaves at worst a page between two of its regions' updates:
-                // these counts are shown, and the project's next delta corrects them.
-                let pages = hub.pages.read().recover();
-                pages.get("").map(|page| page.board.counts.clone())
-            });
+            // A writer's panic leaves at worst a page between two of its regions' updates: these
+            // counts are shown, and the project's next delta corrects them.
+            let counts = hub
+                .and_then(|hub| hub.main_board(project.reader.as_deref()))
+                .map(|board| board.counts);
             let standing = hub.map(|hub| hub.standing());
             let blocked = (hub.and_then(|hub| hub.tasks_read().ok()))
                 .map(|tasks| Blocked::of(&tasks.tasks))

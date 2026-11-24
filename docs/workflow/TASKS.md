@@ -2406,18 +2406,29 @@ as it did before. That person stays `owner`, with every power, once others are n
   being on the board; anything else is the person at the machine's alone. A refusal is a
   403 naming the power, `Forbidden: ana may not decide on this board`, and nothing is written.
 - **Deciding a thing is its owner's** ([below](#which-group-a-thing-belongs-to)): a card's
-  verdict, a task's priority, field, cancel, action and workflow edge, and a setting (the Settings
+  verdict and its Later (with its Undo, and the visit that clears its mark), a task's priority,
+  field, cancel, action and workflow edge, and a setting (the Settings
   page's owner) are a person's while they hold `decide` and are a member of its group or the
   person it is written for, and always the person at the machine's. Anyone else is refused once
   the body is read, a 403 in the board's words with nothing written: `Forbidden: bo is no member
   of the group design, whose it is, so may not decide it: nothing was written`. On a board that
   names people and maps no group a thing keeps, it is the person at the machine's, and the refusal
   says which group to map: `… so ana may not decide it until an admin maps one (just tasks-people
-  map PLACE GROUP)`. A page draws the deciding controls (a card's verdicts, a task's priority,
-  cancel and approve, the Settings page's writes) for those who decide the thing alone, with the
-  wire's `decides` on its owner; a card's message, Later and a hand-over stay as they were. A
+  map PLACE GROUP)`. A page draws the deciding controls (a card's verdicts and Later, a task's
+  priority, cancel and approve, the Settings page's writes) for those who decide the thing alone,
+  with the wire's `decides` on its owner; a card's message and a hand-over stay as they were. A
   custom workflow's `owner` capability on a task is held by those who decide it, as by the person
   at the machine.
+- **What waits on each person** is the cards they decide: the queue's cards and spot-checks, the
+  board's first cards and counts (`/api/board`, Home), the postponed list, the pending list, a
+  folder's count and a project's row in the machine's list hold those alone, on main's page and a
+  branch's, and the feed sends a person no other card's key, words, count or place. Who decides
+  each card is read as a notice of it reads it, main's file with the saves still waiting merged,
+  on the people and map the board's last look read, so a person put in a group or a place mapped
+  reaches each reader's queue within that look, as one event. What is postponed is one order, the
+  board's, each person shown their cards of it. The person at the machine, a hosted page's
+  visitor and every reader of a board that names nobody are shown every card, as before, and
+  their feed carries nothing more.
 - **The `owner` stamp** is met by the approve of the owner or of anyone who decides the task (who
   holds `decide` and is of its group or the person it is written for), on the thread or on the
   cards, named as theirs: `Approved by ana at 1a2b3c4`. Who decides is read when the stamp is

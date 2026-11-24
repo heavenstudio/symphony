@@ -1418,10 +1418,13 @@ Each step can ship alone, and a machine with one person sees none of them.
    the board's map of places to groups, kept by its admins, a card's `*For:*` and a task's
    `--group`, the read of whose a thing is and what gave it, drawn on a task's page and a card, and
    its hand-over by a member of its group
-   ([TASKS](../../workflow/TASKS.md#which-group-a-thing-belongs-to)); a card's verdict, a task's
-   moves, priority, fields, cancel and approve and the settings decided by the members of its
-   group who hold decide, the `owner` stamp read from them, and the controls drawn for them alone
-   ([TASKS](../../workflow/TASKS.md#people)); and the machine's one server telling each member of a
+   ([TASKS](../../workflow/TASKS.md#which-group-a-thing-belongs-to)); a card's verdict and Later, a
+   task's moves, priority, fields, cancel and approve and the settings decided by the members of
+   its group who hold decide, the `owner` stamp read from them, and the controls drawn for them
+   alone ([TASKS](../../workflow/TASKS.md#people)); each person's queue, Home's first cards and
+   counts, the postponed and pending lists, a folder's count, a project's row and the feed holding
+   the cards they decide alone ([TASKS](../../workflow/TASKS.md#people)); and the machine's one
+   server telling each member of a
    thing's group of a card waiting, an agent's question and a reviewer's verdict, by the way each
    chose, through the programs the machine folder names
    ([NOTICES](../../engineering/NOTICES.md#the-servers-part)).
