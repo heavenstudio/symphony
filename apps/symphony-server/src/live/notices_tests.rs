@@ -315,6 +315,41 @@ fn a_second_start_starts_no_second_worker() {
     assert!(worker.thread.lock().unwrap().is_none(), "the first, joined");
 }
 
+#[test]
+fn a_hub_dropped_without_a_stop_ends_its_worker_and_lets_the_record_go() {
+    let Telling {
+        tree,
+        root,
+        f: _board,
+        hub,
+        gate: _gate,
+    } = Telling::new(false);
+    let alive = Arc::new(());
+    let held = Arc::clone(&alive);
+    hub.start_notices_with(
+        "symphony",
+        bounds(),
+        Box::new(move || {
+            let _ = &held;
+            ORIGIN.to_string()
+        }),
+    );
+    let record = root.join("artifacts/notices.json");
+    test_time::until_true("the worker's first look", hand_bound(), || record.is_file())
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    drop(hub);
+    // Its wake went with the hub: the worker ends, and its turns with it.
+    test_time::until_true("the worker ended", hand_bound(), || {
+        Arc::strong_count(&alive) == 1
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    let key = symphony::notices::Key::of(&tree.path("machine")).unwrap();
+    assert!(
+        Runner::open(&root, "symphony", key).is_ok(),
+        "the record's lock is let go"
+    );
+}
+
 /// A wall-clock backstop a stall alone reaches: six fake programs' runs on a loaded machine.
 fn hand_bound() -> std::time::Duration {
     test_time::backstop(crate::notices::hand::MOST)
