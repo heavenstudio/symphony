@@ -2366,13 +2366,16 @@ as it did before. That person stays `owner`, with every power, once others are n
   lines are never read as another's.
 - **A profile is the machine's**, not the board's: `people.json` in the machine folder, with its
   lock `people.lock`, both mode 600, holding each person's display name, sign-ins
-  (`SERVICE:SUBJECT`, each one person's alone, matched ignoring case), git handles, emails, chat
-  and preferences. A git handle is not one person's alone: a person writes their own, and
-  nothing checks that no other profile holds it, so nothing decides by a git handle alone whose
-  commit or write something is (a plugin is told them as the sender's, never as proof). A board and its copies hold none of it. The board's log and the server's log
-  lines name the short name, never a sign-in's subject or an email. An add holds the lock from
-  its check of the sign-ins through the board's change and the profile's write, so of two adds
-  of one sign-in at once the second is refused, with nothing written.
+  (`SERVICE:SUBJECT`, each one person's alone, matched ignoring case), git handles, emails, chat and
+  preferences. A git handle is not one person's alone: a person writes their own, and nothing checks
+  that no other profile holds it, so nothing decides by a git handle alone whose commit or write
+  something is (a plugin is told them as the sender's, never as proof). A board and its copies hold
+  none of it. The board's log and the server's log lines name the short name, never a sign-in's
+  subject or an email. A `people.json` that does not parse is said by its line and column, the field
+  (`people[0].signins`, a profile's own names alone) and the kind of fault, never a value found in
+  it, and none of its profiles is read or written over. An add holds the lock from its check of the
+  sign-ins through the board's change and the profile's write, so of two adds of one sign-in at once
+  the second is refused, with nothing written.
 - **Who reaches a board.** A visitor under another Tailscale login is the profile holding that
   `tailscale` sign-in, on each board that gives its short name a power, as that name
   ([the server guide](../../apps/symphony-server/README.md#who-a-request-is-from)).
@@ -2381,11 +2384,11 @@ as it did before. That person stays `owner`, with every power, once others are n
   approve that is the `owner` stamp among them), a workflow's edge and a setting need `decide`; a
   comment, a message, a task's message, an ask, its reply, the quick chat and a quick task need
   `speak` and `direct_agents`; an upload needs `speak`; an attempt's controls need `decide` and
-  `direct_agents`; a change of the board's people needs `administer`, and a profile's write from
-  the People page being on the board; anything else is the person at the machine's alone. A refusal is a 403 naming
-  the power, `Forbidden: ana may not decide on this board`, and nothing is written. A custom
-  workflow's `owner` capability is held by each person holding `decide`, as by the person at the
-  machine.
+  `direct_agents`; a change of the board's people needs `administer`, and a profile's write from the
+  People page being on the board; anything else is the person at the machine's alone. A refusal is a
+  403 naming the power, `Forbidden: ana may not decide on this board`, and nothing is written. A
+  custom workflow's `owner` capability is held by each person holding `decide`, as by the person at
+  the machine.
 - **The `owner` stamp** is met by the approve of the owner or of anyone holding `decide` on the
   board, on the thread or on the cards, named as theirs: `Approved by ana at 1a2b3c4`. Who
   decides is read when the stamp is read. A revoke withdraws an approve its person gave, and a
@@ -2415,23 +2418,23 @@ could match each spelling, and Codex's rules take no word but those they name.
 
 ### The People page
 
-`/people`, after Settings in the header, shows whoever is on the board its people, each with
-the powers they hold, their own told apart from their groups' by a word as well as an edge, their
-groups, the services they sign in by and their git handles; its groups; and its log, newest
-first. It shows no sign-in's subject, no email and no chat address to anyone. Its controls are
-drawn for whoever holds `administer`, as the person at the machine always does: a person added
-with a display name, git handles, powers and groups (and sign-ins, by the person at the machine
-alone), put in a group or taken out of one, given a power or one taken back, taken off the
-board; a group made, given a power or removed. A power the board gives no one yet (direct
-agents, until step 5 of [the way from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner))
-is drawn not pressable, faded, with the board's reason as its title and said once in each add
-form, in the words its refusal of a grant says. Taking a person off the board and removing a
-group, which a press cannot take back, ask first as a task's Cancel does: a named confirmation,
-then Confirm removal or Keep. Each change is one change of the log, the command's own, named as
-the actor who made it (`owner` for the person at the machine). `administer` is read from the board as the change
-arrives, so one from someone without it is a 403, `Forbidden: ana may not administer on this
-board`, with nothing written. The page is the project's own board's: a worktree's server and a
-hosted visitor are refused it ([the server guide](../../apps/symphony-server/README.md)).
+`/people`, after Settings in the header, shows whoever is on the board its people, each with the
+powers they hold, their own told apart from their groups' by a word as well as an edge, their
+groups, the services they sign in by and their git handles; its groups; and its log, newest first.
+It shows no sign-in's subject, no email and no chat address to anyone. Its controls are drawn for
+whoever holds `administer`, as the person at the machine always does: a person added with a display
+name, git handles, powers and groups (and sign-ins, by the person at the machine alone), put in a
+group or taken out of one, given a power or one taken back, taken off the board; a group made, given
+a power or removed. A power the board gives no one yet (direct agents, until step 5 of [the way from
+one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner)) is drawn not
+pressable, faded, with the board's reason as its title and said once in each add form, in the words
+its refusal of a grant says. Taking a person off the board and removing a group, which a press
+cannot take back, ask first as a task's Cancel does: a named confirmation, then Confirm removal or
+Keep. Each change is one change of the log, the command's own, named as the actor who made it
+(`owner` for the person at the machine). `administer` is read from the board as the change arrives,
+so one from someone without it is a 403, `Forbidden: ana may not administer on this board`, with
+nothing written. The page is the project's own board's: a worktree's server and a hosted visitor are
+refused it ([the server guide](../../apps/symphony-server/README.md)).
 
 Who writes a profile:
 
