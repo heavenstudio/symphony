@@ -4558,6 +4558,7 @@ dependencies = [
  "symphony-app",
  "symphony-board",
  "symphony-env",
+ "symphony-notice",
  "symphony-plugin",
  "test-time",
  "tokio",
