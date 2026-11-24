@@ -62,6 +62,16 @@ pub struct OfBoard {
 }
 
 impl OfBoard {
+    /// The people who held decide on the board as its stamp was read
+    /// ([`TaskStamp::deciders`]), so a read with nothing new asks the board for no more; read now
+    /// where it has no stamp.
+    pub fn deciders(&self, store: &Store) -> Vec<String> {
+        match &self.stamp {
+            Some(stamp) => stamp.deciders(),
+            None => store.deciders(),
+        }
+    }
+
     /// The task and every task under it ([`super::stamps::family`]), read once a stamp, when a
     /// gate first reads the runs of the work under it.
     pub fn ours(&self, store: &Store) -> &[String] {

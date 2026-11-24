@@ -4,18 +4,40 @@
 use super::Pg;
 use std::borrow::Cow;
 
+/// Who is on the board, `{members, groups, revision}`, as an expression: only on a board with the
+/// step that defines the tables (`people_held!` guards it).
+macro_rules! people_object {
+    () => {
+        "jsonb_build_object(
+        'members', coalesce((SELECT jsonb_agg(doc ORDER BY doc ->> 'name') FROM people), '[]'::jsonb),
+        'groups', coalesce((SELECT jsonb_agg(doc ORDER BY doc ->> 'name') FROM people_group), '[]'::jsonb),
+        'revision', coalesce((SELECT (id #>> '{}')::bigint FROM people_log ORDER BY id DESC LIMIT 1), 0))"
+    };
+}
+pub(in crate::store) use people_object;
+
+/// Whether the board has the step that defines the tables, as a block's condition: a statement
+/// that names them only under it reads past them on a board without the step.
+macro_rules! people_held {
+    () => {
+        "to_regclass('people_log') IS NOT NULL"
+    };
+}
+pub(in crate::store) use people_held;
+
 /// Who is on the board, `{members, groups, revision}`: none, at revision 0, where the board lacks
 /// the step that defines the tables.
 pub(in crate::store) const PEOPLE: Pg<'static> = Pg::Script(
-    Cow::Borrowed(
+    Cow::Borrowed(concat!(
         "board_answer := jsonb_build_object('members', '[]'::jsonb, 'groups', '[]'::jsonb, 'revision', 0);
-IF to_regclass('people_log') IS NOT NULL THEN
-    board_answer := jsonb_build_object(
-        'members', coalesce((SELECT jsonb_agg(doc ORDER BY doc ->> 'name') FROM people), '[]'::jsonb),
-        'groups', coalesce((SELECT jsonb_agg(doc ORDER BY doc ->> 'name') FROM people_group), '[]'::jsonb),
-        'revision', coalesce((SELECT (id #>> '{}')::bigint FROM people_log ORDER BY id DESC LIMIT 1), 0));
-END IF;",
-    ),
+IF ",
+        people_held!(),
+        " THEN
+    board_answer := ",
+        people_object!(),
+        ";
+END IF;"
+    )),
     None,
 );
 

@@ -1096,6 +1096,60 @@ fn state(answer: &Value, name: &str) -> GateState {
         .1
 }
 
+/// A decider's approve of the tip on the task's thread meets its `owner` gate, named as theirs,
+/// only while the board gives them decide: who decides comes with the task's stamp, so a grant or
+/// a revoke is read at the next read, and a read with nothing new still asks the board once.
+#[test]
+fn a_deciders_approve_meets_the_owner_gate_while_the_board_gives_them_decide() {
+    use symphony_board::people::{Holder, Power};
+    use symphony_board::stamps::{Catalogue, Needs};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    git(&root, &["branch", "tools/kept"]);
+    let tip = commit_on(&root, "tools/kept");
+    let f = Fixture::new(Seed::default().task("tools/kept", "review"));
+    let needs = Needs {
+        stamps: vec!["owner".into()],
+        tip: Some(tip.clone()),
+        by: f.session("worker"),
+        why: "the owner asked to see it".into(),
+        import: None,
+    };
+    f.store
+        .set_needs("tools/kept", &Catalogue::symphony(), &needs)
+        .unwrap();
+    let (_shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+    let owner_gate = || {
+        let (status, answer) = ask("/api/task-gates?slug=tools/kept");
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        (gates(&answer).into_iter())
+            .find(|(name, _, _)| name == "owner")
+            .map(|(_, state, detail)| (state, detail))
+            .unwrap()
+    };
+    let by = f.session("orchestrator");
+    f.store
+        .add_person("ana", &[], &[Power::Speak], &by)
+        .unwrap();
+    let said = symphony::gates::stamps::approve_line(&tip).unwrap();
+    (f.other().for_person("ana"))
+        .say("tools/kept", "ana", &said, None)
+        .unwrap();
+    assert_eq!(owner_gate().0, GateState::Held, "no decide, no approve");
+    f.store
+        .grant(Holder::Person("ana"), &[Power::Decide], &by)
+        .unwrap();
+    let met = (GateState::Met, format!("Approved by ana at {}", &tip[..7]));
+    assert_eq!(owner_gate(), met, "a grant after her approve counts it");
+    let sent = requests(&f.store);
+    assert_eq!(owner_gate(), met);
+    assert_eq!(requests(&f.store) - sent, 1, "one request to the board");
+    f.store
+        .revoke(Holder::Person("ana"), &[Power::Decide], &by)
+        .unwrap();
+    assert_eq!(owner_gate().0, GateState::Held, "a revoke withdraws it");
+}
+
 /// What a gates read costs is counted, never timed: the requests the board is sent, and each part
 /// read anew (`symphony::gates::Reads`).
 #[test]

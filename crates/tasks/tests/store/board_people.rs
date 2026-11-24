@@ -8,7 +8,7 @@ use crate::common::{Fixture, HOST, NOW, Seed, database, refused};
 use symphony_board::people::{Did, Holder, Power};
 use symphony_board::schema::{ADDED, PEOPLE};
 use symphony_board::workflow::{Host, local_owner, person};
-use symphony_board::{NewSession, Opening, Pick, Schema, Store};
+use symphony_board::{NewSession, NewTask, Opening, Pick, Schema, Store};
 
 /// The session every change is recorded as made by.
 const BY: &str = "amber-heron";
@@ -378,7 +378,13 @@ fn a_board_made_without_the_step_reads_nobody_and_takes_no_change() {
         assert!(why.ends_with("nothing was written"), "{why}");
         assert_eq!(store.carried().unwrap()["people"], serde_json::json!([]));
     }
-    // A session still registers, its handle read past the tables the board lacks.
-    writer.register(&NewSession::new("worker")).unwrap();
+    // A session still registers, its handle read past the tables the board lacks, and a task's
+    // stamp reads, naming no decider.
+    let worker = writer.register(&NewSession::new("worker")).unwrap();
+    writer
+        .create(&NewTask::new("sim/look", "Look", &worker.row.handle))
+        .unwrap();
+    let stamp = writer.task_stamp("sim/look").unwrap().unwrap();
+    assert!(stamp.deciders().is_empty());
     assert_eq!(writer.additions().unwrap(), additions);
 }

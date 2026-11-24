@@ -47,6 +47,16 @@ struct Read {
     revision: i64,
 }
 
+/// The board's people as a read of them answers (`postgres::people::people_object`).
+pub(super) fn answered(answer: &Value) -> Result<People, String> {
+    let read: Read = crate::objects::read(answer).map_err(|e| e.to_string())?;
+    Ok(People {
+        members: read.members,
+        groups: read.groups,
+        revision: read.revision,
+    })
+}
+
 impl Store {
     /// Who is on the board: one read, which finds nobody on a board without the step.
     pub fn people(&self) -> Result<People, Error> {
@@ -58,13 +68,8 @@ impl Store {
                 return Ok(People::default());
             };
             let answer = found.last().cloned().unwrap_or(Value::Null);
-            let read: Read = crate::objects::read(&answer)
-                .map_err(|e| Failure::Stop(Error::Db(format!("the board's people: {e}"))))?;
-            Ok(People {
-                members: read.members,
-                groups: read.groups,
-                revision: read.revision,
-            })
+            answered(&answer)
+                .map_err(|e| Failure::Stop(Error::Db(format!("the board's people: {e}"))))
         })
     }
 
@@ -291,14 +296,6 @@ impl Store {
             return Ok(Host::local_with(&self.people()?));
         }
         Ok(Host::local())
-    }
-
-    /// The names a session's new handle is never given: the board's people and groups.
-    pub(super) fn people_names(&self) -> Result<Vec<String>, Error> {
-        let people = self.people()?;
-        Ok((people.members.iter().map(|member| member.name.clone()))
-            .chain(people.groups.iter().map(|group| group.name.clone()))
-            .collect())
     }
 
     /// Every handle a session of the board was given.

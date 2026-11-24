@@ -1654,7 +1654,8 @@ The server keeps what its own gates are read from, each part by what tells it ha
 
 - the task, its thread and the tasks under it, by the task's stamp on the board
   (`Store::task_stamp`): its row, links, roles and executors' recorded branches, the tasks
-  right under it and its thread's newest line, in one small read;
+  right under it and its thread's newest line, in one small read, which brings the board's
+  [people](#people) too, so who holds decide for its `owner` stamp is read with it;
 - the recorder's runs, by their files: the history and each operation's record are read again
   once the file is another, by its length, when it changed and its inode, and an unfinished
   operation's lease is asked on every read;
@@ -1662,8 +1663,8 @@ The server keeps what its own gates are read from, each part by what tells it ha
 - whether the tip holds work of its own, by that tip and the default branch's.
 
 So a read with nothing new asks the board once, for the stamp, resolves the three refs, and reads
-nothing else again; a post, a role, a recorded run, a new tip or a commit on the default branch
-shows at the next read. One thing shows later: a task moved under one of the task's subtasks
+nothing else again; a post, a role, a recorded run, a new tip, a commit on the default branch or
+a change of the board's people shows at the next read. One thing shows later: a task moved under one of the task's subtasks
 joins the runs its `tests` stamp counts at the task's next post, role, status or subtask. The
 land reads its own, never what the page keeps.
 

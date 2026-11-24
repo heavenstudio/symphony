@@ -1035,7 +1035,7 @@ pub fn answer(
         runs: &runs,
         branch: task.branch.clone(),
         ours: &|| task.ours(store).to_vec(),
-        deciders: &|| store.deciders(),
+        deciders: &|| task.deciders(store),
     };
     Ok(put_together(&read, root, pending, kept))
 }
