@@ -369,3 +369,39 @@ fn what_a_name_names_is_the_boards_rows() {
     assert_eq!(named(&people, "owner"), Some(Kind::Machine));
     assert_eq!(named(&people, "marketing"), None);
 }
+
+#[test]
+fn a_group_tells_each_of_its_members_a_person_themself_and_the_machine_nobody() {
+    let people = board(
+        &[
+            ("ana", &["design"]),
+            ("bo", &["engineering", "design"]),
+            ("cy", &["engineering"]),
+        ],
+        &["design", "engineering"],
+    );
+    let design = owning(&people, &Map::default(), Some("design"), &[]);
+    assert_eq!(told(&people, &design), ["ana", "bo"], "the board's order");
+    let cy = owning(&people, &Map::default(), Some("cy"), &[]);
+    assert_eq!(told(&people, &cy), ["cy"]);
+    let machine = owning(&people, &Map::default(), None, &[]);
+    assert_eq!(machine.kind, Kind::Machine);
+    assert!(told(&people, &machine).is_empty());
+    // A group nobody is in tells nobody, and a person the board no longer holds is not told.
+    let empty = board(&[("ana", &[])], &["design"]);
+    let unpeopled = owning(&empty, &map(&[("default", "design")]), None, &[]);
+    assert_eq!(unpeopled.kind, Kind::Group);
+    assert!(told(&empty, &unpeopled).is_empty());
+    let gone = Owning {
+        name: "dee".into(),
+        kind: Kind::Person,
+        by: By::Named,
+        place: None,
+        unheld: None,
+    };
+    assert!(told(&people, &gone).is_empty());
+    // A board that names nobody: every thing is the person at the machine's, told to no one.
+    let nobody = board(&[], &[]);
+    let any = owning(&nobody, &Map::default(), Some("design"), &[Place::Area("app".into())]);
+    assert!(told(&nobody, &any).is_empty());
+}
