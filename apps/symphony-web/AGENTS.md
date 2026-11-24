@@ -27,8 +27,8 @@ A page kind is an entry under `kinds/` that exports `run` and `stop`, named in `
   ([the board's design](../../docs/product/analysis/board-design.md)).
 - `task`, `/task/SLUG`: `task-page.tsx`, `task-live.ts`, `parts.ts`, `gates.tsx`, `kind.ts`,
   `timeline.tsx`, `timeline-cost.ts`, `task-diff.tsx`, `task-diff-files.tsx`, `attempts.tsx`, for
-  a task with an owner `owner-part.tsx`, and for a custom workflow's task `nextactions.tsx`,
-  `guards.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
+  a task with an owner `owner-part.tsx`, for a holder with a session `session-part.tsx`, and for a
+  custom workflow's task `nextactions.tsx`, `guards.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
   [the timeline](../../docs/workflow/TASKS.md#the-timeline),
   [WORKFLOW](../../docs/workflow/WORKFLOW.md#the-app)).
 - `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx` (what a press does,

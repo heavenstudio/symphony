@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { drawn, FRESH } from "./cache";
 import { Parts, PartsContext, type Shown } from "./parts";
 import { STALE } from "./shared";
@@ -17,6 +17,7 @@ import {
   GhostHead,
   GhostThread,
   LiveTaskPage,
+  loadGoToSession,
   loadOwnerLine,
   NOTHING_READ,
   OwnerControls,
@@ -816,6 +817,11 @@ describe("a task's role chips", () => {
     return html.slice(at, end < 0 ? html.length : end);
   };
 
+  // The controls' chunk, come as it comes once a page drew a holder whose session it names.
+  beforeAll(async () => {
+    await loadGoToSession();
+  });
+
   it("each carry their holder's control", () => {
     const html = renderToStaticMarkup(
       <RoleChips roles={roles} sessions={sessions} local scope="" />,
@@ -834,5 +840,25 @@ describe("a task's role chips", () => {
     );
     expect(phone).toContain('data-go="screen"');
     expect(phone).not.toContain('data-go="focus"');
+  });
+
+  it("hold the place of a holder's control until its chunk has come, and none for one with none", async () => {
+    vi.resetModules();
+    const fresh = await import("./task-page");
+    const held = renderToStaticMarkup(
+      <fresh.RoleChips roles={roles} sessions={sessions} local scope="" />,
+    );
+    // A control's box, no real class of it, for each holder whose session the page names.
+    const box = '<span class="ghost-field" style="width:7rem"></span>';
+    expect(chip(held, "executor amber")).toContain(box);
+    expect(chip(held, "reviewer sub")).toContain(box);
+    expect(chip(held, "orchestrator bare")).not.toContain("ghost-field");
+    expect(held).not.toContain("go-session");
+    await fresh.loadGoToSession();
+    const come = renderToStaticMarkup(
+      <fresh.RoleChips roles={roles} sessions={sessions} local scope="" />,
+    );
+    expect(chip(come, "executor amber")).toContain('data-go="focus"');
+    expect(come).not.toContain("ghost-field");
   });
 });

@@ -8,6 +8,8 @@
 // carried here, held to the Rust by the cases it writes (wire.cases.json, session.test.tsx), as
 // project.ts carries the project's routes; the address it links is a `webAddress` (links.ts). What a
 // press does, a focus or a screen read, is session-press.ts, a chunk imported as one is first pressed.
+// A task's role chips import the control itself as a chunk (session-part.tsx), for a holder whose
+// session the page names alone.
 
 import { useState } from "react";
 import { Button } from "./button";

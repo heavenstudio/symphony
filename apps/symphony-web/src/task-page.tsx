@@ -1,6 +1,7 @@
 // A task's page (`/task/SLUG`): its head (slug, title, state, who filed it, the owner's priority and
 // cancel, its facts, whose it is where its board names an owner (owner.tsx's line, a chunk of its
-// own), its roles and their sessions, its builds and tests), its gates, its subtasks, its timeline,
+// own), its roles and their sessions (session.tsx's control, a chunk of its own, for a holder whose
+// session it names), its builds and tests), its gates, its subtasks, its timeline,
 // its brief, its changes, its execution attempts where it has some (attempts.tsx, a chunk of their
 // own), its thread and the composer under it. Each part is drawn from its own read (task-live.ts's
 // parts, in the page's store) as soon as that read is there, and is its own mock-up until then:
@@ -36,7 +37,7 @@ import { href, scoped } from "./project";
 import { getJson, post, said } from "./request";
 import { currentRoute } from "./route";
 import { SelectField } from "./select";
-import { GoToSession } from "./session";
+import type { GoToSessionProps } from "./session";
 import { field, STALE, useStore } from "./shared";
 import { load, save } from "./storage";
 import { TaskDiffPanel } from "./task-diff";
@@ -291,7 +292,7 @@ export function RoleChips({
           title={`${role.role} is ${role.health}`}
         >
           {`${role.role} ${role.handle}`}
-          <GoToSession
+          <SessionPart
             handle={role.handle}
             go={sessions[role.handle] ?? null}
             local={local}
@@ -695,6 +696,37 @@ export function OwnerPart(props: OwnerLineProps) {
       )}
     </span>
   );
+}
+
+/** A holder's Go to session control, its chunk once it has come: a chip drawn after draws it at once. */
+let goToSession: ComponentType<GoToSessionProps> | null = null;
+
+/** Import a holder's Go to session control, its chunk, kept once it has come. */
+export const loadGoToSession = () =>
+  import("./session-part").then((chunk) => {
+    goToSession = chunk.GoToSession;
+    return goToSession;
+  });
+
+/**
+ * A role's holder's Go to session control, a chunk of its own (session.tsx's control, which the
+ * agents page draws too), imported for a holder whose session the page names alone (chunk.tsx):
+ * none, and nothing imported, for one it names none of.
+ */
+export function SessionPart(props: GoToSessionProps) {
+  return props.go === null ? null : <SessionChunk {...props} />;
+}
+
+/**
+ * The control of a holder whose session the page names, its place held until its chunk comes: a
+ * control's box, as tall as its button, which a link in its place, where the session has an
+ * address, is not.
+ */
+function SessionChunk(props: GoToSessionProps) {
+  const [Go, failed, retry] = useChunk(loadGoToSession, () => goToSession);
+  if (Go) return <Go {...props} />;
+  if (failed) return chunkFailed("The session's control", retry);
+  return <span className="ghost-field" style={{ width: "7rem" }} />;
 }
 
 /** A workflow's next actions, imported for a task a custom workflow holds alone. */
