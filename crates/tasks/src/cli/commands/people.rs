@@ -6,7 +6,7 @@
 
 use super::{Context, Stop};
 use crate::Store;
-use crate::people::{Change, Holder, People, Power, Profile, Profiles, Signin};
+use crate::people::{Change, Holder, People, Power, Profile, Profiles, RETIRED_WHY, Signin};
 use crate::sys::local_minute;
 use serde_json::{Value, json};
 use std::ffi::OsString;
@@ -19,15 +19,7 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         ("list", []) => list(store, c),
         ("log", []) => log(store, c),
         ("add", [name]) => add(store, c, name),
-        ("remove", [name]) => {
-            let line = store.remove_person(name, &c.actor()?)?;
-            c.say(&format!(
-                "{name} is on this board no more (change {}): their lines stay theirs, and their \
-                 profile stays the machine's",
-                line.n
-            ));
-            Ok(())
-        }
+        ("remove", [name]) => remove(store, c, Holder::Person(name)),
         ("join", [name, group]) => {
             let said = match store.join_group(name, group, &c.actor()?)? {
                 Some(line) => format!("{name} is in {group} (change {})", line.n),
@@ -53,14 +45,7 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             ));
             Ok(())
         }
-        ("group", ["remove", group]) => {
-            let line = store.remove_group(group, &c.actor()?)?;
-            c.say(&format!(
-                "the group {group} is removed (change {}), and its members are out of it",
-                line.n
-            ));
-            Ok(())
-        }
+        ("group", ["remove", group]) => remove(store, c, Holder::Group(group)),
         ("profile", [name]) => profile(c, name),
         (other, _) => Err(Stop::Refused(format!(
             "people takes list, log, add NAME, remove NAME, join NAME GROUP, leave NAME GROUP, \
@@ -71,9 +56,13 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     }
 }
 
-/// `add NAME`: the person put on the board with the powers and groups given, and their profile
-/// made or given the sign-ins and git handles named. A sign-in another profile holds is refused
-/// before anything is written, and a profile that cannot be written takes the board's change back.
+/// `add NAME`: the person's profile made or given the sign-ins and git handles named, then the
+/// person put on the board with the powers and groups given. A name the machine retired, a
+/// sign-in another profile holds and anything the board would refuse ([`Store::may_add_person`])
+/// are refused before anything is written; a profile that cannot be written puts no one on the
+/// board, and a board that refuses the person after all (another change came between) puts the
+/// profile back as it was. The profile comes first because a board's removal retires the name: a
+/// person once on a board is never taken off it to undo an add.
 fn add(store: &Store, c: &mut Context, name: &str) -> Result<(), Stop> {
     let actor = c.actor()?;
     let given = parsed_powers(
@@ -86,17 +75,44 @@ fn add(store: &Store, c: &mut Context, name: &str) -> Result<(), Stop> {
     let groups: Vec<String> = c.parsed.all("group").to_vec();
     let signins = parsed_signins(c)?;
     let dir = machine(c)?;
-    let profiles = Profiles::read(&dir).map_err(Stop::Board)?;
-    taken_signins(&profiles, name, &signins).map_err(Stop::Refused)?;
-    let line = store.add_person(name, &groups, &given, &actor)?;
-    if let Err(why) = Profiles::change(&dir, |profiles| fill(profiles, name, c, &signins)) {
-        let undone = store.remove_person(name, &actor).map(|_| "taken back");
-        return Err(Stop::Board(format!(
-            "{name}'s profile could not be written ({why}): the board's change {} is {}",
-            line.n,
-            undone.unwrap_or("still on the board, which `people remove` takes back")
-        )));
-    }
+    let addable = |profiles: &Profiles| {
+        if profiles.is_retired(name) {
+            return Err(format!("{name} is {RETIRED_WHY}: nothing was written"));
+        }
+        taken_signins(profiles, name, &signins)
+    };
+    addable(&Profiles::read(&dir).map_err(Stop::Board)?).map_err(Stop::Refused)?;
+    store.may_add_person(name, &groups, &given)?;
+    let before = Profiles::change(&dir, |profiles| {
+        if let Err(why) = addable(profiles) {
+            return Ok(Err(why));
+        }
+        let before = profiles.get(name).cloned();
+        fill(profiles, name, c, &signins)?;
+        Ok(Ok(before))
+    })
+    .map_err(|why| {
+        Stop::Board(format!(
+            "{name}'s profile could not be written ({why}): nothing was written"
+        ))
+    })?
+    .map_err(Stop::Refused)?;
+    let line = match store.add_person(name, &groups, &given, &actor) {
+        Ok(line) => line,
+        Err(error) => {
+            let back = Profiles::change(&dir, |profiles| {
+                put_back(profiles, name, before.clone());
+                Ok(())
+            });
+            return Err(match back {
+                Ok(()) => Stop::from(error),
+                Err(why) => Stop::Board(format!(
+                    "{error}; and {name}'s profile, written before the board refused, could not \
+                     be put back ({why})"
+                )),
+            });
+        }
+    };
     let profiles = Profiles::read(&dir).map_err(Stop::Board)?;
     let reach = match profiles.get(name).map(|profile| profile.signins.len()) {
         Some(0) | None => {
@@ -113,8 +129,51 @@ fn add(store: &Store, c: &mut Context, name: &str) -> Result<(), Stop> {
     Ok(())
 }
 
+/// `remove NAME` and `group remove GROUP`: the name retired in the machine's profiles, then the
+/// person or group taken off the board, whose log retires it there. A name the board holds no
+/// person or group of is refused by the board, retiring nothing; a removal the board refuses after
+/// the machine retired the name leaves it retired there, never the other way round.
+fn remove(store: &Store, c: &mut Context, holder: Holder<'_>) -> Result<(), Stop> {
+    let actor = c.actor()?;
+    let people = store.people()?;
+    let name = match holder {
+        Holder::Person(name) | Holder::Group(name) => name,
+    };
+    let kept = match holder {
+        Holder::Person(name) => people.member(name).is_some(),
+        Holder::Group(name) => people.group(name).is_some(),
+    };
+    if kept {
+        let dir = machine(c)?;
+        Profiles::change(&dir, |profiles| {
+            profiles.retire(name);
+            Ok(())
+        })
+        .map_err(|why| {
+            Stop::Board(format!(
+                "{name} could not be retired in the machine's profiles ({why}): nothing was \
+                 written"
+            ))
+        })?;
+    }
+    let said = match holder {
+        Holder::Person(name) => format!(
+            "{name} is on this board no more (change {}): their lines stay theirs, their profile \
+             stays the machine's, and {name} is retired, never given to anyone again",
+            store.remove_person(name, &actor)?.n
+        ),
+        Holder::Group(group) => format!(
+            "the group {group} is removed (change {}), its members are out of it, and {group} is \
+             retired, never given to anyone again",
+            store.remove_group(group, &actor)?.n
+        ),
+    };
+    c.say(&said);
+    Ok(())
+}
+
 /// `profile NAME`: the machine's profile of `name` made or given what the options name, on no
-/// board.
+/// board. A retired name makes no new profile; one kept stays that person's to change.
 fn profile(c: &mut Context, name: &str) -> Result<(), Stop> {
     if !symphony_docs::syntax::is_short_name(name) {
         return Err(Stop::Refused(format!(
@@ -124,6 +183,9 @@ fn profile(c: &mut Context, name: &str) -> Result<(), Stop> {
     let signins = parsed_signins(c)?;
     let dir = machine(c)?;
     let changed = Profiles::change(&dir, |profiles| {
+        if profiles.is_retired(name) && profiles.get(name).is_none() {
+            return Err(format!("{name} is {RETIRED_WHY}: nothing was written"));
+        }
         taken_signins(profiles, name, &signins)?;
         let before = profiles.clone();
         fill(profiles, name, c, &signins)?;
@@ -231,17 +293,18 @@ pub fn listed(people: &People, profiles: &Profiles) -> Value {
             "name": group.name,
             "powers": group.powers,
         })).collect::<Vec<_>>(),
+        "retired": people.retired,
     })
 }
 
 /// What `people list` prints.
 pub fn lines(people: &People, profiles: &Profiles) -> Vec<String> {
-    if people.members.is_empty() && people.groups.is_empty() {
-        return vec![
-            "nobody is on this board but the person at the machine, who holds every power".into(),
-        ];
-    }
     let mut lines = Vec::new();
+    if people.members.is_empty() && people.groups.is_empty() {
+        lines.push(
+            "nobody is on this board but the person at the machine, who holds every power".into(),
+        );
+    }
     for member in &people.members {
         let profile = profiles.get(&member.name);
         let shown = profile
@@ -267,6 +330,12 @@ pub fn lines(people: &People, profiles: &Profiles) -> Vec<String> {
             "group {}  {}",
             group.name,
             said_powers(&group.powers)
+        ));
+    }
+    if !people.retired.is_empty() {
+        lines.push(format!(
+            "retired, never given again: {}",
+            people.retired.join(", ")
         ));
     }
     lines
@@ -396,6 +465,20 @@ fn fill(
         }
     }
     Ok(())
+}
+
+/// `name`'s profile put back as it was `before` an add the board refused: removed where there was
+/// none.
+fn put_back(profiles: &mut Profiles, name: &str, before: Option<Profile>) {
+    let at = (profiles.people.iter()).position(|profile| profile.name == name);
+    match (at, before) {
+        (Some(at), Some(before)) => profiles.people[at] = before,
+        (Some(at), None) => {
+            profiles.people.remove(at);
+        }
+        (None, Some(before)) => profiles.people.push(before),
+        (None, None) => {}
+    }
 }
 
 /// The machine folder the command's environment names.

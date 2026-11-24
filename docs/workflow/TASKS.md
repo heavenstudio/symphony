@@ -2359,10 +2359,16 @@ as it did before. That person stays `owner`, with every power, once others are n
   given. A session registering is given no handle a person or group holds, and the command line
   writes as sessions alone, so a thread line under a person's name is theirs, written through the
   Symphony.
+- **A removed name is retired**, a person's or a group's: the board's log keeps every removal, and
+  the name is never given again there, to a person, a group or a session, and the machine's
+  profiles keep it too, so `people add` refuses it on every board of the machine and no new
+  profile takes it. The lines the one removed wrote stay theirs, and no one given the name later
+  could be read as their writer: once removed, their approve meets no stamp. The same person
+  joins a board again under another name.
 - **A profile is the machine's**, not the board's: `people.json` in the machine folder, with its
   lock `people.lock`, both mode 600, holding each person's display name, sign-ins
   (`SERVICE:SUBJECT`, each one person's alone, matched ignoring case), git handles, emails, chat
-  and preferences. A board and its copies hold none of it. The board's log and the server's log
+  and preferences, and the names retired (`retired`). A board and its copies hold none of it. The board's log and the server's log
   lines name the short name, never a sign-in's subject or an email.
 - **Who reaches a board.** A visitor under another Tailscale login is the profile holding that
   `tailscale` sign-in, on each board that gives its short name a power, as that name
@@ -2392,12 +2398,14 @@ the machine folder:
 - `list [--json]`: each person, their powers, groups and the services they sign in by, never a
   subject; `log [--json]`: the changes in order.
 - `add NAME [--display D] [--signin SERVICE:SUBJECT]… [--git H]… [--power P]… [--group G]…`: the
-  board's row, and the profile, written or added to. `remove NAME`: the row goes, their lines stay
-  theirs and their profile the machine's.
+  profile written or added to, then the board's row; a profile that cannot be written puts no one
+  on the board. `remove NAME`: the name retired on the machine, then the row gone and the name
+  retired on the board; their lines stay theirs and their profile the machine's.
 - `join NAME GROUP`, `leave NAME GROUP`, `grant NAME POWER…`, `revoke NAME POWER…`, `grant --group
   GROUP POWER…`, `revoke --group GROUP POWER…`, `group add GROUP [POWER…]`, `group remove GROUP`
-  (its members are out of it).
-- `profile NAME [--display D] [--signin …]… [--git H]…`: the profile alone, on no board.
+  (its members are out of it, and its name is retired as a person's is).
+- `profile NAME [--display D] [--signin …]… [--git H]…`: the profile alone, on no board; a retired
+  name makes no new profile, and one kept stays its person's to change.
 
 ## Sessions
 

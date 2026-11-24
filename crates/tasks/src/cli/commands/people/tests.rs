@@ -24,6 +24,7 @@ fn people() -> People {
             powers: Vec::new(),
             revision: 1,
         }],
+        retired: Vec::new(),
         revision: 3,
     }
 }
@@ -44,6 +45,7 @@ fn profiles() -> Profiles {
             ],
             ..Profile::default()
         }],
+        retired: Vec::new(),
     }
 }
 
@@ -81,6 +83,51 @@ fn a_group_alone_is_listed_and_an_empty_board_says_who_holds_every_power() {
         lines(&People::default(), &Profiles::default()),
         ["nobody is on this board but the person at the machine, who holds every power"]
     );
+}
+
+#[test]
+fn the_names_a_board_retired_are_listed_after_its_people_and_on_a_board_now_empty() {
+    let retired = vec!["cleo".to_string(), "crew".to_string()];
+    let held = People {
+        retired: retired.clone(),
+        ..people()
+    };
+    assert_eq!(
+        lines(&held, &profiles()).last().map(String::as_str),
+        Some("retired, never given again: cleo, crew")
+    );
+    assert_eq!(
+        listed(&held, &profiles())["retired"],
+        json!(["cleo", "crew"])
+    );
+    let empty = People {
+        retired,
+        ..People::default()
+    };
+    assert_eq!(
+        lines(&empty, &Profiles::default()),
+        [
+            "nobody is on this board but the person at the machine, who holds every power",
+            "retired, never given again: cleo, crew",
+        ]
+    );
+}
+
+#[test]
+fn a_profile_put_back_is_as_it_was_and_one_made_for_the_add_is_gone() {
+    let mut changed = profiles();
+    changed.people[0].git.push("ana-l".into());
+    changed.people.push(Profile {
+        name: "bob".into(),
+        ..Profile::default()
+    });
+    put_back(&mut changed, "ana", profiles().get("ana").cloned());
+    put_back(&mut changed, "bob", None);
+    assert_eq!(changed, profiles());
+    let mut gone = Profiles::default();
+    put_back(&mut gone, "ana", profiles().get("ana").cloned());
+    put_back(&mut gone, "bob", None);
+    assert_eq!(gone, profiles());
 }
 
 #[test]

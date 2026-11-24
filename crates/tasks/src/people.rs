@@ -249,6 +249,9 @@ pub struct Change {
 pub struct People {
     pub members: Vec<Member>,
     pub groups: Vec<Group>,
+    /// Every name the board removed, a person's or a group's, in order: never given again to a
+    /// person, a group or a session, as a line under it is the one removed's.
+    pub retired: Vec<String>,
     /// The number of the newest change ([`Change::n`]): 0 on a board none was made on.
     pub revision: i64,
 }
@@ -285,10 +288,14 @@ impl People {
     }
 }
 
+/// How a refusal says a name is retired, after the name: on a board or on the machine.
+pub const RETIRED_WHY: &str = "a name removed before, retired: a removed name is never given \
+     again, as the lines written under it are the one removed's";
+
 /// Why `name` cannot name a new person or group on a board that holds `people`, where `handles`
 /// are the board's sessions' handles: none where it can. It takes a short name's form
 /// ([`symphony_docs::syntax::is_short_name`], which keeps out the board's own words), and is no
-/// person's or group's there already, nor a session's handle.
+/// person's or group's there already, no name the board retired, nor a session's handle.
 pub fn refused_name(name: &str, people: &People, handles: &[String]) -> Option<String> {
     if !symphony_docs::syntax::is_short_name(name) {
         return Some(format!(
@@ -304,6 +311,9 @@ pub fn refused_name(name: &str, people: &People, handles: &[String]) -> Option<S
     }
     if people.group(name).is_some() {
         return Some(format!("{name} is a group of this board"));
+    }
+    if people.retired.iter().any(|retired| retired == name) {
+        return Some(format!("{name} is {RETIRED_WHY}"));
     }
     if handles.iter().any(|handle| handle == name) {
         return Some(format!(
@@ -381,11 +391,17 @@ impl Profile {
     }
 }
 
-/// `people.json`: the machine's profiles, in the order they were made.
+/// `people.json`: the machine's profiles, in the order they were made, and the names a board on
+/// this machine removed.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profiles {
     #[serde(default)]
     pub people: Vec<Profile>,
+    /// Every name a board on this machine removed, a person's or a group's, in order: refused to
+    /// a new person or group on every board, and to a new profile. A profile of one kept stays
+    /// that person's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retired: Vec<String>,
 }
 
 impl Profiles {
@@ -458,6 +474,21 @@ impl Profiles {
     /// The profile `service` signs in as `subject` ([`Signin::is`]).
     pub fn signed_in(&self, service: &str, subject: &str) -> Option<&Profile> {
         (self.people.iter()).find(|profile| profile.signins.iter().any(|s| s.is(service, subject)))
+    }
+
+    /// Whether a board on this machine removed `name`.
+    pub fn is_retired(&self, name: &str) -> bool {
+        self.retired.iter().any(|retired| retired == name)
+    }
+
+    /// `name` kept among the retired, once, in order.
+    pub fn retire(&mut self, name: &str) {
+        if let Err(at) = self
+            .retired
+            .binary_search_by(|retired| retired.as_str().cmp(name))
+        {
+            self.retired.insert(at, name.into());
+        }
     }
 }
 

@@ -1148,6 +1148,20 @@ fn a_deciders_approve_meets_the_owner_gate_while_the_board_gives_them_decide() {
         .revoke(Holder::Person("ana"), &[Power::Decide], &by)
         .unwrap();
     assert_eq!(owner_gate().0, GateState::Held, "a revoke withdraws it");
+    // Removed, her approve meets nothing, and no one given decide under her name revives it.
+    f.store
+        .grant(Holder::Person("ana"), &[Power::Decide], &by)
+        .unwrap();
+    assert_eq!(owner_gate(), met);
+    f.store.remove_person("ana", &by).unwrap();
+    assert_eq!(owner_gate().0, GateState::Held, "her removal withdraws it");
+    let again = f.store.add_person("ana", &[], &[Power::Decide], &by);
+    let refused = again.unwrap_err().to_string();
+    assert!(
+        refused.starts_with("ana is a name removed before, retired"),
+        "{refused}"
+    );
+    assert_eq!(owner_gate().0, GateState::Held, "her old line stays hers");
 }
 
 /// What a gates read costs is counted, never timed: the requests the board is sent, and each part
