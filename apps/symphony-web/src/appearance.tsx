@@ -52,7 +52,6 @@ export function ThemeMenu() {
   const [status, setStatus] = useState("");
   return (
     <div className="theme-menu">
-      <p className="muted">This project's look, on this device.</p>
       <div className="theme-actions">
         <Button type="button" data-theme-action="import" onClick={() => setImporting(true)}>
           Import shadcn theme…

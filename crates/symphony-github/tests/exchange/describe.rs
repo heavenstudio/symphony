@@ -38,11 +38,8 @@ fn with_no_file_committed_it_is_off_and_every_setting_is_its_default() {
     );
     let state = entry.state.clone().unwrap();
     assert_eq!((state.word.as_str(), state.on), ("Off", Some(false)));
-    assert_eq!(
-        state.why,
-        "Off: no symphony-github.toml, so nothing is read from or written to GitHub. Nothing is \
-         kept."
-    );
+    // Why it is off, and nothing of what off means (RULES.md `code/pages-explain-nothing`).
+    assert_eq!(state.why, "Off: no symphony-github.toml. Nothing is kept.");
     assert!(entry.needs.is_empty(), "{:?}", entry.needs);
     let keys: Vec<&str> = entry.settings.iter().map(|s| s.key.as_str()).collect();
     assert_eq!(
@@ -150,10 +147,9 @@ fn a_file_that_does_not_enable_it_is_off_and_its_settings_still_shown() {
     let state = entry.state.clone().unwrap();
     assert_eq!(state.word, "Off");
     assert!(
-        state.why.starts_with(
-            "Off: symphony-github.toml does not enable it, so nothing is read from or written to \
-             GitHub."
-        ),
+        state
+            .why
+            .starts_with("Off: symphony-github.toml does not enable it. "),
         "{}",
         state.why
     );

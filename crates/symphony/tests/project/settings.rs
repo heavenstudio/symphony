@@ -105,11 +105,7 @@ fn a_project_with_no_file_shows_every_default_and_says_none_is_written() {
     let github = entry(&page, "github");
     let state = github.state.as_ref().unwrap();
     assert_eq!((state.word.as_str(), state.on), ("Unknown", None));
-    assert_eq!(
-        state.why,
-        "Unknown: its state is its program's to say, and this machine has no symphony-github: \
-         nothing is exchanged from here."
-    );
+    assert_eq!(state.why, "Unknown: this machine has no symphony-github.");
     assert!(
         github.settings.is_empty(),
         "the page reads no file of its own"
@@ -204,10 +200,15 @@ fn a_project_file_gives_each_value_it_writes_with_its_table_key_and_line() {
     assert_eq!(low.source.file.as_deref(), Some("symphony.toml"));
     assert_eq!(low.source.line, Some(21));
     assert_eq!(low.source.over, None);
-    assert_eq!(
-        entry(&page, "launch").about,
-        "A launch whose caller names nothing starts claude on opus."
-    );
+    // No page draws an entry's `about`, and the Symphony's own entries write none.
+    let abouts: Vec<_> = page
+        .sections
+        .iter()
+        .flat_map(|section| &section.entries)
+        .filter(|entry| !entry.about.is_empty())
+        .map(|entry| entry.id.as_str())
+        .collect();
+    assert_eq!(abouts, Vec::<&str>::new());
 }
 
 #[test]
@@ -568,10 +569,6 @@ fn a_local_launch_holds_over_the_committed_one_key_by_key() {
         ("xhigh", "default: the board's own for codex")
     );
     assert_eq!((effort.source.scope, &effort.source.over), (None, &None));
-    assert_eq!(
-        entry(&page, "launch").about,
-        "A launch whose caller names nothing starts codex on gpt-x (effort xhigh)."
-    );
     // A role with no model of its own runs on the launch's, the local file's.
     let executor = setting(&page, "models", "[agents.models] executor");
     assert_eq!(
@@ -676,14 +673,9 @@ fn an_agent_says_whether_this_machine_has_its_program() {
         "Not found on this machine: a launch of it here is refused."
     );
     assert_eq!(codex.state.as_ref().unwrap().on, Some(true));
-    assert!(
-        codex
-            .state
-            .as_ref()
-            .unwrap()
-            .why
-            .starts_with("A launch starts it when")
-    );
+    // On says what it is: no sentence says what a launch of it does.
+    let why = &codex.state.as_ref().unwrap().why;
+    assert!(!why.contains("launch"), "{why}");
     assert!(!entry(&page, "herdr").needs[0].met);
     assert!(!entry(&page, "github").needs[0].met);
 }
@@ -822,11 +814,7 @@ fn a_custom_workflow_is_said_with_its_line_mappings_and_authorities() {
     let custom = page(&tree.root, &bare());
     assert_eq!(custom.problems, Vec::<String>::new());
     let workflow = setting(&custom, "workflow", "[workflow]");
-    assert_eq!(
-        workflow.value,
-        "The project's own, with mappings, which the board activates once the default branch \
-         commits it."
-    );
+    assert_eq!(workflow.value, "The project's own, with mappings.");
     assert_eq!(workflow.kind, SettingKind::Sentence);
     assert_eq!(workflow.class, SettingClass::Reviewed);
     assert_eq!(workflow.scopes, [SettingScope::Project]);
@@ -857,8 +845,7 @@ fn a_custom_workflow_is_said_with_its_line_mappings_and_authorities() {
     let workflow = setting(&guarded, "workflow", "[workflow]");
     assert_eq!(
         workflow.value,
-        "The project's own, with mappings and approval authorities, which the board activates \
-         once the default branch commits it."
+        "The project's own, with mappings and approval authorities."
     );
     assert_eq!(workflow.source.said, "symphony.toml [workflow], line 4");
 }
@@ -1203,10 +1190,9 @@ fn an_agent_turned_off_says_off_and_where_from_each_place() {
     let off = |page: &SettingsPage| {
         let (word, on, why) = state_of(page, "codex");
         assert_eq!((word.as_str(), on), ("Off", Some(false)), "{why}");
-        assert!(
-            why.contains("no launch, staffing pass or restore starts it"),
-            "{why}"
-        );
+        // Where it was turned off, and nothing of what off means.
+        assert!(why.starts_with("Turned off ("), "{why}");
+        assert!(!why.contains("staffing pass"), "{why}");
         assert_eq!(switch(page, "codex").value, "off");
         why
     };

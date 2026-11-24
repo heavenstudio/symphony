@@ -109,8 +109,8 @@ describe("an age", () => {
 
 describe("the lead", () => {
   it("counts cards and documents in the singular and the plural", () => {
-    expect(lead(37, 9)).toBe("37 cards wait on you across 9 documents. Start with the one below.");
-    expect(lead(1, 1)).toBe("1 card waits on you across 1 document. Start with the one below.");
+    expect(lead(37, 9)).toBe("37 cards wait on you across 9 documents.");
+    expect(lead(1, 1)).toBe("1 card waits on you across 1 document.");
     expect(lead(0, 0)).toBe("Your queue is empty.");
   });
 });
@@ -236,9 +236,16 @@ describe("the counts", () => {
     ]) {
       expect(html).toContain(`href="${to}"><b>${value}</b><span>${label}</span>`);
     }
-    expect(html).toContain(
-      "<span>tasks in progress · in review</span><small>in progress includes Build and Test</small>",
-    );
+    // A hint is a value of its own, never what the tile counts said again.
+    expect(html).toContain("<span>waiting on you</span><small>across 9 documents</small>");
+    for (const label of [
+      "auto-approved to spot-check",
+      "tasks in progress · in review",
+      "agents live",
+    ]) {
+      expect(html, label).toContain(`<span>${label}</span></a>`);
+    }
+    expect(html).toContain("<span>answered by agents today</span></button>");
     expect(html).toContain(
       '<button type="button" class="tile card tone-answered" aria-controls="activity-panel"><b>6</b><span>answered by agents today</span>',
     );
@@ -326,9 +333,7 @@ describe("the head", () => {
   it("greets by the hour and says how much waits", () => {
     const html = render(board());
     expect(html).toContain("<h1>Good morning</h1>");
-    expect(html).toContain(
-      '<p class="lead">37 cards wait on you across 9 documents. Start with the one below.</p>',
-    );
+    expect(html).toContain('<p class="head-state">37 cards wait on you across 9 documents.</p>');
   });
 });
 
@@ -338,7 +343,7 @@ describe("an empty queue", () => {
     expect(html).toContain("Your queue is empty.");
     expect(html).toContain('<h2 class="hero-title">Nothing waits on you. ✦</h2>');
     expect(html).toContain(
-      'Enjoy the quiet. While you are here: <a href="/queue#spot">2 auto-approved cards</a> could use a glance.',
+      '<p class="hero-summary"><a href="/queue#spot">2 auto-approved cards</a> to spot-check.</p>',
     );
     expect(html).not.toContain('class="next card"');
     expect(html).not.toContain('class="pics"');
@@ -349,9 +354,7 @@ describe("an empty queue", () => {
     shown.counts = { ...shown.counts, spot_check: 1 };
     expect(render(shown)).toContain("1 auto-approved card</a>");
     shown.counts = { ...shown.counts, spot_check: 0 };
-    expect(render(shown)).toContain(
-      '<p class="hero-summary">Every card has your verdict, and the agents have the next move. Enjoy the quiet.</p>',
-    );
+    expect(render(shown)).not.toContain("hero-summary");
   });
 });
 

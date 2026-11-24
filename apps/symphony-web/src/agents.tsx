@@ -216,7 +216,6 @@ export function AgentsView({
       <div className="page-head">
         <div>
           <h1>Agents</h1>
-          <p className="lead">Who is connected, and what they are working on.</p>
         </div>
       </div>
       <p className="muted">{`Terminal panes: ${view.probes.panes} · Test slots: ${view.probes.slots}`}</p>
@@ -460,9 +459,6 @@ function Guidance({ id, guidance }: { id: string; guidance: WorkGuidance | undef
   return (
     <details className="machine-guidance">
       <summary>{`Advisory targets · builds ${target(guidance?.build)} · tests ${target(guidance?.test)}`}</summary>
-      <p className="muted">
-        Orchestrators decide when to start work. These targets do not enforce admission.
-      </p>
       <p className="muted">
         {"Machine ID: "}
         <code>{id}</code>

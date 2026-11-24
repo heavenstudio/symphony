@@ -55,7 +55,6 @@ function chart(unit: Unit, data: SeriesData[]): ChartData {
   return {
     id: "test",
     title: "Test",
-    note: "A test chart.",
     unit,
     series: data,
     cover: Array.from({ length: periods }, () => 1),
@@ -424,7 +423,7 @@ describe("a chart's card", () => {
   it("has a ghost of its box, its title and its plot", () => {
     expect(renderToStaticMarkup(<GhostChart />)).toBe(
       '<div class="ghost-chart" aria-hidden="true"><span class="bone" style="--w:40%"></span>' +
-        '<span class="bone" style="--w:70%"></span><div class="ghost-plot"></div></div>',
+        '<div class="ghost-plot"></div></div>',
     );
   });
 });
@@ -528,7 +527,6 @@ function dearest(rows: Row[], side = false): RowsData {
   return {
     id: "dearest",
     title: "Dearest tasks",
-    note: "The dearest first.",
     unit: "dollars",
     series: [
       { name: "First round", hidden: false },
@@ -709,7 +707,6 @@ function spread(dots: Dot[]): DotsData {
   return {
     id: "spread",
     title: "Every task, cost against size",
-    note: "Both on a log scale.",
     xUnit: "count",
     yUnit: "dollars",
     xName: "lines changed",
@@ -718,6 +715,7 @@ function spread(dots: Dot[]): DotsData {
       { name: "No kind", colour: "var(--chart-none)", hidden: false },
     ],
     dots,
+    undrawn: [],
     tableToggle: "Show the table",
     table: () => ({ caption: "Every dot", head: ["Task"], rows: [] }),
   };
@@ -762,6 +760,24 @@ describe("a chart of dots", () => {
     );
     expect(html).toContain(
       'aria-label="Every task, cost against size: the arrow keys move between dots"',
+    );
+    expect(html, "every row a dot").not.toContain("No dot for");
+  });
+
+  it("says under its plot the rows no dot stands for, listed as a sentence lists them", () => {
+    const one = dotsCard({ ...spread(dots), undrawn: ["2 that changed no counted line"] }, null);
+    expect(one).toContain(
+      '<p class="chart-x-name">lines changed</p><p class="chart-instead">No dot for 2 that changed no counted line.</p>',
+    );
+    const three = dotsCard(
+      {
+        ...spread(dots),
+        undrawn: ["2 that changed no counted line", "1 landed before", "1 with no price"],
+      },
+      null,
+    );
+    expect(three).toContain(
+      "No dot for 2 that changed no counted line, 1 landed before and 1 with no price.",
     );
   });
 
@@ -822,29 +838,25 @@ describe("a chart of dots", () => {
 });
 
 describe("every shape of chart", () => {
-  /** The card's caption, as every shape opens: its title, which names the figure, and its note. */
-  const opens = (figure: string, id: string, title: string, note: string) =>
+  /** The card's caption, as every shape opens: its title alone, which names the figure. */
+  const opens = (figure: string, id: string, title: string) =>
     `<figure class="${figure}" id="chart-${id}" aria-labelledby="chart-${id}-title"><figcaption>` +
-    `<h3 id="chart-${id}-title">${title}</h3><p class="chart-note">${note}</p></figcaption>`;
+    `<h3 id="chart-${id}-title">${title}</h3></figcaption>`;
   /** Its table's button, closed, which every shape ends with. */
   const ends = (label: string) =>
     `<button class="chart-table-toggle" type="button" aria-expanded="false">${label}</button></figure>`;
 
-  it("opens with its title and note and ends with its table's button, closed", () => {
+  it("opens with its title alone and ends with its table's button, closed", () => {
     const periods = card(openChart(), null);
-    expect(periods.startsWith(opens("chart", "open", "Open work", "A test chart."))).toBe(true);
+    expect(periods.startsWith(opens("chart", "open", "Open work"))).toBe(true);
     expect(periods.endsWith(ends("Show the table"))).toBe(true);
     const rows = rowsCard(dearest([row("a/b", [3, 1])], true), null);
-    expect(
-      rows.startsWith(opens("chart hchart side", "dearest", "Dearest tasks", "The dearest first.")),
-    ).toBe(true);
+    expect(rows.startsWith(opens("chart hchart side", "dearest", "Dearest tasks"))).toBe(true);
     expect(rows.endsWith(ends("Show all 2 as a table"))).toBe(true);
     const dots = dotsCard({ ...spread([dot("a/b", 10, 1)]), tableToggle: "Show all 1" }, null);
-    expect(
-      dots.startsWith(
-        opens("chart dchart", "spread", "Every task, cost against size", "Both on a log scale."),
-      ),
-    ).toBe(true);
+    expect(dots.startsWith(opens("chart dchart", "spread", "Every task, cost against size"))).toBe(
+      true,
+    );
     expect(dots.endsWith(ends("Show all 1"))).toBe(true);
   });
 
@@ -963,7 +975,7 @@ describe("every shape of chart", () => {
   it("says in its plot's place what the window cannot show, with no legend or table", () => {
     const html = card({ ...openChart(), instead: "Switch to Days." }, null, NO_AXIS);
     expect(html).toBe(
-      `${opens("chart", "open", "Open work", "A test chart.")}<p class="chart-instead">Switch to Days.</p></figure>`,
+      `${opens("chart", "open", "Open work")}<p class="chart-instead">Switch to Days.</p></figure>`,
     );
   });
 });

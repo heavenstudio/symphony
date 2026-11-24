@@ -117,8 +117,6 @@ export function seriesKey(chart: string, series: string): string {
 export interface ChartData {
   id: string;
   title: string;
-  /** What it shows and in what unit, a sentence. */
-  note: string;
   unit: Unit;
   /** Its series in their fixed order: the first takes `--chart-1`, the next `--chart-2`, and so on. */
   series: SeriesData[];
@@ -382,14 +380,16 @@ function Swatch({ series, mark }: { series: number; mark: Mark }) {
   );
 }
 
-/** What every shape of chart says over its plot. */
+/**
+ * What every shape of chart says over its plot: its title alone, no note under it that says what it
+ * shows (RULES.md `code/pages-explain-nothing`).
+ */
 interface Head {
   id: string;
   title: string;
-  note: string;
 }
 
-/** A chart's card, of every shape: its title and its note, then what `children` draw. */
+/** A chart's card, of every shape: its title, then what `children` draw. */
 function Frame({
   chart,
   className,
@@ -404,7 +404,6 @@ function Frame({
     <figure className={className} id={`chart-${chart.id}`} aria-labelledby={titleId}>
       <figcaption>
         <h3 id={titleId}>{chart.title}</h3>
-        <p className="chart-note">{chart.note}</p>
       </figcaption>
       {children}
     </figure>
@@ -838,7 +837,6 @@ export interface Row {
 export interface RowsData {
   id: string;
   title: string;
-  note: string;
   unit: Unit;
   /**
    * The parts each bar stacks, in their fixed order: the first takes `--chart-1`, the next
@@ -1020,11 +1018,17 @@ export interface Dot {
   said: string[];
 }
 
+/** `parts` joined as a sentence lists them: `a`, `a and b`, `a, b and c`. */
+function listed(parts: string[]): string {
+  return parts.length < 2
+    ? (parts[0] ?? "")
+    : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
+
 /** A chart of dots on two log scales, ready to draw. */
 export interface DotsData {
   id: string;
   title: string;
-  note: string;
   /** What the dots' places count across and up: `count` lines, `dollars`. */
   xUnit: Unit;
   yUnit: Unit;
@@ -1034,6 +1038,8 @@ export interface DotsData {
   series: { name: string; colour: string; hidden: boolean }[];
   /** The dots, in the order the arrow keys step through them: across, then up. */
   dots: Dot[];
+  /** The rows no dot stands for, each with why (`2 that changed no counted line`). */
+  undrawn: string[];
   tableToggle: string;
   table: () => TableData;
 }
@@ -1172,17 +1178,19 @@ export function DotChart({ chart, selected, onSelect, onToggle }: DotChartProps)
         ))}
       </div>
       <p className="chart-x-name">{chart.xName}</p>
+      {chart.undrawn.length > 0 && (
+        <p className="chart-instead">{`No dot for ${listed(chart.undrawn)}.`}</p>
+      )}
       <TableToggle label={chart.tableToggle} table={() => <DataTable table={chart.table()} />} />
     </Frame>
   );
 }
 
-/** A chart still to come: its box, a bar for its title and note, and its plot's place. */
+/** A chart still to come: its box, a bar for its title, and its plot's place. */
 export function GhostChart() {
   return (
     <div className="ghost-chart" aria-hidden="true">
       <span className="bone" style={css({ "--w": "40%" })} />
-      <span className="bone" style={css({ "--w": "70%" })} />
       <div className="ghost-plot" />
     </div>
   );

@@ -334,7 +334,8 @@ describe("the charts", () => {
       "Board health",
     ]);
     const open = find(drawn, "open");
-    expect(open.note).toBe("Top-level tasks in each open status at the end of each day.");
+    // A chart is its title alone: no note says what it shows.
+    expect(Object.keys(open)).not.toContain("note");
     expect(open.series[0]?.values).toEqual([2, null, 0]);
     expect([gap(open, 1), gap(open, 2)]).toEqual([true, false]);
     expect(open.cover).toEqual([1, 0, 5 / 11]);
@@ -356,8 +357,6 @@ describe("the charts", () => {
   it("read the tasks done each once, and a period that did not count them is a gap", () => {
     const done = find(charts(page(), []), "done");
     expect(done.series[0]?.values).toEqual([3, null, 4]);
-    expect(done.note).toContain("each once at its last close");
-    expect(done.note).toContain("UTC");
     const uncounted = wire();
     for (const one of uncounted.buckets) {
       if (one.flow) (one.flow as Wire).done = null;
@@ -482,8 +481,7 @@ describe("the workflow's charts", () => {
     const phases = find(drawn, "phases");
     expect(phases.title).toBe("Time by phase");
     expect(phases.unit).toBe("hours");
-    expect(phases.note).toContain("per day");
-    expect(phases.note).toContain("never counted here");
+    expect(Object.keys(phases)).not.toContain("note");
     expect(phases.series.map((one) => [one.name, one.values])).toEqual([
       ["Build", [10, null, 0]],
       ["Make", [1, null, 3]],
@@ -816,7 +814,7 @@ describe("the page's view", () => {
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('data-ready="loading"');
     expect(html).toContain('<p class="status-text" role="status">Loading the reports…</p>');
-    expect(html).toContain("Days · the last 3 days · times in UTC");
+    expect(html).toContain('<p class="reports-unit">Times in UTC</p>');
     expect(html).toContain('aria-pressed="true" data-grain="day"');
     expect(html).toContain('aria-pressed="false" data-days="7"');
     expect(html.match(/class="ghost-chart"/g)).toHaveLength(2);
@@ -923,7 +921,7 @@ describe("the page's view", () => {
       error: "The server could not be reached",
       onAsk: () => {},
     });
-    expect(childrenOf(drawn, "reports-sub")).toBe("Days · the last 3 days · times in UTC");
+    expect(childrenOf(drawn, "reports-unit")).toBe("Times in UTC");
     expect(childrenOf(drawn, "reports-error")).toBe(
       "The reports could not be read. The server could not be reached; check the connection. Trying again…",
     );
@@ -998,9 +996,11 @@ describe("the page's view", () => {
     const empty = { ...unrecorded(wire()), first: null };
     let html = view(read(empty));
     expect(html).toContain('<section class="reports-empty" aria-label="No roll-up yet">');
-    expect(html).toContain("the next is due by 11:00 UTC");
+    expect(html).toContain("<p>No roll-up yet: the next is due by 11:00 UTC.</p>");
     expect(html).not.toContain("chart-slot");
-    expect(firstRollUp(read({ ...empty, to: MONDAY + 9 * HOUR + 59 }))).toContain("by 09:00 UTC");
+    expect(firstRollUp(read({ ...empty, to: MONDAY + 9 * HOUR + 59 }))).toBe(
+      "No roll-up yet: the next is due by 09:00 UTC.",
+    );
     // The agents recorded before the first roll-up still draw.
     (empty.buckets[0] as Wire).agents = mondayAgents();
     html = view(
@@ -1009,7 +1009,7 @@ describe("the page's view", () => {
         unread: ["/repo/.git/symphony/reports/2026-11-10.json: not a regular file"],
       }),
     );
-    expect(html).toContain("No roll-up yet.");
+    expect(html).toContain("No roll-up yet: the next is due by");
     expect(html).toContain("chart-slot");
     expect(html).toContain("1 file not read: their hours show as gaps");
     expect(html).toContain(
@@ -1060,7 +1060,8 @@ describe("the window and the series hidden", () => {
     localStorage.setItem("reports-days", "28");
     const html = renderToStaticMarkup(<ReportsPage />);
     expect(html).toMatch(/^<main class="reports-page"><div class="reports" data-ready="loading"/);
-    expect(html).toContain("Weeks · the last 4 weeks · times in UTC");
+    expect(html).toContain('<p class="reports-unit">Times in UTC</p>');
+    expect(html).toContain('aria-pressed="true" data-grain="week"');
     expect(html).toContain('data-view="time"');
   });
 
@@ -1539,10 +1540,6 @@ describe("the tokens and their cost", () => {
     expect(dollars.series[1]?.values).toEqual([8, null, null]);
     expect(dollars.cover).toEqual([1, 0, 0]);
     expect([gap(dollars, 1), gap(dollars, 2)]).toEqual([true, true]);
-    expect(dollars.note).toContain("estimated at API list prices read 2026-11-16");
-    expect(dollars.note).toContain("never money spent");
-    expect(dollars.note).toContain("shared among the hours between them by time");
-    expect(find(charts(page(), []), "cost").note).toContain("read on a day not named");
   });
 
   it("are summed over the window, none where no period told any", () => {
@@ -1559,23 +1556,18 @@ describe("the tokens and their cost", () => {
     expect(spendSaid(read(spendWire()))).toBe(
       "In the 1 of 3 days that told them: $10.40 + unpriced estimated, 2.9M tokens.",
     );
-    expect(spendSaid(page())).toBe(
-      "No day of the window told its tokens: an hour's are told once two roll-ups span it.",
-    );
+    expect(spendSaid(page())).toBe("No day of the window told its tokens.");
     const told = read(spendWire());
     told.buckets = [told.buckets[0] as Bucket];
     expect(spendSaid(told)).toBe("In the window: $10.40 + unpriced estimated, 2.9M tokens.");
     const said = (shown: Page) =>
       renderToStaticMarkup(<DollarNote page={shown} />).replace(/<[^>]+>/g, "");
     expect(said(read(spendWire()))).toBe(
-      "Every dollar here is estimated at API list prices read 2026-11-16, not money spent; a " +
-        "figure marked + unpriced leaves out the tokens of a model the price table does not " +
-        "name: gpt-x 300k tokens.",
+      "Every dollar here is estimated at API list prices read 2026-11-16, not money spent; " +
+        "unpriced: gpt-x 300k tokens.",
     );
     expect(said(page())).toBe(
-      "Every dollar here is estimated at API list prices read on a day not named, not money " +
-        "spent; a figure marked + unpriced leaves out the tokens of a model the price table " +
-        "does not name.",
+      "Every dollar here is estimated at API list prices read on a day not named, not money spent.",
     );
     // Only tokens of a model with no price, named twice: summed once, and no dollar said.
     const unpriced = spendWire();
@@ -1587,15 +1579,13 @@ describe("the tokens and their cost", () => {
     expect(spendSaid(read(unpriced))).toBe(
       "In the 1 of 3 days that told them: unpriced estimated, 500k tokens.",
     );
-    expect(said(read(unpriced))).toMatch(/name: gpt-x 500k tokens\.$/);
+    expect(said(read(unpriced))).toMatch(/; unpriced: gpt-x 500k tokens\.$/);
   });
 
   it("draw the cost of a landed task and of 100 lines, a period that landed none drawn empty", () => {
     const drawn = charts(read(spendWire()), []);
     const tasks = find(drawn, "landed-cost");
     expect(tasks.title).toBe("Cost per landed task");
-    expect(tasks.note).toContain("the median and the p90 of what one cost");
-    expect(tasks.note).toContain("A day that landed none has no point.");
     expect(tasks.series.map((series) => [series.name, series.mark, series.values])).toEqual([
       ["Median", "line", [5, null, null]],
       ["p90", "line", [5.8, null, null]],
@@ -1700,7 +1690,7 @@ describe("the tokens and their cost", () => {
     const html = view(read(spendWire()));
     expect(html).toContain('<section class="reports-section" aria-label="Tokens and cost">');
     expect(html).toContain(
-      '<h2>Tokens and cost</h2><p class="reports-sub">In the 1 of 3 days that told them: ',
+      '<h2>Tokens and cost</h2><p class="reports-spend">In the 1 of 3 days that told them: ',
     );
     expect(html).toContain('<p class="reports-note">Every dollar here is estimated');
     expect(html).not.toContain("Cost per landed task</h3><p>");

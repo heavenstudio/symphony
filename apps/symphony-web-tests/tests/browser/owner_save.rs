@@ -97,7 +97,7 @@ fn a_conversation_expiring_before_a_reply_keeps_text_until_a_new_chat_is_sent() 
         SHOWN
     ));
     page.eval("document.querySelector('#quick-sheet form').requestSubmit()");
-    assert!(page.wait_for("document.querySelector('#quick-sheet [role=alert]')?.textContent.includes('send again to start a new conversation') === true && !document.getElementById('quick-text').disabled", SHOWN));
+    assert!(page.wait_for("document.querySelector('#quick-sheet [role=alert]')?.textContent === 'This conversation is gone; send again to start a new one.' && !document.getElementById('quick-text').disabled", SHOWN));
     assert_eq!(page.eval("[window.reviewQuickDraft.ask,window.reviewQuickDraft.ask_scope,document.getElementById('quick-text').value]"), json!([0,"","Keep my reply"]));
     assert_eq!(
         site.posts(),

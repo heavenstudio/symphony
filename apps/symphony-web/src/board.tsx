@@ -1272,13 +1272,7 @@ export function TaskBoard({
           <div className="under-way" />
         ))}
       <WaitStrip row={waits} waiting={waiting} counts={counts} wait={wait} choose={chooseWait} />
-      {wait === "" && search === "" && noTasks(counts) && (
-        <FirstSteps>
-          No task is open on this board, and none finished {days === 1 ? "today" : "this week"}. Add
-          one with the + button, or have an agent file it with the create-task skill or{" "}
-          <code>just tasks create</code>:
-        </FirstSteps>
-      )}
+      {wait === "" && search === "" && noTasks(counts) && <FirstSteps>No open task.</FirstSteps>}
       {flow?.strip({ waiting, wait, choose: chooseWait, open: setOpened, opened, phone })}
       {flowFailed && (
         <p className="flow-failed" role="alert">

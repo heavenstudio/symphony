@@ -167,8 +167,9 @@ describe("a document's questions", () => {
     expect(empty).toContain(
       '<section class="asks" id="asks" aria-label="Questions about this document"><h2>Ask about this document</h2>',
     );
-    expect(empty).toContain("Nobody is registered to receive chat. Your question is queued.");
-    expect(empty).toContain(" Questions go after a day without activity.");
+    expect(empty).toContain(
+      '<p class="muted">Nobody is registered to receive chat; your question is queued.</p>',
+    );
     expect(empty).toContain("Use selected passage");
     expect(empty).not.toContain("Clear passage");
     expect(empty).toContain('<form data-attach="review-ask:/docs/a.md">');

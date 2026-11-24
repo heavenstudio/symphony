@@ -9,10 +9,8 @@ import {
   kindName,
   kindsChart,
   LandedView,
-  LEFT_OUT,
   landedEmpty,
   landedFigures,
-  landedIntro,
   linesSaid,
   per100,
   readLanded,
@@ -203,19 +201,11 @@ describe("the words", () => {
     expect([kindName("fix"), kindName(null)]).toEqual(["fix", "No kind"]);
   });
 
-  it("open the tab saying what it counts, and say why it has nothing to draw", () => {
-    expect(landedIntro(read(sample()))).toBe(
-      "The 3 top-level tasks landed in the window with tokens recorded, each priced once with " +
-        "its subtasks, at its landing: by task, not by day.",
-    );
-    expect(landedIntro({ ...withTasks([task("a/b")]), grain: "week" })).toBe(
-      "The one top-level task landed in the window with tokens recorded, each priced once with " +
-        "its subtasks, at its landing: by task, not by week.",
-    );
+  it("say in one line why the tab has nothing to draw", () => {
     const empty = read(CASES.samples.emptyLanded);
     expect(landedEmpty(empty)).toBe("No top-level task landed in the window.");
     expect(landedEmpty({ ...empty, without: 2 })).toBe(
-      "2 top-level tasks landed in the window, none with tokens recorded: no figure to draw.",
+      "2 top-level tasks landed in the window, none with tokens recorded.",
     );
     expect(landedEmpty({ ...empty, without: 1 })).toContain("1 top-level task landed");
   });
@@ -310,7 +300,6 @@ describe("the figures", () => {
 describe("the dearest tasks", () => {
   it("are every task as a bar, its first round and its review rounds stacked, its name a link", () => {
     const chart = dearestChart(read(sample()), []);
-    expect(chart.note).toMatch(/^Every top-level task landed in the window, the dearest first, /);
     expect(chart.series).toEqual([
       { name: "First round", hidden: false },
       { name: "Review rounds", hidden: false },
@@ -338,9 +327,6 @@ describe("the dearest tasks", () => {
     const tasks = Array.from({ length: 12 }, (_, at) => task(`t/${at}`, { first: 12 - at }));
     const chart = dearestChart(withTasks(tasks), [seriesKey("dearest", "Review rounds")]);
     expect(chart.rows).toHaveLength(DEAREST);
-    expect(chart.note).toMatch(
-      /^The 10 top-level tasks landed in the window that cost the most, each with its subtasks/,
-    );
     expect(chart.series[1]?.hidden).toBe(true);
     expect(chart.tableToggle).toBe("Show all 12 as a table");
     expect(chart.table().rows).toHaveLength(12);
@@ -411,8 +397,6 @@ describe("the kinds", () => {
         '<ul><li><span class="swatch" style="--c:var(--chart-1)" aria-hidden="true"></span>' +
         "Median a task <strong>$3.50</strong></li></ul></div>",
     );
-    expect(chart.note).toContain("a task landed before kinds were kept counts under No kind.");
-    expect(chart.note).toMatch(/ The first with a kind landed 9 Nov 2026\.$/);
     expect(chart.table()).toEqual({
       caption: "By kind",
       head: ["Kind", "Tasks", "Median a task", "In all", "Per 100 lines"],
@@ -424,12 +408,11 @@ describe("the kinds", () => {
     });
   });
 
-  it("say when no task had a kind, nothing of the day when every one had, and none unpriced", () => {
+  it("are drawn the same whenever kinds began, and say none unpriced", () => {
     const whole = read(sample());
+    // When kinds began is no part of the chart: it is drawn the same either way.
     const none = kindsChart({ ...whole, kinds_from: null });
-    expect(none.note).toMatch(/ No task landed in the window was filed with a kind\.$/);
-    const kinded = { ...whole, kinds: whole.kinds.filter((kind) => kind.kind !== null) };
-    expect(kindsChart(kinded).note).toMatch(/counts under No kind\.$/);
+    expect([none.title, none.rows]).toEqual([kindsChart(whole).title, kindsChart(whole).rows]);
     const unpriced = {
       ...whole,
       kinds: [{ ...(whole.kinds[0] as LandedPage["kinds"][number]), median: null }],
@@ -486,9 +469,10 @@ describe("the review rounds", () => {
 describe("every task's cost against its size", () => {
   it("is a dot a task with lines and a cost, saying which it leaves out", () => {
     const chart = spreadChart(read(sample()), []);
-    expect(chart.note).toMatch(
-      / No dot for 1 that changed no counted line and 1 landed before lines were kept\.$/,
-    );
+    expect(chart.undrawn).toEqual([
+      "1 that changed no counted line",
+      "1 landed before lines were kept",
+    ]);
     expect([chart.xUnit, chart.yUnit, chart.xName]).toEqual(["count", "dollars", "lines changed"]);
     expect(chart.series).toEqual([{ name: "feature", colour: "var(--chart-1)", hidden: false }]);
     expect(chart.dots).toEqual([
@@ -535,7 +519,7 @@ describe("every task's cost against its size", () => {
       ["fix", "var(--chart-3)", false],
       ["No kind", "var(--chart-none)", true],
     ]);
-    expect(chart.note).toMatch(/ No dot for 1 with no price\.$/);
+    expect(chart.undrawn).toEqual(["1 with no price"]);
     expect(chart.table().rows.map((row) => row.cells[1])).toEqual([
       "chore",
       "none",
@@ -543,7 +527,7 @@ describe("every task's cost against its size", () => {
       "fix",
     ]);
     // Every task drawn: nothing said left out.
-    expect(spreadChart(withTasks([task("a/b")]), []).note).toMatch(/lock files are left out\.$/);
+    expect(spreadChart(withTasks([task("a/b")]), []).undrawn).toEqual([]);
   });
 });
 
@@ -554,11 +538,12 @@ function tab(page: LandedPage, hash = "", hidden: string[] = []) {
 }
 
 describe("the tab", () => {
-  it("draws its sentence, the files not read, four linked figures and a place for each chart", () => {
+  it("draws the files not read, four linked figures and a place for each chart, no opening sentence", () => {
     const html = tab(read(sample()));
     expect(html).toContain(
-      '<section class="reports-section reports-landed" aria-label="Landed tasks"><p class="reports-sub">The 3 top-level tasks landed',
+      '<section class="reports-section reports-landed" aria-label="Landed tasks"><details class="reports-unread">',
     );
+    expect(html).not.toContain("reports-sub");
     expect(html).toContain(
       '<details class="reports-unread"><summary>1 file not read: the tasks they hold are missing</summary><ul><li>/repo/.git/symphony/reports/2026-11-08.json: not read</li></ul></details>',
     );
@@ -568,14 +553,10 @@ describe("the tab", () => {
       expect(html).toContain(`<span id="chart-${id}"></span><div class="ghost-chart"`);
     }
     expect(html).not.toContain("<figure");
+    expect(html.match(/class="reports-note"/g)).toHaveLength(1);
     expect(text(html)).toContain(
-      "Every dollar here is estimated at API list prices read 2026-11-16, not money spent; a " +
-        "figure marked + unpriced leaves out the tokens of a model the price table does not name.",
+      "Every dollar here is estimated at API list prices read 2026-11-16, not money spent.",
     );
-    expect(html).toContain(`<p class="reports-note">${LEFT_OUT.replaceAll("'", "&#x27;")}</p>`);
-    expect(LEFT_OUT).toContain("Codex");
-    expect(LEFT_OUT).toContain("orchestrators");
-    expect(LEFT_OUT).toContain("last answer");
     const files = tab({ ...read(sample()), unread: ["a", "b"] });
     expect(files).toContain("<summary>2 files not read: the tasks they hold are missing</summary>");
     expect(tab({ ...read(sample()), unread: [] })).not.toContain("reports-unread");

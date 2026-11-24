@@ -218,8 +218,7 @@ const sending = () => import("./attach-upload");
  * What a composer says where the files' sending did not come, once the shell said the page's build
  * is there (where it is gone, the page loads again): the files are not taken, and are given again.
  */
-export const UNSENT =
-  "The files could not be sent: this page could not load its uploads. Try again.";
+export const UNSENT = "The files could not be sent; try again.";
 
 /**
  * A composer's `files`, taken into `held` after the batches `before` them (attach-upload.ts `take`,

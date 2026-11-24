@@ -71,7 +71,7 @@ down. A toast needs no press: the item stays in **Recent activity**.
 
 | Tab | Holds | **Send** |
 | --- | --- | --- |
-| **Chat** | *Ask about this page.*, then the conversation once there is one, each message under its author's name; **Message**; **Attach** | sends the message, with the page it was asked on, to the agent that answers chat |
+| **Chat** | the conversation once there is one, each message under its author's name; **Message**; **Attach** | sends the message, with the page it was asked on, to the agent that answers chat |
 | **Add task** | **Title**, with its count out of 200 characters; **Details**; **Slug (optional)**; **Priority**, **p0** to **p4**, **p2** to begin with; **Attach** | files the task on the board, and says **✓ Task** *slug* **created**, the slug a link to its page |
 
 - Under a conversation the sheet says who receives it, *Chat goes to* and the agent's name, or

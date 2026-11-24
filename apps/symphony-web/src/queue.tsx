@@ -193,10 +193,6 @@ const GROUPS: [string, number][] = [
   ["agent", 2],
 ];
 
-/** What the page says under its heading: what its groups hold, and the order of the first. */
-const LEAD =
-  "The cards waiting on you, oldest first, the document folders taken in turn; then those to spot-check and those waiting on an agent.";
-
 /** A row of the queue while it loads; a card waiting on the owner has its rank and Later too. */
 function GhostRow({ ranked = false }: { ranked?: boolean }) {
   return (
@@ -531,7 +527,6 @@ export function QueuePage({ scope, refreshed }: { scope: string; refreshed: numb
               <a href={href(scoped(scope, "/"))}>← Home</a>
             </p>
             <h1>Review queue</h1>
-            <p className="lead">{LEAD}</p>
           </div>
         </div>
         {error !== null && <p role="alert">{failedRead(error, true)}</p>}

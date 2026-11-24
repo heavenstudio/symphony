@@ -2419,7 +2419,6 @@ fn settings_section(
     api::SettingsSection {
         id: id.into(),
         title: title.into(),
-        about: format!("About {title}."),
         entries,
     }
 }
@@ -2760,11 +2759,7 @@ fn settings() -> api::SettingsPage {
                 vec![settings_herdr(), settings_described()],
             ),
             settings_section("models", "Models and limits", vec![settings_models()]),
-            settings_section(
-                "reviewed",
-                "Shown here, changed by a reviewed task",
-                settings_reviewed(),
-            ),
+            settings_section("reviewed", "Reviewed settings", settings_reviewed()),
             settings_section("device", "This device", vec![settings_appearance()]),
         ],
         stored: settings_stored(),

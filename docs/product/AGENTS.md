@@ -126,8 +126,8 @@ One column: the cards of **Happening now** one under another, then the rows acro
   the tasks it executes or reviews.
 - In an agent's work and under **Following**, a task with a workflow of its own says the state
   that workflow names in place of its stage; the cards of **Happening now** say its stage.
-- A machine's advisory targets are what orchestrators aim at, never a limit: *Orchestrators decide
-  when to start work. These targets do not enforce admission.*
+- A machine's advisory targets are what orchestrators aim at, never a limit; the page shows them
+  with no sentence saying so.
 - An agent's tokens and cost are its own sessions', not its tasks': a task's are on its page.
 
 ## Related

@@ -513,7 +513,7 @@ export function needRows(
       authority: shown,
       record: mine
         ? {
-            title: `What the board read from your ${action.label} at ${clock(mine.at / 1000)} · kept on this page until the task moves or the page reloads`,
+            title: `What the board read from your ${action.label} at ${clock(mine.at / 1000)}`,
             lines: [
               ...(record
                 ? [

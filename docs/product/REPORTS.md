@@ -86,9 +86,10 @@ says *kept by the day*.
 | | **Time to fix a red** | the median and the **p90** time from a red's filing to its close |
 | **Board health** | **Board requests** | requests to the board that were slow or got no answer, and failed passes of its dispatch and sweep |
 
-Only tasks are counted, never their subtasks. Each chart has its title, a sentence saying exactly
-what it counts, its legend, the period picked said in words, its plot with the unit on its axis,
-and **Show the table**.
+Only tasks are counted, never their subtasks. Each chart has its title, its legend, the period
+picked said in words, its plot with the unit on its axis, and **Show the table**: what it counts
+is said here, never on the page. The head says *Times in UTC* beside the grain and the window
+chosen.
 
 ### Tokens and cost
 
@@ -96,18 +97,18 @@ Under the group's heading the page sums the window: the estimated dollars and th
 A period that landed no task has no point on **Cost per landed task**, and says *no task landed*
 over the plot rather than *no data recorded*; one whose landings changed no counted line has none
 on **Cost per 100 lines changed**, and says *no line changed*, or *lines not read* where a task it
-landed came before lines were kept and its roll-up counted no line of git. Under the charts the page says what every dollar is: an
-estimate at the providers' list prices, with the day those prices were read, never money spent,
-as a subscription is not billed by the token. A figure marked **+ unpriced** leaves out the
-tokens of a model the price list does not name, and the page names those models.
+landed came before lines were kept and its roll-up counted no line of git. Under the charts the
+page says what every dollar is, its unit: *Every dollar here is estimated at API list prices read
+2026-11-16, not money spent*, then the models the price list does not name and their tokens,
+which a figure marked **+ unpriced** leaves out: *; unpriced: gpt-x 300k tokens.*
 
 ## Landed tasks
 
 ![The Landed tasks tab, wide](pictures/reports-landed-wide.png)
 
 Each task landed in the window with tokens recorded, priced once with its subtasks, at its last
-landing in the window: by task, not by period. A sentence says how many, then four figures, each
-a link to its chart, and four charts.
+landing in the window: by task, not by period. Four figures, each a link to its chart, then four
+charts.
 
 | Figure | Says | Under it |
 | --- | --- | --- |
@@ -126,10 +127,10 @@ a link to its chart, and four charts.
 A press on a name in a legend hides that part, kind or series, as on **Over time**. Generated
 files and lock files are left out of a task's lines, as **Lines changed** leaves them out.
 
-Under the charts the tab says what no figure on it counts: a Codex session's tokens, which no hook
-records, so a task a Codex agent worked looks cheap; the orchestrators' tokens, which are on no
-task and count only in **All in** on **Over time**; and a session's last answer after its last
-tool call. A window in which no task landed says so in place of the charts, its figures at **–**.
+No figure on the tab counts a Codex session's tokens, which no hook records, so a task a Codex
+agent worked looks cheap; nor the orchestrators' tokens, which are on no task and count only in
+**All in** on **Over time**; nor a session's last answer after its last tool call. The tab does
+not say so. A window in which no task landed says so in place of the charts, its figures at **–**.
 
 ![The Landed tasks tab on a phone](pictures/reports-landed-phone.png)
 
@@ -171,7 +172,7 @@ page reads its window again every five minutes, and at once when another window 
 | --- | --- |
 | Loading, first visit | grey lines that stand in for four figures and two charts, which a screen reader reads as *Loading the reports…*, or *Loading the landed tasks…* on **Landed tasks** |
 | Loading, a later visit | at once, the window as this device last kept it, with *Shown from this device, saved 14:32. Checking for changes…* until the server has answered |
-| Nothing recorded yet | *No roll-up yet.*, when the first is due, the four figures at **–** and no chart |
+| Nothing recorded yet | *No roll-up yet: the next is due by 11:00 UTC.*, the four figures at **–** and no chart |
 | A file could not be read | **N files not read: their hours show as gaps**, which opens to name each file and why |
 | The read fails | **The reports could not be read.**, or **The landed tasks could not be read.**, why, and that it is trying again; what was shown stays |
 | No task landed in the window | on **Landed tasks**: *No top-level task landed in the window.*, or how many landed with no tokens recorded, the four figures at **–** and no chart |
