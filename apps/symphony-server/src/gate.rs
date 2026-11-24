@@ -29,7 +29,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::lock::Recovered as _;
@@ -86,6 +86,8 @@ pub struct Gate {
     clock: Clock,
     person: Actor,
     roster: Roster,
+    /// The machine folder whose profiles the roster reads, and the People page reads and writes.
+    machine: Option<PathBuf>,
     seen: Mutex<HashMap<IpAddr, Kept<Option<Peer>>>>,
     own: Mutex<Kept<Own>>,
 }
@@ -161,6 +163,7 @@ impl Gate {
             clock,
             person: symphony_board::workflow::local_actor(),
             roster: Arc::new(|_, _| None),
+            machine: None,
             seen: Mutex::new(HashMap::new()),
             own: Mutex::new(Kept::default()),
         }
@@ -186,6 +189,23 @@ impl Gate {
         Gate { roster, ..self }
     }
 
+    /// The same gate over the machine folder `machine`: its profiles the People page's, and its
+    /// people the roster ([`crate::roster::of`]).
+    #[must_use]
+    pub fn with_machine(self, machine: PathBuf) -> Gate {
+        Gate {
+            roster: crate::roster::of(machine.clone()),
+            machine: Some(machine),
+            ..self
+        }
+    }
+
+    /// The machine folder the profiles are kept in: none for a gate given none, whose roster adds
+    /// nobody but as a test's says.
+    pub fn machine(&self) -> Option<&Path> {
+        self.machine.as_deref()
+    }
+
     /// The person at the machine: the actor their writes take.
     pub fn person(&self) -> &Actor {
         &self.person
@@ -206,14 +226,18 @@ impl Gate {
     }
 
     /// [`Gate::tailscale`], each `tailscale whois` given `patience` to answer where the server gives
-    /// it [`CLI_TIMEOUT`]: a test's, on a machine whose load a deadline must not judge. Its roster
-    /// is the people of the machine folder the environment names ([`crate::roster`]).
+    /// it [`CLI_TIMEOUT`]: a test's, on a machine whose load a deadline must not judge. Its machine
+    /// folder is the one the environment names, its roster that folder's people
+    /// ([`crate::roster`]).
     pub fn tailscale_within(patience: Duration) -> Gate {
-        Gate::new(
+        let gate = Gate::new(
             Arc::new(move |ip: &str| whois_by(find_tailscale(), ip, patience)),
             Arc::new(Instant::now),
-        )
-        .with_roster(crate::roster::of_this_machine())
+        );
+        match crate::roster::this_machine() {
+            Some(machine) => gate.with_machine(machine),
+            None => gate,
+        }
     }
 
     /// Host validation for the routes served here. A loopback client can still be a browser

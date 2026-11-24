@@ -45,7 +45,7 @@ export function parseRoute(view: ProjectView, pathname: string): Route | null {
   const route = named.endsWith("/") ? named.slice(0, -1) : named;
   const answered =
     route === "" ||
-    ["tasks", "queue", "reports", "settings", "runs", "agents"].includes(route) ||
+    ["tasks", "queue", "reports", "settings", "people", "runs", "agents"].includes(route) ||
     route.startsWith("task/") ||
     document;
   return answered ? { path: route, scope, document, folder } : null;

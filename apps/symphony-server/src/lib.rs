@@ -27,6 +27,7 @@ pub mod log;
 mod mark;
 mod media_files;
 mod pages;
+mod people;
 mod powers;
 pub mod probe;
 mod projects;

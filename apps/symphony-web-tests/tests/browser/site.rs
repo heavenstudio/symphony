@@ -345,6 +345,13 @@ impl Site {
                 symphony_api::SETTINGS_PATH,
                 serde_json::json!({"files": [], "sections": []}),
             ),
+            (
+                symphony_api::PEOPLE_PATH,
+                serde_json::json!({
+                    "people": [], "groups": [], "log": [], "revision": 0,
+                    "administers": true, "machine": true
+                }),
+            ),
         ] {
             files.insert(
                 path.into(),

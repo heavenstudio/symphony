@@ -1,0 +1,249 @@
+/* The People page (people.tsx): its head, then a panel a part (the people, the groups, the log),
+   a person or a group a block of it with their powers as tags. A power held by a group wears a
+   dashed edge, one given them a solid one, each with its word: never colour alone. */
+.people {
+  display: grid;
+  gap: var(--sp-5);
+  min-width: 0;
+}
+.people-head h1 {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  line-height: 1.2;
+}
+.people-sub {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.people-error {
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid color-mix(in srgb, var(--dislike) 45%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--dislike) 7%, transparent);
+  overflow-wrap: anywhere;
+}
+.people-section {
+  min-width: 0;
+}
+.people-section h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+}
+.people-panel {
+  margin-top: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  min-width: 0;
+}
+.people-ghost {
+  display: grid;
+  gap: var(--sp-5);
+}
+.people-ghost-panel {
+  height: 9rem;
+  margin-top: 0;
+  background: var(--muted);
+}
+.people-empty {
+  margin: 0;
+  padding: var(--sp-4);
+  color: var(--muted-foreground);
+  font-size: var(--fs-sm);
+}
+.people-add {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+}
+.people-person {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  min-width: 0;
+}
+.people-person + .people-person,
+.people-panel > .people-add {
+  border-top: 1px solid var(--border);
+}
+.people-person-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px var(--sp-3);
+  min-width: 0;
+}
+.people-person-head h3,
+.people-add h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.people-name,
+.people-reach {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.people-reach {
+  margin: 0;
+}
+.people-you {
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--auto) 40%, transparent);
+  border-radius: var(--r-pill);
+  color: var(--auto);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+.people-powers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+li.people-power,
+.people-none,
+.people-group-tag {
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-xs);
+  line-height: 1.8;
+  white-space: nowrap;
+}
+.people-none {
+  color: var(--muted-foreground);
+}
+li.people-power[data-held="own"],
+.dx-button.people-power[data-held="own"] {
+  border-color: color-mix(in srgb, var(--decision) 55%, transparent);
+  color: var(--decision);
+}
+li.people-power[data-held="group"],
+.dx-button.people-power[data-held="group"] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--decision) 45%, transparent);
+  color: var(--decision);
+}
+.dx-button.people-power[aria-disabled="true"] {
+  cursor: default;
+}
+.dx-button.people-power[data-held="none"] {
+  color: var(--muted-foreground);
+}
+.people-groups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.people-groups .dx-select {
+  max-width: 14rem;
+}
+.people-group-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--muted);
+}
+.people-leave {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+.people-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2) var(--sp-3);
+}
+.people-confirm {
+  display: inline-flex;
+  gap: 6px;
+}
+.people-profile {
+  flex: 1 1 18rem;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+.people-profile summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+}
+.people-profile form,
+.people-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+  min-width: 0;
+}
+.people-profile .dx-input,
+.people-fields .dx-input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  max-width: 20rem;
+}
+.people-form {
+  display: grid;
+  gap: var(--sp-3);
+  justify-items: start;
+  min-width: 0;
+}
+.people-form .people-fields {
+  margin-top: 0;
+  justify-self: stretch;
+}
+.people-hint {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+}
+.people-said {
+  margin: 0;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.people-said:empty {
+  display: none;
+}
+.people-said[data-refused="true"] {
+  color: var(--dislike);
+}
+.people-said[data-refused="false"] {
+  color: var(--like);
+}
+.people-log {
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4) var(--sp-3) calc(var(--sp-4) + 2.2em);
+  font-size: var(--fs-sm);
+}
+.people-log li {
+  padding: 3px 0;
+  overflow-wrap: anywhere;
+}
+.people-log time {
+  margin-right: var(--sp-2);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+@media (max-width: 640px) {
+  .people-person,
+  .people-add {
+    padding: var(--sp-3);
+  }
+}

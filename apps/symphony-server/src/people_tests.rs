@@ -1,0 +1,714 @@
+//! The People page's routes: the page as each reader is shown it, no sign-in's subject in any
+//! answer, and its writes through the real router: a change by the person at the machine and by
+//! a person holding administer, each a line of the board's log, a reader without it refused with
+//! nothing written, and a profile written by whom `symphony_board::people::change` lets.
+
+use super::*;
+use crate::testing::{Board, LAPTOP, Tree, laptop_with, repository_holding};
+use axum::body::Body;
+use axum::extract::connect_info::MockConnectInfo;
+use axum::http::{Request, header};
+use std::net::SocketAddr;
+use symphony_api::{PEOPLE_PATH, PROFILE_PATH};
+use symphony_board::people::{Did, Group, Member, Profile};
+use tower::ServiceExt;
+
+const HOST: &str = "127.0.0.1:8123";
+/// The person at the machine, from loopback.
+const HERE: &str = "127.0.0.1:5000";
+
+fn signin(text: &str) -> Signin {
+    Signin::parse(text).unwrap()
+}
+
+/// Ana's profile: two Tailscale sign-ins, one GitHub, a git handle and an email.
+fn anas() -> Profile {
+    Profile {
+        name: "ana".into(),
+        display: "Ana Lima".into(),
+        signins: vec![
+            signin("tailscale:ana@example.com"),
+            signin("github:ana-lima"),
+            signin("tailscale:ana@work.example"),
+        ],
+        git: vec!["ana-lima".into()],
+        emails: vec!["ana@mail.example".into()],
+        ..Profile::default()
+    }
+}
+
+/// A board holding Ana (speak, and decide by the group `staff`) and Bo, with no profile, holding
+/// administer.
+fn people() -> People {
+    People {
+        members: vec![
+            Member {
+                name: "ana".into(),
+                groups: vec!["staff".into()],
+                powers: vec![Power::Speak],
+                revision: 3,
+            },
+            Member {
+                name: "bo".into(),
+                groups: vec![],
+                powers: vec![Power::Administer],
+                revision: 4,
+            },
+        ],
+        groups: vec![Group {
+            name: "staff".into(),
+            powers: vec![Power::Decide],
+            revision: 1,
+        }],
+        revision: 4,
+    }
+}
+
+fn asker(name: &str, machine: bool) -> Asker {
+    Asker {
+        name: name.into(),
+        machine,
+    }
+}
+
+fn line(n: i64, did: Did, name: &str, powers: &[Power]) -> Change {
+    Change {
+        n,
+        at: 1_700_000_000.0 + n as f64,
+        by: "owner".into(),
+        did,
+        name: name.into(),
+        group: None,
+        powers: powers.to_vec(),
+    }
+}
+
+#[test]
+fn a_page_lists_each_person_by_their_profile_and_names_no_sign_ins_subject() {
+    let profiles = Profiles {
+        people: vec![anas()],
+    };
+    let log = vec![
+        line(1, Did::GroupAdd, "staff", &[Power::Decide]),
+        line(2, Did::Add, "ana", &[Power::Speak]),
+    ];
+    let page = page(Ok((people(), log)), Ok(profiles), &asker("owner", true));
+    let ana = &page.people[0];
+    assert_eq!(
+        (ana.display.as_str(), ana.signins.as_slice()),
+        (
+            "Ana Lima",
+            ["tailscale".to_string(), "github".to_string()].as_slice()
+        ),
+        "each service once"
+    );
+    assert_eq!(ana.powers, ["read", "speak", "decide"]);
+    assert_eq!(
+        (ana.own.as_slice(), ana.profile),
+        (["speak".to_string()].as_slice(), true)
+    );
+    let bo = &page.people[1];
+    assert_eq!(
+        (
+            bo.display.as_str(),
+            bo.profile,
+            bo.signins.len(),
+            bo.git.len()
+        ),
+        ("bo", false, 0, 0)
+    );
+    assert_eq!(
+        page.groups,
+        [GroupRow {
+            name: "staff".into(),
+            powers: vec!["decide".into()]
+        }]
+    );
+    assert_eq!(
+        (
+            page.log[1].did.as_str(),
+            page.log[1].powers.as_slice(),
+            page.revision
+        ),
+        ("add", ["speak".to_string()].as_slice(), 4)
+    );
+    let said = serde_json::to_string(&page).unwrap();
+    for private in [
+        "ana@example.com",
+        "ana@work.example",
+        "ana-lima\"",
+        "ana@mail.example",
+    ] {
+        let shown = said.matches(private).count();
+        let allowed = usize::from(private == "ana-lima\"");
+        assert_eq!(shown, allowed, "{private} in {said}");
+    }
+}
+
+#[test]
+fn the_page_says_who_reads_it_and_whether_they_administer() {
+    let shown = |asker: Asker| {
+        let page = page(Ok((people(), vec![])), Ok(Profiles::default()), &asker);
+        (page.administers, page.machine, page.you)
+    };
+    assert_eq!(shown(asker("owner", true)), (true, true, None));
+    assert_eq!(shown(asker("bo", false)), (true, false, Some("bo".into())));
+    assert_eq!(
+        shown(asker("ana", false)),
+        (false, false, Some("ana".into()))
+    );
+}
+
+#[test]
+fn a_board_or_profiles_not_read_are_said_and_the_page_lists_what_was() {
+    let page = page(
+        Err("down".into()),
+        Err(NO_MACHINE.into()),
+        &asker("owner", true),
+    );
+    assert_eq!(
+        page.problem.as_deref(),
+        Some(
+            "the board's people could not be read: down; the machine's profiles could not be \
+             read: this server names no machine folder, so no profile is read or written"
+        )
+    );
+    assert!(page.people.is_empty() && page.log.is_empty());
+    let page = page_of_profiles_unread();
+    assert_eq!(
+        page.people[0].display, "ana",
+        "a person listed without a profile"
+    );
+}
+
+fn page_of_profiles_unread() -> PeoplePage {
+    page(
+        Ok((people(), vec![])),
+        Err("people.json: unreadable".into()),
+        &asker("ana", false),
+    )
+}
+
+#[test]
+fn the_people_are_read_by_get_and_changed_by_two_posts_the_one_needing_administer() {
+    assert!(crate::api::READS.contains(&PEOPLE_PATH));
+    for path in [PEOPLE_PATH, "/people"] {
+        assert_eq!(crate::write::methods(path), None, "{path}");
+    }
+    for path in [PEOPLE_CHANGE_PATH, PROFILE_PATH] {
+        assert_eq!(crate::write::methods(path), Some("POST"), "{path}");
+        assert!(!crate::api::READS.contains(&path));
+    }
+    use crate::powers::{Needs, needs};
+    assert_eq!(
+        needs(PEOPLE_CHANGE_PATH),
+        Needs::Powers(&[Power::Administer])
+    );
+    assert_eq!(needs(PROFILE_PATH), Needs::Powers(&[]));
+}
+
+/// A project with a board, its People page served behind `gate` over the machine folder
+/// `machine`: the server, its root, and the tree and board kept alive.
+struct Served {
+    shared: Arc<Shared>,
+    root: PathBuf,
+    machine: PathBuf,
+    _board: Board,
+    _tree: Tree,
+}
+
+impl Served {
+    /// The board holding `people`, Ana's profile signing her in as the laptop's login.
+    fn new(people: &[(&str, &[Power])]) -> Served {
+        let tree = Tree::new();
+        let root = repository_holding(&tree, "main", "docs/README.md", "# Docs\n");
+        let machine = tree.root.join("machine");
+        (Profiles {
+            people: vec![anas()],
+        })
+        .write(&machine)
+        .unwrap();
+        let board = Board::holding(&root, people);
+        let gate = laptop_with(Arc::new(|_, _| None)).with_machine(machine.clone());
+        let shared = Shared::new(1, 8123, &root, None, gate);
+        let hub = crate::live::Hub::new(&root, &root.join("build/client"));
+        assert!(shared.api.set(Arc::new(hub)).is_ok());
+        Served {
+            shared,
+            root,
+            machine,
+            _board: board,
+            _tree: tree,
+        }
+    }
+
+    /// What the router answers `client`'s `method` of `path` with `body`: status and body.
+    async fn asked(
+        &self,
+        client: &str,
+        method: &str,
+        path: &str,
+        body: &str,
+    ) -> (StatusCode, String) {
+        let app = crate::front::router(self.shared.clone())
+            .layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()));
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, HOST);
+        if method == "POST" {
+            request = request
+                .header(header::ORIGIN, format!("http://{HOST}"))
+                .header(header::CONTENT_TYPE, "application/json");
+        }
+        let response = app
+            .oneshot(request.body(Body::from(body.to_string())).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// `client`'s change `change`, its page as it then reads.
+    async fn changed(&self, client: &str, change: serde_json::Value) -> PeoplePage {
+        let (status, body) = self
+            .asked(client, "POST", PEOPLE_CHANGE_PATH, &change.to_string())
+            .await;
+        assert_eq!(status, StatusCode::OK, "{change}: {body}");
+        serde_json::from_str(&body).unwrap()
+    }
+
+    async fn page(&self, client: &str) -> PeoplePage {
+        let (status, body) = self.asked(client, "GET", PEOPLE_PATH, "").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        serde_json::from_str(&body).unwrap()
+    }
+
+    fn profiles(&self) -> Profiles {
+        Profiles::read(&self.machine).unwrap()
+    }
+
+    /// The board's log as `(did, name, by)`.
+    fn log(&self) -> Vec<(String, String, String)> {
+        (Board::store(&self.root).people_log().unwrap().into_iter())
+            .map(|line| (line.did.word().to_string(), line.name, line.by))
+            .collect()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_at_the_machine_adds_a_person_puts_them_in_a_group_and_gives_a_power() {
+    let served = Served::new(&[]);
+    let empty = served.page(HERE).await;
+    assert_eq!(
+        (
+            empty.people.len(),
+            empty.administers,
+            empty.machine,
+            empty.you
+        ),
+        (0, true, true, None)
+    );
+    let page = served
+        .changed(
+            HERE,
+            serde_json::json!({
+                "action": "add", "name": "bo", "powers": ["speak"], "display": "Bo Reis",
+                "signins": ["tailscale:bo@example.com"], "git": ["bo-reis"],
+            }),
+        )
+        .await;
+    assert_eq!(page.people[0].display, "Bo Reis");
+    served
+        .changed(
+            HERE,
+            serde_json::json!({"action": "group-add", "name": "staff", "powers": ["decide"]}),
+        )
+        .await;
+    served
+        .changed(
+            HERE,
+            serde_json::json!({"action": "join", "name": "bo", "group": "staff"}),
+        )
+        .await;
+    let page = served
+        .changed(
+            HERE,
+            serde_json::json!({"action": "grant", "name": "bo", "powers": ["administer"]}),
+        )
+        .await;
+    let bo = &page.people[0];
+    assert_eq!(bo.powers, ["read", "speak", "decide", "administer"]);
+    assert_eq!(
+        (bo.groups.as_slice(), bo.signins.as_slice()),
+        (
+            ["staff".to_string()].as_slice(),
+            ["tailscale".to_string()].as_slice()
+        )
+    );
+    assert_eq!(
+        served.log(),
+        [
+            ("add".into(), "bo".into(), "owner".into()),
+            ("group-add".into(), "staff".into(), "owner".into()),
+            ("join".into(), "bo".into(), "owner".into()),
+            ("grant".into(), "bo".into(), "owner".into()),
+        ]
+    );
+    assert_eq!(page.log.len(), 4);
+    let bo = served.profiles().get("bo").cloned().unwrap();
+    assert_eq!(bo.git, ["bo-reis"]);
+    // The rest of a person's and a group's changes, each a line.
+    for change in [
+        serde_json::json!({"action": "revoke", "name": "bo", "powers": ["administer"]}),
+        serde_json::json!({"action": "grant", "group": "staff", "powers": ["speak"]}),
+        serde_json::json!({"action": "revoke", "group": "staff", "powers": ["speak"]}),
+        serde_json::json!({"action": "leave", "name": "bo", "group": "staff"}),
+        serde_json::json!({"action": "group-remove", "name": "staff"}),
+        serde_json::json!({"action": "remove", "name": "bo"}),
+    ] {
+        served.changed(HERE, change).await;
+    }
+    let page = served.page(HERE).await;
+    assert!(page.people.is_empty() && page.groups.is_empty());
+    assert_eq!(page.log.len(), 10);
+    assert_eq!(
+        served.profiles().get("bo").map(|p| p.name.as_str()),
+        Some("bo"),
+        "her profile is the machine's"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_holding_administer_changes_the_board_and_one_without_it_is_refused() {
+    let served = Served::new(&[("ana", &[Power::Speak, Power::Administer])]);
+    let shared = Shared::new(
+        1,
+        8123,
+        &served.root,
+        None,
+        laptop_with(crate::roster::of(served.machine.clone())).with_machine(served.machine.clone()),
+    );
+    assert!(shared.api.set(served.shared.hub().ok().unwrap()).is_ok());
+    let served = Served { shared, ..served };
+    let page = served.page(LAPTOP).await;
+    assert_eq!(
+        (page.administers, page.machine, page.you.as_deref()),
+        (true, false, Some("ana"))
+    );
+    served
+        .changed(
+            LAPTOP,
+            serde_json::json!({"action": "add", "name": "bo", "powers": ["speak"], "display": "Bo"}),
+        )
+        .await;
+    assert_eq!(served.log()[1], ("add".into(), "bo".into(), "ana".into()));
+    assert_eq!(
+        served.profiles().get("bo").unwrap().display,
+        "Bo",
+        "a profile made for one with none"
+    );
+    // A profile the machine holds is the machine's person's to change, even by an admin's add.
+    Board::store(&served.root)
+        .remove_person("bo", "owner")
+        .unwrap();
+    let (status, body) = served
+        .asked(
+            LAPTOP,
+            "POST",
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"add","name":"bo","signins":["tailscale:mallory@example.com"]}"#,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("only the person at the machine"), "{body}");
+    assert_eq!(served.profiles().get("bo").unwrap().signins.len(), 0);
+    // Administer taken, her next change is refused before its body is read, and nothing is
+    // written; she still reads the page, without its controls.
+    Board::store(&served.root)
+        .revoke(Holder::Person("ana"), &[Power::Administer], "owner")
+        .unwrap();
+    let before = served.log().len();
+    let (status, body) = served
+        .asked(
+            LAPTOP,
+            "POST",
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"add","name":"cy"}"#,
+        )
+        .await;
+    assert_eq!(
+        (status, body.as_str()),
+        (
+            StatusCode::FORBIDDEN,
+            r#"{"error":"Forbidden: ana may not administer on this board"}"#
+        )
+    );
+    assert_eq!(served.log().len(), before);
+    let page = served.page(LAPTOP).await;
+    assert_eq!((page.administers, page.people.len()), (false, 1));
+    // Her own profile is hers to write, its sign-ins never; another's is not hers at all.
+    let (status, body) = served
+        .asked(
+            LAPTOP,
+            "POST",
+            PROFILE_PATH,
+            r#"{"name":"ana","display":"Ana L.","git":["ana-l"]}"#,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ana = served.profiles().get("ana").cloned().unwrap();
+    assert_eq!((ana.display.as_str(), ana.git.len()), ("Ana L.", 2));
+    for (body, refused) in [
+        (
+            r#"{"name":"ana","signins":["github:ana"]}"#,
+            "a sign-in is the person at the machine's to give",
+        ),
+        (
+            r#"{"name":"bo","display":"Mallory"}"#,
+            "only the person at the machine, or bo,",
+        ),
+    ] {
+        let (status, said) = served.asked(LAPTOP, "POST", PROFILE_PATH, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{said}");
+        assert!(said.contains(refused), "{said}");
+    }
+    assert_eq!(served.profiles().get("bo").unwrap().display, "Bo");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_at_the_machine_writes_any_profile_and_a_refusal_writes_nothing() {
+    let served = Served::new(&[("ana", &[Power::Speak])]);
+    let (status, body) = served
+        .asked(
+            HERE,
+            "POST",
+            PROFILE_PATH,
+            r#"{"name":"ana","signins":["github:ana-l"]}"#,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let page: PeoplePage = serde_json::from_str(&body).unwrap();
+    assert_eq!(page.people[0].signins, ["tailscale", "github"]);
+    for (route, body, refused) in [
+        (
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"grant","name":"ana","powers":["fly"]}"#,
+            "\\\"fly\\\" is no power",
+        ),
+        (
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"join","name":"ana"}"#,
+            "a join or a leave names its group",
+        ),
+        (
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"add","name":"bo","signins":["github"]}"#,
+            "a sign-in is SERVICE:SUBJECT",
+        ),
+        (
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"add","name":"ana"}"#,
+            "ana",
+        ),
+        (
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"fly","name":"ana"}"#,
+            "unknown variant",
+        ),
+        (
+            PROFILE_PATH,
+            r#"{"name":"bo","signins":["tailscale:ana@example.com"]}"#,
+            "is ana's",
+        ),
+    ] {
+        let before = served.log().len();
+        let (status, said) = served.asked(HERE, "POST", route, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {said}");
+        assert!(said.contains(refused), "{body}: {said}");
+        assert_eq!(served.log().len(), before, "{body}");
+    }
+    assert_eq!(served.profiles().people.len(), 1);
+    // A worktree's page changes no one.
+    let (status, said) = served
+        .asked(
+            HERE,
+            "POST",
+            "/@feature/api/people-change",
+            r#"{"action":"remove","name":"ana"}"#,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{said}");
+    assert!(said.contains("never a worktree's"), "{said}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_with_no_machine_folder_changes_the_board_and_writes_no_profile() {
+    let served = Served::new(&[("ana", &[Power::Speak])]);
+    let shared = Shared::new(1, 8123, &served.root, None, crate::testing::open_gate());
+    assert!(shared.api.set(served.shared.hub().ok().unwrap()).is_ok());
+    let served = Served { shared, ..served };
+    let page = served.page(HERE).await;
+    assert_eq!(
+        page.problem.as_deref(),
+        Some(
+            "the machine's profiles could not be read: this server names no machine folder, so no \
+         profile is read or written"
+        )
+    );
+    for (route, body) in [
+        (PEOPLE_CHANGE_PATH, r#"{"action":"add","name":"bo"}"#),
+        (PROFILE_PATH, r#"{"name":"ana","display":"Ana"}"#),
+    ] {
+        let (status, said) = served.asked(HERE, "POST", route, body).await;
+        assert_eq!(
+            (status, said.contains(NO_MACHINE)),
+            (StatusCode::SERVICE_UNAVAILABLE, true),
+            "{said}"
+        );
+    }
+    let page = served
+        .changed(
+            HERE,
+            serde_json::json!({"action": "grant", "name": "ana", "powers": ["decide"]}),
+        )
+        .await;
+    assert_eq!(page.people[0].powers, ["read", "speak", "decide"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hosted_visitor_reads_no_one_and_changes_no_one() {
+    let served = Served::new(&[("ana", &[Power::Speak])]);
+    for (method, path, body) in [
+        ("GET", PEOPLE_PATH, ""),
+        (
+            "POST",
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"remove","name":"ana"}"#,
+        ),
+    ] {
+        let app = crate::front::router(served.shared.clone())
+            .layer(MockConnectInfo(HERE.parse::<SocketAddr>().unwrap()));
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, HOST)
+            .header(header::ORIGIN, format!("http://{HOST}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(crate::hosted::tests::admitted().await);
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {path}");
+        let said = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&said).contains("ana"),
+            "{method} {path}"
+        );
+    }
+    assert_eq!(served.log().len(), 1, "ana is still on the board");
+}
+
+/// A change the board refuses is a 400 in the board's words, and profiles that cannot be had (a
+/// folder where their lock goes) are a 503 to an add and to a profile's write: nothing is
+/// written, on the board or in the machine folder.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_change_the_board_refuses_or_profiles_not_had_are_said_with_nothing_written() {
+    let served = Served::new(&[("ana", &[Power::Speak])]);
+    let (status, said) = served
+        .asked(
+            HERE,
+            "POST",
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"grant","name":"ana","powers":["direct_agents"]}"#,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{said}");
+    assert!(
+        said.contains("direct agents is given to no one yet"),
+        "{said}"
+    );
+    let lock = served.machine.join(symphony_board::people::LOCK);
+    let _ = std::fs::remove_file(&lock);
+    std::fs::create_dir(&lock).unwrap();
+    for (route, body, words) in [
+        (
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"add","name":"bo"}"#,
+            "the machine's profiles could not be locked or read",
+        ),
+        (
+            PROFILE_PATH,
+            r#"{"name":"ana","display":"Ana"}"#,
+            "ana's profile could not be written",
+        ),
+    ] {
+        let (status, said) = served.asked(HERE, "POST", route, body).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{route}: {said}");
+        assert!(said.contains(words), "{route}: {said}");
+    }
+    assert_eq!(served.log().len(), 1, "ana's add alone");
+    assert_eq!(served.profiles().people, [anas()]);
+}
+
+/// A server whose read hub has not started answers the page 503, as every read of the board, and
+/// one whose project holds no board it can reach answers a change 503, naming the board.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_page_waits_on_the_servers_start_and_a_change_on_a_board_it_reaches() {
+    let tree = Tree::new();
+    let plain = tree.root.join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let shared = Shared::new(1, 8123, &plain, None, crate::testing::open_gate());
+    let app = |shared: &Arc<Shared>| {
+        crate::front::router(shared.clone())
+            .layer(MockConnectInfo(HERE.parse::<SocketAddr>().unwrap()))
+    };
+    let asked = |method: &str, path: &str, body: &str| {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, HOST);
+        if method == "POST" {
+            request = request
+                .header(header::ORIGIN, format!("http://{HOST}"))
+                .header(header::CONTENT_TYPE, "application/json");
+        }
+        request.body(Body::from(body.to_string())).unwrap()
+    };
+    let said = |response: axum::response::Response| async move {
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    };
+    let (status, body) = said(
+        app(&shared)
+            .oneshot(asked("GET", PEOPLE_PATH, ""))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("the Symphony server is starting"), "{body}");
+    let (status, body) = said(
+        app(&shared)
+            .oneshot(asked(
+                "POST",
+                PEOPLE_CHANGE_PATH,
+                r#"{"action":"remove","name":"ana"}"#,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("the task board cannot be reached"), "{body}");
+}

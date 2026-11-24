@@ -76,6 +76,7 @@ pub(crate) const READS: &[&str] = &[
     symphony_api::RUN_PATH,
     symphony_api::SCHEMA_UPDATES_PATH,
     symphony_api::SETTINGS_PATH,
+    symphony_api::PEOPLE_PATH,
     symphony_api::workflow::WORKFLOW_PATH,
     symphony_api::workflow::WORKFLOW_ACTIONS_PATH,
     symphony_api::workflow::WORKFLOW_GUARDS_PATH,
@@ -492,6 +493,9 @@ async fn off_board(
             });
             answered(read.await, "the settings could not be read: ")
         }
+        // Who is on the board is its rows and the machine's profiles, read on the store the
+        // pages share (`crate::people`).
+        symphony_api::PEOPLE_PATH => crate::people::read(shared, request).await,
         symphony_api::RUN_PATH => {
             let run = query(request, "run")
                 .filter(|run| !run.is_empty())
@@ -1736,6 +1740,7 @@ fn client_kind(project: &symphony_api::ProjectView, path: &str) -> Option<&'stat
         "/reports" => Some("reports"),
         "/runs" => Some("runs"),
         "/settings" => Some("settings"),
+        "/people" => Some("people"),
         _ if path.starts_with("/task/") => Some("task"),
         _ if project
             .nav

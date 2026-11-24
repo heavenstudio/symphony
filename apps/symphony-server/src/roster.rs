@@ -29,19 +29,18 @@ pub(crate) fn of(machine: PathBuf) -> Roster {
     })
 }
 
-/// The roster of the machine folder this process's environment names, or one that adds nobody
-/// where it names none.
-pub(crate) fn of_this_machine() -> Roster {
-    match symphony_board::project::machine_folder(
+/// The machine folder this process's environment names, whose roster [`of`] is: none where it
+/// names none, said in the server's log, and then no visitor but the person at the machine is on
+/// any board.
+pub(crate) fn this_machine() -> Option<PathBuf> {
+    symphony_board::project::machine_folder(
         |name| std::env::var_os(name),
         cfg!(target_os = "macos"),
-    ) {
-        Ok(machine) => of(machine),
-        Err(why) => {
-            eprintln!("· no visitor but the person at the machine is on any board: {why}");
-            Arc::new(|_, _| None)
-        }
-    }
+    )
+    .inspect_err(|why| {
+        eprintln!("· no visitor but the person at the machine is on any board: {why}");
+    })
+    .ok()
 }
 
 /// `visitor` on the board at `root`, its people read by `people`, as the actor their writes there

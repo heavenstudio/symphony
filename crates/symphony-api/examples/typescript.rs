@@ -107,6 +107,9 @@ fn constants() -> String {
         ("REPORTS_LANDED_PATH", text(api::REPORTS_LANDED_PATH)),
         ("SETTINGS_PATH", text(api::SETTINGS_PATH)),
         ("SETTING_WRITE_PATH", text(api::SETTING_WRITE_PATH)),
+        ("PEOPLE_PATH", text(api::PEOPLE_PATH)),
+        ("PEOPLE_CHANGE_PATH", text(api::PEOPLE_CHANGE_PATH)),
+        ("PROFILE_PATH", text(api::PROFILE_PATH)),
         ("RUNS_PATH", text(api::RUNS_PATH)),
         ("RUN_PATH", text(api::RUN_PATH)),
         ("RUN_LOG_PATH", text(api::RUN_LOG_PATH)),
@@ -175,6 +178,7 @@ fn constants() -> String {
         "BOARD": api::page_names::BOARD,
         "REPORTS": api::page_names::REPORTS,
         "SETTINGS": api::page_names::SETTINGS,
+        "PEOPLE": api::page_names::PEOPLE,
         "RUNS": api::page_names::RUNS,
         "AGENTS": api::page_names::AGENTS,
         "PROJECTS": api::page_names::PROJECTS,
@@ -189,6 +193,7 @@ fn declarations() -> Vec<Declared> {
     let cfg = Config::new().with_large_int("number");
     [
         board_declarations(&cfg),
+        page_declarations(&cfg),
         document_declarations(&cfg),
         task_declarations(&cfg),
     ]
@@ -197,7 +202,7 @@ fn declarations() -> Vec<Declared> {
     .collect()
 }
 
-/// The types the frame, the feed, the queue, Reports, the task board and the agents page read.
+/// The types the frame, the feed, the queue, Reports and Settings read.
 fn board_declarations(cfg: &Config) -> Vec<Declared> {
     vec![
         declared::<api::ProjectView>(cfg),
@@ -246,6 +251,21 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::SettingValue>(cfg),
         declared::<api::SettingWrite>(cfg),
         declared::<api::SettingWritten>(cfg),
+    ]
+}
+
+/// The types the People page, the Runs page, the task board and the agents page read, after the
+/// board's in wire.ts.
+fn page_declarations(cfg: &Config) -> Vec<Declared> {
+    vec![
+        // The People page's.
+        declared::<api::PeoplePage>(cfg),
+        declared::<api::PersonRow>(cfg),
+        declared::<api::GroupRow>(cfg),
+        declared::<api::PeopleLogLine>(cfg),
+        declared::<api::PeopleAction>(cfg),
+        declared::<api::PeopleChange>(cfg),
+        declared::<api::ProfileWrite>(cfg),
         // The Runs page's, its schema updates too.
         declared::<api::RunsPage>(cfg),
         declared::<api::RunPage>(cfg),
@@ -1419,6 +1439,15 @@ fn samples() -> Value {
     );
     samples.insert("settings".into(), json!(settings()));
     samples.insert("emptySettings".into(), json!(api::SettingsPage::default()));
+    samples.insert("people".into(), json!(people()));
+    samples.insert(
+        "emptyPeople".into(),
+        json!(api::PeoplePage {
+            administers: true,
+            machine: true,
+            ..api::PeoplePage::default()
+        }),
+    );
     samples.extend(tokens_samples());
     samples.insert("blocks".into(), json!(blocks()));
     samples.extend(
@@ -2604,6 +2633,71 @@ fn settings_stored() -> Vec<api::StoredSetting> {
             waiting: None,
         },
     ]
+}
+
+/// The People page as the person at the machine reads it: Ana, given speak and deciding by the
+/// group staff, signing in by two services; Bo, who has no profile, given administer; Cy, a
+/// reader; the group staff; and the log of every change that made them.
+fn people() -> api::PeoplePage {
+    let words = |powers: &[&str]| powers.iter().map(|power| (*power).to_string()).collect();
+    let person = |name: &str, display: &str, powers: &[&str], own: &[&str], groups: &[&str]| {
+        api::PersonRow {
+            name: name.into(),
+            display: display.into(),
+            powers: words(powers),
+            own: words(own),
+            groups: words(groups),
+            ..api::PersonRow::default()
+        }
+    };
+    let line =
+        |n: i32, did: &str, name: &str, group: Option<&str>, powers: &[&str]| api::PeopleLogLine {
+            n: n.into(),
+            at: 1_763_000_000.0 + 3600.0 * f64::from(n),
+            by: "owner".into(),
+            did: did.into(),
+            name: name.into(),
+            group: group.map(Into::into),
+            powers: words(powers),
+        };
+    api::PeoplePage {
+        people: vec![
+            api::PersonRow {
+                signins: words(&["tailscale", "github"]),
+                git: words(&["ana-lima"]),
+                profile: true,
+                ..person(
+                    "ana",
+                    "Ana Lima",
+                    &["read", "speak", "decide"],
+                    &["speak"],
+                    &["staff"],
+                )
+            },
+            person("bo", "bo", &["read", "administer"], &["administer"], &[]),
+            api::PersonRow {
+                signins: words(&["tailscale"]),
+                profile: true,
+                ..person("cy", "Cy Okafor", &["read"], &["read"], &[])
+            },
+        ],
+        groups: vec![api::GroupRow {
+            name: "staff".into(),
+            powers: words(&["decide"]),
+        }],
+        log: vec![
+            line(1, "group-add", "staff", None, &["decide"]),
+            line(2, "add", "ana", None, &["speak"]),
+            line(3, "join", "ana", Some("staff"), &[]),
+            line(4, "add", "bo", None, &["administer"]),
+            line(5, "add", "cy", None, &["read"]),
+        ],
+        revision: 5,
+        administers: true,
+        machine: true,
+        you: None,
+        problem: None,
+    }
 }
 
 /// A Settings page of every shape an entry takes: one with a state, a need met and one not, a

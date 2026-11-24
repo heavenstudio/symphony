@@ -57,6 +57,8 @@ pub(crate) fn methods(path: &str) -> Option<&'static str> {
         || route == symphony_api::AGENT_FOCUS_PATH
         || route == symphony_api::ATTEMPT_CONTROL_ROUTE
         || route == symphony_api::ATTEMPT_VIEW_ROUTE
+        || route == symphony_api::PEOPLE_CHANGE_PATH
+        || route == symphony_api::PROFILE_PATH
     {
         Some("POST")
     } else {
@@ -69,6 +71,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
     let scope = scope.to_string();
     let route = route.to_string();
     let actor = crate::front::Admitted::actor(shared, request.extensions());
+    let machine = crate::front::Admitted::machine(request.extensions());
     if let Err(why) = allowed(shared, &request).await {
         eprintln!("{}", refusal(request.uri().path(), why, request.headers()));
         return error(
@@ -76,7 +79,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
             "Forbidden: the Host or Origin header does not name this app",
         );
     }
-    if !crate::front::Admitted::machine(request.extensions())
+    if !machine
         && let Some(refused) = unpermitted(shared, request.uri().path(), &route, &actor).await
     {
         return refused;
@@ -99,6 +102,13 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
     };
     if route == symphony_api::workflow::WORKFLOW_APPLY_ROUTE {
         return workflow_apply(shared, payload, actor).await;
+    }
+    if route == symphony_api::PEOPLE_CHANGE_PATH || route == symphony_api::PROFILE_PATH {
+        let asker = crate::people::Asker {
+            name: actor.name().to_string(),
+            machine,
+        };
+        return crate::people::write(shared, &scope, &route, payload, asker).await;
     }
     let shared = shared.clone();
     match crate::spawn::blocking(move || {

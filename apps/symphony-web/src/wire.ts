@@ -16,6 +16,9 @@ export const REPORTS_PATH = "/api/reports";
 export const REPORTS_LANDED_PATH = "/api/reports/landed";
 export const SETTINGS_PATH = "/api/settings";
 export const SETTING_WRITE_PATH = "/api/setting";
+export const PEOPLE_PATH = "/api/people";
+export const PEOPLE_CHANGE_PATH = "/api/people-change";
+export const PROFILE_PATH = "/api/people-profile";
 export const RUNS_PATH = "/api/runs";
 export const RUN_PATH = "/api/run";
 export const RUN_LOG_PATH = "/api/run-log";
@@ -60,6 +63,7 @@ export const SYMPHONY_ROUTES = [
   "reports",
   "runs",
   "settings",
+  "people",
   "api",
   "assets",
   "static",
@@ -79,6 +83,7 @@ export const PAGE_NAMES = {
   BOARD: "Board",
   REPORTS: "Reports",
   SETTINGS: "Settings",
+  PEOPLE: "People",
   RUNS: "Runs",
   AGENTS: "Agents",
   PROJECTS: "Projects",
@@ -773,6 +778,153 @@ export type SettingWritten = {
    * Whether the commit waits for its delivery by pull request, its entry kept meanwhile.
    */
   waiting: boolean;
+};
+
+export type PeoplePage = {
+  /**
+   * The people the board named, by short name.
+   */
+  people: Array<PersonRow>;
+  /**
+   * Its groups, by name.
+   */
+  groups: Array<GroupRow>;
+  /**
+   * Every change made to them, oldest first.
+   */
+  log: Array<PeopleLogLine>;
+  /**
+   * The number of the newest change: 0 on a board none was made on.
+   */
+  revision: number;
+  /**
+   * Whether the one reading may change who is on the board: the person at the machine, or a
+   * person holding administer.
+   */
+  administers: boolean;
+  /**
+   * Whether the one reading is the person at the machine, who writes any profile.
+   */
+  machine: boolean;
+  /**
+   * The one reading's short name on the board; none for the person at the machine.
+   */
+  you?: string | null;
+  /**
+   * Why the board's people could not be read, said whole; the page then lists nobody.
+   */
+  problem?: string | null;
+};
+
+export type PersonRow = {
+  name: string;
+  /**
+   * How pages show them: their profile's display name, else their short name.
+   */
+  display: string;
+  /**
+   * Every power they hold, their own and their groups', read among them.
+   */
+  powers: Array<string>;
+  /**
+   * The powers given to them, not their groups'.
+   */
+  own: Array<string>;
+  groups: Array<string>;
+  /**
+   * The services they sign in by, each once: never a subject.
+   */
+  signins: Array<string>;
+  /**
+   * Their git handles.
+   */
+  git: Array<string>;
+  /**
+   * Whether the machine holds a profile of theirs.
+   */
+  profile: boolean;
+};
+
+export type GroupRow = { name: string; powers: Array<string> };
+
+export type PeopleLogLine = {
+  /**
+   * Its number, from 1.
+   */
+  n: number;
+  /**
+   * When, in seconds since the epoch.
+   */
+  at: number;
+  /**
+   * Who made it: a session's handle, a person's short name, or `owner`.
+   */
+  by: string;
+  /**
+   * What it did, as the log writes it (`add`, `group-remove`).
+   */
+  did: string;
+  name: string;
+  group?: string | null;
+  powers?: Array<string>;
+};
+
+export type PeopleAction =
+  | "add"
+  | "remove"
+  | "join"
+  | "leave"
+  | "grant"
+  | "revoke"
+  | "group-add"
+  | "group-remove";
+
+export type PeopleChange = {
+  action: PeopleAction;
+  /**
+   * The person's short name; the group's for a group's add or removal.
+   */
+  name: string;
+  /**
+   * The group a join or a leave names, or whose powers a grant or a revoke changes.
+   */
+  group?: string | null;
+  /**
+   * The powers an add, a group's add, a grant or a revoke names.
+   */
+  powers?: Array<string>;
+  /**
+   * The groups an add puts the person in.
+   */
+  groups?: Array<string>;
+  /**
+   * An add's profile, made where the person has none: their display name.
+   */
+  display?: string | null;
+  /**
+   * An add's profile: the sign-ins it is given, each `SERVICE:SUBJECT`.
+   */
+  signins?: Array<string>;
+  /**
+   * An add's profile: its git handles.
+   */
+  git?: Array<string>;
+};
+
+export type ProfileWrite = {
+  /**
+   * The person whose profile it is.
+   */
+  name: string;
+  display?: string | null;
+  /**
+   * Git handles added to the profile.
+   */
+  git?: Array<string>;
+  /**
+   * Sign-ins added to it, each `SERVICE:SUBJECT`: the person at the machine's alone to give.
+   */
+  signins?: Array<string>;
 };
 
 export type RunsPage = {

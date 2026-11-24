@@ -5,7 +5,18 @@ import { BACKSTOP_MS, UnitRunReport } from "./src/unit-run.ts";
 // (package.sh): `src/kinds/NAME.tsx` exports the kind's `run` and `stop`. The menus (`overlay`) and
 // the chat (`panel`) are no page's but the shell's persistent kinds every page mounts beside its
 // own.
-const PAGES = ["agents", "board", "docs", "queue", "reports", "review", "runs", "settings", "task"];
+const PAGES = [
+  "agents",
+  "board",
+  "docs",
+  "people",
+  "queue",
+  "reports",
+  "review",
+  "runs",
+  "settings",
+  "task",
+];
 const KINDS = [...PAGES, "overlay", "panel"].sort();
 // The stylesheet every kind shares, an entry of its own and no kind: its sheets in the order
 // `src/styles/shared.css` writes, one minified file package.sh puts first in every kind's styles.

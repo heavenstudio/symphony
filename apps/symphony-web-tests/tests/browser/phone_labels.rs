@@ -278,10 +278,11 @@ fn cued(row: &Value, sides: &str, what: &str) {
     );
 }
 
-/// The first seven of the Symphony's eight pages show whole at 320 and at 390, the page shown lit
-/// among them; the eighth and a project's own page beyond them make the row scroll, faded at the
-/// edge it continues past and only there, and the last page, opened, is brought whole into view. The first, a middle and the
-/// last page take the keyboard's focus with their outline uncut.
+/// The first six of the Symphony's nine pages show whole at 320 and the first seven at 390, the
+/// page shown lit among them; the rest and a project's own page beyond them make the row scroll,
+/// faded at the edge it continues past and only there, and the last page, opened, is brought whole
+/// into view. The first, a middle and the last page take the keyboard's focus with their outline
+/// uncut.
 #[test]
 fn a_phones_pages_show_whole_and_the_row_fades_only_where_it_continues() {
     let site = site();
@@ -293,14 +294,13 @@ fn a_phones_pages_show_whole_and_the_row_fades_only_where_it_continues() {
         page.eval(MEASURES);
         let row = rests(&mut page, ".app-pages", &what);
         assert_eq!(row["oneRow"], json!(true), "{what}: {row}");
-        // Seven whole, with the Symphony's eighth and the project's own beyond the edge.
-        assert_eq!(
-            row["whole"],
-            json!([
-                "Home", "Queue", "Docs", "Board", "Reports", "Settings", "Runs"
-            ]),
-            "{what}: {row}"
-        );
+        // Six whole at 320 and seven at 390, the rest of the Symphony's and the project's own
+        // beyond the edge.
+        let whole = [
+            "Home", "Queue", "Docs", "Board", "Reports", "Settings", "People",
+        ];
+        let shown = if width == 320 { 6 } else { 7 };
+        assert_eq!(row["whole"], json!(whole[..shown]), "{what}: {row}");
         assert_eq!(row["scrolls"], json!(true), "{what}: {row}");
         cued(&row, "end", &what);
         chosen(&row, "Board", &what);
@@ -308,7 +308,7 @@ fn a_phones_pages_show_whole_and_the_row_fades_only_where_it_continues() {
         for (at, name, sides) in [
             (0, "Home", "end"),
             (3, "Board", "end"),
-            (8, "⬡ lamps", "start"),
+            (9, "⬡ lamps", "start"),
         ] {
             page.eval(&format!(
                 "document.querySelectorAll('.app-pages a')[{at}].focus()"
@@ -333,12 +333,16 @@ fn a_phones_pages_show_whole_and_the_row_fades_only_where_it_continues() {
         );
         chosen(&row, "⬡ lamps", &what);
         cued(&row, "start", &format!("{what}, the last page shown"));
-        // With the Symphony's pages alone the row still scrolls to its eighth, back at its start.
+        // With the Symphony's pages alone the row still scrolls past its seventh, back at its start.
         page.eval("document.querySelector('.app-pages a:last-child').style.display = 'none'; document.querySelector('.app-pages').scrollLeft = 0; document.querySelector('.app-pages').dispatchEvent(new Event('scroll'))");
-        let row = rests(&mut page, ".app-pages", &format!("{what}, eight pages"));
+        let row = rests(&mut page, ".app-pages", &format!("{what}, nine pages"));
         assert_eq!(row["scrolls"], json!(true), "{what}: {row}");
-        assert_eq!(row["whole"].as_array().unwrap().len(), 7, "{what}: {row}");
-        cued(&row, "end", &format!("{what}, eight pages"));
+        assert_eq!(
+            row["whole"].as_array().unwrap().len(),
+            shown,
+            "{what}: {row}"
+        );
+        cued(&row, "end", &format!("{what}, nine pages"));
         assert_eq!(
             page.eval("document.documentElement.scrollWidth <= innerWidth && document.querySelector('.app-header').getBoundingClientRect().height < 100"),
             json!(true),

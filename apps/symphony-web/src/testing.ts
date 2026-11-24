@@ -91,6 +91,8 @@ export const CASES = cases as unknown as {
   samples: {
     settings: unknown;
     emptySettings: unknown;
+    people: unknown;
+    emptyPeople: unknown;
     queue: unknown;
     emptyQueue: unknown;
     board: unknown;

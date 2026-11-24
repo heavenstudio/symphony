@@ -4,7 +4,7 @@
 //! at it, whose line reads `owner` as it always has.
 
 use crate::front::{Shared, router};
-use crate::testing::{Tree, open_gate, repository_holding};
+use crate::testing::{Board, LAPTOP, Tree, laptop_with, open_gate, repository_holding};
 use axum::body::Body;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{Request, StatusCode, header};
@@ -60,49 +60,6 @@ fn laptop_gate(added: &Path, ana: &Actor) -> crate::gate::Gate {
     ))
 }
 
-/// A gate whose whois names a colleague's laptop at [`LAPTOP`], under a login other than this
-/// machine's, and whose roster is `roster`.
-fn laptop_with(roster: crate::gate::Roster) -> crate::gate::Gate {
-    crate::gate::Gate::new(
-        Arc::new(|address: &str| {
-            Ok((address == LAPTOP_IP).then(|| {
-                r#"{"Node": {"Name": "laptop"}, "UserProfile": {"ID": 12, "LoginName": "ana@example.com"}}"#.to_string()
-            }))
-        }),
-        Arc::new(std::time::Instant::now),
-    )
-    .with_status(Arc::new(|| {
-        Ok(r#"{"Self": {"DNSName": "studio.tail.ts.net.", "UserID": 11}}"#.to_string())
-    }))
-    .with_roster(roster)
-}
-
-const LAPTOP_IP: &str = "100.101.102.104";
-const LAPTOP: &str = "100.101.102.104:5000";
-
-/// The board of the project at `root`, made on PostgreSQL as its command line makes it, Ana on it
-/// holding `powers`: its server stopped when it drops.
-struct Board(symphony_board::server::Home);
-
-impl Board {
-    fn holding(root: &Path, powers: &[Power]) -> Board {
-        let env = symphony_board::cli::Env {
-            vars: Default::default(),
-            cwd: root.to_path_buf(),
-        };
-        let board = Board(symphony_board::server::Home::in_common(&root.join(".git")));
-        let store = symphony_board::cli::connect(&env).unwrap();
-        store.add_person("ana", &[], powers, "owner").unwrap();
-        board
-    }
-}
-
-impl Drop for Board {
-    fn drop(&mut self) {
-        let _ = self.0.stop_board();
-    }
-}
-
 /// A visitor under another login whom the board added, holding decide, saves as the actor the board
 /// names them, never as the person at the machine; on a board that has not added them, a server of
 /// its own refuses them before any route, and nothing is written.
@@ -118,7 +75,7 @@ async fn a_visitor_a_board_added_saves_as_themselves_and_one_it_did_not_writes_n
     );
     let tree = Tree::new();
     let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
-    let _board = Board::holding(&root, &[Power::Decide]);
+    let _board = Board::holding(&root, &[("ana", &[Power::Decide])]);
     let shared = Shared::new(1, 8123, &root, None, laptop_gate(&root, &ana));
     let (status, body) = asked_from(&shared, LAPTOP).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -159,7 +116,7 @@ async fn a_person_is_refused_each_write_whose_power_she_lacks_and_nothing_is_wri
     );
     let tree = Tree::new();
     let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
-    let _board = Board::holding(&root, &[Power::Speak]);
+    let _board = Board::holding(&root, &[("ana", &[Power::Speak])]);
     let shared = Shared::new(1, 8123, &root, None, laptop_gate(&root, &ana));
     let (status, body) = asked_from(&shared, LAPTOP).await;
     assert_eq!(
@@ -183,11 +140,7 @@ async fn a_person_is_refused_each_write_whose_power_she_lacks_and_nothing_is_wri
         )
     );
     // Powers are read as each write arrives: given decide now, the same save is hers.
-    let store = symphony_board::cli::connect(&symphony_board::cli::Env {
-        vars: Default::default(),
-        cwd: root.clone(),
-    })
-    .unwrap();
+    let store = Board::store(&root);
     store
         .grant(Holder::Person("ana"), &[Power::Decide], "owner")
         .unwrap();
@@ -228,7 +181,7 @@ async fn the_machines_roster_puts_a_profiles_login_on_a_board_that_gives_her_a_p
         Ok(())
     })
     .unwrap();
-    let _board = Board::holding(&root, &[Power::Decide]);
+    let _board = Board::holding(&root, &[("ana", &[Power::Decide])]);
     let gate = laptop_with(crate::roster::of(machine));
     let visitor = crate::gate::Visitor::Login(crate::gate::Login {
         id: 12,
@@ -250,11 +203,7 @@ async fn the_machines_roster_puts_a_profiles_login_on_a_board_that_gives_her_a_p
             .any(|l| l.ends_with("] ana · question — Which one?")),
         "{page}"
     );
-    let store = symphony_board::cli::connect(&symphony_board::cli::Env {
-        vars: Default::default(),
-        cwd: root.clone(),
-    })
-    .unwrap();
+    let store = Board::store(&root);
     store
         .revoke(Holder::Person("ana"), &[Power::Decide], "owner")
         .unwrap();

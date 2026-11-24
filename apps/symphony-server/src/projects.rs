@@ -285,12 +285,29 @@ impl Projects {
 
     /// The projects served whose board `visitor` is on, each with the actor they are there
     /// ([`crate::gate::Gate::member`], the starter's gate asked): to them every other project is
-    /// one this server does not hold.
-    fn reached_by(&self, visitor: &Visitor) -> Vec<(Served, symphony_plugin::Actor)> {
+    /// one this server does not hold. A visitor who is not the person at the machine asking for
+    /// `path` under a project's id is asked of that project's board alone where it has added them,
+    /// as nothing else they are shown then names another; where it has not, of every board, so
+    /// they are answered as for a project the server does not hold. The person at the machine is
+    /// on every board, asked of none.
+    fn reached_by(&self, visitor: &Visitor, path: &str) -> Vec<(Served, symphony_plugin::Actor)> {
         let gate = &self.starter.gate;
-        self.served()
-            .into_iter()
-            .filter_map(|served| {
+        let served = self.served();
+        let first = path[1.min(path.len())..].split('/').next().unwrap_or("");
+        let named = (*visitor != Visitor::Machine)
+            .then(|| served.iter().position(|served| served.entry.id == first))
+            .flatten();
+        // The board already asked, which did not add them.
+        let mut asked = None;
+        if let Some(at) = named {
+            match gate.member(&served[at].entry.root, visitor) {
+                Some(actor) => return vec![(served[at].clone(), actor)],
+                None => asked = Some(at),
+            }
+        }
+        (served.into_iter().enumerate())
+            .filter(|(at, _)| Some(*at) != asked)
+            .filter_map(|(_, served)| {
                 let actor = gate.member(&served.entry.root, visitor)?;
                 Some((served, actor))
             })
@@ -529,7 +546,9 @@ async fn dispatch(
     }
     let reading = projects.clone();
     let judged = visitor.clone();
-    let Ok(reached) = crate::spawn::blocking(move || reading.reached_by(&judged)).await else {
+    let asked = path.clone();
+    let Ok(reached) = crate::spawn::blocking(move || reading.reached_by(&judged, &asked)).await
+    else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     // From here on a project the visitor is not on is one this server does not hold.

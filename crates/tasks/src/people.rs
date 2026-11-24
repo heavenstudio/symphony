@@ -19,6 +19,8 @@
 //! nothing, so its powers hold on the whole board. The person at the machine is on every board with
 //! every power, and no row says so ([`Powers::all`]).
 
+pub mod change;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
@@ -53,7 +55,8 @@ pub enum Power {
     /// not direct agents (step 5 of docs/product/analysis/users-and-identity.md), so the routes
     /// that need it stay the person at the machine's.
     DirectAgents,
-    /// Say who is on the board. No route asks it yet: the command line is the terminal's.
+    /// Say who is on the board, in which groups and with what powers: the People page's changes
+    /// need it, and the command line is the terminal's.
     Administer,
 }
 

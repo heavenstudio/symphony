@@ -4,15 +4,16 @@
 use super::{READY, SHOWN, chrome, chrome::Chrome, look_parity, site, site::Site, texts};
 use serde_json::json;
 
-/// The Symphony's eight pages, then the stand-in project's own page under its plugin's label:
-/// nine, two more than a phone 390 wide holds in view.
-const PAGES: [&str; 9] = [
+/// The Symphony's nine pages, then the stand-in project's own page under its plugin's label:
+/// ten, three more than a phone 390 wide holds in view.
+const PAGES: [&str; 10] = [
     "Home",
     "Queue",
     "Docs",
     "Board",
     "Reports",
     "Settings",
+    "People",
     "Runs",
     "Agents",
     "⬡ lamps",
@@ -61,6 +62,7 @@ fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
         ("/tasks", ".waiting-board:not(.waiting-ghost)", "Board", &[]),
         ("/reports", "[data-ready=reports]", "Reports", &[]),
         ("/settings", "[data-ready=settings]", "Settings", &[]),
+        ("/people", "[data-ready=people]", "People", &[]),
         ("/runs", "[data-ready=runs]", "Runs", &[]),
         ("/agents", ".agents", "Agents", &[]),
         (
@@ -103,8 +105,9 @@ fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
 }
 
 /// On a phone 390 wide the header is two rows, the buttons and then the pages on one row. The
-/// first seven of the Symphony's eight pages show whole there; the eighth and a project's own
-/// page beyond them are reached by scrolling the row across, shaded at the edge it continues past.
+/// first seven of the Symphony's nine pages show whole there, each shown with the row at its
+/// start; the eighth, the ninth and a project's own page beyond them are reached by scrolling the
+/// row across, shaded at the edge it continues past.
 #[test]
 fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_shaded() {
     let site = content_site();
@@ -114,8 +117,8 @@ fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_
         ("/", ".hero-title"),
         ("/tasks", ".waiting-board:not(.waiting-ghost)"),
         ("/reports", "[data-ready=reports]"),
-        ("/runs", "[data-ready=runs]"),
         ("/settings", "[data-ready=settings]"),
+        ("/people", "[data-ready=people]"),
         ("/docs/look-parity.md", ".doc-card"),
     ] {
         open(&mut page, &site, path, ready);

@@ -145,6 +145,7 @@ export function ownPages(view: ProjectView): [string, string][] {
     ["/tasks", PAGE_NAMES.BOARD],
     ["/reports", PAGE_NAMES.REPORTS],
     ["/settings", PAGE_NAMES.SETTINGS],
+    ["/people", PAGE_NAMES.PEOPLE],
     ["/runs", PAGE_NAMES.RUNS],
     ["/agents", PAGE_NAMES.AGENTS],
   ];
@@ -182,6 +183,7 @@ export function headerLinks(view: ProjectView, path: string, document: boolean):
     path === "tasks" || path.startsWith("task/"),
     path === "reports",
     path === "settings",
+    path === "people",
     path === "runs",
     path === "agents",
   ];

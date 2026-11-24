@@ -53,6 +53,7 @@ pub mod health;
 mod links;
 pub mod listing;
 mod machine_work;
+mod people;
 mod project;
 pub mod report_page;
 pub mod reports;
@@ -74,6 +75,10 @@ pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates
 pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 pub use links::{app_path, linkable};
 pub use listing::{ListedCard, ListedProject, PROJECTS_PATH, ProjectList, TaskAsks, TaskVerdict};
+pub use people::{
+    GroupRow, PEOPLE_CHANGE_PATH, PEOPLE_PATH, PROFILE_PATH, PeopleAction, PeopleChange,
+    PeopleLogLine, PeoplePage, PersonRow, ProfileWrite,
+};
 pub use report_page::{Grain, REPORTS_LANDED_PATH, REPORTS_PATH, ReportBucket, ReportsPage};
 pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
 pub use runs::{

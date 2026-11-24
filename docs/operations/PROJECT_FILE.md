@@ -291,8 +291,8 @@ engine carries the entries.
 Each table serves one folder at one URL. With none written, one keeps the convention: `docs/` at
 `/docs/`, Markdown and HTML, `docs/history` listed but never read as documents. A key not listed here
 refuses the file, as a misspelt one would change what is served. A route the Symphony answers
-itself (`symphony_api::SYMPHONY_ROUTES`: `tasks`, `queue`, `reports`, `runs`, `settings` and the
-rest) wins over every entrypoint, so one whose `url` lies on such a route refuses the file by name.
+itself (`symphony_api::SYMPHONY_ROUTES`: `tasks`, `queue`, `reports`, `runs`, `settings`, `people`
+and the rest) wins over every entrypoint, so one whose `url` lies on such a route refuses the file by name.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
