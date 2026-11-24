@@ -89,6 +89,20 @@ impl Power {
         }
     }
 
+    /// Why no one is given it yet, where no one is: direct agents, until a board speaks to its
+    /// agents for a person (step 5 of docs/product/analysis/users-and-identity.md), so every
+    /// route that asks them for work stays the person at the machine's. Every grant of it is
+    /// refused in these words, and the People page draws it as not yet givable with them.
+    pub fn withheld(self) -> Option<&'static str> {
+        match self {
+            Power::DirectAgents => Some(
+                "until a board speaks to its agents for a person, asking them for work is the \
+                 person at the machine's",
+            ),
+            Power::Read | Power::Speak | Power::Decide | Power::Administer => None,
+        }
+    }
+
     /// The power `word` names, its word or with a hyphen for the underscore (`direct-agents`).
     ///
     /// # Errors
