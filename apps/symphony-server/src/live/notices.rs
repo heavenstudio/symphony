@@ -16,7 +16,7 @@
 //! without a stop takes the worker's wake with it, which ends the worker too.
 
 use super::Hub;
-use crate::notices::hand::{self, Running};
+use crate::notices::hand::{self, Bounds, Running};
 use crate::notices::runner::{Line, Look, Runner, Waiting};
 use std::collections::BTreeMap;
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -76,6 +76,7 @@ impl Hub {
         let mut tailnet = None;
         self.start_notices_with(
             project,
+            Bounds::SERVER,
             Box::new(move || {
                 if tailnet.is_none() {
                     tailnet = crate::gate::magicdns_name();
@@ -86,15 +87,20 @@ impl Hub {
         );
     }
 
-    /// [`Hub::start_notices`], each link begun by `origin`.
-    pub(super) fn start_notices_with(self: &Arc<Self>, project: &str, origin: Origin) {
+    /// [`Hub::start_notices`], each hand waiting by `bounds` and each link begun by `origin`.
+    pub(super) fn start_notices_with(
+        self: &Arc<Self>,
+        project: &str,
+        bounds: Bounds,
+        origin: Origin,
+    ) {
         let (wake, woken) = mpsc::sync_channel(1);
         let running = Arc::new(Running::default());
         let (weak, project, worker_running) =
             (Arc::downgrade(self), project.to_string(), running.clone());
         let started = std::thread::Builder::new()
             .name("review notices".into())
-            .spawn(move || work(&weak, &woken, &worker_running, &project, origin));
+            .spawn(move || work(&weak, &woken, &worker_running, &project, bounds, origin));
         match started {
             Ok(thread) => {
                 let worker = Worker {
@@ -163,11 +169,16 @@ impl Hub {
     /// stands open, the runner opened (its record read) as the gate opens; none while it is held
     /// or closed, or before it is given, and the runner let go, so the record is read again when
     /// it opens.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one turn's state, each kept by the worker"
+    )]
     fn notice_turn(
         &self,
         runner: &mut Option<Runner>,
         last: &mut Option<Read>,
         running: &Running,
+        bounds: Bounds,
         origin: &mut dyn FnMut() -> String,
         said: &mut Said,
         project: &str,
@@ -184,18 +195,23 @@ impl Hub {
             *last = None;
         }
         if let Some(runner) = runner {
-            self.notice_pass(runner, last, running, origin, said, project);
+            self.notice_pass(runner, last, running, bounds, origin, said, project);
         }
     }
 
     /// One pass of `runner`: a look, where what it reads moved since `last`, then the hand of what
     /// is due. A machine folder, a board or profiles that cannot be read leaves the record as it
     /// was, said once; programs that are refused send nothing, said once, and the look goes on.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one pass's state, each kept by the worker"
+    )]
     fn notice_pass(
         &self,
         runner: &mut Runner,
         last: &mut Option<Read>,
         running: &Running,
+        bounds: Bounds,
         origin: &mut dyn FnMut() -> String,
         said: &mut Said,
         project: &str,
@@ -293,10 +309,9 @@ impl Hub {
             }
         }
         let clock = || (self.clock)();
+        let ends = |pid: u32| symphony_board::sys::gone(i64::from(pid), bounds.ends);
         let mut handing = |program: &std::path::Path, line: &str, hidden: &[&str]| {
-            hand::hand(program, line, hidden, running, &|pid| {
-                symphony_board::sys::gone(i64::from(pid), hand::MOST)
-            })
+            hand::hand(program, line, hidden, running, &ends, bounds.heard)
         };
         let mut log = |line: String| eprintln!("{line}");
         match runner.hand_due(&profiles, &programs, &clock, &mut handing, &mut log) {
@@ -351,6 +366,7 @@ fn work(
     woken: &mpsc::Receiver<()>,
     running: &Running,
     project: &str,
+    bounds: Bounds,
     mut origin: Origin,
 ) {
     let (mut runner, mut last, mut said) = (None, None, Said::default());
@@ -366,6 +382,7 @@ fn work(
                 &mut runner,
                 &mut last,
                 running,
+                bounds,
                 &mut *origin,
                 &mut said,
                 project,

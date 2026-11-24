@@ -27,6 +27,21 @@ pub(crate) const MOST: Duration = Duration::from_secs(60);
 /// wrote is in the pipe already, so only a process that left the group and holds the pipe is
 /// waited for, and not past this.
 pub(crate) const HEARD_AFTER: Duration = Duration::from_secs(5);
+
+/// How long a hand waits: for its program's end, and for what it said once it ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Bounds {
+    pub ends: Duration,
+    pub heard: Duration,
+}
+
+impl Bounds {
+    /// The server's own: [`MOST`] and [`HEARD_AFTER`].
+    pub(crate) const SERVER: Bounds = Bounds {
+        ends: MOST,
+        heard: HEARD_AFTER,
+    };
+}
 /// The most of a program's stderr kept: a program that says more is still read to its end.
 const KEPT: usize = 64 * 1024;
 /// The most of what it said that a line repeats.
@@ -72,13 +87,15 @@ impl Running {
 
 /// Hands `line` to `program`, the words `hidden` never repeated of what it says: [`Handed`].
 /// `ends_within` waits for the process of the pid it is given to end, answering whether it ended
-/// within its bound (in the server, [`symphony_board::sys::gone`] for [`MOST`]).
+/// within its bound (in the server, [`symphony_board::sys::gone`] for [`MOST`]), and what it said
+/// is heard at most `heard_after` once it and its group ended (in the server, [`HEARD_AFTER`]).
 pub(crate) fn hand(
     program: &Path,
     line: &str,
     hidden: &[&str],
     running: &Running,
     ends_within: &dyn Fn(u32) -> io::Result<bool>,
+    heard_after: Duration,
 ) -> Handed {
     let mut command = symphony::children::command(program);
     command
@@ -124,7 +141,7 @@ pub(crate) fn hand(
     }
     let status = child.wait();
     let said = heard
-        .map(|heard| heard.within(HEARD_AFTER))
+        .map(|heard| heard.within(heard_after))
         .unwrap_or_default();
     let said = hidden_in(&said, hidden);
     if running.stopping() {

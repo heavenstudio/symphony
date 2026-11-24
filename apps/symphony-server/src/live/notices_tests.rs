@@ -6,7 +6,7 @@
 
 use super::super::Hub;
 use super::{Read, Said};
-use crate::notices::hand::Running;
+use crate::notices::hand::{Bounds, Running};
 use crate::notices::runner::Runner;
 use crate::testing::board::{Fixture, Seed};
 use crate::testing::{Tree, repository_holding, store_on};
@@ -181,6 +181,7 @@ impl Passes {
             &mut self.runner,
             &mut self.last,
             &self.running,
+            bounds(),
             &mut origin,
             &mut self.said,
             "symphony",
@@ -279,7 +280,7 @@ fn the_worker_hands_what_a_wake_finds_and_ends_at_the_stop() {
     let telling = Telling::new(false);
     telling
         .hub
-        .start_notices_with("symphony", Box::new(|| ORIGIN.to_string()));
+        .start_notices_with("symphony", bounds(), Box::new(|| ORIGIN.to_string()));
     // Its first pass takes what stands; a wake after the asks finds them.
     let record = telling.root.join("artifacts/notices.json");
     test_time::until_true("the worker's first look", hand_bound(), || record.is_file())
@@ -299,7 +300,16 @@ fn the_worker_hands_what_a_wake_finds_and_ends_at_the_stop() {
 
 /// A wall-clock backstop a stall alone reaches: six fake programs' runs on a loaded machine.
 fn hand_bound() -> std::time::Duration {
-    crate::notices::hand::MOST
+    test_time::backstop(crate::notices::hand::MOST)
+}
+
+/// The server's hand bounds, each as the test's backstop, so a hand's outcome is the code's and
+/// never a loaded machine's stall.
+fn bounds() -> Bounds {
+    Bounds {
+        ends: test_time::backstop(Bounds::SERVER.ends),
+        heard: test_time::backstop(Bounds::SERVER.heard),
+    }
 }
 
 #[test]

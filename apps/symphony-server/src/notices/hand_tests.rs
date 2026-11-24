@@ -21,13 +21,31 @@ fn program(tree: &Tree, name: &str, body: &str) -> PathBuf {
     path
 }
 
-/// The server's own wait for a program's end.
+/// A test's wall-clock backstop for a wait the server bounds by `bound`: past a loaded
+/// machine's stall, so an outcome is the code's and never a stall's.
+fn backstop(bound: std::time::Duration) -> std::time::Duration {
+    test_time::backstop(bound)
+}
+
+/// The server's wait for a program's end, its bound the test's backstop.
 fn ends(pid: u32) -> io::Result<bool> {
-    symphony_board::sys::gone(i64::from(pid), MOST)
+    symphony_board::sys::gone(i64::from(pid), backstop(MOST))
+}
+
+/// The server's bound on what a program said once it ended, as the test's backstop.
+fn heard() -> std::time::Duration {
+    backstop(HEARD_AFTER)
 }
 
 fn handed(program: &Path) -> Handed {
-    hand(program, LINE, &[ADDRESS, LINK], &Running::default(), &ends)
+    hand(
+        program,
+        LINE,
+        &[ADDRESS, LINK],
+        &Running::default(),
+        &ends,
+        heard(),
+    )
 }
 
 #[test]
@@ -120,12 +138,20 @@ fn a_program_that_does_not_end_is_ended_with_its_whole_group() {
     let child = tree.path("child");
     // Its bound passes once its child is running: the end a deadline gives, without a clock.
     let bound = |_pid: u32| {
-        test_time::until_true("the stuck program's child", MOST, || child.is_file())
-            .unwrap_or_else(|stall| panic!("{stall}"));
+        test_time::until_true("the stuck program's child", backstop(MOST), || {
+            child.is_file()
+        })
+        .unwrap_or_else(|stall| panic!("{stall}"));
         Ok(false)
     };
-    let Handed::Later(why) = hand(&stuck, LINE, &[ADDRESS, LINK], &Running::default(), &bound)
-    else {
+    let Handed::Later(why) = hand(
+        &stuck,
+        LINE,
+        &[ADDRESS, LINK],
+        &Running::default(),
+        &bound,
+        heard(),
+    ) else {
         panic!("a program ended at its bound is handed again");
     };
     assert_eq!(
@@ -133,7 +159,7 @@ fn a_program_that_does_not_end_is_ended_with_its_whole_group() {
         "it did not end within 60 s, so it and its group were ended"
     );
     let pid: i64 = tree.read("child").trim().parse().unwrap();
-    test_time::until_true("the stuck program's child ended", MOST, || {
+    test_time::until_true("the stuck program's child ended", backstop(MOST), || {
         !symphony_board::sys::pid_alive(pid)
     })
     .unwrap_or_else(|stall| panic!("{stall}"));
@@ -149,11 +175,13 @@ fn a_program_whose_end_cannot_be_watched_is_ended_with_its_group_and_handed_agai
     );
     let child = tree.path("child");
     let unwatched = |_pid: u32| {
-        test_time::until_true("the stuck program's child", MOST, || child.is_file())
-            .unwrap_or_else(|stall| panic!("{stall}"));
+        test_time::until_true("the stuck program's child", backstop(MOST), || {
+            child.is_file()
+        })
+        .unwrap_or_else(|stall| panic!("{stall}"));
         Err(io::Error::other("no watch"))
     };
-    let handed = hand(&stuck, LINE, &[], &Running::default(), &unwatched);
+    let handed = hand(&stuck, LINE, &[], &Running::default(), &unwatched, heard());
     assert_eq!(
         handed,
         Handed::Later(
@@ -161,7 +189,7 @@ fn a_program_whose_end_cannot_be_watched_is_ended_with_its_group_and_handed_agai
         )
     );
     let pid: i64 = tree.read("child").trim().parse().unwrap();
-    test_time::until_true("the stuck program's child ended", MOST, || {
+    test_time::until_true("the stuck program's child ended", backstop(MOST), || {
         !symphony_board::sys::pid_alive(pid)
     })
     .unwrap_or_else(|stall| panic!("{stall}"));
@@ -178,16 +206,19 @@ fn the_servers_stop_ends_a_hand_under_way_and_starts_none_after() {
     let running = Arc::new(Running::default());
     let hand_under_way = {
         let (running, stuck) = (running.clone(), stuck.clone());
-        std::thread::spawn(move || hand(&stuck, LINE, &[], &running, &ends))
+        std::thread::spawn(move || hand(&stuck, LINE, &[], &running, &ends, heard()))
     };
     let started = tree.path("started");
-    test_time::until_true("the program started", MOST, || started.is_file())
+    test_time::until_true("the program started", backstop(MOST), || started.is_file())
         .unwrap_or_else(|stall| panic!("{stall}"));
     running.stop();
-    let handed = crate::testing::joined(hand_under_way, "the hand the stop cut", MOST);
+    let handed = crate::testing::joined(hand_under_way, "the hand the stop cut", backstop(MOST));
     assert_eq!(handed, Handed::Cut);
     std::fs::remove_file(&started).unwrap();
-    assert_eq!(hand(&stuck, LINE, &[], &running, &ends), Handed::Cut);
+    assert_eq!(
+        hand(&stuck, LINE, &[], &running, &ends, heard()),
+        Handed::Cut
+    );
     assert!(!started.exists(), "no program starts once the server stops");
 }
 
@@ -210,7 +241,7 @@ fn what_is_heard_after_the_end_is_bounded_while_another_holds_the_pipe() {
     let (pipe, mut holder) = io::pipe().unwrap();
     let heard = Heard::listen(pipe);
     holder.write_all(b"said before it ended").unwrap();
-    test_time::until_true("what was said, heard", MOST, || {
+    test_time::until_true("what was said, heard", backstop(MOST), || {
         heard.so_far() == b"said before it ended"
     })
     .unwrap_or_else(|stall| panic!("{stall}"));
@@ -229,7 +260,7 @@ fn a_closed_pipe_is_heard_to_its_end_and_kept_to_its_bound() {
     let long = vec![b'x'; KEPT + 10_000];
     // Written from a thread, so a pipe no reader drained never holds the test.
     let writing = std::thread::spawn(move || writer.write_all(&long).unwrap());
-    let kept = heard.within(MOST);
-    crate::testing::joined(writing, "the writer", MOST);
+    let kept = heard.within(backstop(HEARD_AFTER));
+    crate::testing::joined(writing, "the writer", backstop(MOST));
     assert_eq!(kept.len(), KEPT, "the rest is read and dropped");
 }
