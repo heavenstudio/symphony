@@ -1,8 +1,9 @@
 //! The one server's notices for a project, on a scratch board and a temporary machine folder whose
 //! `notices/programs.toml` names a fake program: a card that starts waiting, an agent's question to
 //! the person at the machine and a reviewer's verdict reach each member of the thing's group once,
-//! by their way, and nobody else; a board that names nobody tells no one; and the worker hands what
-//! a wake finds and ends at the stop.
+//! by their way, and nobody else; a held message's line tells as such a question, its author among
+//! those told when of the group, and its pass, a person's line, tells no one; a board that names
+//! nobody tells no one; and the worker hands what a wake finds and ends at the stop.
 
 use super::super::Hub;
 use super::{Read, Said};
@@ -262,6 +263,37 @@ fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_b
         !record.contains(ANA_SLACK) && !record.contains(BO_EMAIL),
         "{record}"
     );
+}
+
+/// A message held for people (`symphony_board::held`) is told of by the board's line for it, a
+/// question to the person at the machine that no person wrote: each member of the task's group is
+/// told, its author too when one of them, a link alone. Its pass is a person's line, which tells no
+/// one.
+#[test]
+fn a_held_messages_line_tells_its_tasks_group_as_a_question_and_its_pass_tells_no_one() {
+    let telling = Telling::new(false);
+    let mut passes = Passes::default();
+    passes.pass(&telling.hub);
+    let ana = telling.f.other().for_person("ana");
+    let held = (ana.hold_words("app/x", "ana", "Cut the header", None)).unwrap();
+    telling.hub.observe(&telling.f.store);
+    passes.pass(&telling.hub);
+    let task = format!("{ORIGIN}/symphony/task/app/x");
+    let told = |kind: &str, way: &str, address: &str| {
+        (kind.into(), way.into(), address.into(), task.clone())
+    };
+    assert_eq!(
+        telling.told(),
+        [
+            told("question", "slack", ANA_SLACK),
+            told("question", "email", BO_EMAIL)
+        ],
+        "ana and bo are design's; cy is engineering's"
+    );
+    (telling.f.store.pass("app/x", held.id, "owner")).unwrap();
+    telling.hub.observe(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 2, "the pass is a person's line");
 }
 
 #[test]

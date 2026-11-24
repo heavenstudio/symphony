@@ -2508,8 +2508,12 @@ them.
   pass is refused naming who passed it, and a number no message held on the task has is refused,
   each with nothing written. A session's pass is the person at the machine's, as every board
   command is.
-- **Who is told** of a held message today is the person at the machine, by its line waiting on
-  them. A board with nobody named holds nothing, and every line reads as before.
+- **Who is told** of a held message is whom the board's line for it reaches: the person at the
+  machine, on whom it waits, and each member of the task's group, its author too when one of
+  them, whom the machine's server tells as of any question to the person at the machine, by the
+  way they chose, a link alone ([NOTICES](../engineering/NOTICES.md#the-servers-part)). Its pass
+  is a person's line and tells no one. A board with nobody named holds nothing, and every line
+  reads as before.
 - **A build and a board a step apart** follow [the additive step rule](RELEASES.md): a build
   without the step never reads or writes the table, so it serves no agent the words, the board's
   line reads as any line, and it refuses a person without `direct_agents` a task's message, as
