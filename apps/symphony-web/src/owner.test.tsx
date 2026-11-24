@@ -65,7 +65,8 @@ describe("the owner's line", () => {
     const html = drawn({ ...DESIGN, hand_to: [] });
     expect(html).toContain("group: design");
     expect(html).not.toContain('id="hand"');
-    expect(drawn({ ...DESIGN, hand_to: undefined })).not.toContain('id="hand"');
+    const { hand_to: _handTo, ...unsaid } = DESIGN;
+    expect(drawn(unsaid)).not.toContain('id="hand"');
   });
 
   it("says a hand-over done, or its refusal in the server's words", async () => {
