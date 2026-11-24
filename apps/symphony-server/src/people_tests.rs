@@ -1058,6 +1058,63 @@ async fn a_groups_name_is_no_persons_and_a_persons_name_no_groups() {
     assert_eq!(served.log().len(), 1, "only the first group was made");
 }
 
+/// The name the person at the machine gives themselves is checked against every board the
+/// machine's registry lists, not only the one asked: a person or a group another project's board
+/// holds is refused with nothing written, and a project whose folder is gone holds no board.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_name_another_board_of_the_machine_holds_is_refused_to_the_person_at_the_machine() {
+    let served = Served::new(&[]);
+    let elsewhere = Tree::new();
+    let other = repository_holding(&elsewhere, "other", "docs/README.md", "# Other\n");
+    let _board = Board::holding(&other, &[("bo", &[Power::Speak])]);
+    Board::store(&other)
+        .add_group("crew", &[Power::Speak], "owner")
+        .unwrap();
+    let entry = |id: &str, root: PathBuf| symphony::machine::Entry {
+        id: id.into(),
+        name: format!("{id} works"),
+        root,
+        manifest: None,
+        plugins: Vec::new(),
+        pin: 0,
+        schema: 0,
+    };
+    symphony::machine::Registry {
+        projects: vec![
+            entry("gone", elsewhere.path("gone")),
+            entry("other", other.clone()),
+        ],
+    }
+    .write(&served.machine)
+    .unwrap();
+    for (name, said) in [
+        (
+            "bo",
+            "bo is a person on a board of this machine whom it holds no profile of",
+        ),
+        ("crew", "crew is a group's name on a board of this machine"),
+    ] {
+        let (status, body) = profile_write(
+            &served,
+            HERE,
+            serde_json::json!({"name": name, "machine": true}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
+        assert!(body.contains(said), "{name}: {body}");
+    }
+    assert_eq!(served.profiles().machine, None, "nothing was written");
+    // A name no board holds is theirs, the gone project's folder read as no board.
+    let (status, body) = profile_write(
+        &served,
+        HERE,
+        serde_json::json!({"name": "stefano", "machine": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(served.profiles().machine.as_deref(), Some("stefano"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_person_writes_their_own_addresses_and_ways_and_no_one_elses() {
     let served = Served::new(&[("ana", &[Power::Speak]), ("bo", &[Power::Speak])]);
