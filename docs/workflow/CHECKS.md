@@ -420,11 +420,11 @@ both kinds, to copy after `--`:
 | the runs page (`/runs`) | `runs::` `header::` `polish::` `projects::` `preload::` `budget` |
 | the settings page (`/settings`) | `settings::` `header::` `phone_labels::` `projects::` `preload::` `budget` |
 | document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |
-| the header, on every page | `header::` `floating_controls::` `panel_open::` `persistent::` `polish::` `projects::` |
+| the header, on every page | `header::` `floating_controls::` `panel_open::` `persistent::` `polish::` `projects::` `budget` |
 | the panel (the chat, add task, the activity list, Appearance, toasts, the pending bar) | `panel_open::` `persistent::` `header::` `floating_controls::` `components::` `look_parity::` `server_notices::` `notice_layout::` `polish::` `projects::` `budget` |
-| shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
-| the project switch and a project's look | `projects::` |
-| the feed and its stream | `feed` `stream` |
+| shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` `budget` |
+| the project switch and a project's look | `projects::` `budget` |
+| the feed and its stream | `feed` `stream` `budget` |
 | what an entry page loads (its bytes, its order) | `budget` `phone::` `preload::` |
 
 ## Worked examples
@@ -451,7 +451,7 @@ page's rows, in `apps/symphony-web/src/queue.tsx` and `apps/symphony-web/src/que
 just symphony-cli shot URL --out queue-before.png   (desktop and phone, light and dark, before the change)
 just symphony-cli shot URL --out queue-after.png    (the same four, after it)
 just client-lint
-just test-rs -p symphony-web-tests --test browser -- queue polish:: projects::
+just test-rs -p symphony-web-tests --test browser -- queue polish:: projects:: budget
 just client-update
 just lint-rs
 ```
@@ -460,10 +460,11 @@ A new unit test in `queue.test.tsx` pins the priority in the row's markup, and `
 runs it with the lint, the type check and the wire types' check; `queue` runs the browser tests of
 the queue's counts, order, spacing and filter colours, which a taller row or new markup could
 break, and the branch updates any that pinned the old row, naming it. `polish::` and `projects::`
-draw the page's panels and its one heading, and the link each row draws under the project's base.
-A change to home's rows would add `budget` and `phone::`, as home is an entry page. The thread
-gets the eight pictures, the commands and their result lines and the updated tests named; the
-commit holds the source alone, `just client-update`'s distribution put back as main has it.
+draw the page's panels and its one heading, and the link each row draws under the project's base;
+`budget` holds the entry pages' first visits, which any client change can grow. A change to
+home's rows would add `phone::`, as home is an entry page. The thread gets the eight pictures,
+the commands and their result lines and the updated tests named; the commit holds the source
+alone, `just client-update`'s distribution put back as main has it.
 
 ## The release run
 
@@ -946,6 +947,21 @@ runs only what the record does not cover and reading cannot settle:
 
 A run the evidence claims and no record at the tip shows is asked for in a `changes`, as is a
 red one.
+
+- [ ] **reviewer-mutations** — Two of your rules disagree on whether a reviewer may break a task's code on purpose, on a scratch copy, to see that the task's new test then fails (a mutation). One reviewer did, and others have asked whether they may. A: no; a reviewer judges by reading whether a test can fail, and may still try a case it suspects the code gets wrong. B: yes, on a scratch copy that is never committed, its run not recorded against the task. Recommended: A. Approve and say A or B in the note, or comment. [[CHECKS#No second build in review]]
+  [2026-11-24 18:05] agent — Posted for the board task `docs/standing-guidance-budget-and-scratch-checks`.
+
+    **The two rules.** RULES.md `workflow/tests-after` (2026-11-11): "no planted fault or reverted change to watch a test fail, whatever a brief asks; a reviewer may still probe the code with a case it suspects the code gets wrong". RULES.md `workflow/no-second-build-in-review` (2026-11-15) names "a mutation" among what a reviewer runs, and so does the list above: "a mutation, to see that a test the task adds can fail".
+
+    **What A changes.** "a mutation" leaves `workflow/no-second-build-in-review` and the list above, and this repository's reviewer page (`.agents/skills/review-task/project.md`) says the shipped review skill's "a mutation" gives way to `workflow/tests-after`. The shipped skill keeps it, for projects that want mutations.
+
+    **What B changes.** `workflow/tests-after` ends "a reviewer may still probe the code with a case it suspects the code gets wrong, or with a mutation on a scratch copy". Nothing else.
+
+    **Why A.** `workflow/tests-after` says it outright, "whatever a brief asks", while "a mutation" came in with a rule about building nothing twice in review, and each mutation is one more build. Whether a test can fail is read from what it asserts.
+
+    **Meanwhile, under either:** a reviewer's run on a scratch copy, a mutation among them, runs unrecorded (`TASKS_RECORDER=off`), as the reviewer page now says, so it never takes a task's `tests` stamp.
+
+    No earlier verdict decides it: no card in `docs/` speaks of mutations, planted faults or the order of tests and code.
 
 **The `tests` stamp reads the same record.** It is met by the newest recorded run of each build
 and test command the task ran at the tip, every one green and one test run among them
