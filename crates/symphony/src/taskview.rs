@@ -396,13 +396,16 @@ pub fn brief(record: &symphony_board::Task, from: usize, root: &Path) -> symphon
 
 /// The first offer of `plugins`' board actions on `slug` that has a payload, whatever the task's
 /// status: each action decides which work it offers on; with none, the owner's approve of the tip
-/// while the task needs it (`gates::stamps::owner_offer`). Requested only when the owner reaches
-/// the message/approval controls: preparing an offer must not delay the task's metadata and brief.
+/// while the task needs it and the person at the machine (`machine`, once they gave themselves a
+/// name) has not given it under either name (`gates::stamps::owner_offer`). Requested only when the
+/// owner reaches the message/approval controls: preparing an offer must not delay the task's
+/// metadata and brief.
 pub fn owner_offer(
     store: &symphony_board::Store,
     plugins: &crate::plugins::Plugins,
     slug: &str,
     root: &Path,
+    machine: Option<&symphony_board::people::MachinePerson>,
 ) -> Result<symphony_api::TaskOffer, String> {
     let task = store.get(slug).map_err(|e| e.to_string())?;
     let branch = approval_branch(store, &task).map_err(|e| e.to_string())?;
@@ -417,7 +420,7 @@ pub fn owner_offer(
             return Ok(offer);
         }
     }
-    if let Some(offer) = crate::gates::stamps::owner_offer(store, &task, root, &branch) {
+    if let Some(offer) = crate::gates::stamps::owner_offer(store, &task, root, &branch, machine) {
         return Ok(offer);
     }
     Ok(symphony_api::TaskOffer {

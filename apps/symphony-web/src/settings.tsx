@@ -11,12 +11,14 @@
 // never by its name, and a value the store holds gets "Make it the project's" and "Remove" beside
 // it. Every other setting is drawn as its value alone, a reviewed one with the task that changes
 // it, and so is a plugin's description of one of the store's keys, which its describer never
-// writes in the board's scope.
+// writes in the board's scope. Its head links to where the reader writes their own profile
+// (`profilePath`).
 
 import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "./button";
 import { Input } from "./input";
 import { useMount } from "./mount";
+import { href, profilePath, project, writer } from "./project";
 import { Failure, getJson, post, said } from "./request";
 import { SelectField } from "./select";
 import { field } from "./shared";
@@ -315,7 +317,7 @@ export function openingText(setting: Setting): string {
 
 /** A change of the store's entry, as its record says it: when, by whom, from what to what. */
 export function changeLine(change: StoredChange): string {
-  return `${change.at} · ${change.by}: ${change.before ?? "none"} → ${change.after ?? "removed"}`;
+  return `${change.at} · ${writer(change.by).text}: ${change.before ?? "none"} → ${change.after ?? "removed"}`;
 }
 
 /** What the store's entry for a setting says beside it: its value, and whether it is in force. */
@@ -664,6 +666,9 @@ export function SettingsView({ page, error, missing, reread }: SettingsViewProps
           commit it. A reviewed setting is changed by a task, and this page writes no file of this
           machine&apos;s.
         </p>
+        <a className="settings-profile" href={href(profilePath(project()))}>
+          Your profile
+        </a>
       </header>
       {error !== null && (
         <p className="settings-error" role="alert">

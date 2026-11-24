@@ -60,7 +60,8 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         ("revoke", rest) => Box::new(move |c| powers(store, c, false, rest)),
         ("group", ["add", group, rest @ ..]) => Box::new(move |c| {
             let given = parsed_powers(rest)?;
-            let line = store.add_group(group, &given, &c.actor()?)?;
+            let (actor, dir) = (c.actor()?, machine(c)?);
+            let line = change::add_group(store, &dir, group, &given, &actor).map_err(stopped)?;
             c.say(&format!(
                 "the group {group} is on this board (change {}), holding {}",
                 line.n,

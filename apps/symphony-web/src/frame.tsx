@@ -13,7 +13,7 @@ import {
   useState,
 } from "react";
 import { Button } from "./button";
-import { crumbs, headerLinks, here, href, project, scoped } from "./project";
+import { crumbs, headerLinks, here, href, profilePath, project, scoped } from "./project";
 import { getJson, said } from "./request";
 import type { Route } from "./route";
 import { useScrollRow } from "./scrollrow";
@@ -280,6 +280,27 @@ function Brand({ view }: { view: ProjectView }) {
   );
 }
 
+/**
+ * Who reads the page, as the server named them in its view (`ProjectView.you`): their shown name,
+ * `owner` for the person at the machine before they give themselves one, linking to where they
+ * write their profile, their short name its title where the two differ. Nothing for a page served
+ * for nobody.
+ */
+export function You({ view }: { view: ProjectView }) {
+  const you = view.you;
+  if (you == null) return null;
+  return (
+    <a
+      className="app-you"
+      href={href(profilePath(view))}
+      title={you.shown !== you.name ? you.name : undefined}
+      aria-label={`${you.shown}, your profile`}
+    >
+      {you.shown}
+    </a>
+  );
+}
+
 /** The Symphony's own pages, which stay the global view's on a branch's document. */
 const GLOBAL = ["/", "/queue", "/tasks", "/reports", "/settings", "/people", "/runs", "/agents"];
 
@@ -343,6 +364,7 @@ export function Frame({ route, children }: FrameProps) {
                 ))}
               </nav>
             )}
+            <You view={view} />
             {/* Appearance is a setting of this project on this device: its panel is the persistent
               module's, which this button loads, as the bell loads activity's. */}
             <Button

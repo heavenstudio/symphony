@@ -75,7 +75,21 @@ pub(super) async fn static_response(shared: &Shared, path: &str, request: &Reque
         {
             preload::page(shared, kind, &mut shell).await;
         }
-        bytes = Bytes::from(crate::shell::page(&shell, &shared.root, &shared.base, ""));
+        let actor = crate::front::Admitted::actor(shared, request.extensions());
+        let reader = crate::shell::Reader {
+            you: Some(symphony_api::PersonName {
+                name: actor.name().into(),
+                shown: actor.sender.display.clone(),
+            }),
+            machine: shared.gate.machine_person(),
+        };
+        bytes = Bytes::from(crate::shell::page_for(
+            &shell,
+            &shared.root,
+            &shared.base,
+            "",
+            &reader,
+        ));
     }
     let (content_type, compresses) = file_type(&extension);
     let hash: String = sha2::Sha256::digest(&bytes)

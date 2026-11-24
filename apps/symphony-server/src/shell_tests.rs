@@ -321,3 +321,27 @@ fn an_older_shell_with_body_attributes_keeps_the_notice_in_its_body() {
     );
     assert!(page.contains("<body class=\"old\"><section id=\"shell-notices\" aria-label=\"Server notices\">warning</section>"), "{page}");
 }
+
+/// A page served to a reader names them, and the person at the machine as they are shown, in the
+/// view it carries, so the header and each thread draw them with nothing more asked; a page served
+/// for nobody names neither, and a name that would close the element is carried as text.
+#[test]
+fn a_page_served_to_a_reader_carries_who_they_are_and_the_machines_person() {
+    let tree = project("");
+    let nobody = view(&page(SHELL, &tree.root, "", ""));
+    assert_eq!((nobody.you, nobody.machine), (None, None));
+    let named = |name: &str, shown: &str| symphony_api::PersonName {
+        name: name.into(),
+        shown: shown.into(),
+    };
+    let reader = Reader {
+        you: Some(named("ana", "Ana </script><b>Lima")),
+        machine: Some(named("stefano", "Stefano")),
+    };
+    let page = page_for(SHELL, &tree.root, "", "", &reader);
+    assert!(!page.contains("</script><b>"), "{page}");
+    let carried = view(&page);
+    assert_eq!(carried.you, reader.you);
+    assert_eq!(carried.machine, reader.machine);
+    assert_eq!(carried.name, "Lantern", "the rest of the view as before");
+}

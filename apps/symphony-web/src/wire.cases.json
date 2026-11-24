@@ -4522,7 +4522,9 @@
           "power": "direct_agents",
           "why": "until a board speaks to its agents for a person, asking them for work is the person at the machine's"
         }
-      ]
+      ],
+      "mine": {},
+      "signins": ["tailscale"]
     },
     "emptyPeople": {
       "people": [],
@@ -4536,7 +4538,24 @@
           "power": "direct_agents",
           "why": "until a board speaks to its agents for a person, asking them for work is the person at the machine's"
         }
-      ]
+      ],
+      "mine": {}
+    },
+    "namedPeople": {
+      "people": [],
+      "groups": [],
+      "log": [],
+      "revision": 0,
+      "administers": true,
+      "machine": true,
+      "withheld": [
+        {
+          "power": "direct_agents",
+          "why": "until a board speaks to its agents for a person, asking them for work is the person at the machine's"
+        }
+      ],
+      "mine": { "name": "stefano", "display": "Stefano", "git": ["stefano-b"] },
+      "signins": ["tailscale"]
     },
     "taskTokens": {
       "total": {

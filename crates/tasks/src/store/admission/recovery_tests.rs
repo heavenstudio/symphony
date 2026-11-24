@@ -92,6 +92,24 @@ fn a_lost_executor_is_recovered_to_its_positions_target_on_the_record() {
     take(&f.store, "sim/a", &agent_session("birch"), "claim").unwrap();
 }
 
+/// A person who recovers a lost holder is no session the write checks is still there: the person
+/// at the machine under the name they gave themselves, as `owner`, and their line is marked theirs.
+#[test]
+fn a_person_recovers_a_lost_holder_as_no_session_and_their_line_is_theirs() {
+    let f = board(&workflow());
+    take(&f.store, "sim/a", &agent_session("amber"), "claim").unwrap();
+    lose_all_but(&f, &["orch"]);
+    let me = f.other().for_machine("stefano");
+    me.recover_holder("sim/a", "amber", "stefano", &Host::local())
+        .unwrap()
+        .unwrap();
+    let line = (f.store.thread_rows("sim/a").unwrap())
+        .into_iter()
+        .rfind(|row| row.kind == "system")
+        .unwrap();
+    assert_eq!((line.sender.as_str(), line.person), ("stefano", true));
+}
+
 #[test]
 fn a_lost_reviewer_stays_for_a_person_keeping_its_role() {
     let f = board(&workflow());

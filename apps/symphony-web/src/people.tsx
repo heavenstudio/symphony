@@ -5,29 +5,37 @@
 // every change, newest first. Everyone on the board reads it. A sign-in is said by its service
 // alone: no answer carries its subject.
 //
+// The person at the machine reads their own profile first, in its You section (`#you`, the read's
+// `mine`, theirs alone): before they give themselves a short name, the form that gives it, asked
+// once more as the name is fixed once given; after it, their name and the form that writes their
+// display name and git handles (PROFILE_PATH).
+//
 // Its controls are the read's to give. Where it says the reader administers (the person at the
 // machine, or a person holding administer), each person's powers are toggles that grant or revoke
 // their own, their groups are joined and left, they are taken off the board, a group is made, given
-// powers and removed, and a person is added (PEOPLE_CHANGE_PATH). A power the board gives no one
-// yet (the read's `withheld`) is drawn as not yet givable, its reason the board's. A removal asks
-// first, as the task page's Cancel does. A profile's form is shown on the reader's own card, and on
-// every card for the person at the machine, the one who gives a sign-in (PROFILE_PATH): the add's
-// sign-in field is theirs alone too. Each write answers the page as it left it, which the page
-// draws: no read follows it, and what the write did is said on the part that sent it, in the log's
-// words.
+// powers and removed, and someone else is added (PEOPLE_CHANGE_PATH). A power the board gives no
+// one yet (the read's `withheld`) is offered by no control: one held already is drawn held, and no
+// form sends it. A removal asks first, as the task page's Cancel does. A profile's form is shown
+// on the reader's own card, and on every card for the person at the machine, the one who gives a
+// sign-in, where this server knows a sign-in's service (the read's `signins`): the add's sign-in
+// field is theirs alone too. Each field is labelled, `(optional)` where it may be left empty. Each
+// write answers the page as it left it, which the page draws: no read follows it, and what the
+// write did is said on the part that sent it, in the log's words.
 
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { Button } from "./button";
 import { Input } from "./input";
 import { useMount } from "./mount";
+import { named, writer } from "./project";
 import { Failure, getJson, post, said } from "./request";
 import { SelectField } from "./select";
-import { field } from "./shared";
+import { field, publish } from "./shared";
 import { tryAgain } from "./state";
 import type { retryWait } from "./timing";
 import { failed, ready } from "./trouble";
 import {
   type GroupRow,
+  type MachineProfile,
   type PeoplePage as Page,
   PEOPLE_CHANGE_PATH,
   PEOPLE_PATH,
@@ -63,6 +71,18 @@ const isGroup = (value: unknown): value is GroupRow =>
 const isWithheld = (value: unknown): value is WithheldPower =>
   isText(field(value, "power")) && isText(field(value, "why"));
 
+const isMine = (value: unknown): value is MachineProfile => {
+  const display = field(value, "display");
+  const git = field(value, "git");
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    maybeText(field(value, "name")) &&
+    (absent(display) || isText(display)) &&
+    (absent(git) || isTexts(git))
+  );
+};
+
 const isLine = (value: unknown): value is PeopleLogLine => {
   const powers = field(value, "powers");
   return (
@@ -87,6 +107,8 @@ export function readPeople(value: unknown): Page | null {
   const withheld = field(value, "withheld");
   const you = field(value, "you");
   const problem = field(value, "problem");
+  const mine = field(value, "mine");
+  const signins = field(value, "signins");
   if (
     !Array.isArray(people) ||
     !people.every(isPerson) ||
@@ -100,7 +122,9 @@ export function readPeople(value: unknown): Page | null {
     typeof field(value, "administers") !== "boolean" ||
     typeof field(value, "machine") !== "boolean" ||
     !maybeText(you) ||
-    !maybeText(problem)
+    !maybeText(problem) ||
+    !(absent(mine) || isMine(mine)) ||
+    !(absent(signins) || isTexts(signins))
   ) {
     return null;
   }
@@ -114,6 +138,16 @@ export function readPeople(value: unknown): Page | null {
     withheld,
     you: isText(you) ? you : null,
     problem: isText(problem) ? problem : null,
+    ...(isMine(mine)
+      ? {
+          mine: {
+            name: isText(mine.name) ? mine.name : null,
+            display: mine.display ?? "",
+            git: mine.git ?? [],
+          },
+        }
+      : {}),
+    ...(isTexts(signins) && signins.length > 0 ? { signins } : {}),
   };
 }
 
@@ -171,30 +205,32 @@ export function powersSaid(words: readonly string[]): string {
   return words.length === 0 ? "no power" : words.map(powerName).join(", ");
 }
 
-/** One change of the log, said: who did what to whom. A did the page does not know is said as written. */
+/** One change of the log, said: who did what to whom, who did it drawn as every writer is (`writer`). A
+ * did the page does not know is said as written. */
 export function logLine(line: PeopleLogLine): string {
   const powers = powersSaid(line.powers ?? []);
+  const by = writer(line.by).text;
   // A group's own grant or revoke names the group as the change's name and its group.
   const whom = line.group === line.name ? `the group ${line.name}` : line.name;
   switch (line.did) {
     case "add":
-      return `${line.by} put ${line.name} on the board, holding ${powers}`;
+      return `${by} put ${line.name} on the board, holding ${powers}`;
     case "remove":
-      return `${line.by} took ${line.name} off the board`;
+      return `${by} took ${line.name} off the board`;
     case "join":
-      return `${line.by} put ${line.name} in ${line.group ?? "a group"}`;
+      return `${by} put ${line.name} in ${line.group ?? "a group"}`;
     case "leave":
-      return `${line.by} took ${line.name} out of ${line.group ?? "a group"}`;
+      return `${by} took ${line.name} out of ${line.group ?? "a group"}`;
     case "grant":
-      return `${line.by} gave ${whom} ${powers}`;
+      return `${by} gave ${whom} ${powers}`;
     case "revoke":
-      return `${line.by} took ${powers} from ${whom}`;
+      return `${by} took ${powers} from ${whom}`;
     case "group-add":
-      return `${line.by} made the group ${line.name}, holding ${powers}`;
+      return `${by} made the group ${line.name}, holding ${powers}`;
     case "group-remove":
-      return `${line.by} removed the group ${line.name}`;
+      return `${by} removed the group ${line.name}`;
     default:
-      return `${line.by}: ${line.did} ${line.name}`;
+      return `${by}: ${line.did} ${line.name}`;
   }
 }
 
@@ -251,6 +287,21 @@ export function profileWrite(
   const body: ProfileWrite = { name, git: listed(fields.git), signins: listed(fields.signin) };
   if (fields.display.trim() !== "") body.display = fields.display.trim();
   return body;
+}
+
+/**
+ * The write by which the person at the machine gives themselves the short name `name`, once and for
+ * good, with a display name where one is written and their git handles.
+ */
+export function naming(name: string, fields: { display: string; git: string }): ProfileWrite {
+  const body: ProfileWrite = { name: name.trim(), git: listed(fields.git), machine: true };
+  if (fields.display.trim() !== "") body.display = fields.display.trim();
+  return body;
+}
+
+/** The powers of `chosen` a form may send: each but one the board gives no one yet. */
+export function givable(chosen: readonly string[], withheld: readonly WithheldPower[]): string[] {
+  return chosen.filter((word) => !withheld.some((power) => power.power === word));
 }
 
 /** What a write tells the part that sent it. */
@@ -323,22 +374,11 @@ export function powerState(
   return { state, given, implied };
 }
 
-/** Why the board gives `word` to no one yet, from the read's `withheld`; none where it may. */
-export function withheldWhy(word: string, withheld: readonly WithheldPower[]): string | undefined {
-  return withheld.find((power) => power.power === word)?.why;
-}
-
-/** A withheld power said once in words, as a sentence: `Direct agents is given to no one yet: …`. */
-export function withheldSaid({ power, why }: WithheldPower): string {
-  const name = powerName(power);
-  return `${name.charAt(0).toUpperCase()}${name.slice(1)} is given to no one yet: ${why}.`;
-}
-
 /**
  * The powers a person or a group holds, each a tag: one given them, one held by a group (`held`),
  * none. Where `toggle` is given, each is a button that grants a power not given them and revokes
- * one that is; a power the board gives no one yet (`withheld`) and not given them is drawn as not
- * yet givable, its reason as its title, and a press on it does nothing.
+ * one that is; a power the board gives no one yet (`withheld`) is no control: held already, it is
+ * drawn as held, and else not at all.
  */
 export function PowerTags({
   held,
@@ -373,7 +413,13 @@ export function PowerTags({
     <ul className="people-powers" aria-label={`${label}'s powers`}>
       {POWERS.map(([word, name]) => {
         const { state, given, implied } = powerState(word, held, own);
-        const why = given ? undefined : withheldWhy(word, withheld);
+        if (withheld.some((power) => power.power === word)) {
+          return state === "none" ? null : (
+            <li key={word} className="people-power" data-held={state}>
+              {name}
+            </li>
+          );
+        }
         return (
           <li key={word}>
             <Button
@@ -381,24 +427,21 @@ export function PowerTags({
               size="xs"
               className="people-power"
               data-held={state}
-              data-withheld={why !== undefined || undefined}
               aria-pressed={given || implied}
               aria-label={`${name} for ${label}`}
               title={
                 implied
                   ? `Held with every other power of ${label}'s own`
-                  : why !== undefined
-                    ? `Given to no one yet: ${why}`
-                    : given
-                      ? `Take ${name} from ${label}`
-                      : state === "group"
-                        ? `Held by a group; give ${label} ${name} of their own`
-                        : `Give ${label} ${name}`
+                  : given
+                    ? `Take ${name} from ${label}`
+                    : state === "group"
+                      ? `Held by a group; give ${label} ${name} of their own`
+                      : `Give ${label} ${name}`
               }
               disabled={busy}
-              aria-disabled={implied || why !== undefined || undefined}
+              aria-disabled={implied || undefined}
               onClick={() => {
-                if (!implied && why === undefined) toggle(word, given);
+                if (!implied) toggle(word, given);
               }}
             >
               {name}
@@ -459,14 +502,41 @@ export function Remove({
   );
 }
 
+/** A field of a form with its label above it, `(optional)` after the label where it may be empty. */
+export function Field({
+  id,
+  label,
+  optional = false,
+  children,
+}: {
+  id: string;
+  label: string;
+  optional?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="people-field">
+      <label htmlFor={id}>
+        {label}
+        {optional && <span className="people-optional"> (optional)</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+/** The sign-in field's label: what a sign-in is for, as the reader needs no more. */
+const SIGNIN_LABEL = "Sign-in, to open boards from their own device";
+
 /** A person's profile, as the person at the machine or the person themself writes it. */
 function ProfileForm({
   person,
-  machine,
+  signins,
   writes,
 }: {
   person: PersonRow;
-  machine: boolean;
+  /** Whether it takes a sign-in: the person at the machine's form, on a server that knows one. */
+  signins: boolean;
   writes: Writes;
 }) {
   const [display, setDisplay] = useState("");
@@ -487,25 +557,34 @@ function ProfileForm({
     <details className="people-profile">
       <summary>{person.profile ? "Profile" : "Make a profile"}</summary>
       <form onSubmit={submit}>
-        <Input
-          aria-label={`Display name of ${person.name}`}
-          placeholder={person.display}
-          value={display}
-          onChange={(event) => setDisplay(event.currentTarget.value)}
-        />
-        <Input
-          aria-label={`Git handles of ${person.name}`}
-          placeholder="git handle, more by commas"
-          value={git}
-          onChange={(event) => setGit(event.currentTarget.value)}
-        />
-        {machine && (
+        <Field id={`profile-${person.name}-display`} label="Display name" optional>
           <Input
-            aria-label={`Sign-in of ${person.name}`}
-            placeholder="tailscale:login@example.com"
-            value={signin}
-            onChange={(event) => setSignin(event.currentTarget.value)}
+            id={`profile-${person.name}-display`}
+            aria-label={`Display name of ${person.name}`}
+            placeholder={person.display}
+            value={display}
+            onChange={(event) => setDisplay(event.currentTarget.value)}
           />
+        </Field>
+        <Field id={`profile-${person.name}-git`} label="Git handles" optional>
+          <Input
+            id={`profile-${person.name}-git`}
+            aria-label={`Git handles of ${person.name}`}
+            placeholder="git handle, more by commas"
+            value={git}
+            onChange={(event) => setGit(event.currentTarget.value)}
+          />
+        </Field>
+        {signins && (
+          <Field id={`profile-${person.name}-signin`} label={SIGNIN_LABEL} optional>
+            <Input
+              id={`profile-${person.name}-signin`}
+              aria-label={`Sign-in of ${person.name}`}
+              placeholder="tailscale:login@example.com"
+              value={signin}
+              onChange={(event) => setSignin(event.currentTarget.value)}
+            />
+          </Field>
         )}
         <Button type="submit" size="sm" disabled={writes.busy}>
           Keep
@@ -540,7 +619,9 @@ export function Person({
       <header className="people-person-head">
         <h3>{person.display}</h3>
         {person.display !== person.name && <span className="people-name">{person.name}</span>}
-        {page.you === person.name && <span className="people-you">you</span>}
+        {(page.you === person.name || page.mine?.name === person.name) && (
+          <span className="people-you">you</span>
+        )}
       </header>
       <p className="people-reach">
         {person.git.length > 0 ? `${reach} · git ${person.git.join(", ")}` : reach}
@@ -593,7 +674,7 @@ export function Person({
       )}
       {(admin || profiled) && (
         <div className="people-actions">
-          {profiled && <ProfileForm person={person} machine={page.machine} writes={writes} />}
+          {profiled && <ProfileForm person={person} signins={takesSignins(page)} writes={writes} />}
           {admin && (
             <Remove
               label="Take off the board"
@@ -667,7 +748,7 @@ function Group({
   );
 }
 
-/** Powers chosen in a form before it is sent, as toggles, each withheld one said once in words. */
+/** Powers chosen in a form before it is sent, as toggles: none for a power the board gives no one. */
 export function Choose({
   chosen,
   label,
@@ -680,23 +761,16 @@ export function Choose({
   onChoose: (chosen: string[]) => void;
 }) {
   return (
-    <>
-      <PowerTags
-        held={chosen}
-        own={chosen}
-        label={label}
-        busy={false}
-        withheld={withheld}
-        toggle={(word, given) =>
-          onChoose(given ? chosen.filter((power) => power !== word) : [...chosen, word])
-        }
-      />
-      {withheld.map((power) => (
-        <p key={power.power} className="people-hint">
-          {withheldSaid(power)}
-        </p>
-      ))}
-    </>
+    <PowerTags
+      held={chosen}
+      own={chosen}
+      label={label}
+      busy={false}
+      withheld={withheld}
+      toggle={(word, given) =>
+        onChoose(given ? chosen.filter((power) => power !== word) : [...chosen, word])
+      }
+    />
   );
 }
 
@@ -705,8 +779,14 @@ function doneBy(part: string, writes: Writes): Said | null {
   return writes.said?.part === part && !writes.said.refused ? writes.said : null;
 }
 
-/** The form that puts a person on the board, with their profile where they have none. */
-function AddPerson({ page, writes }: { page: Page; writes: Writes }) {
+/** Whether the page's profile forms take a sign-in: the person at the machine's, on a server that
+ * knows a sign-in's service (none with no tailnet). */
+export function takesSignins(page: Page): boolean {
+  return page.machine && (page.signins ?? []).length > 0;
+}
+
+/** The form that puts someone else on the board, with their profile where they have none. */
+export function AddPerson({ page, writes }: { page: Page; writes: Writes }) {
   const [name, setName] = useState("");
   const [display, setDisplay] = useState("");
   const [signin, setSignin] = useState("");
@@ -726,51 +806,67 @@ function AddPerson({ page, writes }: { page: Page; writes: Writes }) {
   }, [done]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    const chosen = givable(powers, page.withheld);
+    const signs = takesSignins(page) ? signin : "";
     writes.send(
       "people-add",
       PEOPLE_CHANGE_PATH,
-      addition({ name, display, signin: page.machine ? signin : "", git, group, powers }),
+      addition({ name, display, signin: signs, git, group, powers: chosen }),
     );
   };
   return (
-    <form className="people-form" id="people-add" onSubmit={submit} aria-label="Add a person">
+    <form className="people-form" id="people-add" onSubmit={submit} aria-label="Add someone else">
       <div className="people-fields">
-        <Input
-          aria-label="Short name"
-          placeholder="short name, as ana"
-          value={name}
-          onChange={(event) => setName(event.currentTarget.value)}
-        />
-        <Input
-          aria-label="Display name"
-          placeholder="display name"
-          value={display}
-          onChange={(event) => setDisplay(event.currentTarget.value)}
-        />
-        {page.machine && (
+        <Field id="people-add-name" label="Short name">
           <Input
-            aria-label="Sign-in"
-            placeholder="tailscale:login@example.com"
-            value={signin}
-            onChange={(event) => setSignin(event.currentTarget.value)}
+            id="people-add-name"
+            aria-label="Short name"
+            placeholder="ana"
+            value={name}
+            onChange={(event) => setName(event.currentTarget.value)}
           />
+        </Field>
+        <Field id="people-add-display" label="Display name" optional>
+          <Input
+            id="people-add-display"
+            aria-label="Display name"
+            value={display}
+            onChange={(event) => setDisplay(event.currentTarget.value)}
+          />
+        </Field>
+        {takesSignins(page) && (
+          <Field id="people-add-signin" label={SIGNIN_LABEL} optional>
+            <Input
+              id="people-add-signin"
+              aria-label="Sign-in"
+              placeholder="tailscale:login@example.com"
+              value={signin}
+              onChange={(event) => setSignin(event.currentTarget.value)}
+            />
+          </Field>
         )}
-        <Input
-          aria-label="Git handles"
-          placeholder="git handle"
-          value={git}
-          onChange={(event) => setGit(event.currentTarget.value)}
-        />
-        {page.groups.length > 0 && (
-          <SelectField
-            label="Group"
-            value={group}
-            options={[
-              ["", "No group"],
-              ...page.groups.map((g): [string, string] => [g.name, g.name]),
-            ]}
-            onChange={setGroup}
+        <Field id="people-add-git" label="Git handles" optional>
+          <Input
+            id="people-add-git"
+            aria-label="Git handles"
+            placeholder="git handle, more by commas"
+            value={git}
+            onChange={(event) => setGit(event.currentTarget.value)}
           />
+        </Field>
+        {page.groups.length > 0 && (
+          <Field id="people-add-group" label="Group" optional>
+            <SelectField
+              id="people-add-group"
+              label="Group"
+              value={group}
+              options={[
+                ["", "No group"],
+                ...page.groups.map((g): [string, string] => [g.name, g.name]),
+              ]}
+              onChange={setGroup}
+            />
+          </Field>
         )}
       </div>
       <Choose
@@ -779,11 +875,6 @@ function AddPerson({ page, writes }: { page: Page; writes: Writes }) {
         withheld={page.withheld}
         onChoose={setPowers}
       />
-      <p className="people-hint">
-        {page.machine
-          ? "A profile is made for them where the machine holds none, or given what you write."
-          : "A profile is made for them where the machine holds none, with no sign-in: the person at the machine gives that, as it says who they are on every board. One it holds is kept as it is."}
-      </p>
       <Button
         type="submit"
         size="sm"
@@ -798,7 +889,7 @@ function AddPerson({ page, writes }: { page: Page; writes: Writes }) {
 }
 
 /** The form that makes a group. */
-function AddGroup({ page, writes }: { page: Page; writes: Writes }) {
+export function AddGroup({ page, writes }: { page: Page; writes: Writes }) {
   const [name, setName] = useState("");
   const [powers, setPowers] = useState<string[]>([]);
   const submit = (event: FormEvent) => {
@@ -806,18 +897,21 @@ function AddGroup({ page, writes }: { page: Page; writes: Writes }) {
     writes.send("people-add-group", PEOPLE_CHANGE_PATH, {
       action: "group-add",
       name: name.trim(),
-      powers,
+      powers: givable(powers, page.withheld),
     });
   };
   return (
     <form className="people-form" id="people-add-group" onSubmit={submit} aria-label="Make a group">
       <div className="people-fields">
-        <Input
-          aria-label="Group name"
-          placeholder="group name, as staff"
-          value={name}
-          onChange={(event) => setName(event.currentTarget.value)}
-        />
+        <Field id="people-group-name" label="Group name">
+          <Input
+            id="people-group-name"
+            aria-label="Group name"
+            placeholder="staff"
+            value={name}
+            onChange={(event) => setName(event.currentTarget.value)}
+          />
+        </Field>
       </div>
       <Choose chosen={powers} label="the new group" withheld={page.withheld} onChoose={setPowers} />
       <Button type="submit" size="sm" disabled={writes.busy || name.trim() === ""}>
@@ -825,6 +919,172 @@ function AddGroup({ page, writes }: { page: Page; writes: Writes }) {
       </Button>
       <Spoken part="people-add-group" writes={writes} />
     </form>
+  );
+}
+
+/**
+ * The form by which the person at the machine gives themselves a short name: the name, then a
+ * display name and git handles, each labelled; Keep asks once more, saying the name is fixed once
+ * given, and Confirm the name sends it.
+ */
+export function Naming({ writes }: { writes: Writes }) {
+  const [name, setName] = useState("");
+  const [display, setDisplay] = useState("");
+  const [git, setGit] = useState("");
+  const [asking, setAsking] = useState(false);
+  const short = name.trim();
+  return (
+    <form
+      className="people-form people-person"
+      aria-label="Your name"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (short !== "") setAsking(true);
+      }}
+    >
+      <p className="people-state">You write as owner.</p>
+      <div className="people-fields">
+        <Field id="you-name" label="Short name">
+          <Input
+            id="you-name"
+            aria-label="Your short name"
+            placeholder="stefano"
+            value={name}
+            onChange={(event) => {
+              setName(event.currentTarget.value);
+              setAsking(false);
+            }}
+          />
+        </Field>
+        <Field id="you-display" label="Display name" optional>
+          <Input
+            id="you-display"
+            aria-label="Your display name"
+            value={display}
+            onChange={(event) => setDisplay(event.currentTarget.value)}
+          />
+        </Field>
+        <Field id="you-git" label="Git handles" optional>
+          <Input
+            id="you-git"
+            aria-label="Your git handles"
+            placeholder="git handle, more by commas"
+            value={git}
+            onChange={(event) => setGit(event.currentTarget.value)}
+          />
+        </Field>
+      </div>
+      {asking ? (
+        // biome-ignore lint/a11y/useSemanticElements: a confirmation's row, as the Remove control's
+        <div className="people-confirm" role="group" aria-label="Your short name: confirmation">
+          <span>{`Write as ${short} on every board? A short name is never changed once given.`}</span>
+          <Button
+            type="button"
+            size="xs"
+            variant="primary"
+            disabled={writes.busy}
+            onClick={() => {
+              setAsking(false);
+              writes.send("you", PROFILE_PATH, naming(short, { display, git }));
+            }}
+          >
+            Confirm the name
+          </Button>
+          <Button type="button" size="xs" onClick={() => setAsking(false)}>
+            Change it
+          </Button>
+        </div>
+      ) : (
+        <Button type="submit" size="sm" variant="primary" disabled={writes.busy || short === ""}>
+          Keep
+        </Button>
+      )}
+      <Spoken part="you" writes={writes} />
+    </form>
+  );
+}
+
+/** The person at the machine's profile once they gave themselves `name`: how it reads, and the form
+ * that writes their display name and git handles. */
+export function Yours({
+  mine,
+  name,
+  writes,
+}: {
+  mine: MachineProfile;
+  name: string;
+  writes: Writes;
+}) {
+  const [display, setDisplay] = useState("");
+  const [git, setGit] = useState("");
+  const shown = mine.display === undefined || mine.display === "" ? name : mine.display;
+  const handles = mine.git ?? [];
+  // Its fields cleared once its write is said done.
+  const done = doneBy("you", writes);
+  useEffect(() => {
+    if (done === null) return;
+    setDisplay("");
+    setGit("");
+  }, [done]);
+  return (
+    <div className="people-person">
+      <header className="people-person-head">
+        <h3>{shown}</h3>
+        {shown !== name && <span className="people-name">{name}</span>}
+      </header>
+      {handles.length > 0 && <p className="people-reach">{`git ${handles.join(", ")}`}</p>}
+      <form
+        className="people-fields"
+        aria-label="Your profile"
+        onSubmit={(event) => {
+          event.preventDefault();
+          writes.send("you", PROFILE_PATH, profileWrite(name, { display, git, signin: "" }));
+        }}
+      >
+        <Field id="you-display" label="Display name" optional>
+          <Input
+            id="you-display"
+            aria-label="Your display name"
+            placeholder={shown}
+            value={display}
+            onChange={(event) => setDisplay(event.currentTarget.value)}
+          />
+        </Field>
+        <Field id="you-git" label="Git handles" optional>
+          <Input
+            id="you-git"
+            aria-label="Your git handles"
+            placeholder="git handle, more by commas"
+            value={git}
+            onChange={(event) => setGit(event.currentTarget.value)}
+          />
+        </Field>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={writes.busy || (display.trim() === "" && git.trim() === "")}
+        >
+          Keep
+        </Button>
+      </form>
+      <Spoken part="you" writes={writes} />
+    </div>
+  );
+}
+
+/** The person at the machine's own profile, first on the page and theirs alone (`#you`). */
+export function You({ mine, writes }: { mine: MachineProfile; writes: Writes }) {
+  return (
+    <section className="people-section" id="you" aria-labelledby="people-you-head">
+      <h2 id="people-you-head">You</h2>
+      <div className="people-panel">
+        {mine.name == null ? (
+          <Naming writes={writes} />
+        ) : (
+          <Yours mine={mine} name={mine.name} writes={writes} />
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -882,6 +1142,7 @@ export function PeopleView({ page, error, missing, writes, now = new Date() }: P
               {page.problem}
             </p>
           )}
+          {page.mine != null && writes !== undefined && <You mine={page.mine} writes={writes} />}
           <section className="people-section" aria-labelledby="people-people">
             <h2 id="people-people">People</h2>
             <div className="people-panel">
@@ -896,7 +1157,7 @@ export function PeopleView({ page, error, missing, writes, now = new Date() }: P
             </div>
             {admin && (
               <div className="people-panel people-add">
-                <h3>Add a person</h3>
+                <h3>Add someone else</h3>
                 <AddPerson page={page} writes={writes} />
               </div>
             )}
@@ -943,6 +1204,19 @@ export function PeopleView({ page, error, missing, writes, now = new Date() }: P
   );
 }
 
+/**
+ * What a write's answer `read` tells the page around it: the header names the person at the machine
+ * as they now name themselves, by their display name, else their short name; nothing while they
+ * gave none, or for another reader.
+ */
+export function renamed(read: Page): void {
+  const name = read.mine?.name;
+  if (name == null) return;
+  const display = read.mine?.display ?? "";
+  named({ name, shown: display === "" ? name : display });
+  publish("review:frame");
+}
+
 /** The page at `/people`: read once, and drawn again from each write's answer. */
 export function PeoplePage() {
   const mount = useMount();
@@ -969,7 +1243,10 @@ export function PeoplePage() {
     setBusy(true);
     setSpoken(null);
     void writePeople(route, body, page?.revision ?? 0, mount, {
-      answered: setPage,
+      answered(read) {
+        setPage(read);
+        renamed(read);
+      },
       said: (said) => setSpoken({ part, ...said }),
     }).finally(() => {
       if (!mount.aborted) setBusy(false);

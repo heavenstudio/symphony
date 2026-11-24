@@ -13,6 +13,7 @@ import {
   navPage,
   ownPages,
   PLAIN,
+  profilePath,
   readmeRoute,
   readView,
   scoped,
@@ -189,6 +190,22 @@ describe("the view the server inlined", () => {
     });
   });
 
+  it("keeps who reads it and the person at the machine as names, and leaves out one of another shape", () => {
+    const you = { name: "stefano", shown: "Stefano" };
+    expect(readView({ name: "n", register: "r", you, machine: you })).toEqual({
+      name: "n",
+      register: "r",
+      nav: [],
+      entrypoints: [],
+      you,
+      machine: you,
+    });
+    for (const odd of [null, "stefano", { name: "stefano" }, { name: 1, shown: "S" }]) {
+      const read = readView({ name: "n", register: "r", you: odd, machine: odd });
+      expect([read.name, read.you, read.machine]).toEqual(["n", undefined, undefined]);
+    }
+  });
+
   it.each([
     ["nothing", undefined],
     ["text", "x"],
@@ -208,10 +225,43 @@ describe("the view the server inlined", () => {
   });
 });
 
+describe("where a reader writes their profile", () => {
+  const stefano = { name: "stefano", shown: "Stefano" };
+
+  it("is the You section for the person at the machine, named or not, and a person's own card", () => {
+    expect(profilePath({ ...PLAIN, you: { name: "owner", shown: "owner" } })).toBe("/people#you");
+    expect(profilePath({ ...PLAIN, you: stefano, machine: stefano })).toBe("/people#you");
+    expect(profilePath({ ...PLAIN, you: { name: "ana", shown: "Ana" }, machine: stefano })).toBe(
+      "/people#person-ana",
+    );
+    expect(profilePath(PLAIN)).toBe("/people#you");
+  });
+});
+
 describe("the page's project", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
+  });
+
+  it("names the person at the machine as a page that wrote their name says, with no read", async () => {
+    vi.stubGlobal("document", {
+      getElementById: () => ({
+        textContent: JSON.stringify({
+          name: "n",
+          register: "",
+          you: { name: "owner", shown: "owner" },
+        }),
+      }),
+    });
+    const { named, project } = await import("./project");
+    expect(project().machine).toBeUndefined();
+    named({ name: "stefano", shown: "Stefano" });
+    expect([project().name, project().you, project().machine]).toEqual([
+      "n",
+      { name: "stefano", shown: "Stefano" },
+      { name: "stefano", shown: "Stefano" },
+    ]);
   });
 
   it("is read once from its element, and its links take its base", async () => {

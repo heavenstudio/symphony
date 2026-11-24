@@ -534,7 +534,7 @@ impl Admitted {
         extensions: &axum::http::Extensions,
     ) -> symphony_plugin::Actor {
         extensions.get::<Admitted>().map_or_else(
-            || shared.gate.person().clone(),
+            || shared.gate.person(),
             |admitted| admitted.actor.clone(),
         )
     }

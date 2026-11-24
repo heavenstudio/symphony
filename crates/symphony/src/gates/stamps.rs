@@ -66,6 +66,10 @@ pub struct Evidence<'a> {
     /// The people who hold decide on the board, whose approve meets the `owner` stamp as the
     /// owner's does ([`read::owner_with_by`]): none where the task does not need it.
     pub deciders: &'a [String],
+    /// The person at the machine, once they gave themselves a name: among `deciders`, and named
+    /// by how they are shown in what the `owner` stamp's reading says
+    /// ([`symphony_board::people::MachinePerson::said`]).
+    pub machine: Option<&'a symphony_board::people::MachinePerson>,
     /// What the cards the task's branch posted say of its `owner` stamp at a tip
     /// (`symphony_board::stamps::posted::read_by`), asked only where the thread's approve does not
     /// name it ([`read::owner_with_by`]).
@@ -108,8 +112,8 @@ pub fn stamps(record: &Task, catalogue: &Catalogue, evidence: &Evidence<'_>) -> 
                 OWNER => match owner(evidence.cards) {
                     Some(held) => held,
                     None if wanted => read_at(name, GateState::Held, &|tip| {
-                        let deciders = evidence.deciders;
-                        read::owner_with_by(evidence.thread, tip, deciders, || {
+                        let (deciders, machine) = (evidence.deciders, evidence.machine);
+                        read::owner_with_by(evidence.thread, tip, deciders, machine, || {
                             (evidence.posted)(tip)
                         })
                     }),
@@ -367,9 +371,16 @@ pub use symphony_board::stamps::family;
 
 /// The owner's approve the task page offers on `record`, its branch `branch` in the checkout
 /// `root`: while the task is top-level, has a tip, needs its `owner` stamp there and waits on it
-/// ([`awaits_owner`]). Its payload is the whole tip, which [`OWNER_APPROVE`]'s action posts as the
-/// owner's line ([`approve_line`]).
-pub fn owner_offer(store: &Store, record: &Task, root: &Path, branch: &str) -> Option<TaskOffer> {
+/// ([`awaits_owner`]), an approve of the person at the machine (`machine`) under the name they gave
+/// themselves meeting it as one under `owner`. Its payload is the whole tip, which
+/// [`OWNER_APPROVE`]'s action posts as the owner's line ([`approve_line`]).
+pub fn owner_offer(
+    store: &Store,
+    record: &Task,
+    root: &Path,
+    branch: &str,
+    machine: Option<&symphony_board::people::MachinePerson>,
+) -> Option<TaskOffer> {
     if record.parent.is_some() || record.status == "cancelled" {
         return None;
     }
@@ -380,7 +391,8 @@ pub fn owner_offer(store: &Store, record: &Task, root: &Path, branch: &str) -> O
         return None;
     }
     let thread = store.thread(&record.slug).ok()?;
-    let deciders = store.deciders();
+    // The person at the machine decides under the name they gave themselves as under `owner`.
+    let deciders = symphony_board::people::with_machine(store.deciders(), machine);
     awaits_owner(&record.status, &thread, &tip, root, &deciders).then(|| TaskOffer {
         action: OWNER_APPROVE.into(),
         label: format!("Approve {}", short(&tip)),
@@ -407,7 +419,7 @@ pub fn awaits_owner(
         "cancelled" => false,
         _ => true,
     };
-    standing && !read::owner_at_by(thread, tip, root, deciders).met
+    standing && !read::owner_at_by(thread, tip, root, deciders, None).met
 }
 
 /// The owner's line [`OWNER_APPROVE`]'s action posts for `payload`, the commit the offer showed:

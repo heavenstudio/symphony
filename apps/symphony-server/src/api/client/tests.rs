@@ -618,3 +618,57 @@ async fn a_shell_symlink_outside_the_bundle_does_not_contribute_preloads() {
             .contains("modulepreload")
     );
 }
+
+/// The project view a served page carries.
+fn carried(page: &str) -> symphony_api::ProjectView {
+    let open = format!(
+        "<script type=\"application/json\" id=\"{}\">",
+        symphony_api::PROJECT_ELEMENT
+    );
+    let start = page.find(&open).expect("the page carries the project") + open.len();
+    let end = start + page[start..].find("</script>").unwrap();
+    serde_json::from_str(&page[start..end].replace("\\u003c", "<")).unwrap()
+}
+
+/// The page names whom it is served to, as the gate admitted them, and the person at the machine
+/// by the name their profile gives them: `owner` and nobody to draw before one is given.
+#[tokio::test]
+async fn the_page_names_its_reader_and_the_person_at_the_machine_as_their_profile_does() {
+    let tree = Tree::new();
+    let shell = b"<html><head></head><body>shell</body></html>";
+    let path = tree.path("install/client/public/index.html");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, shell).unwrap();
+    std::fs::create_dir_all(tree.path("repo")).unwrap();
+    let machine = tree.path("machine");
+    let serve = || {
+        let gate = crate::testing::open_gate().with_machine(machine.clone());
+        let shared = Shared::new(1, 1, &tree.path("repo"), Some(&tree.path("install")), gate);
+        let loopback: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        router(shared).layer(MockConnectInfo(loopback))
+    };
+    let got = send(&serve(), Method::GET, "/docs/README.md", &[]).await;
+    let view = carried(&String::from_utf8_lossy(&got.body));
+    let owner = symphony_api::PersonName {
+        name: "owner".into(),
+        shown: "owner".into(),
+    };
+    assert_eq!((view.you, view.machine), (Some(owner), None));
+    symphony_board::people::Profiles {
+        people: vec![symphony_board::people::Profile {
+            name: "stefano".into(),
+            display: "Stefano".into(),
+            ..Default::default()
+        }],
+        machine: Some("stefano".into()),
+    }
+    .write(&machine)
+    .unwrap();
+    let got = send(&serve(), Method::GET, "/docs/README.md", &[]).await;
+    let view = carried(&String::from_utf8_lossy(&got.body));
+    let named = symphony_api::PersonName {
+        name: "stefano".into(),
+        shown: "Stefano".into(),
+    };
+    assert_eq!((view.you, view.machine), (Some(named.clone()), Some(named)));
+}

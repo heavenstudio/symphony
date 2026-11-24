@@ -206,6 +206,7 @@ fn declarations() -> Vec<Declared> {
 fn board_declarations(cfg: &Config) -> Vec<Declared> {
     vec![
         declared::<api::ProjectView>(cfg),
+        declared::<api::PersonName>(cfg),
         declared::<api::NavItem>(cfg),
         declared::<api::Board>(cfg),
         declared::<api::Card>(cfg),
@@ -267,6 +268,7 @@ fn page_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::PeopleAction>(cfg),
         declared::<api::PeopleChange>(cfg),
         declared::<api::ProfileWrite>(cfg),
+        declared::<api::MachineProfile>(cfg),
         // The Runs page's, its schema updates too.
         declared::<api::RunsPage>(cfg),
         declared::<api::RunPage>(cfg),
@@ -1447,6 +1449,23 @@ fn samples() -> Value {
             administers: true,
             machine: true,
             withheld: withheld(),
+            mine: Some(api::MachineProfile::default()),
+            ..api::PeoplePage::default()
+        }),
+    );
+    // The person at the machine once they gave themselves a name, on a board with nobody named.
+    samples.insert(
+        "namedPeople".into(),
+        json!(api::PeoplePage {
+            administers: true,
+            machine: true,
+            withheld: withheld(),
+            mine: Some(api::MachineProfile {
+                name: Some("stefano".into()),
+                display: "Stefano".into(),
+                git: vec!["stefano-b".into()],
+            }),
+            signins: vec!["tailscale".into()],
             ..api::PeoplePage::default()
         }),
     );
@@ -2700,6 +2719,8 @@ fn people() -> api::PeoplePage {
         withheld: withheld(),
         you: None,
         problem: None,
+        mine: Some(api::MachineProfile::default()),
+        signins: words(&["tailscale"]),
     }
 }
 

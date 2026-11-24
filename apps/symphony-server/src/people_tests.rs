@@ -87,6 +87,7 @@ fn line(n: i64, did: Did, name: &str, powers: &[Power]) -> Change {
 fn a_page_lists_each_person_by_their_profile_and_names_no_sign_ins_subject() {
     let profiles = Profiles {
         people: vec![anas()],
+        ..Profiles::default()
     };
     let log = vec![
         line(1, Did::GroupAdd, "staff", &[Power::Decide]),
@@ -236,6 +237,33 @@ struct Served {
     _tree: Tree,
 }
 
+/// A phone under this machine's own Tailscale login (the laptop gate's status says user 11).
+const PHONE: &str = "100.101.102.105:5000";
+
+/// The laptop gate, its whois naming the phone too, under this machine's own login: a node of the
+/// person at the machine's.
+fn laptop_and_phone(roster: crate::gate::Roster) -> crate::gate::Gate {
+    crate::gate::Gate::new(
+        Arc::new(|address: &str| {
+            Ok(match address {
+                "100.101.102.104" => Some(
+                    r#"{"Node": {"Name": "laptop"}, "UserProfile": {"ID": 12, "LoginName": "ana@example.com"}}"#,
+                ),
+                "100.101.102.105" => Some(
+                    r#"{"Node": {"Name": "phone"}, "UserProfile": {"ID": 11, "LoginName": "me@example.com"}}"#,
+                ),
+                _ => None,
+            }
+            .map(str::to_string))
+        }),
+        Arc::new(std::time::Instant::now),
+    )
+    .with_status(Arc::new(|| {
+        Ok(r#"{"Self": {"DNSName": "studio.tail.ts.net.", "UserID": 11}}"#.to_string())
+    }))
+    .with_roster(roster)
+}
+
 impl Served {
     /// The board holding `people`, Ana's profile signing her in as the laptop's login.
     fn new(people: &[(&str, &[Power])]) -> Served {
@@ -244,11 +272,12 @@ impl Served {
         let machine = tree.root.join("machine");
         (Profiles {
             people: vec![anas()],
+            ..Profiles::default()
         })
         .write(&machine)
         .unwrap();
         let board = Board::holding(&root, people);
-        let gate = laptop_with(Arc::new(|_, _| None)).with_machine(machine.clone());
+        let gate = laptop_and_phone(Arc::new(|_, _| None)).with_machine(machine.clone());
         let shared = Shared::new(1, 8123, &root, None, gate);
         let hub = crate::live::Hub::new(&root, &root.join("build/client"));
         assert!(shared.api.set(Arc::new(hub)).is_ok());
@@ -787,4 +816,111 @@ async fn the_page_waits_on_the_servers_start_and_a_change_on_a_board_it_reaches(
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert!(body.contains("the task board cannot be reached"), "{body}");
+}
+
+/// `client`'s write of a profile `write`: status and body.
+async fn profile_write(served: &Served, client: &str, write: serde_json::Value) -> (StatusCode, String) {
+    served
+        .asked(client, "POST", PROFILE_PATH, &write.to_string())
+        .await
+}
+
+/// The person at the machine names themselves from their own phone, under the machine's login, as
+/// from here: their profile written and the machine naming it, every later write of theirs under
+/// the name, their You shown to them alone; a visitor under another login sees no You and cannot
+/// name anyone so; and a name once given is never changed.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_at_the_machine_names_themselves_from_their_phone_and_a_visitor_cannot() {
+    let served = Served::new(&[("ana", &[Power::Speak, Power::Administer])]);
+    let here = served.page(HERE).await;
+    assert_eq!(here.mine, Some(MachineProfile::default()));
+    assert_eq!(here.signins, ["tailscale"], "this machine's status lists its names");
+    assert_eq!(served.page(PHONE).await.mine, Some(MachineProfile::default()));
+    let hers = served.page(LAPTOP).await;
+    assert_eq!((hers.mine, hers.you.as_deref()), (None, Some("ana")));
+    let naming = serde_json::json!({
+        "name": "stefano", "display": "Stefano", "git": ["stefano-b"], "machine": true
+    });
+    let (status, body) = profile_write(&served, LAPTOP, naming.clone()).await;
+    assert_eq!(
+        (status, body.as_str()),
+        (
+            StatusCode::FORBIDDEN,
+            r#"{"error":"Forbidden: only the person at the machine gives themselves its name"}"#
+        )
+    );
+    assert_eq!(served.profiles().machine, None, "nothing was written");
+    let (status, body) = profile_write(&served, PHONE, naming).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let page: PeoplePage = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        page.mine,
+        Some(MachineProfile {
+            name: Some("stefano".into()),
+            display: "Stefano".into(),
+            git: vec!["stefano-b".into()],
+        })
+    );
+    assert_eq!(served.profiles().machine.as_deref(), Some("stefano"));
+    let person = served.shared.gate.person();
+    assert_eq!((person.name(), person.sender.display.as_str()), ("stefano", "Stefano"));
+    assert_eq!(person.principal, symphony_board::workflow::local_owner());
+    // Their next change is theirs by name, from here as from the phone.
+    served
+        .changed(HERE, serde_json::json!({"action": "group-add", "name": "design"}))
+        .await;
+    assert_eq!(
+        served.log().last().unwrap(),
+        &("group-add".to_string(), "design".to_string(), "stefano".to_string())
+    );
+    // Their display name and git handles stay theirs to write; their name is fixed.
+    let (status, body) = profile_write(
+        &served,
+        HERE,
+        serde_json::json!({"name": "stefano", "display": "Stefano B"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(served.shared.gate.person().sender.display, "Stefano B");
+    let (status, body) = profile_write(
+        &served,
+        HERE,
+        serde_json::json!({"name": "teo", "machine": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body.contains("you write as stefano already, and a short name once given is never changed"),
+        "{body}"
+    );
+}
+
+/// A name a board of the machine holds as a group is refused to the person at the machine, and a
+/// group named as a profile of the machine is refused to anyone, each with nothing written.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_groups_name_is_no_persons_and_a_persons_name_no_groups() {
+    let served = Served::new(&[]);
+    served
+        .changed(HERE, serde_json::json!({"action": "group-add", "name": "design"}))
+        .await;
+    let (status, body) = profile_write(
+        &served,
+        HERE,
+        serde_json::json!({"name": "design", "machine": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("design is a group's name on a board of this machine"), "{body}");
+    let (status, body) = served
+        .asked(
+            HERE,
+            "POST",
+            PEOPLE_CHANGE_PATH,
+            r#"{"action": "group-add", "name": "ana"}"#,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("ana is a person's name on this machine"), "{body}");
+    assert_eq!(served.profiles().machine, None);
+    assert_eq!(served.log().len(), 1, "only the first group was made");
 }

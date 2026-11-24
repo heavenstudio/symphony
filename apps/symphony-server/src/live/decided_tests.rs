@@ -428,7 +428,7 @@ fn a_hold_whose_task_has_no_branch_stays_held() {
         .unwrap();
     let mut kept = symphony::decided::Kept::default();
     let board = f.store.board().unwrap();
-    let looked = kept.look(&f.store, &root, &board, &Default::default(), 0.0);
+    let looked = kept.look(&f.store, &root, &board, &Default::default(), 0.0, None);
     assert_eq!(looked, symphony::decided::Looked::default());
     assert_eq!(status(&f), "blocked");
 }

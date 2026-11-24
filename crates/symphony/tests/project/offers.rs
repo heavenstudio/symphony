@@ -64,7 +64,7 @@ fn an_action_offers_on_the_work_it_chooses_and_a_plain_project_offers_nothing() 
     let root = Path::new("/nowhere");
     let desk = Plugins::new(vec![&DESK]);
     assert_eq!(
-        owner_offer(&f.store, &desk, "sim/jump", root),
+        owner_offer(&f.store, &desk, "sim/jump", root, None),
         Ok(TaskOffer {
             action: "pick up".into(),
             label: "Pick up".into(),
@@ -73,18 +73,18 @@ fn an_action_offers_on_the_work_it_chooses_and_a_plain_project_offers_nothing() 
         })
     );
     assert_eq!(
-        owner_offer(&f.store, &desk, "sim/dash", root),
+        owner_offer(&f.store, &desk, "sim/dash", root, None),
         none("sim/dash")
     );
     assert_eq!(
-        owner_offer(&f.store, &desk, "sim/roll", root),
+        owner_offer(&f.store, &desk, "sim/roll", root, None),
         none("sim/roll")
     );
     for slug in ["sim/jump", "sim/dash", "sim/roll"] {
         assert_eq!(
-            owner_offer(&f.store, &Plugins::default(), slug, root),
+            owner_offer(&f.store, &Plugins::default(), slug, root, None),
             none(slug)
         );
     }
-    assert!(owner_offer(&f.store, &desk, "sim/none", root).is_err());
+    assert!(owner_offer(&f.store, &desk, "sim/none", root, None).is_err());
 }

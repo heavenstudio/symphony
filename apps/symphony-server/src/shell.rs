@@ -31,6 +31,20 @@ pub(crate) const NOTICE_STYLE: &str = "shell-notices-style";
 /// `shell` with the project at `root` in it, served at `base` (empty at the server's root), and
 /// `banner` (empty for none) in the shell's notice region, styled even before the client loads.
 pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String {
+    page_for(shell, root, base, banner, &Reader::default())
+}
+
+/// Who a page is served to, as its project's view says ([`symphony_api::ProjectView::you`],
+/// [`symphony_api::ProjectView::machine`]): none for a page served for nobody in particular.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Reader {
+    pub(crate) you: Option<symphony_api::PersonName>,
+    pub(crate) machine: Option<symphony_api::PersonName>,
+}
+
+/// [`page`], served to `reader`: the header names them, and the lines of the person at the machine
+/// are drawn with how they are shown, from the page's own view, so neither asks for anything more.
+pub(crate) fn page_for(shell: &str, root: &Path, base: &str, banner: &str, reader: &Reader) -> String {
     let project = Project::of(root);
     let package = Package::of(&project);
     let mut page = shell.to_string();
@@ -72,6 +86,8 @@ pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String
     let element = body.map_or_else(String::new, |_| {
         let mut view = project.view_at(root);
         view.base = base.into();
+        view.you.clone_from(&reader.you);
+        view.machine.clone_from(&reader.machine);
         if !view.mark.is_empty() {
             view.mark = versioned(root, "", &view.mark)[1..].to_string();
         }

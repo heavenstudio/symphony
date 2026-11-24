@@ -4,15 +4,21 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
+  AddGroup,
+  AddPerson,
   addition,
   Choose,
   doneLine,
+  givable,
   listed,
   logLine,
+  Naming,
+  naming,
   openPeople,
   PeoplePage,
   PeopleView,
   Person,
+  POWERS,
   PowerTags,
   powerName,
   powerState,
@@ -20,12 +26,14 @@ import {
   profileWrite,
   Remove,
   readPeople,
+  renamed,
   type Said,
   type Told,
+  takesSignins,
   type Writes,
-  withheldSaid,
-  withheldWhy,
   writePeople,
+  You,
+  Yours,
 } from "./people";
 import { asking, CASES, elementOf, type Found, fire, reply, server } from "./testing";
 import type { PeoplePage as Page, PeopleChange, PeopleLogLine, ProfileWrite } from "./wire";
@@ -48,6 +56,9 @@ vi.mock("react", async (original) => {
       hooks.setters.push(set);
       return [value, set];
     },
+    // A component drawn as a function runs no effect.
+    useEffect: (...args: Parameters<typeof actual.useEffect>) =>
+      hooks.on ? undefined : actual.useEffect(...args),
   };
 });
 
@@ -60,13 +71,16 @@ afterEach(() => {
 
 const SAMPLE = CASES.samples.people as Page;
 const EMPTY = CASES.samples.emptyPeople as Page;
+const NAMED = CASES.samples.namedPeople as Page;
 const ana = () => {
   const found = SAMPLE.people.find((person) => person.name === "ana");
   if (!found) throw new Error("no ana");
   return found;
 };
+/** The sample as the server answers a reader not at the machine: no profile of the machine's. */
+const { mine: _mine, ...ELSEWHERE } = SAMPLE;
 /** The sample as a reader without administer reads it: Cy, at another machine. */
-const READER: Page = { ...SAMPLE, administers: false, machine: false, you: "cy" };
+const READER: Page = { ...ELSEWHERE, administers: false, machine: false, you: "cy" };
 
 /** The sample with the value at `path` set to `value`, or taken out when `value` is undefined. */
 function changed(path: (string | number)[], value?: unknown): unknown {
@@ -101,7 +115,8 @@ function writing(said: Said | null = null): { sent: unknown[]; writes: Writes } 
 
 describe("the read", () => {
   it("takes the server's page, and an empty one", () => {
-    expect(readPeople(SAMPLE)).toEqual({ ...SAMPLE, you: null, problem: null });
+    const unnamed = { name: null, display: "", git: [] };
+    expect(readPeople(SAMPLE)).toEqual({ ...SAMPLE, you: null, problem: null, mine: unnamed });
     expect(readPeople(EMPTY)).toEqual({
       people: [],
       groups: [],
@@ -112,7 +127,17 @@ describe("the read", () => {
       withheld: SAMPLE.withheld,
       you: null,
       problem: null,
+      mine: unnamed,
     });
+    expect(readPeople(NAMED)?.mine).toEqual({
+      name: "stefano",
+      display: "Stefano",
+      git: ["stefano-b"],
+    });
+    // A reader not at the machine is sent no profile of theirs, and a server off a tailnet no
+    // sign-in service.
+    const { mine: _, signins: __, ...theirs } = SAMPLE;
+    expect(readPeople({ ...theirs, signins: [] })).toEqual({ ...theirs, you: null, problem: null });
     expect(SAMPLE.withheld.map((power) => power.power)).toEqual(["direct_agents"]);
     expect(readPeople({ ...SAMPLE, you: "cy", problem: "down" })).toMatchObject({
       you: "cy",
@@ -153,6 +178,14 @@ describe("the read", () => {
     }
     for (const value of [null, "people", [], 3]) expect(readPeople(value)).toBeNull();
     expect(readPeople(changed(["log", 0, "powers"]))).not.toBeNull();
+  });
+
+  it("refuses a profile of the person at the machine, or sign-in services, of another shape", () => {
+    for (const mine of ["stefano", { name: 1 }, { display: 2 }, { git: "x" }]) {
+      expect(readPeople({ ...SAMPLE, mine })).toBeNull();
+    }
+    expect(readPeople({ ...SAMPLE, signins: [1] })).toBeNull();
+    expect(readPeople({ ...SAMPLE, signins: "tailscale" })).toBeNull();
   });
 
   it("asks once and tells the page what the server answered", async () => {
@@ -478,14 +511,9 @@ describe("a person's and a group's powers", () => {
     ]);
   });
 
-  it("draws a power the board gives no one yet as not givable, its reason its title, a press doing nothing", () => {
+  it("offers no control for a power the board gives no one yet, and draws one held as held", () => {
     const toggled: unknown[] = [];
     const withheld = SAMPLE.withheld;
-    const why = withheldWhy("direct_agents", withheld);
-    expect(why).toBe(
-      "until a board speaks to its agents for a person, asking them for work is the person at the machine's",
-    );
-    expect(withheldWhy("speak", withheld)).toBeUndefined();
     const toggle = (word: string, given: boolean) => toggled.push([word, given]);
     const tags = PowerTags({
       held: ana().powers,
@@ -495,42 +523,33 @@ describe("a person's and a group's powers", () => {
       toggle,
       withheld,
     });
-    expect(renderToStaticMarkup(tags)).toContain(
-      `data-held="none" data-withheld="true" aria-pressed="false" aria-label="direct agents for ana" title="Given to no one yet: ${why?.replace("'", "&#x27;")}" aria-disabled="true"`,
-    );
-    fire(tags, labelled("direct agents for ana"), "onClick");
+    const html = renderToStaticMarkup(tags);
+    expect(html).not.toContain("direct agents");
+    expect(html.match(/<button /g)).toHaveLength(POWERS.length - 1);
     fire(tags, labelled("administer for ana"), "onClick");
     expect(toggled).toEqual([["administer", false]]);
-    // Held by a group, it is no more givable as one's own.
-    const grouped = renderToStaticMarkup(
-      <PowerTags
-        held={["read", "direct_agents"]}
-        own={[]}
-        label="bo"
-        busy={false}
-        toggle={toggle}
-        withheld={withheld}
-      />,
-    );
-    expect(grouped).toContain('data-held="group" data-withheld="true"');
-    // Given already (a board from before the rule), it is taken back like any other.
-    const given = PowerTags({
-      held: ["read", "direct_agents"],
-      own: ["direct_agents"],
-      label: "cy",
-      busy: false,
-      toggle,
-      withheld,
-    });
-    expect(renderToStaticMarkup(given)).not.toContain("data-withheld");
-    fire(given, labelled("direct agents for cy"), "onClick");
-    expect(toggled.at(-1)).toEqual(["direct_agents", true]);
+    // Held by a group or given already (a board from before the rule), it is drawn held, with no
+    // control to give or take it.
+    for (const [own, state] of [
+      [[], "group"],
+      [["direct_agents"], "own"],
+    ] as const) {
+      const held = renderToStaticMarkup(
+        <PowerTags
+          held={["read", "direct_agents"]}
+          own={own}
+          label="bo"
+          busy={false}
+          toggle={toggle}
+          withheld={withheld}
+        />,
+      );
+      expect(held).toContain(`<li class="people-power" data-held="${state}">direct agents</li>`);
+      expect(held).not.toContain('aria-label="direct agents for bo"');
+    }
   });
 
-  it("says each withheld power once in words in a form's choice, which toggles the rest", () => {
-    expect(withheldSaid({ power: "direct_agents", why: "not yet" })).toBe(
-      "Direct agents is given to no one yet: not yet.",
-    );
+  it("toggles a form's choice of every power the board gives, and sends none it gives no one", () => {
     const chosen: string[][] = [];
     const choice = (
       <Choose
@@ -541,20 +560,15 @@ describe("a person's and a group's powers", () => {
       />
     );
     const html = renderToStaticMarkup(choice);
-    expect(html.match(/class="people-hint"/g)).toHaveLength(1);
-    expect(html).toContain(
-      '<p class="people-hint">Direct agents is given to no one yet: until a board speaks',
-    );
+    expect(html).not.toContain("direct agents");
+    expect(html).not.toContain("people-hint");
     const tags = elementOf(choice.type(choice.props), (element) => element.type === PowerTags);
     const toggle = tags?.props.toggle as (word: string, given: boolean) => void;
     toggle("speak", false);
     toggle("read", true);
     expect(chosen).toEqual([["read", "speak"], []]);
-    expect(
-      renderToStaticMarkup(
-        <Choose chosen={[]} label="the new group" withheld={[]} onChoose={() => {}} />,
-      ),
-    ).not.toContain("people-hint");
+    expect(givable(["read", "direct_agents", "speak"], SAMPLE.withheld)).toEqual(["read", "speak"]);
+    expect(givable(["direct_agents"], [])).toEqual(["direct_agents"]);
   });
 
   it("asks before a removal as the task page's Cancel does: an outlined control, then a named confirmation", () => {
@@ -675,25 +689,43 @@ describe("the page", () => {
       "1",
     ]);
     expect(html).toContain("owner put cy on the board, holding read</li>");
-    // The person at the machine adds, makes a group, and writes every profile, a sign-in with it.
-    expect(html).toContain('aria-label="Add a person"');
+    // The person at the machine adds someone else, makes a group, and writes every profile, a
+    // sign-in with it, each field labelled.
+    expect(html).toContain("<h3>Add someone else</h3>");
+    expect(html).toContain('aria-label="Add someone else"');
     expect(html).toContain('aria-label="Make a group"');
     expect(html.match(/<details class="people-profile">/g)).toHaveLength(3);
     expect(html).toContain('aria-label="Sign-in of bo"');
     expect(html).toContain('aria-label="Sign-in"');
+    expect(html).toContain(
+      '<label for="people-add-signin">Sign-in, to open boards from their own device<span class="people-optional"> (optional)</span></label>',
+    );
+    expect(html).toContain('<label for="people-add-name">Short name</label>');
+    expect(html).toContain('<label for="people-group-name">Group name</label>');
     expect(html).toContain("<summary>Make a profile</summary>");
-    // Each add form says once why direct agents is given to no one, and the group's removal asks.
-    expect(html.match(/Direct agents is given to no one yet/g)).toHaveLength(2);
+    // No word explains the page's controls, nor a power the board gives no one; the group's
+    // removal asks.
+    expect(html).not.toContain("people-hint");
+    expect(html).not.toContain("Direct agents is given to no one yet");
+    expect(html).not.toContain("direct agents for");
     expect(html).toContain(">Remove the group</button>");
   });
 
   it("offers an admin who is not the person at the machine no sign-in to give in the add", () => {
-    const html = draw({ ...SAMPLE, machine: false, you: "bo" }, writing().writes);
-    expect(html).toContain('aria-label="Add a person"');
+    const html = draw({ ...ELSEWHERE, machine: false, you: "bo" }, writing().writes);
+    expect(html).toContain('aria-label="Add someone else"');
     expect(html).not.toContain('aria-label="Sign-in"');
-    expect(html).toContain(
-      "A profile is made for them where the machine holds none, with no sign-in: the person at the machine gives that",
-    );
+    expect(html).not.toContain("people-hint");
+  });
+
+  it("offers no sign-in to give where the server knows no sign-in's service, as off a tailnet", () => {
+    const { signins: _, ...offline } = SAMPLE;
+    const html = draw(offline, writing().writes);
+    expect(html).toContain('aria-label="Add someone else"');
+    expect(html).not.toContain("Sign-in");
+    expect(takesSignins(SAMPLE)).toBe(true);
+    expect(takesSignins(offline)).toBe(false);
+    expect(takesSignins({ ...SAMPLE, machine: false })).toBe(false);
   });
 
   it("says a change of today by its time, and one of another day with its day", () => {
@@ -724,7 +756,8 @@ describe("the page", () => {
   it("draws a reader without administer no control but their own profile, and no sign-in to give", () => {
     const html = draw(READER, writing().writes);
     expect(html).toContain("Changing who is on the board needs administer, which you do not hold.");
-    expect(html).not.toContain('aria-label="Add a person"');
+    expect(html).not.toContain('aria-label="Add someone else"');
+    expect(html).not.toContain('id="you"');
     expect(html).not.toContain("Take off the board");
     expect(html).not.toContain("aria-pressed");
     expect(html.match(/<details class="people-profile">/g)).toHaveLength(1);
@@ -754,5 +787,187 @@ describe("the page", () => {
     expect(bo).toContain('<p class="people-said" data-refused="true" aria-live="polite">no</p>');
     const anas = spoken.slice(spoken.indexOf('id="person-ana"')).split("</article>")[0] ?? "";
     expect(anas).toContain('<p class="people-said" aria-live="polite"></p>');
+  });
+});
+
+describe("the person at the machine's own profile", () => {
+  const draw = (page: Page, writes?: Writes) =>
+    renderToStaticMarkup(<PeopleView page={page} error={null} missing={false} writes={writes} />);
+  const submitted = { preventDefault() {} };
+  const named = { name: "stefano", display: "Stefano", git: ["stefano-b"] };
+  const read = (element: Found) => element.props.children === "Confirm the name";
+
+  it("gives their short name once and for good, with a display name and git handles", () => {
+    expect(naming(" stefano ", { display: " Stefano ", git: "stefano-b, sb" })).toEqual({
+      name: "stefano",
+      display: "Stefano",
+      git: ["stefano-b", "sb"],
+      machine: true,
+    });
+    expect(naming("stefano", { display: " ", git: "" })).toEqual({
+      name: "stefano",
+      git: [],
+      machine: true,
+    });
+  });
+
+  it("is first on the page, theirs alone: the form that names them, then their name", () => {
+    const { writes } = writing();
+    const unnamed = draw(SAMPLE, writes);
+    expect(unnamed.indexOf('id="you"')).toBeLessThan(unnamed.indexOf('id="people-people"'));
+    expect(unnamed).toContain('<h2 id="people-you-head">You</h2>');
+    expect(unnamed).toContain('<p class="people-state">You write as owner.</p>');
+    expect(unnamed).toContain('<label for="you-name">Short name</label>');
+    expect(unnamed).toContain(
+      '<label for="you-display">Display name<span class="people-optional"> (optional)</span></label>',
+    );
+    expect(unnamed).toContain(
+      '<label for="you-git">Git handles<span class="people-optional"> (optional)</span></label>',
+    );
+    expect(unnamed).not.toContain('for="you-signin"');
+    expect(unnamed).toContain('type="submit" disabled="">Keep</button>');
+    const theirs = draw(NAMED, writes);
+    expect(theirs).toContain(
+      '<h3>Stefano</h3><span class="people-name">stefano</span></header><p class="people-reach">git stefano-b</p>',
+    );
+    expect(theirs).not.toContain("You write as owner.");
+    expect(theirs).not.toContain('aria-label="Your short name"');
+    // Another reader, or a page drawn with no writes, has no You section.
+    expect(draw(READER, writes)).not.toContain('id="you"');
+    expect(draw(SAMPLE)).not.toContain('id="you"');
+  });
+
+  it("asks once more before it gives the name, saying it is fixed, and sends it confirmed", () => {
+    const { sent, writes } = writing();
+    hooks.on = true;
+    hooks.states = ["stefano", "Stefano", "stefano-b", false];
+    const form = Naming({ writes });
+    fire(form, (element) => typeof element.props.onSubmit === "function", "onSubmit", submitted);
+    expect(hooks.setters[3]?.mock.calls).toEqual([[true]]);
+    expect(sent).toEqual([]);
+    hooks.states = ["stefano", "Stefano", "stefano-b", true];
+    const asking = Naming({ writes });
+    const html = renderToStaticMarkup(asking);
+    expect(html).toContain(
+      '<div class="people-confirm" role="group" aria-label="Your short name: confirmation">' +
+        "<span>Write as stefano on every board? A short name is never changed once given.</span>",
+    );
+    expect(html).not.toContain(">Keep</button>");
+    fire(asking, (element) => element.props.children === "Change it", "onClick");
+    fire(asking, read, "onClick");
+    expect(sent).toEqual([
+      [
+        "you",
+        "/api/people-profile",
+        { name: "stefano", display: "Stefano", git: ["stefano-b"], machine: true },
+      ],
+    ]);
+    // Typing another name asks again.
+    fire(asking, (element) => element.props["aria-label"] === "Your short name", "onChange", {
+      currentTarget: { value: "teo" },
+    });
+    const [setName, , , setAsking] = hooks.setters.slice(4);
+    expect(setName?.mock.calls).toEqual([["teo"]]);
+    // Kept, confirmed, then typed again: each leaves it asking no more.
+    expect(setAsking?.mock.calls).toEqual([[false], [false], [false]]);
+  });
+
+  it("asks nothing for a name left empty", () => {
+    const { writes } = writing();
+    hooks.on = true;
+    hooks.states = ["  ", "", "", false];
+    const form = Naming({ writes });
+    fire(form, (element) => typeof element.props.onSubmit === "function", "onSubmit", submitted);
+    expect(hooks.setters[3]?.mock.calls).toEqual([]);
+  });
+
+  it("writes their display name and git handles under the name they gave, never another", () => {
+    const { sent, writes } = writing();
+    hooks.on = true;
+    hooks.states = ["Stefano B", "sb"];
+    const form = Yours({ mine: named, name: "stefano", writes });
+    fire(form, (element) => typeof element.props.onSubmit === "function", "onSubmit", submitted);
+    expect(sent).toEqual([
+      [
+        "you",
+        "/api/people-profile",
+        { name: "stefano", display: "Stefano B", git: ["sb"], signins: [] },
+      ],
+    ]);
+    const plain = renderToStaticMarkup(
+      <You mine={{ name: "stefano", display: "", git: [] }} writes={writes} />,
+    );
+    expect(plain).toContain("<h3>stefano</h3></header>");
+    expect(plain).not.toContain("people-reach");
+  });
+
+  it("names them in the header as a write's answer names them, and no one before", async () => {
+    vi.stubGlobal("document", { getElementById: () => null });
+    const heard: string[] = [];
+    vi.stubGlobal("dispatchEvent", (event: Event) => heard.push(event.type));
+    const { project } = await import("./project");
+    renamed(SAMPLE);
+    renamed(READER);
+    expect([heard, project().you]).toEqual([[], undefined]);
+    renamed(NAMED);
+    expect([heard, project().you, project().machine]).toEqual([
+      ["review:frame"],
+      { name: "stefano", shown: "Stefano" },
+      { name: "stefano", shown: "Stefano" },
+    ]);
+    renamed({ ...NAMED, mine: { name: "stefano", display: "", git: [] } });
+    expect(project().you).toEqual({ name: "stefano", shown: "stefano" });
+  });
+
+  it("marks their row on a board that holds them as theirs", () => {
+    const { writes } = writing();
+    const html = renderToStaticMarkup(
+      <Person
+        person={ana()}
+        page={{ ...NAMED, mine: { ...named, name: "ana" } }}
+        writes={writes}
+      />,
+    );
+    expect(html).toContain('<span class="people-you">you</span>');
+  });
+});
+
+describe("a form's powers", () => {
+  const submitted = { preventDefault() {} };
+  const submit = (element: Found) => typeof element.props.onSubmit === "function";
+
+  it("adds someone else with no power the board gives no one, a sign-in only where one is taken", () => {
+    const { sent, writes } = writing();
+    hooks.on = true;
+    hooks.states = ["ana", "", "tailscale:ana@example.com", "", "", ["read", "direct_agents"]];
+    fire(AddPerson({ page: SAMPLE, writes }), submit, "onSubmit", submitted);
+    hooks.states = ["ana", "", "tailscale:ana@example.com", "", "", ["read"]];
+    const { signins: _, ...offline } = SAMPLE;
+    fire(AddPerson({ page: offline, writes }), submit, "onSubmit", submitted);
+    expect(sent.map((write) => (write as [string, string, PeopleChange])[2])).toEqual([
+      {
+        action: "add",
+        name: "ana",
+        powers: ["read"],
+        groups: [],
+        signins: ["tailscale:ana@example.com"],
+        git: [],
+      },
+      { action: "add", name: "ana", powers: ["read"], groups: [], signins: [], git: [] },
+    ]);
+  });
+
+  it("makes a group with no power the board gives no one", () => {
+    const { sent, writes } = writing();
+    hooks.on = true;
+    hooks.states = ["design", ["decide", "direct_agents"]];
+    fire(AddGroup({ page: SAMPLE, writes }), submit, "onSubmit", submitted);
+    expect(sent).toEqual([
+      [
+        "people-add-group",
+        "/api/people-change",
+        { action: "group-add", name: "design", powers: ["decide"] },
+      ],
+    ]);
   });
 });

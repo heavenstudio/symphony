@@ -84,7 +84,9 @@ pub struct Gate {
     whois: Whois,
     status: Status,
     clock: Clock,
-    person: Actor,
+    /// A test host's actor for the person at the machine, in place of the one the machine's
+    /// profiles say ([`Gate::person`]).
+    person: Option<Actor>,
     roster: Roster,
     /// The machine folder whose profiles the roster reads, and the People page reads and writes.
     machine: Option<PathBuf>,
@@ -161,7 +163,7 @@ impl Gate {
             whois,
             status: Arc::new(tailscale_status),
             clock,
-            person: symphony_board::workflow::local_actor(),
+            person: None,
             roster: Arc::new(|_, _| None),
             machine: None,
             seen: Mutex::new(HashMap::new()),
@@ -179,7 +181,10 @@ impl Gate {
     /// place of the local one.
     #[must_use]
     pub fn admitting(self, person: Actor) -> Gate {
-        Gate { person, ..self }
+        Gate {
+            person: Some(person),
+            ..self
+        }
     }
 
     /// The same gate, asking `roster` which boards have added a visitor who is not the person at
@@ -206,16 +211,40 @@ impl Gate {
         self.machine.as_deref()
     }
 
-    /// The person at the machine: the actor their writes take.
-    pub fn person(&self) -> &Actor {
-        &self.person
+    /// The person at the machine: the actor their writes take, read from the machine's profiles
+    /// on each request ([`machine_actor`]), so the name they give themselves holds from their next.
+    pub fn person(&self) -> Actor {
+        match &self.person {
+            Some(person) => person.clone(),
+            None => machine_actor(self.machine.as_deref()),
+        }
+    }
+
+    /// The person at the machine as a page names them once they gave themselves a name; none
+    /// while their lines read `owner`.
+    pub fn machine_person(&self) -> Option<symphony_api::PersonName> {
+        let person = self.person();
+        (person.name() != symphony_board::workflow::local_actor().name()).then(|| {
+            symphony_api::PersonName {
+                name: person.name().into(),
+                shown: person.sender.display,
+            }
+        })
+    }
+
+    /// Whether this machine is on a tailnet, as the last `tailscale status` that listed its names
+    /// said, asking it when that answer is due: the one sign-in service the server reads a
+    /// visitor by, which a profile's sign-in names, is Tailscale's, and with none no visitor but
+    /// the person at the machine reaches it.
+    pub fn tailnet(&self) -> bool {
+        self.own(|_| ()).is_some()
     }
 
     /// Whether `visitor` is on the board at `root`, and as whom: the person at the machine is on
     /// every board, as [`Gate::person`]; anyone else as the roster says, on none by default.
     pub fn member(&self, root: &Path, visitor: &Visitor) -> Option<Actor> {
         match visitor {
-            Visitor::Machine => Some(self.person.clone()),
+            Visitor::Machine => Some(self.person()),
             other => (self.roster)(root, other),
         }
     }
@@ -345,6 +374,24 @@ impl Gate {
         let peer = seen.entry(ip).or_default();
         peer.record(now, answer);
         peer.answer().cloned().flatten()
+    }
+}
+
+/// The person at the machine as the profiles in the machine folder `machine` name them
+/// (docs/product/analysis/users-and-identity.md, "How a person's name is written"): the profile
+/// they gave themselves ([`symphony_board::people::Profiles::machine`]), its short name the one
+/// their lines carry, shown by its display name, its git handles theirs, under the principal the
+/// owner always was ([`symphony_board::workflow::local_owner`]), so every power stays theirs and
+/// no board's row is asked. While they gave none, or the profiles cannot be read, or the gate names
+/// no machine folder, they are the owner, as before ([`symphony_board::workflow::local_actor`]).
+pub fn machine_actor(machine: Option<&Path>) -> Actor {
+    let profiles = machine.and_then(|dir| symphony_board::people::Profiles::read(dir).ok());
+    match profiles.as_ref().and_then(|profiles| profiles.machine()) {
+        Some(profile) => Actor::new(
+            symphony_plugin::Sender::new(&profile.name, profile.shown(), profile.git.clone()),
+            symphony_board::workflow::local_owner(),
+        ),
+        None => symphony_board::workflow::local_actor(),
     }
 }
 

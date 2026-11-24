@@ -161,35 +161,35 @@ fn lines_that_decide_nothing_are_each_told_and_an_empty_one_is_not() {
 #[test]
 fn a_line_is_told_with_its_card_stamp_and_page_under_a_key_of_what_it_says() {
     let said = line("2026-11-20 04:10", None, "which screens?");
-    let (text, key) = told("layout", &said);
+    let (text, key) = told("layout", &said, None);
     assert_eq!(
         text,
         "the owner on card layout [2026-11-20 04:10] (docs/DECISIONS.md#layout), deciding \
          nothing, so it stays blocked on decision:layout: which screens?"
     );
     assert!(key.starts_with("decided:layout:2026-11-20 04:10:"), "{key}");
-    assert_eq!(told("layout", &said).1, key, "the same line, the same key");
+    assert_eq!(told("layout", &said, None).1, key, "the same line, the same key");
     let other = line("2026-11-20 04:10", None, "which pages?");
-    assert_ne!(told("layout", &other).1, key);
+    assert_ne!(told("layout", &other, None).1, key);
     let asked = line("2026-11-20 04:10", Some("question"), "which screens?");
     assert_ne!(
-        told("layout", &asked).1,
+        told("layout", &asked, None).1,
         key,
         "a verdict word changes what it says"
     );
     assert!(
-        told("layout", &asked)
+        told("layout", &asked, None)
             .0
             .ends_with("decision:layout: question — which screens?")
     );
     assert!(
-        told("layout", &line("2026-11-20 04:10", Some("pending"), ""))
+        told("layout", &line("2026-11-20 04:10", Some("pending"), ""), None)
             .0
             .ends_with(": pending")
     );
     // A long line is cut: the card has the rest.
     let long = line("2026-11-20 04:10", None, &"é".repeat(400));
-    let (text, _) = told("layout", &long);
+    let (text, _) = told("layout", &long, None);
     assert!(
         text.ends_with(&format!(": {}…", "é".repeat(WORDS))),
         "{text}"
@@ -200,22 +200,25 @@ fn a_line_is_told_with_its_card_stamp_and_page_under_a_key_of_what_it_says() {
 #[test]
 fn the_whys_name_the_card_and_verdict_or_the_commit_approved() {
     assert_eq!(
-        decided_why("layout", "reject", "owner"),
+        decided_why("layout", "reject", "owner", None),
         "the owner decided layout (reject)"
     );
-    assert_eq!(
-        approved_why("1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"),
-        "the owner approved 1a2b3c4"
-    );
-    assert_eq!(approved_why("abc"), "the owner approved abc");
     let tip = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
     assert_eq!(
-        approved_cards_why(&["layout".into()], tip),
+        approved_why("owner", &[], tip, None),
+        "the owner approved 1a2b3c4"
+    );
+    assert_eq!(
+        approved_why("owner", &[], "abc", None),
+        "the owner approved abc"
+    );
+    assert_eq!(
+        approved_why("owner", &["layout".into()], tip, None),
         "the owner approved card layout, at 1a2b3c4"
     );
     assert_eq!(
-        approved_cards_why(&["layout".into(), "colour".into()], tip),
-        "the owner approved cards layout, colour, at 1a2b3c4"
+        approved_why("ana", &["layout".into(), "colour".into()], tip, None),
+        "ana approved cards layout, colour, at 1a2b3c4"
     );
 }
 
@@ -243,20 +246,20 @@ fn a_persons_lines_are_kept_by_name_and_decide_and_are_told_as_theirs() {
     let lines = [theirs("ana", "2026-11-20 04:10", Some("approved"), "")];
     assert_eq!(word(&lines, block), Word::Decided("approve", "ana"));
     assert_eq!(
-        decided_why("layout", "approve", "ana"),
+        decided_why("layout", "approve", "ana", None),
         "ana decided layout (approve)"
     );
     // Told as hers, under a key of her own, while the owner's key reads as it always has.
     let hers = theirs("ana", "2026-11-20 04:10", None, "which screens?");
     let mine = line("2026-11-20 04:10", None, "which screens?");
-    let (text, key) = told("layout", &hers);
+    let (text, key) = told("layout", &hers, None);
     assert!(
         text.starts_with("ana on card layout [2026-11-20 04:10]"),
         "{text}"
     );
-    assert_ne!(key, told("layout", &mine).1);
+    assert_ne!(key, told("layout", &mine, None).1);
     assert!(
-        told("layout", &mine)
+        told("layout", &mine, None)
             .0
             .starts_with("the owner on card layout")
     );
@@ -282,7 +285,7 @@ fn the_owners_approve_counts_where_it_names_the_tip() {
     let tip = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
     let other = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
     let nowhere = Path::new("/nowhere");
-    let approves = |thread: &[Message]| approves(thread, tip, nowhere, &[]);
+    let approves = |thread: &[Message]| approves(thread, tip, nowhere, &[], None);
     assert_eq!(
         approves(&[post(1, "owner", "msg", &format!("approve {tip}"))]).as_deref(),
         Some("the owner approved 1a2b3c4")
@@ -291,7 +294,7 @@ fn the_owners_approve_counts_where_it_names_the_tip() {
     let hers = [post(1, "ana", "msg", &format!("approve {tip}"))];
     let deciders = ["ana".to_string()];
     assert_eq!(
-        super::approves(&hers, tip, nowhere, &deciders).as_deref(),
+        super::approves(&hers, tip, nowhere, &deciders, None).as_deref(),
         Some("ana approved 1a2b3c4")
     );
     assert_eq!(approves(&hers), None, "no decide, no approve");
@@ -304,6 +307,42 @@ fn the_owners_approve_counts_where_it_names_the_tip() {
     ] {
         assert_eq!(approves(&thread), None, "{thread:?}");
     }
+}
+
+/// The person at the machine, once named, ends a block by an approve under their name as under
+/// `owner`, and every line telling of their word names them by how they are shown; the key a line
+/// is told once under is the one it had.
+#[test]
+fn the_machines_persons_word_is_told_and_counted_by_how_they_are_shown() {
+    let stefano = MachinePerson {
+        name: "stefano".into(),
+        shown: "Stefano".into(),
+    };
+    let machine = Some(&stefano);
+    let tip = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
+    let nowhere = Path::new("/nowhere");
+    let deciders = symphony_board::people::with_machine(Vec::new(), machine);
+    for by in ["owner", "stefano"] {
+        let theirs = [post(1, by, "msg", &format!("approve {tip}"))];
+        assert_eq!(
+            approves(&theirs, tip, nowhere, &deciders, machine).as_deref(),
+            Some("Stefano approved 1a2b3c4"),
+            "{by}"
+        );
+        assert_eq!(
+            decided_why("layout", "approve", by, machine),
+            "Stefano decided layout (approve)"
+        );
+    }
+    let mine = line("2026-11-20 04:10", None, "which screens?");
+    let (text, key) = told("layout", &mine, machine);
+    assert!(text.starts_with("Stefano on card layout [2026-11-20 04:10]"), "{text}");
+    assert_eq!(key, told("layout", &mine, None).1, "told once, named or not");
+    assert_eq!(
+        approved_why("ana", &[], tip, machine),
+        "ana approved 1a2b3c4",
+        "anyone else by their short name"
+    );
 }
 
 #[test]

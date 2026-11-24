@@ -136,11 +136,6 @@ li.people-power[data-held="group"],
 .dx-button.people-power[aria-disabled="true"] {
   cursor: default;
 }
-/* A power the board gives no one yet: drawn as a disabled control is, its reason as its title. */
-.dx-button.people-power[data-withheld="true"] {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 .dx-button.people-power[data-held="none"] {
   color: var(--muted-foreground);
 }
@@ -193,16 +188,33 @@ li.people-power[data-held="group"],
 .people-fields {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: end;
   gap: var(--sp-2);
   margin-top: var(--sp-2);
   min-width: 0;
 }
-.people-profile .dx-input,
-.people-fields .dx-input {
+/* A field with its label above it. */
+.people-field {
+  display: grid;
+  gap: 2px;
   flex: 1 1 12rem;
   min-width: 0;
   max-width: 20rem;
+}
+.people-field label {
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.people-field .dx-input,
+.people-field .dx-select {
+  width: 100%;
+  max-width: none;
+}
+.people-state {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--fs-sm);
 }
 .people-form {
   display: grid;
@@ -213,11 +225,6 @@ li.people-power[data-held="group"],
 .people-form .people-fields {
   margin-top: 0;
   justify-self: stretch;
-}
-.people-hint {
-  margin: 0;
-  color: var(--muted-foreground);
-  font-size: var(--fs-xs);
 }
 .people-said {
   margin: 0;

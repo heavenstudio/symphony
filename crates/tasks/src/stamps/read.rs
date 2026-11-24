@@ -16,6 +16,7 @@
 use super::posted::{self, Approval, Posted};
 use super::{Catalogue, Needs, short};
 use crate::Message;
+use crate::people::MachinePerson;
 use crate::cli::machine_work::recorded::{Phase, Record, Step};
 use std::path::Path;
 
@@ -393,16 +394,24 @@ pub fn approves_by(post: &Message, deciders: &[String]) -> bool {
 /// it, read from git in the main checkout `main` ([`posted::read`]). [`owner_at_by`] reads it on a
 /// board whose people may decide.
 pub fn owner_at(thread: &[Message], tip: &str, main: &Path) -> Reading {
-    owner_at_by(thread, tip, main, &[])
+    owner_at_by(thread, tip, main, &[], None)
 }
 
 /// [`owner_at`] on a board where `deciders` hold the decide power: an approve of theirs meets it as
 /// the owner's does, on the thread ([`approves_by`]) and on the cards ([`posted::read_by`]). Their
 /// powers are the board's now, so a revoke withdraws an approve given while they held it, and a
 /// grant counts one given before it: the server refused their decision while they lacked the
-/// power, so no such line was written through it.
-pub fn owner_at_by(thread: &[Message], tip: &str, main: &Path, deciders: &[String]) -> Reading {
-    owner_with_by(thread, tip, deciders, || {
+/// power, so no such line was written through it. The person at the machine (`machine`), once
+/// they gave themselves a name, is among `deciders` ([`crate::people::with_machine`]) and is named
+/// by how they are shown in what it says ([`MachinePerson::said`]).
+pub fn owner_at_by(
+    thread: &[Message],
+    tip: &str,
+    main: &Path,
+    deciders: &[String],
+    machine: Option<&MachinePerson>,
+) -> Reading {
+    owner_with_by(thread, tip, deciders, machine, || {
         posted::read_by(main, tip, deciders)
     })
 }
@@ -412,7 +421,7 @@ pub fn owner_at_by(thread: &[Message], tip: &str, main: &Path, deciders: &[Strin
 /// Met by the cards, it says so, naming them; where a commit after their approve keeps them from
 /// standing, the thread's reading says which.
 pub fn owner_with(thread: &[Message], tip: &str, posted: impl FnOnce() -> Posted) -> Reading {
-    owner_with_by(thread, tip, &[], || Approval {
+    owner_with_by(thread, tip, &[], None, || Approval {
         posted: posted(),
         by: OWNER.into(),
     })
@@ -424,9 +433,10 @@ pub fn owner_with_by(
     thread: &[Message],
     tip: &str,
     deciders: &[String],
+    machine: Option<&MachinePerson>,
     posted: impl FnOnce() -> Approval,
 ) -> Reading {
-    let reading = owner_by(thread, tip, deciders);
+    let reading = owner_by(thread, tip, deciders, machine);
     if reading.met {
         return reading;
     }
@@ -437,7 +447,7 @@ pub fn owner_with_by(
             met: true,
             detail: format!(
                 "Approved by {} on {}, at {}",
-                said(&by),
+                MachinePerson::said(&by, machine),
                 on(&cards),
                 short(tip)
             ),
@@ -451,27 +461,13 @@ pub fn owner_with_by(
             detail: format!(
                 "{}; {} approve of {} came before {}, which changes more than the owner's lines",
                 reading.detail,
-                whose(&by),
+                format!("{}'s", MachinePerson::said(&by, machine)),
                 on(&cards),
                 short(&commit)
             ),
             ..reading
         },
     }
-}
-
-/// Who gave an approve, as a reading says it: `the owner`, or a person by their short name.
-fn said(by: &str) -> String {
-    if by == OWNER {
-        "the owner".into()
-    } else {
-        by.into()
-    }
-}
-
-/// [`said`], possessive: `the owner's`, `ana's`.
-fn whose(by: &str) -> String {
-    format!("{}'s", said(by))
 }
 
 /// `cards` as a reading names them: `card NAME`, `cards NAME, OTHER`.
@@ -487,19 +483,27 @@ pub fn on(cards: &[String]) -> String {
 /// while the newest names another commit or none, or there is none. [`owner_at`] reads the cards the
 /// task posted beside it.
 pub fn owner(thread: &[Message], tip: &str) -> Reading {
-    owner_by(thread, tip, &[])
+    owner_by(thread, tip, &[], None)
 }
 
 /// [`owner`] on a board where `deciders` hold the decide power: their approve counts as the owner's
-/// ([`approves_by`]), the reading naming whose it was.
-pub fn owner_by(thread: &[Message], tip: &str, deciders: &[String]) -> Reading {
+/// ([`approves_by`]), the reading naming whose it was, the person at the machine (`machine`) by how
+/// they are shown ([`MachinePerson::said`]). It waits on their approve by that name while nobody
+/// else decides, and on one of the owner's or a decider's, naming nobody, while others do.
+pub fn owner_by(
+    thread: &[Message],
+    tip: &str,
+    deciders: &[String],
+    machine: Option<&MachinePerson>,
+) -> Reading {
     let approves = thread.iter().filter(|post| approves_by(post, deciders));
     let at_tip = short(tip);
     let Some((post, reading)) = newest(approves, tip, |post| post.sender.clone()) else {
-        let waits = if deciders.is_empty() {
-            "the owner's approve".to_string()
-        } else {
+        let others = (deciders.iter()).any(|name| machine.is_none_or(|machine| *name != machine.name));
+        let waits = if others {
             "an approve of the owner's or a decider's".to_string()
+        } else {
+            format!("{}'s approve", MachinePerson::said(OWNER, machine))
         };
         return Reading {
             commit: Some(tip.to_string()),
@@ -507,14 +511,10 @@ pub fn owner_by(thread: &[Message], tip: &str, deciders: &[String]) -> Reading {
             ..Reading::default()
         };
     };
-    // A sentence starts with the owner as `The owner`, and with a person's short name as it is.
-    let first = if post.sender == OWNER {
-        "The owner".to_string()
-    } else {
-        post.sender.clone()
-    };
+    // A sentence starts with the owner as `The owner`, and with a person's name as it is.
+    let first = MachinePerson::first(&post.sender, machine);
     let detail = match (reading.met, reading.commit.as_deref()) {
-        (true, _) => format!("Approved by {} at {at_tip}", said(&post.sender)),
+        (true, _) => format!("Approved by {} at {at_tip}", MachinePerson::said(&post.sender, machine)),
         (false, Some(commit)) => {
             format!("{first} approved {}, not the tip {at_tip}", short(commit))
         }

@@ -465,3 +465,274 @@ fn a_change_line_names_short_names_alone_and_reads_back() {
         serde_json::json!("group-remove")
     );
 }
+
+/// The person at the machine's own profile is named by `machine`, kept beside the profiles and left
+/// out of the file while none is given; one that names no profile names nobody.
+#[test]
+fn the_machines_person_is_the_profile_machine_names_and_none_without_it() {
+    let machine = Machine::new("machine-named");
+    assert_eq!(machine_name(&machine.0), None, "no file is no name");
+    let unnamed = Profiles {
+        people: vec![ana()],
+        ..Profiles::default()
+    };
+    unnamed.write(&machine.0).unwrap();
+    let text = fs::read_to_string(machine.0.join(FILE)).unwrap();
+    assert!(!text.contains("machine"), "{text}");
+    assert_eq!((Profiles::read(&machine.0).unwrap().machine(), machine_name(&machine.0)), (None, None));
+    let stefano = Profile {
+        name: "stefano".into(),
+        display: "Stefano".into(),
+        ..Profile::default()
+    };
+    let named = Profiles {
+        machine: Some("stefano".into()),
+        people: vec![ana(), stefano.clone()],
+    };
+    named.write(&machine.0).unwrap();
+    let read = Profiles::read(&machine.0).unwrap();
+    assert_eq!(read, named);
+    assert_eq!(read.machine(), Some(&stefano));
+    assert_eq!(machine_name(&machine.0).as_deref(), Some("stefano"));
+    let dangling = Profiles {
+        machine: Some("nobody".into()),
+        people: vec![ana()],
+    };
+    assert_eq!(dangling.machine(), None);
+    // A file that does not parse names nobody, and its fault at `machine` is said by that field.
+    fs::write(machine.0.join(FILE), r#"{"machine": 7, "people": []}"#).unwrap();
+    assert_eq!(machine_name(&machine.0), None);
+    let said = Profiles::read(&machine.0).unwrap_err();
+    assert!(said.contains(": machine: a value of a type or form"), "{said}");
+}
+
+/// The machine folder an environment names is where the machine's person's name is read, and an
+/// environment that names a relative one, or none and no home, names nobody.
+#[test]
+fn the_machines_persons_name_is_read_in_the_folder_the_environment_names() {
+    let machine = Machine::new("machine-env");
+    Profiles {
+        machine: Some("stefano".into()),
+        people: vec![Profile {
+            name: "stefano".into(),
+            ..Profile::default()
+        }],
+    }
+    .write(&machine.0)
+    .unwrap();
+    let dir = machine.0.clone();
+    let named = machine_person_in(|name| {
+        (name == crate::project::MACHINE_DIR).then(|| dir.clone().into_os_string())
+    });
+    assert_eq!(
+        named,
+        Some(MachinePerson {
+            name: "stefano".into(),
+            shown: "stefano".into()
+        }),
+        "a profile with no display name is shown by its short name"
+    );
+    let relative = machine_person_in(|name| {
+        (name == crate::project::MACHINE_DIR).then(|| "relative/machine".into())
+    });
+    assert_eq!(relative, None);
+    assert_eq!(machine_person_in(|_| None), None, "no folder and no home");
+}
+
+/// The deciders of a board take the machine's person by their name once, where they gave one.
+#[test]
+fn the_machines_person_decides_beside_the_boards_deciders_once() {
+    let ana = vec!["ana".to_string()];
+    let named = |name: &str| MachinePerson {
+        name: name.into(),
+        shown: "Stefano".into(),
+    };
+    assert_eq!(with_machine(ana.clone(), None), ["ana"]);
+    assert_eq!(with_machine(ana.clone(), Some(&named("stefano"))), ["ana", "stefano"]);
+    assert_eq!(with_machine(ana, Some(&named("ana"))), ["ana"]);
+    assert_eq!(with_machine(Vec::new(), Some(&named("stefano"))), ["stefano"]);
+}
+
+/// A sentence names the person at the machine by how they are shown, under `owner` as under the
+/// name they gave themselves, and starts with the owner as `The owner` while they gave none.
+#[test]
+fn a_sentence_names_the_machines_person_by_how_they_are_shown() {
+    let stefano = MachinePerson {
+        name: "stefano".into(),
+        shown: "Stefano".into(),
+    };
+    let named = Some(&stefano);
+    for by in ["owner", "stefano"] {
+        assert_eq!(MachinePerson::said(by, named), "Stefano");
+        assert_eq!(MachinePerson::first(by, named), "Stefano");
+    }
+    assert_eq!(MachinePerson::said("ana", named), "ana");
+    assert_eq!(MachinePerson::said("owner", None), "the owner");
+    assert_eq!(MachinePerson::first("owner", None), "The owner");
+    assert_eq!(MachinePerson::said("stefano", None), "stefano");
+    assert_eq!(MachinePerson::first("ana", None), "ana");
+    let shown = |display: &str| {
+        (Profiles {
+            people: vec![Profile {
+                name: "stefano".into(),
+                display: display.into(),
+                ..Profile::default()
+            }],
+            machine: Some("stefano".into()),
+        })
+        .machine_person()
+        .map(|person| person.shown)
+    };
+    assert_eq!(shown("Stefano B"), Some("Stefano B".into()));
+    assert_eq!(shown("  "), Some("stefano".into()), "a blank display name is none");
+    assert_eq!(Profiles::default().machine_person(), None);
+}
+
+mod naming {
+    use super::super::change::{Given, Held, Stopped, name_machine};
+    use super::*;
+
+    fn given(display: &str, git: &[&str]) -> Given {
+        Given {
+            display: Some(display.into()).filter(|d: &String| !d.is_empty()),
+            signins: Vec::new(),
+            git: git.iter().map(|g| (*g).to_string()).collect(),
+        }
+    }
+
+    fn refused(stopped: Result<(), Stopped>) -> String {
+        match stopped {
+            Err(Stopped::Refused(why)) => why,
+            other => panic!("not refused: {other:?}"),
+        }
+    }
+
+    /// A board of the machine holding nothing under the name.
+    fn nothing(_: &str) -> Result<Option<Held>, Stopped> {
+        Ok(None)
+    }
+
+    /// Named once, the person at the machine's profile is written with what they gave, and
+    /// `machine` names it; a second name is refused, and so is the first again.
+    #[test]
+    fn the_person_at_the_machine_names_themselves_once_with_their_display_name_and_git() {
+        let machine = Machine::new("name-once");
+        name_machine(&machine.0, " stefano ", &given("Stefano", &["stefano-b"]), nothing).unwrap();
+        let read = Profiles::read(&machine.0).unwrap();
+        assert_eq!(read.machine.as_deref(), Some("stefano"));
+        let mine = read.machine().unwrap();
+        assert_eq!((mine.shown(), mine.git.clone()), ("Stefano", vec!["stefano-b".to_string()]));
+        assert!(mine.signins.is_empty());
+        assert_eq!(machine.mode(FILE), MODE);
+        for again in ["stefano", "teo"] {
+            let why = refused(name_machine(&machine.0, again, &given("", &[]), nothing));
+            assert_eq!(
+                why,
+                "you write as stefano already, and a short name once given is never changed: \
+                 nothing was written"
+            );
+        }
+        assert_eq!(Profiles::read(&machine.0).unwrap(), read, "nothing was written");
+    }
+
+    /// A name no board could give a person, and a sign-in, are refused before the profiles are
+    /// read, so with nothing written.
+    #[test]
+    fn a_name_no_person_takes_and_a_sign_in_are_refused_with_nothing_written() {
+        let machine = Machine::new("name-refused");
+        for bad in ["owner", "agent", "Stefano", "amber-heron", "", "a b"] {
+            let why = refused(name_machine(&machine.0, bad, &given("", &[]), nothing));
+            assert!(why.ends_with(": nothing was written"), "{bad:?}: {why}");
+        }
+        let signed = Given {
+            signins: vec![Signin::parse("tailscale:me@example.com").unwrap()],
+            ..given("", &[])
+        };
+        let why = refused(name_machine(&machine.0, "stefano", &signed, nothing));
+        assert!(why.starts_with("the person at the machine is known by where they are"), "{why}");
+        assert!(!machine.0.join(FILE).exists(), "nothing was written");
+    }
+
+    /// A profile someone signs in by is another's; one with no sign-in, which no visitor ever
+    /// wrote under, is taken as theirs with what it holds, the rows boards hold of it theirs too.
+    #[test]
+    fn a_profile_with_a_sign_in_is_refused_and_one_with_none_is_taken_as_theirs() {
+        let machine = Machine::new("name-taken");
+        let added = Profile {
+            name: "stefano".into(),
+            display: "Stefano B".into(),
+            git: vec!["sb".into()],
+            ..Profile::default()
+        };
+        Profiles {
+            people: vec![ana(), added],
+            ..Profiles::default()
+        }
+        .write(&machine.0)
+        .unwrap();
+        let why = refused(name_machine(&machine.0, "ana", &given("", &[]), nothing));
+        assert_eq!(
+            why,
+            "ana is the profile of someone who signs in, and a name once used is never given to \
+             another: choose another name, so nothing was written"
+        );
+        let a_row = |_: &str| Ok(Some(Held::Person));
+        name_machine(&machine.0, "stefano", &given("", &["stefano-b"]), a_row).unwrap();
+        let read = Profiles::read(&machine.0).unwrap();
+        let mine = read.machine().unwrap();
+        assert_eq!(
+            (mine.shown(), mine.git.clone()),
+            ("Stefano B", vec!["sb".to_string(), "stefano-b".to_string()])
+        );
+    }
+
+    /// What a board holds under the name: a group refuses it, a person the machine holds no
+    /// profile of refuses it, and a board that cannot be read fails it, each with nothing written.
+    #[test]
+    fn a_boards_group_or_stranger_refuses_the_name_and_an_unread_board_fails_it() {
+        let machine = Machine::new("name-held");
+        let group = refused(name_machine(&machine.0, "design", &given("", &[]), |_| {
+            Ok(Some(Held::Group))
+        }));
+        assert_eq!(
+            group,
+            "design is a group's name on a board of this machine, and a person's name and a \
+             group's never meet: choose another name, so nothing was written"
+        );
+        let stranger = refused(name_machine(&machine.0, "bo", &given("", &[]), |_| {
+            Ok(Some(Held::Person))
+        }));
+        assert_eq!(
+            stranger,
+            "bo is a person on a board of this machine whom it holds no profile of, someone named \
+             elsewhere: choose another name, so nothing was written"
+        );
+        let failure = super::super::change::Failure {
+            said: "a board of this machine could not be read, so nothing was written".into(),
+            why: "the board is down".into(),
+            left: None,
+        };
+        let unread = name_machine(&machine.0, "stefano", &given("", &[]), |_| {
+            Err(Stopped::Failed(failure.clone()))
+        });
+        assert_eq!(unread, Err(Stopped::Failed(failure)));
+        assert_eq!(Profiles::read(&machine.0).unwrap(), Profiles::default());
+    }
+
+    /// Profiles that cannot be read are never written over, and naming fails saying so.
+    #[test]
+    fn profiles_not_read_fail_the_name_and_are_kept() {
+        let machine = Machine::new("name-unread");
+        fs::create_dir_all(&machine.0).unwrap();
+        fs::write(machine.0.join(FILE), "{not json").unwrap();
+        match name_machine(&machine.0, "stefano", &given("", &[]), nothing) {
+            Err(Stopped::Failed(failure)) => assert_eq!(
+                failure.said,
+                "the machine's profiles could not be locked, read or written, so nothing was \
+                 written"
+            ),
+            other => panic!("not failed: {other:?}"),
+        }
+        assert_eq!(fs::read_to_string(machine.0.join(FILE)).unwrap(), "{not json");
+    }
+}

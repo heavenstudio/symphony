@@ -417,11 +417,20 @@ impl Profile {
     }
 }
 
-/// `people.json`: the machine's profiles, in the order they were made.
+/// `people.json`: the machine's profiles, in the order they were made, and which of them is the
+/// person at the machine's own.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profiles {
     #[serde(default)]
     pub people: Vec<Profile>,
+    /// The short name of the person at the machine's own profile, which every line they write
+    /// carries from then on, on every board the machine serves (docs/product/analysis/
+    /// users-and-identity.md, "How a person's name is written"): none until they give themselves
+    /// one, and their lines read `owner`. Given once, by them alone ([`change::name_machine`]),
+    /// and never changed, as a name once used is never given to another. After the profiles, so
+    /// a list read as the struct, as serde reads one, is its profiles first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
 }
 
 impl Profiles {
@@ -496,6 +505,99 @@ impl Profiles {
     pub fn signed_in(&self, service: &str, subject: &str) -> Option<&Profile> {
         (self.people.iter()).find(|profile| profile.signins.iter().any(|s| s.is(service, subject)))
     }
+
+    /// The person at the machine's own profile ([`Profiles::machine`]): none while they have
+    /// given themselves no name, or where it names no profile the file holds.
+    pub fn machine(&self) -> Option<&Profile> {
+        self.get(self.machine.as_deref()?)
+    }
+}
+
+/// The word the person at the machine's lines carry until they give themselves a name.
+const OWNER: &str = "owner";
+/// How a sentence names them then.
+const THE_OWNER: &str = "the owner";
+
+/// The person at the machine as a sentence names them, once they gave themselves a name: the
+/// short name their lines carry, and how a page shows them, their display name else that name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MachinePerson {
+    pub name: String,
+    pub shown: String,
+}
+
+impl MachinePerson {
+    /// `by`, who wrote a line, as a sentence names them: the person at the machine (`machine`)
+    /// by how they are shown, for a line under `owner` or under their short name; `the owner`
+    /// for a line under `owner` while they gave no name; anyone else by their short name.
+    pub fn said(by: &str, machine: Option<&MachinePerson>) -> String {
+        match machine {
+            Some(machine) if by == OWNER || by == machine.name => machine.shown.clone(),
+            _ if by == OWNER => THE_OWNER.into(),
+            _ => by.into(),
+        }
+    }
+
+    /// [`MachinePerson::said`] as a sentence starts with it: `The owner`, else as it is.
+    pub fn first(by: &str, machine: Option<&MachinePerson>) -> String {
+        let said = Self::said(by, machine);
+        if said == THE_OWNER {
+            "The owner".into()
+        } else {
+            said
+        }
+    }
+}
+
+impl Profiles {
+    /// The person at the machine ([`Profiles::machine`]) as a sentence names them: none while
+    /// they gave themselves no name.
+    pub fn machine_person(&self) -> Option<MachinePerson> {
+        let profile = self.machine()?;
+        let shown = if profile.display.trim().is_empty() {
+            profile.name.clone()
+        } else {
+            profile.display.clone()
+        };
+        Some(MachinePerson {
+            name: profile.name.clone(),
+            shown,
+        })
+    }
+}
+
+/// The person at the machine, from the profiles in the machine folder `dir`
+/// ([`Profiles::machine_person`]): none where they gave themselves no name, and none where the
+/// profiles cannot be read, as their lines then read `owner`, the role's word, as before.
+pub fn machine_person(dir: &Path) -> Option<MachinePerson> {
+    Profiles::read(dir).ok()?.machine_person()
+}
+
+/// The short name the person at the machine writes under ([`machine_person`]).
+pub fn machine_name(dir: &Path) -> Option<String> {
+    Some(machine_person(dir)?.name)
+}
+
+/// [`machine_person`] in the machine folder the environment `var` names
+/// ([`crate::project::machine_folder`]): none where it names none.
+pub fn machine_person_in(
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Option<MachinePerson> {
+    let dir = crate::project::machine_folder(var, cfg!(target_os = "macos")).ok()?;
+    machine_person(&dir)
+}
+
+/// `deciders`, the people who hold decide on a board, and the person at the machine (`machine`,
+/// [`machine_person`]) where they gave themselves a name: they hold every power on every board,
+/// and no row says so, so an approve of theirs under that name meets the `owner` stamp as one
+/// under `owner` does.
+pub fn with_machine(mut deciders: Vec<String>, machine: Option<&MachinePerson>) -> Vec<String> {
+    if let Some(machine) = machine
+        && !deciders.contains(&machine.name)
+    {
+        deciders.push(machine.name.clone());
+    }
+    deciders
 }
 
 /// `people.json`'s text as profiles; else the field it does not parse at ([`field`]) and why.
@@ -508,7 +610,8 @@ fn parse(text: &str) -> Result<Profiles, (String, serde_json::Error)> {
 }
 
 /// The names a profile's fields have in `people.json`, the only keys said of a fault in it.
-const FIELDS: [&str; 10] = [
+const FIELDS: [&str; 11] = [
+    "machine",
     "people",
     "name",
     "display",

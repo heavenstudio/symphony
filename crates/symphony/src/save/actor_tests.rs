@@ -137,9 +137,19 @@ fn marked(f: &Fixture, slug: &str) -> Vec<String> {
 }
 
 /// The board as the saves reach it for `actor`, who asked: vouched for by their short name, as
-/// [`Saves::store_by`] reaches it.
+/// [`Saves::store_for`] reaches it.
 fn board_for(f: &Fixture, actor: &Actor) -> symphony_board::Store {
-    f.other().for_person(actor.name())
+    f.other().for_actor(actor)
+}
+
+/// The person at the machine under the name they gave themselves, as the local host's gate admits
+/// them once their profile names them: their short name and display name, the local owner's
+/// principal.
+fn machines(name: &str, display: &str) -> Actor {
+    Actor::new(
+        Sender::new(name, display, vec!["stefano-b".into()]),
+        symphony_board::workflow::local_owner(),
+    )
 }
 
 /// Each of a task's writes asked by `actor` on a board holding `sim/a` and `sim/held`, both ready:
@@ -158,7 +168,7 @@ fn on_the_board(f: &Fixture, actor: &Actor, root: &Path) -> Vec<String> {
         json!({"slug": "sim/a", "priority": 0}),
     );
     // A read: the offer, asked of the plugin with no one.
-    crate::taskview::owner_offer(&f.store, &plugins(), "sim/a", root).unwrap();
+    crate::taskview::owner_offer(&f.store, &plugins(), "sim/a", root, None).unwrap();
     let said = write(
         symphony_api::TASK_ACTION_ROUTE,
         json!({"slug": "sim/a", "action": "sign", "payload": "tip", "note": ""}),
@@ -228,6 +238,42 @@ fn a_person_a_host_admitted_is_the_sender_and_mover_the_board_records_and_the_pl
         thread(&f, "sim/held")
     );
     assert_eq!(marked(&f, "sim/held"), ["ana"]);
+}
+
+/// The person at the machine, once named, writes every line of a task under their name, each
+/// marked a person's, the plugin told their name, and moves as the owner did, on a board that
+/// names nobody.
+#[test]
+fn the_machines_person_under_their_name_is_the_sender_and_mover_on_a_board_naming_nobody() {
+    let (f, tree) = (Fixture::empty(), Tree::new());
+    seeded(&f, "owner");
+    let worker = f.session("worker");
+    f.store.claim("sim/held", &worker).unwrap();
+    f.store.hold_blocked("sim/held", &worker).unwrap();
+    let asked = on_the_board(&f, &machines("stefano", "Stefano"), &tree.root);
+    assert_eq!(
+        asked,
+        ["offer sim/a", "submit sim/a from stefano (Stefano, stefano-b)"]
+    );
+    let lines = thread(&f, "sim/a");
+    for said in ["Ready when you are", "signed tip for Stefano"] {
+        assert!(
+            lines.contains(&("stefano".to_string(), said.to_string())),
+            "{said}: {lines:?}"
+        );
+    }
+    assert!((lines.iter().skip(1)).all(|(sender, _)| sender != "owner"), "{lines:?}");
+    let marks = marked(&f, "sim/a");
+    assert!(!marks.is_empty() && marks.iter().all(|s| s == "stefano"), "{marks:?}");
+    assert_eq!(f.store.get("sim/a").unwrap().status, "cancelled");
+    assert!(
+        thread(&f, "sim/held").contains(&(
+            "stefano".to_string(),
+            "stefano moved it blocked → review".to_string()
+        )),
+        "{:?}",
+        thread(&f, "sim/held")
+    );
 }
 
 #[test]

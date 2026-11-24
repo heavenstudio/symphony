@@ -21,7 +21,7 @@ import { PageNotices } from "./live";
 import { useMount } from "./mount";
 import type { NextActionsProps } from "./nextactions";
 import { PartsContext, type Shown, usePart } from "./parts";
-import { href, scoped } from "./project";
+import { writer as drawnWriter, href, scoped } from "./project";
 import { getJson, post, said } from "./request";
 import { currentRoute } from "./route";
 import { SelectField } from "./select";
@@ -75,12 +75,14 @@ export function voice(message: TaskEntry["message"]): "owner" | "system" | "agen
 export const TaskMessage = memo(function TaskMessage({ entry }: { entry: TaskEntry }) {
   const { message } = entry;
   const who = voice(message);
+  // A person's line names its writer by the one rule a card's thread draws them by too.
+  const writer = who === "owner" ? drawnWriter(message.sender) : { text: message.sender };
   return (
     <div className={`entry ${who}`}>
       <time>{entry.stamp}</time>{" "}
-      <span className="from">
-        {message.sender}
-        {message.recipient !== null && ` → ${message.recipient}`}
+      <span className="from" title={writer.title}>
+        {writer.text}
+        {message.recipient !== null && ` → ${drawnWriter(message.recipient).text}`}
       </span>
       {message.kind === "verdict" && <b>verdict </b>}
       {/* An owner message is literal text, unless it names an upload: the server then sends its
@@ -707,7 +709,9 @@ export function TaskHead({ page, scope, connected }: TaskHeadProps) {
           once, by its own control. */}
       <div className="task-state row">
         <span className={`state pill st-${task.status}`}>{statusWords(task.status)}</span>
-        <span className="by">{`filed by ${task.created_by}`}</span>
+        <span className="by" title={drawnWriter(task.created_by).title}>
+          {`filed by ${drawnWriter(task.created_by).text}`}
+        </span>
         <OwnerControls slug={slug} priority={task.priority} status={task.status} />
       </div>
       {task.workflow && (

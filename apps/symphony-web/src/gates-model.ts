@@ -11,6 +11,7 @@
 // (its `task_gates.rs`, gone with its task page), whose unit tests gates-model.test.ts and
 // gates.test.tsx port, and which the browser tests hold.
 
+import { writer } from "./project";
 import { field } from "./shared";
 import { NOT_IN_TIME } from "./trouble";
 import type { Gate, GateState, GatesSeen, MachineWork, Task, TaskGates, WorkState } from "./wire";
@@ -326,7 +327,7 @@ export function counts(answer: TaskGates): string {
  */
 export function byline(gate: Gate, today: number): string[] {
   const parts: string[] = [];
-  if (present(gate.by) && gate.by !== "") parts.push(gate.by);
+  if (present(gate.by) && gate.by !== "") parts.push(writer(gate.by).text);
   if (present(gate.at)) parts.push(when(localMinutes(gate.at), today));
   const commit = unsaidCommit(gate);
   if (commit !== null) parts.push(commit);

@@ -46,6 +46,30 @@ pub struct PeoplePage {
     /// Why the board's people could not be read, said whole; the page then lists nobody.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
+    /// The person at the machine's own profile, which their You section shows and writes: for
+    /// them alone, none for anyone else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mine: Option<MachineProfile>,
+    /// The sign-in services this server knows a visitor by, which an add and a profile take a
+    /// sign-in of: `tailscale` while this machine is on a tailnet, none where it is on none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signins: Vec<String>,
+}
+
+/// The person at the machine's own profile.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct MachineProfile {
+    /// The short name they gave themselves, fixed once given: none until then, and their lines
+    /// read `owner`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Their display name: empty where they gave none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display: String,
+    /// Their git handles.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub git: Vec<String>,
 }
 
 /// A person on the board.
@@ -171,4 +195,8 @@ pub struct ProfileWrite {
     /// Sign-ins added to it, each `SERVICE:SUBJECT`: the person at the machine's alone to give.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub signins: Vec<String>,
+    /// Whether it gives the person at the machine `name` as their own short name, once and for
+    /// good: theirs alone to ask, and refused once they have one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub machine: bool,
 }

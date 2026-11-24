@@ -44,6 +44,7 @@ fn profiles() -> Profiles {
             ],
             ..Profile::default()
         }],
+        ..Profiles::default()
     }
 }
 

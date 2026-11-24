@@ -675,6 +675,9 @@ impl Project {
             guide: String::new(),
             nav: crate::plugins::Plugins::for_project(self).nav(),
             entrypoints: self.entrypoints.iter().map(|e| e.url.clone()).collect(),
+            // Who reads it is the server's to say, for each page it serves.
+            you: None,
+            machine: None,
         }
     }
 

@@ -374,3 +374,84 @@ fn a_roster_says_which_boards_a_visitor_is_on_and_is_never_asked_of_the_machine(
         "asked with the board's root and the visitor; the machine is never asked of"
     );
 }
+
+/// A machine folder of the test's own, holding `profiles`, removed when it drops.
+struct Folder(std::path::PathBuf);
+
+impl Folder {
+    fn holding(name: &str, profiles: Option<&str>) -> Folder {
+        let dir = std::env::temp_dir().join(format!("gate-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        if let Some(text) = profiles {
+            std::fs::write(dir.join(symphony_board::people::FILE), text).unwrap();
+        }
+        Folder(dir)
+    }
+}
+
+impl Drop for Folder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+const NAMED: &str = r#"{"people": [{"name": "stefano", "display": "Stefano", "git": ["stefano-b"]}], "machine": "stefano"}"#;
+
+/// The person at the machine is the profile the machine's profiles name as theirs, on every board,
+/// under the owner's principal: from here, from this machine's tailnet address and from a node
+/// under its login; and the owner while they name none, or the profiles cannot be read.
+#[test]
+fn the_person_at_the_machine_writes_under_the_name_their_profile_gives_them() {
+    let owner = symphony_board::workflow::local_actor();
+    assert_eq!(machine_actor(None), owner, "no machine folder");
+    for (name, text) in [
+        ("none", None),
+        ("unnamed", Some(r#"{"people": [{"name": "ana"}]}"#)),
+        ("dangling", Some(r#"{"people": [], "machine": "stefano"}"#)),
+        ("unparsed", Some("{not json")),
+    ] {
+        let folder = Folder::holding(name, text);
+        assert_eq!(machine_actor(Some(&folder.0)), owner, "{name}");
+    }
+    let folder = Folder::holding("named", Some(NAMED));
+    let named = Actor::new(
+        Sender::new("stefano", "Stefano", vec!["stefano-b".into()]),
+        symphony_board::workflow::local_owner(),
+    );
+    assert_eq!(machine_actor(Some(&folder.0)), named);
+    let judge = Judge::new(&[Ok(STATUS)]);
+    let gate = judge.gate.with_machine(folder.0.clone());
+    for address in ["127.0.0.1", OWN_IP, PHONE_IP] {
+        let visitor = gate.visitor(ip(address)).unwrap();
+        assert_eq!(visitor, Visitor::Machine, "{address}");
+        assert_eq!(gate.member(Path::new("/alpha"), &visitor), Some(named.clone()));
+    }
+    assert_eq!(
+        gate.machine_person(),
+        Some(symphony_api::PersonName {
+            name: "stefano".into(),
+            shown: "Stefano".into()
+        })
+    );
+    // Named or not, a node under another login is the roster's, never the machine's person.
+    let laptop = gate.visitor(ip(LAPTOP_IP)).unwrap();
+    assert!(matches!(laptop, Visitor::Login(_)));
+    assert_eq!(gate.member(Path::new("/alpha"), &laptop), None);
+    let unnamed = Judge::new(&[]).gate;
+    assert_eq!(unnamed.machine_person(), None, "owner is no name to draw");
+}
+
+/// The machine is on a tailnet while a status answer lists its names, kept through a call that
+/// gives none, and on none where no call has listed any.
+#[test]
+fn the_machine_is_on_a_tailnet_while_its_status_lists_its_names() {
+    assert!(Judge::new(&[Ok(STATUS)]).gate.tailnet());
+    let failing = Judge::new(&[Err(TIMED_OUT)]);
+    assert!(!failing.gate.tailnet(), "no answer yet: no tailnet");
+    assert!(!Judge::new(&[Ok("{}")]).gate.tailnet(), "an answer naming no node");
+    let kept = Judge::new(&[Ok(STATUS), Err(TIMED_OUT)]);
+    assert!(kept.gate.tailnet());
+    assert!(kept.after(TTL).gate.tailnet(), "a failed refresh keeps the last answer");
+    assert_eq!(kept.unasked(), 0);
+}

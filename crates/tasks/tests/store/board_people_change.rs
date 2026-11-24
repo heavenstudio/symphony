@@ -33,6 +33,7 @@ impl Machine {
     fn holding(self, profiles: &[Profile]) -> Machine {
         (Profiles {
             people: profiles.to_vec(),
+            ..Profiles::default()
         })
         .write(&self.0)
         .unwrap();
@@ -577,4 +578,72 @@ fn a_failure_is_told_with_or_without_its_cause_and_its_remedy() {
         failure.told(false, |_| unreachable!("no one left")),
         "bo's profile could not be written, and the board's change 3 still stands"
     );
+}
+
+/// A group is never named as a profile of the machine is, the person at the machine's own among
+/// them, as a line under the name would read as either's; any other name it takes as before.
+#[test]
+fn a_group_named_as_a_profile_is_refused_and_any_other_is_made() {
+    let f = board();
+    let machine = Machine::new("group-named");
+    (Profiles {
+        people: vec![anas(), Profile {
+            name: "stefano".into(),
+            ..Profile::default()
+        }],
+        machine: Some("stefano".into()),
+    })
+    .write(&machine.0)
+    .unwrap();
+    for name in ["ana", "stefano"] {
+        let why = refused(change::add_group(&f.store, &machine.0, name, &[Power::Decide], BY));
+        assert_eq!(
+            why,
+            format!(
+                "{name} is a person's name on this machine, and a person's name and a group's \
+                 never meet: name the group otherwise, so nothing was written"
+            )
+        );
+    }
+    assert!(f.store.people().unwrap().groups.is_empty(), "nothing was written");
+    let made = change::add_group(&f.store, &machine.0, "design", &[Power::Decide], BY).unwrap();
+    assert_eq!((made.did, made.name.as_str()), (Did::GroupAdd, "design"));
+    // What the board refuses is said as its refusal.
+    let twice = refused(change::add_group(&f.store, &machine.0, "design", &[], BY));
+    assert_eq!(twice, "design is a group of this board: nothing was written");
+}
+
+/// The person at the machine is on every board with every power, and no row adds them: an add of
+/// their name is refused to anyone, writing neither the board nor the profiles.
+#[test]
+fn nobody_adds_the_person_at_the_machine_to_a_board() {
+    let f = board();
+    let machine = Machine::new("add-machine");
+    let profiles = Profiles {
+        people: vec![Profile {
+            name: "stefano".into(),
+            ..Profile::default()
+        }],
+        machine: Some("stefano".into()),
+    };
+    profiles.write(&machine.0).unwrap();
+    for writer in [Writer::Machine, Writer::Other] {
+        let why = refused(change::add(
+            &f.store,
+            &machine.0,
+            "stefano",
+            &[],
+            &[Power::Speak],
+            &Given::default(),
+            writer,
+            BY,
+        ));
+        assert_eq!(
+            why,
+            "stefano is the person at the machine, on every board with every power, and no row \
+             adds them: nothing was written"
+        );
+    }
+    assert!(named(&f.store).is_empty());
+    assert_eq!(machine.profiles(), profiles);
 }

@@ -43,6 +43,27 @@ pub struct ProjectView {
     /// Symphony's.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub mark: String,
+    /// Who reads the page, as the header names them and links to their profile: the person at the
+    /// machine (`owner` until they give themselves a name), or a person a board named. None in a
+    /// page served for nobody in particular.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub you: Option<PersonName>,
+    /// The person at the machine, once they gave themselves a name: every line they wrote, under
+    /// it and under `owner` before it, is drawn with how they are shown. None while they gave none,
+    /// and their lines read `owner`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<PersonName>,
+}
+
+/// A person as a page names them: the short name their lines carry, and how pages show them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct PersonName {
+    /// The short name every line of theirs carries: `owner` for the person at the machine while
+    /// they gave themselves none.
+    pub name: String,
+    /// Their display name, else their short name.
+    pub shown: String,
 }
 
 impl ProjectView {

@@ -33,6 +33,10 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
         hub.serve_at(&shared.base);
         hub.gate_recorders(shared.recording.clone());
         hub.wake_at_board(shared.board_wakers.clone());
+        // The person at the machine decides under the name the gate's profiles give them.
+        if let Some(folder) = shared.gate.machine() {
+            hub.gates.machine_at(folder.to_path_buf());
+        }
         // Saves kept for delivery by pull request are taken up again now and after each refresh.
         let settle = settling(&shared);
         settle();

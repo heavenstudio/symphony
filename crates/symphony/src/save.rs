@@ -187,11 +187,24 @@ impl Saves {
         })
     }
 
-    /// The board, for the writes `by` asked for: these saves vouch for a person their host
-    /// admitted, by the short name their lines carry ([`symphony_board::Store::for_person`]); the
-    /// person at the machine and a session write as they always have.
-    fn store_by(&self, by: &str) -> Result<symphony_board::Store, Failure> {
-        Ok(self.store()?.for_person(by))
+    /// The board, for the writes `actor` asked for: these saves vouch for the person their host
+    /// admitted, by the short name their lines carry ([`symphony_board::Store::for_actor`]): the
+    /// person at the machine, under `owner` or the name they gave themselves, or a person a board
+    /// named.
+    fn store_for(&self, actor: &Actor) -> Result<symphony_board::Store, Failure> {
+        Ok(self.store()?.for_actor(actor))
+    }
+
+    /// The board, for the writes `by` asked for, a record kept from such a write naming them
+    /// (a quick task's): the person at the machine where `machine`
+    /// ([`symphony_board::Store::for_machine`]), else a person a board named.
+    fn store_as(&self, by: &str, machine: bool) -> Result<symphony_board::Store, Failure> {
+        let store = self.store()?;
+        Ok(if machine {
+            store.for_machine(by)
+        } else {
+            store.for_person(by)
+        })
     }
 
     /// The scope and document name a save names: the page's `scope` and `rel`, or those a document
@@ -325,7 +338,7 @@ impl Saves {
                     Failure::from(format!("attestations: not signed statements: {e}"))
                 })?),
             };
-        let (store, owner) = (self.store_by(actor.name())?, &actor.principal);
+        let (store, owner) = (self.store_for(actor)?, &actor.principal);
         let attestations = match given {
             Some(given) => given,
             None => attest::fetched(
@@ -452,7 +465,7 @@ impl Saves {
             | "/api/task-field"
             | "/api/task-cancel"
             | symphony_api::TASK_ACTION_ROUTE => on_task(
-                &self.store_by(actor.name())?,
+                &self.store_for(actor)?,
                 || crate::plugins::Plugins::of(&self.root),
                 &self.root,
                 actor,
@@ -463,10 +476,8 @@ impl Saves {
                 (self.workflow_apply(actor, payload)).map_err(|refused| refused.failure)
             }
             "/api/ask" | "/api/ask-reply" => self.ask(actor, scope, route, payload),
-            symphony_api::SETTING_WRITE_PATH => self.setting(scope, payload, actor.name()),
-            "/api/quick-chat" | "/api/quick-task" => {
-                self.quick(scope, route, payload, actor.name())
-            }
+            symphony_api::SETTING_WRITE_PATH => self.setting(scope, payload, actor),
+            "/api/quick-chat" | "/api/quick-task" => self.quick(scope, route, payload, actor),
             _ => Err(Failure {
                 status: 404,
                 error: "no such route".into(),
@@ -819,7 +830,7 @@ impl Saves {
                         base: original,
                         new: text,
                     },
-                    actor.name(),
+                    actor,
                 )?;
         }
         if !tap.is_empty() {

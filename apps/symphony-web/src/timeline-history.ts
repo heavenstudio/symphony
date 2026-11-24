@@ -1,4 +1,5 @@
 // Recorded metadata only: no attribution from today's role holders, and no message bodies.
+import { writer } from "./project";
 import { field } from "./shared";
 import type { History, MessageEndpoint, TaskEntry, TimelineMessage } from "./wire";
 
@@ -70,7 +71,8 @@ export function messagesOf(
 }
 
 export function address(message: TimelineMessage): string {
-  return `${message.sender} → ${message.recipient ?? "Everyone on task"}`;
+  const to = message.recipient == null ? "Everyone on task" : writer(message.recipient).text;
+  return `${writer(message.sender).text} → ${to}`;
 }
 
 /** Only a unique known role gets a role lane; ambiguity stays on Other. */

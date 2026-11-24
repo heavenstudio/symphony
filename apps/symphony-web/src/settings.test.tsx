@@ -659,6 +659,8 @@ describe("the page", () => {
     );
     expect(html).toContain("<h1>Settings</h1>");
     expect(html).toContain('class="settings-ghost" aria-hidden="true"');
+    // Its head links to where the reader writes their own profile, read or not.
+    expect(html).toContain('<a class="settings-profile" href="/people#you">Your profile</a>');
   });
 
   it("draws every section and entry the server describes, in its order", () => {

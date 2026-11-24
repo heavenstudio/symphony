@@ -20,7 +20,7 @@ import { Button } from "./button";
 import { whenShown } from "./feed";
 import { taskSlug } from "./links";
 import { useMount } from "./mount";
-import { href } from "./project";
+import { href, writer } from "./project";
 import { Failure, getIf, getJson, said } from "./request";
 import { field } from "./shared";
 import { load, save } from "./storage";
@@ -616,7 +616,7 @@ function RunRow({ line, shown, at }: { line: RunLine; shown: Result; at: number 
           {line.label}
         </span>
         <span className="run-where">{where.join(" · ")}</span>
-        <span className="run-who">{line.trigger}</span>
+        <span className="run-who">{writer(line.trigger).text}</span>
         <span className="run-time">{time === null ? "" : duration(time)}</span>
         {failed > 0 && <span className="run-note">{`${failed} failed`}</span>}
       </a>
@@ -1354,8 +1354,8 @@ export function RunView({
           name="Started by"
           value={
             run.handle !== null && run.handle !== run.trigger
-              ? `${run.trigger} for ${run.handle}`
-              : run.trigger
+              ? `${writer(run.trigger).text} for ${run.handle}`
+              : writer(run.trigger).text
           }
         />
         <Fact name="Asked for" value={when(run.queued)} />

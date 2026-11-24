@@ -132,6 +132,30 @@ export type ProjectView = {
    * Symphony's.
    */
   mark?: string;
+  /**
+   * Who reads the page, as the header names them and links to their profile: the person at the
+   * machine (`owner` until they give themselves a name), or a person a board named. None in a
+   * page served for nobody in particular.
+   */
+  you?: PersonName | null;
+  /**
+   * The person at the machine, once they gave themselves a name: every line they wrote, under
+   * it and under `owner` before it, is drawn with how they are shown. None while they gave none,
+   * and their lines read `owner`.
+   */
+  machine?: PersonName | null;
+};
+
+export type PersonName = {
+  /**
+   * The short name every line of theirs carries: `owner` for the person at the machine while
+   * they gave themselves none.
+   */
+  name: string;
+  /**
+   * Their display name, else their short name.
+   */
+  shown: string;
 };
 
 export type NavItem = {
@@ -819,6 +843,16 @@ export type PeoplePage = {
    * Why the board's people could not be read, said whole; the page then lists nobody.
    */
   problem?: string | null;
+  /**
+   * The person at the machine's own profile, which their You section shows and writes: for
+   * them alone, none for anyone else.
+   */
+  mine?: MachineProfile | null;
+  /**
+   * The sign-in services this server knows a visitor by, which an add and a profile take a
+   * sign-in of: `tailscale` while this machine is on a tailnet, none where it is on none.
+   */
+  signins?: Array<string>;
 };
 
 export type PersonRow = {
@@ -941,6 +975,27 @@ export type ProfileWrite = {
    * Sign-ins added to it, each `SERVICE:SUBJECT`: the person at the machine's alone to give.
    */
   signins?: Array<string>;
+  /**
+   * Whether it gives the person at the machine `name` as their own short name, once and for
+   * good: theirs alone to ask, and refused once they have one.
+   */
+  machine?: boolean;
+};
+
+export type MachineProfile = {
+  /**
+   * The short name they gave themselves, fixed once given: none until then, and their lines
+   * read `owner`.
+   */
+  name?: string | null;
+  /**
+   * Their display name: empty where they gave none.
+   */
+  display?: string;
+  /**
+   * Their git handles.
+   */
+  git?: Array<string>;
 };
 
 export type RunsPage = {
