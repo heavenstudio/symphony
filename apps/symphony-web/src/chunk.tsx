@@ -37,12 +37,16 @@ export function useChunk<T>(
   return [chunk, failed, () => setFailed(false)];
 }
 
-/** That `what` could not be loaded, with its retry: drawn by the part itself, in its place. */
-export function chunkFailed(what: string, retry: () => void) {
-  return (
-    <p role="alert">
+/**
+ * That `what` could not be loaded, with its retry: drawn by the part itself, in its place, a
+ * paragraph of its own, or `inline` in a line of other words (a role's chip).
+ */
+export function chunkFailed(what: string, retry: () => void, inline = false) {
+  const said = (
+    <>
       {`${what} could not be loaded. `}
       <Button onClick={retry}>Retry</Button>
-    </p>
+    </>
   );
+  return inline ? <span role="alert">{said}</span> : <p role="alert">{said}</p>;
 }

@@ -214,26 +214,28 @@ function inner(element: ReactElement): ReactElement {
 }
 
 /** The parts of a task's head imported for a task that has them, each held in its place until its
- * chunk has come: the chunk's export, the part, what it says when it does not come, and the tree
- * that draws its Retry. */
+ * chunk has come: the chunk's export, the part, what it says when it does not come, the element it
+ * says it in (inline in a role's chip), and the tree that draws its Retry. */
 const HEAD_PARTS = [
   [
     "OwnerLine",
     (page: Page) => <page.OwnerPart {...OWNER} />,
     "The task&#x27;s ownership",
+    "p",
     (page: Page) => page.OwnerPart(OWNER),
   ],
   [
     "GoToSession",
     (page: Page) => <page.SessionPart {...SESSION} />,
     "The session&#x27;s control",
+    "span",
     (page: Page) => inner(page.SessionPart(SESSION) as ReactElement),
   ],
 ] as const;
 
 describe("a part of a task's head that is a chunk of its own", () => {
   it("holds its place while out, says one that did not come with its retry, and is kept once come", async () => {
-    for (const [name, element, said, tree] of HEAD_PARTS) {
+    for (const [name, element, said, tag, tree] of HEAD_PARTS) {
       react.states.length = 0;
       chunksCome(false);
       aShell(false);
@@ -245,7 +247,7 @@ describe("a part of a task's head that is a chunk of its own", () => {
       await until(() =>
         expect(draw(part).html).toMatch(
           new RegExp(
-            `^<p role="alert">${said} could not be loaded\\. <button[^>]*>Retry</button></p>$`,
+            `^<${tag} role="alert">${said} could not be loaded\\. <button[^>]*>Retry</button></${tag}>$`,
           ),
         ),
       );
@@ -264,11 +266,19 @@ describe("a part of a task's head that is a chunk of its own", () => {
     }
   });
 
-  it("draws and imports nothing for a holder whose session the page names none of", async () => {
+  it("draws and imports nothing for a holder with no way into its session", async () => {
     const { SessionPart } = await import("./task-page");
-    react.at = 0;
-    react.effects.length = 0;
-    expect(renderToStaticMarkup(<SessionPart {...SESSION} go={null} />)).toBe("");
-    expect(react.effects).toEqual([]);
+    // The page names none of its session; it names one with no pane and no address; or one whose
+    // address is no web address and no pane.
+    for (const go of [
+      null,
+      { handle: "amber", url: null, pane: null },
+      { handle: "amber", url: "javascript:alert(1)", pane: null },
+    ]) {
+      react.at = 0;
+      react.effects.length = 0;
+      expect([go, renderToStaticMarkup(<SessionPart {...SESSION} go={go} />)]).toEqual([go, ""]);
+      expect(react.effects).toEqual([]);
+    }
   });
 });

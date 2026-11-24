@@ -387,14 +387,16 @@ describe("a task's page", () => {
         />,
       );
     const bar = '<span class="bone" style="--w:24ch"></span>';
-    // A bar for its words and, for one who may hand it on, the select's box: no real class of it.
+    const box =
+      '<span class="ghost-field" style="width:6.95rem;height:calc(1lh + 16px);box-sizing:border-box"></span>';
+    // A bar for its words in a line of their text and, for one who may hand it on, the select's
+    // box, as tall as the select: none of its words, nor its select.
     const held = head(["bo"]);
-    expect(held).toContain(
-      `<li><span class="row">${bar}<span class="ghost-field" style="width:7rem"></span></span></li>`,
-    );
-    expect(held).not.toContain('class="owner');
+    expect(held).toContain(`<li><span class="owner"><span>${bar}</span>${box}</span></li>`);
+    expect(held).not.toContain("owner-name");
     expect(held).not.toContain("group: design");
-    expect(head([])).toContain(`<li><span class="row">${bar}</span></li>`);
+    expect(held).not.toContain('id="task-hand"');
+    expect(head([])).toContain(`<li><span class="owner"><span>${bar}</span></span></li>`);
     await fresh.loadOwnerLine();
     const come = head(["bo"]);
     expect(come).toContain('<span class="owner-name">group: design</span>');
@@ -842,23 +844,47 @@ describe("a task's role chips", () => {
     expect(phone).not.toContain('data-go="focus"');
   });
 
-  it("hold the place of a holder's control until its chunk has come, and none for one with none", async () => {
+  it("hold the place of a holder's control as the control it will be until its chunk has come", async () => {
     vi.resetModules();
     const fresh = await import("./task-page");
-    const held = renderToStaticMarkup(
-      <fresh.RoleChips roles={roles} sessions={sessions} local scope="" />,
+    // Beside the three: a session with a pane and an address, a button here and a link elsewhere;
+    // one with neither; and one whose address is no web address, which is never linked.
+    const more = {
+      ...sessions,
+      both: go("both", "https://claude.ai/code/s2", "t9"),
+      lost: go("lost", null, null),
+      odd: go("odd", "javascript:alert(1)", null),
+    };
+    const all = [
+      ...roles,
+      aRole("reviewer", "both"),
+      aRole("executor", "lost"),
+      aRole("executor", "odd"),
+    ];
+    const chips = (local: boolean) =>
+      renderToStaticMarkup(<fresh.RoleChips roles={all} sessions={more} local={local} scope="" />);
+    const box = '<span class="ghost-field" style="width:5.7rem;box-sizing:border-box"></span>';
+    const bar = '<span class="bone" style="--w:11ch"></span>';
+    const held = chips(true);
+    // A button's box, or a bar in the chip's line for a link, then whose session a subagent's goes
+    // to, as the control says it: none of the control itself.
+    expect(chip(held, "executor amber")).toBe(`>executor amber${box}`);
+    expect(chip(held, "reviewer sub")).toBe(
+      `>reviewer sub${bar}<span class="go-session-via">in orch&#x27;s session</span>`,
     );
-    // A control's box, no real class of it, for each holder whose session the page names.
-    const box = '<span class="ghost-field" style="width:5.75rem;box-sizing:border-box"></span>';
-    expect(chip(held, "executor amber")).toContain(box);
-    expect(chip(held, "reviewer sub")).toContain(box);
-    expect(chip(held, "orchestrator bare")).not.toContain("ghost-field");
-    expect(held).not.toContain("go-session");
+    expect(chip(held, "reviewer both")).toBe(`>reviewer both${box}`);
+    expect(chip(chips(false), "reviewer both")).toBe(`>reviewer both${bar}`);
+    expect(chip(held, "orchestrator bare")).toBe(">orchestrator bare");
+    expect(chip(held, "executor lost")).toBe(">executor lost");
+    // The last chip, to the end of the chips.
+    expect(chip(held, "executor odd")).toBe(">executor odd</span></span>");
+    expect(held).not.toContain('class="go-session"');
     await fresh.loadGoToSession();
-    const come = renderToStaticMarkup(
-      <fresh.RoleChips roles={roles} sessions={sessions} local scope="" />,
-    );
+    const come = chips(true);
     expect(chip(come, "executor amber")).toContain('data-go="focus"');
+    expect(chip(come, "reviewer sub")).toContain('data-go="link"');
+    expect(chip(come, "reviewer sub")).toContain("in orch&#x27;s session");
     expect(come).not.toContain("ghost-field");
+    expect(come).not.toContain('class="bone"');
   });
 });

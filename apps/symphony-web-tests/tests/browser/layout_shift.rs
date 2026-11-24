@@ -875,3 +875,147 @@ fn the_chat_holds_still_while_its_conversation_loads() {
 fn the_activity_panel_holds_still_once_it_is_open() {
     holds_still("activity", "/", HOME, Some(ACTIVITY), plain());
 }
+
+/// A task whose owner, `hand_to` those it may be handed to, and whose holders' Go to session
+/// controls are each a chunk of their own (task-page.tsx's `OwnerPart` and `SessionPart`). The page
+/// is asked from the server's machine, so a session with a pane is a button there: one holder's is
+/// a button (`pane`), one's a link (an address and no pane), one's none (neither), and two
+/// subagents' go to a parent's session, a button and a link, and say so.
+fn held_parts_site(hand_to: &Value) -> Site {
+    let site = super::site();
+    let content = look_parity::responses();
+    let mut page = content["/api/task-page"].clone();
+    let role = |role: &str, handle: &str| json!({"handle":handle,"role":role,"since":1.0,"expires":null,"health":"live"});
+    page["task"]["roles"] = json!([
+        role("executor", "amber"),
+        role("reviewer", "birch"),
+        role("orchestrator", "cedar"),
+        role("executor", "dune-sub"),
+        role("reviewer", "elm-sub")
+    ]);
+    page["owner"] = json!({"name":"design","kind":"group","by":"map","said":"from the folder docs","hand_to":hand_to});
+    page["sessions"] = json!({
+        "amber": {"handle":"amber","url":null,"pane":"t1"},
+        "birch": {"handle":"birch","url":"https://example.com/s/birch","pane":null},
+        "cedar": {"handle":"cedar","url":null,"pane":null},
+        "dune-sub": {"handle":"dune","url":null,"pane":"t4"},
+        "elm-sub": {"handle":"elm","url":"https://example.com/s/elm","pane":null}
+    });
+    page["local"] = json!(true);
+    site.set_json("/api/task-page", &page);
+    site.set_json("/api/task-history", &content["/api/task-history"]);
+    site
+}
+
+/// The path the newest build serves the chunk `name` at (`/assets/NAME-HASH.js`), as its
+/// `builds.json` lists its files, newest build first.
+fn chunk_path(name: &str) -> String {
+    let listed = super::dist().join("builds.json");
+    let text = std::fs::read_to_string(&listed)
+        .unwrap_or_else(|err| panic!("{}: {err}", listed.display()));
+    let builds: Value = serde_json::from_str(&text).expect("builds.json is JSON");
+    let prefix = format!("{name}-");
+    let found: Vec<&str> = builds["builds"][0]["files"]
+        .as_array()
+        .map(|files| files.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let named: Vec<&str> = found
+        .into_iter()
+        .filter(|file| {
+            file.strip_prefix(&prefix)
+                .and_then(|hash| hash.strip_suffix(".js"))
+                .is_some_and(|hash| hash.len() == 16 && hash.chars().all(|c| c.is_ascii_hexdigit()))
+        })
+        .collect();
+    let [file] = named[..] else {
+        panic!(
+            "the newest build has {} chunks named {name}: {named:?}",
+            named.len()
+        )
+    };
+    format!("/assets/{file}")
+}
+
+/// The head drawn with each part's place held: the owner's bar, two button boxes and two link bars.
+const PARTS_HELD: &str =
+    "document.querySelectorAll('.task-head .facts .owner > span > .bone').length === 1
+    && document.querySelectorAll('.task-head .chip > .ghost-field').length === 2
+    && document.querySelectorAll('.task-head .chip > .bone').length === 2
+    && document.querySelectorAll('.task-head .chip > .go-session-via').length === 2";
+/// The head drawn with each part come: the owner's line and four holders' controls.
+const PARTS_DRAWN: &str = "document.querySelector('.task-head .facts .owner-name') !== null
+    && document.querySelectorAll('.task-head .chip .go-session').length === 4
+    && document.querySelectorAll('.task-head .chip .go-session-via').length === 2";
+/// Where the head and what it holds stand, top and height, once its fonts are in and two frames
+/// have laid it out: the head, its facts, each fact and each chip, and what comes after it.
+const PARTS_GEOMETRY: &str = "document.fonts.ready.then(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => {
+    const at = element => { const box = element.getBoundingClientRect(); return [box.top + scrollY, box.height]; };
+    const head = document.querySelector('.task-head');
+    done({
+        head: at(head),
+        facts: [...head.querySelectorAll('.facts > li')].map(at),
+        chips: [...head.querySelectorAll('.chip')].map(at),
+        after: head.nextElementSibling ? at(head.nextElementSibling) : null,
+    });
+}))))";
+
+/// A task's owner line and its holders' Go to session controls hold their place until their
+/// chunks come: the place each holds is the one it takes, so nothing in the head or under it moves
+/// when they come (the owner's goal, app/skeleton-loading). Each form, at a phone's width and a
+/// wide one: an owner who may hand it on (the select's box) and one who may not (a line of text);
+/// a holder's control as a button (its box), as a link (a bar in the chip's line) and none, and a
+/// subagent's either way with whose session it is. A shift score cannot see a ghost's box against
+/// the element that takes its place, so the places are measured.
+#[test]
+fn a_tasks_owner_and_session_controls_hold_their_place_until_their_chunks_come() {
+    let Some(mut browser) = chrome() else { return };
+    let chunks = ["owner-part", "session-part"].map(chunk_path);
+    let mut moved = Vec::new();
+    for (owner, hand_to) in [
+        (
+            "an owner it may be handed on from",
+            json!(["engineering", "ana"]),
+        ),
+        ("an owner it may not", json!([])),
+    ] {
+        let site = held_parts_site(&hand_to);
+        for width in [PHONE, WIDE] {
+            browser.fresh_context();
+            browser.viewport(width.width, width.height, width.mobile);
+            for chunk in &chunks {
+                site.hold_route(chunk, true);
+            }
+            browser.open(&site.url(TASK));
+            let held = browser.wait_for(&format!("{READY} && ({PARTS_HELD})"), SHOWN);
+            let before = held.then(|| browser.eval(PARTS_GEOMETRY));
+            for chunk in &chunks {
+                site.hold_route(chunk, false);
+            }
+            assert!(
+                held,
+                "{owner}, {}: the head never held its parts' places: {:?}",
+                width.name,
+                browser.eval("document.querySelector('.task-head')?.outerHTML.slice(0, 3000)")
+            );
+            assert!(
+                browser.wait_for(PARTS_DRAWN, SHOWN),
+                "{owner}, {}: the parts never came: {:?}",
+                width.name,
+                browser.eval("document.querySelector('.task-head')?.outerHTML.slice(0, 3000)")
+            );
+            let after = browser.eval(PARTS_GEOMETRY);
+            let before = before.unwrap_or_default();
+            eprintln!("{owner}, {}: held {before}, drawn {after}", width.name);
+            if before != after {
+                moved.push(format!(
+                    "{owner}, {}: held {before}, drawn {after}",
+                    width.name
+                ));
+            }
+        }
+    }
+    assert!(
+        moved.is_empty(),
+        "the head moved as its parts came: {moved:#?}"
+    );
+}

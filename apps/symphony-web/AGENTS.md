@@ -31,9 +31,9 @@ A page kind is an entry under `kinds/` that exports `run` and `stop`, named in `
   custom workflow's task `nextactions.tsx`, `guards.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
   [the timeline](../../docs/workflow/TASKS.md#the-timeline),
   [WORKFLOW](../../docs/workflow/WORKFLOW.md#the-app)).
-- `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx` (what a press does,
-  `session-press.ts`)
-  ([TASKS](../../docs/workflow/TASKS.md#the-agents-api)).
+- `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx` (which control a session is
+  given `session-control.ts`, which a task's role chips read too; what a press does
+  `session-press.ts`) ([TASKS](../../docs/workflow/TASKS.md#the-agents-api)).
 - `reports`, `/reports`: `reports.tsx`, its Landed tasks tab `reports-landed.tsx`, `chart.tsx`
   ([REPORTS](../../docs/product/REPORTS.md)).
 - `runs`, `/runs`: `runs.tsx` ([RUNS](../../docs/workflow/RUNS.md#the-runs-page)).
