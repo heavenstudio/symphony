@@ -108,6 +108,9 @@ none of the repositories around this one: its board runs on the machine's Postgr
 - [Notices by email](operations/NOTICE_EMAIL.md) — the email notice plugin, apart from the core:
   building it, its settings and password in the machine folder, the mail it sends by SMTP and
   what each exit says.
+- [WhatsApp notices](operations/NOTICE_WHATSAPP.md) — `symphony-notice-whatsapp`, the notice
+  plugin that sends a person's notice by WhatsApp: what Meta must give and approve first, the
+  person's agreement and the cost, its folder, settings and token, and what its exit says.
 - [Operating the board](operations/BOARD_OPERATIONS.md) — the board's store and the schema
   contract between its builds, which build moves a live board, who writes it, its server,
   snapshots and holds, what the command may write, stuck servers, a board that went back or was

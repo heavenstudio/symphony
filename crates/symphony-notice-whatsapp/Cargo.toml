@@ -1,0 +1,34 @@
+# `symphony-notice-whatsapp`: the notice plugin that sends a person's notice by WhatsApp, a
+# template message through Meta's WhatsApp Cloud API (docs/operations/NOTICE_WHATSAPP.md). A
+# program of its own, the server's and apart from the core: it links `symphony-notice` alone of the
+# workspace's members and no member links it, which tests/plugin/boundary.rs holds. It reaches Meta
+# through `curl` and keeps its settings and its token in the machine folder's `notices/`, never in
+# a project's `symphony.toml`. Never published: whoever runs the server builds it.
+[package]
+name = "symphony-notice-whatsapp"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+symphony-notice = { path = "../symphony-notice" }
+# Its settings file.
+toml.workspace = true
+
+[dev-dependencies]
+# The machine folder's rule, which the plugin repeats rather than links: its tests hold the two the
+# same.
+symphony-board = { path = "../tasks" }
+
+[lints]
+workspace = true
+
+[[test]]
+name = "plugin"
+path = "tests/plugin/main.rs"

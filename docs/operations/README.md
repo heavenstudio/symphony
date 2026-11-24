@@ -27,6 +27,9 @@ Setting the Symphony up and running it: a first project, the commands, the proje
 - [Notices by email](NOTICE_EMAIL.md) — the email notice plugin, apart from the core: building
   it, its settings and password in the machine folder, the mail it sends by SMTP and what each
   exit says.
+- [WhatsApp notices](NOTICE_WHATSAPP.md) — `symphony-notice-whatsapp`, the notice plugin that
+  sends a person's notice by WhatsApp: what Meta must give and approve first, the person's
+  agreement and the cost, its folder, settings and token, and what its exit says.
 - [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
   public repository into a private copy with its ancestry kept, the export of selected reusable
   changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.
