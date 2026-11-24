@@ -107,7 +107,7 @@ machine folder: `~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_H
 elsewhere, `SYMPHONY_MACHINE_DIR` when set (every test sets a temporary one). The registry
 beside them (`projects.json`) holds each project's root, id and `symphony.toml`; the people's
 profiles (`people.json`, with its lock `people.lock`, both mode 600: they hold sign-ins and
-contact details) are there, which `just tasks people` writes; and the
+contact details) are there, which `just tasks-people` writes; and the
 releases installed on the machine are there too (`releases/NAME/`, with the `current` link); `symphony
 project add [DIR]` writes it, and every start runs it. The build and client stay in the
 starter's install folder (`--install`, `symphony/server/` in its git common dir), where a record

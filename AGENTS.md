@@ -192,8 +192,9 @@ copy alone.
   installed skill (`.agents/skills/ROLE/project.md`), which init never writes.
 - **Prompts.** The allow rules pass the board and reply recipes (`just tasks`, `just agent-send`,
   `just symphony-status`, `just symphony-reply`, `just symphony-ask`) and `just land` with no
-  prompt; `just symphony` and `just symphony-cli` ask first, and so does any command with an env
-  prefix. A place an unasked recipe writes must lead into its checkout, or from a linked worktree
+  prompt; `just symphony`, `just symphony-cli` and `just tasks-people` (a change to a board's
+  people, which `just tasks` refuses) ask first, and so does any command with an env prefix. A
+  place an unasked recipe writes must lead into its checkout, or from a linked worktree
   into the main checkout's artifacts folder (`crates/tasks/src/confine.rs`).
 - **Recipes in text.** Every `just NAME` a skill, a doc, a guide or a binary's string names is an
   installed recipe, this repository's own where `tools/named-recipes.txt` lists it, or the

@@ -12,14 +12,28 @@ use serde_json::{Value, json};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+/// The recipe a change runs by, which asks first: `symphony.just`'s, which `symphony init`
+/// installs.
+pub const RECIPE: &str = "just tasks-people";
+
+/// A change to a board's people or a profile, decided from the command line and not made yet.
+type Pending<'a> = Box<dyn FnOnce(&mut Context<'_>) -> Result<(), Stop> + 'a>;
+
+/// The two reads, `list` and `log`, run as they are. Every other action is a change, refused
+/// under [`crate::confine::MARKER`], which `just tasks` sets as an agent runs it unasked, so a
+/// change runs by `just tasks-people`, which no allow rule passes and so asks first. The dispatch
+/// decides the action, from the command line as parsed wherever it put the action (after `--as`,
+/// an option or a `--`), and only then the guard refuses it: an action added later is refused
+/// until it is written as a read, and an unknown one keeps its usage error.
 pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let action = c.arg("action");
     let words: Vec<String> = c.parsed.all("words").to_vec();
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
-    match (c.arg("action").as_str(), words.as_slice()) {
-        ("list", []) => list(store, c),
-        ("log", []) => log(store, c),
-        ("add", [name]) => add(store, c, name),
-        ("remove", [name]) => {
+    let change: Pending<'_> = match (action.as_str(), words.as_slice()) {
+        ("list", []) => return list(store, c),
+        ("log", []) => return log(store, c),
+        ("add", [name]) => Box::new(move |c| add(store, c, name)),
+        ("remove", [name]) => Box::new(move |c| {
             let line = store.remove_person(name, &c.actor()?)?;
             c.say(&format!(
                 "{name} is on this board no more (change {}): their lines stay theirs, and their \
@@ -27,23 +41,23 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 line.n
             ));
             Ok(())
-        }
-        ("join", [name, group]) => {
+        }),
+        ("join", [name, group]) => Box::new(move |c| {
             let said = match store.join_group(name, group, &c.actor()?)? {
                 Some(line) => format!("{name} is in {group} (change {})", line.n),
                 None => format!("{name} is in {group} already: nothing written"),
             };
             c.say(&said);
             Ok(())
-        }
-        ("leave", [name, group]) => {
+        }),
+        ("leave", [name, group]) => Box::new(move |c| {
             let line = store.leave_group(name, group, &c.actor()?)?;
             c.say(&format!("{name} is not in {group} now (change {})", line.n));
             Ok(())
-        }
-        ("grant", rest) => powers(store, c, true, rest),
-        ("revoke", rest) => powers(store, c, false, rest),
-        ("group", ["add", group, rest @ ..]) => {
+        }),
+        ("grant", rest) => Box::new(move |c| powers(store, c, true, rest)),
+        ("revoke", rest) => Box::new(move |c| powers(store, c, false, rest)),
+        ("group", ["add", group, rest @ ..]) => Box::new(move |c| {
             let given = parsed_powers(rest)?;
             let line = store.add_group(group, &given, &c.actor()?)?;
             c.say(&format!(
@@ -52,28 +66,41 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 said_powers(&line.powers)
             ));
             Ok(())
-        }
-        ("group", ["remove", group]) => {
+        }),
+        ("group", ["remove", group]) => Box::new(move |c| {
             let line = store.remove_group(group, &c.actor()?)?;
             c.say(&format!(
                 "the group {group} is removed (change {}), and its members are out of it",
                 line.n
             ));
             Ok(())
+        }),
+        ("profile", [name]) => Box::new(move |c| profile(c, name)),
+        (other, _) => {
+            return Err(Stop::Refused(format!(
+                "people takes list, log, add NAME, remove NAME, join NAME GROUP, leave NAME \
+                 GROUP, grant NAME POWER…, revoke NAME POWER…, grant --group GROUP POWER…, \
+                 revoke --group GROUP POWER…, group add GROUP [POWER…], group remove GROUP or \
+                 profile NAME, not {other:?} with those arguments"
+            )));
         }
-        ("profile", [name]) => profile(c, name),
-        (other, _) => Err(Stop::Refused(format!(
-            "people takes list, log, add NAME, remove NAME, join NAME GROUP, leave NAME GROUP, \
-             grant NAME POWER…, revoke NAME POWER…, grant --group GROUP POWER…, revoke --group \
-             GROUP POWER…, group add GROUP [POWER…], group remove GROUP or profile NAME, not \
-             {other:?} with those arguments"
-        ))),
+    };
+    if c.env.var(crate::confine::MARKER).is_some() {
+        return Err(Stop::Refused(format!(
+            "just tasks refuses people {action}: a change to a board's people or to a profile asks \
+             first, and an agent runs just tasks unasked. Run it as `{RECIPE} {action} …`, which \
+             asks: nothing was written"
+        )));
     }
+    change(c)
 }
 
 /// `add NAME`: the person put on the board with the powers and groups given, and their profile
-/// made or given the sign-ins and git handles named. A sign-in another profile holds is refused
-/// before anything is written, and a profile that cannot be written takes the board's change back.
+/// made or given the sign-ins and git handles named, all under the profiles' lock
+/// ([`Profiles::change`]): two adds at once are decided one after the other, so a sign-in is never
+/// given two profiles. A sign-in another profile holds is refused before anything is written, on
+/// the board or in the machine folder, and a profile that cannot be written once the board took the
+/// person takes the board's change back.
 fn add(store: &Store, c: &mut Context, name: &str) -> Result<(), Stop> {
     let actor = c.actor()?;
     let given = parsed_powers(
@@ -86,24 +113,46 @@ fn add(store: &Store, c: &mut Context, name: &str) -> Result<(), Stop> {
     let groups: Vec<String> = c.parsed.all("group").to_vec();
     let signins = parsed_signins(c)?;
     let dir = machine(c)?;
-    let profiles = Profiles::read(&dir).map_err(Stop::Board)?;
-    taken_signins(&profiles, name, &signins).map_err(Stop::Refused)?;
-    let line = store.add_person(name, &groups, &given, &actor)?;
-    if let Err(why) = Profiles::change(&dir, |profiles| fill(profiles, name, c, &signins)) {
-        let undone = store.remove_person(name, &actor).map(|_| "taken back");
-        return Err(Stop::Board(format!(
-            "{name}'s profile could not be written ({why}): the board's change {} is {}",
-            line.n,
-            undone.unwrap_or("still on the board, which `people remove` takes back")
-        )));
-    }
-    let profiles = Profiles::read(&dir).map_err(Stop::Board)?;
-    let reach = match profiles.get(name).map(|profile| profile.signins.len()) {
-        Some(0) | None => {
-            "no sign-in is theirs yet, so they reach no board until `people profile` gives one"
-                .to_string()
+    // The number of the board's change, once it is made: what a profile not written takes back.
+    let mut added = None;
+    let held = Profiles::change(&dir, |profiles| {
+        if let Err(why) = taken_signins(profiles, name, &signins) {
+            return Ok(Err(Stop::Refused(why)));
         }
-        Some(_) => "they reach it by their sign-ins".to_string(),
+        let line = match store.add_person(name, &groups, &given, &actor) {
+            Ok(line) => line,
+            Err(error) => return Ok(Err(Stop::from(error))),
+        };
+        added = Some(line.n);
+        fill(profiles, name, c, &signins)?;
+        let signed = profiles
+            .get(name)
+            .map_or(0, |profile| profile.signins.len());
+        Ok(Ok((line, signed)))
+    });
+    let (line, signed) = match (held, added) {
+        (Ok(decided), _) => decided?,
+        (Err(why), None) => {
+            return Err(Stop::Board(format!(
+                "the machine's profiles could not be locked or read ({why}): nothing was written"
+            )));
+        }
+        (Err(why), Some(n)) => {
+            let undone = store.remove_person(name, &actor).map(|_| "taken back");
+            return Err(Stop::Board(format!(
+                "{name}'s profile could not be written ({why}): the board's change {n} is {}",
+                undone.map_or_else(
+                    |_| format!("still on the board, which `{RECIPE} remove {name}` takes back"),
+                    str::to_string
+                )
+            )));
+        }
+    };
+    let reach = match signed {
+        0 => format!(
+            "no sign-in is theirs yet, so they reach no board until `{RECIPE} profile` gives one"
+        ),
+        _ => "they reach it by their sign-ins".to_string(),
     };
     c.say(&format!(
         "{name} is on this board (change {}), holding {}: {reach}",
@@ -114,12 +163,10 @@ fn add(store: &Store, c: &mut Context, name: &str) -> Result<(), Stop> {
 }
 
 /// `profile NAME`: the machine's profile of `name` made or given what the options name, on no
-/// board.
+/// board. A name no board could add ([`crate::people::refused_person_name`]) is refused.
 fn profile(c: &mut Context, name: &str) -> Result<(), Stop> {
-    if !symphony_docs::syntax::is_short_name(name) {
-        return Err(Stop::Refused(format!(
-            "{name:?} is no short name: nothing was written"
-        )));
+    if let Some(why) = crate::people::refused_person_name(name) {
+        return Err(Stop::Refused(format!("{why}: nothing was written")));
     }
     let signins = parsed_signins(c)?;
     let dir = machine(c)?;

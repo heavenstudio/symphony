@@ -136,7 +136,9 @@ fn a_name_takes_a_short_names_form_and_one_name_space_with_no_session_in_it() {
         groups: vec![group("staff", &[])],
         revision: 2,
     };
-    let handles = vec!["amber-heron".to_string()];
+    // A handle no register gives now, as an older word list gave one: a session holds it all the
+    // same.
+    let handles = vec!["pale-moth".to_string()];
     assert_eq!(refused_name("bob", &people, &handles), None);
     assert_eq!(refused_name("ana-l", &people, &handles), None);
     for bad in [
@@ -155,11 +157,45 @@ fn a_name_takes_a_short_names_form_and_one_name_space_with_no_session_in_it() {
         refused_name("staff", &people, &handles).as_deref(),
         Some("staff is a group of this board")
     );
-    let handle = refused_name("amber-heron", &people, &handles).unwrap();
+    let handle = refused_name("pale-moth", &people, &handles).unwrap();
     assert!(
-        handle.starts_with("amber-heron is a session's handle"),
+        handle.starts_with("pale-moth is a session's handle"),
         "{handle}"
     );
+    let pair = refused_name("amber-heron", &people, &[]).unwrap();
+    assert!(
+        pair.starts_with("amber-heron is a name a session's handle can take"),
+        "{pair}"
+    );
+}
+
+/// A register and an add of one name at the same instant never both take it: a name a register can
+/// give is refused to every person and group, whatever the board holds, and a profile with them.
+/// Each word alone, either order, or a word of either list beside another is a person's name.
+#[test]
+fn a_name_a_register_can_give_is_no_persons_and_its_words_apart_are() {
+    for name in ["amber-heron", "swift-swift", "vivid-merlin", "slate-raven"] {
+        let why = refused_person_name(name).unwrap();
+        assert!(
+            why.starts_with(&format!("{name} is a name a session's handle can take")),
+            "{why}"
+        );
+    }
+    for name in [
+        "amber",
+        "heron",
+        "heron-amber",
+        "amber-moth",
+        "ana-heron",
+        "amberheron",
+        "amber-heron-l",
+        "amber-heronx",
+    ] {
+        assert_eq!(refused_person_name(name), None, "{name}");
+    }
+    // A numbered handle, the board's past its fiftieth try, is no short name at all.
+    let numbered = refused_person_name("amber-heron-12").unwrap();
+    assert!(numbered.contains("is no short name"), "{numbered}");
 }
 
 #[test]

@@ -1396,12 +1396,12 @@ Each step can ship alone, and a machine with one person sees none of them.
    login is its person. A peer under another login is that login's person, and until a board
    adds them the server shows them nothing.
 3. **People, groups and powers on a board.** The rows, the People page, names on lines.
-   Built: names on lines; a board's people, groups and powers as rows, the command that changes
-   them and the log it keeps; the profiles in the machine folder; a visitor under another login
-   on the boards that give them a power; each write checked against the powers it needs; and the
-   `owner` stamp opened by decide ([TASKS](../../workflow/TASKS.md#people)); and the People
-   page, read by everyone on the board, its changes guarded by administer
-   ([TASKS](../../workflow/TASKS.md#the-people-page)).
+   Built: names on lines; a board's people, groups and powers as rows, the command that changes them
+   (`just tasks-people`, which an agent is asked before) and the log it keeps; the profiles in the
+   machine folder; a visitor under another login on the boards that give them a power; each write
+   checked against the powers it needs; the `owner` stamp opened by decide
+   ([TASKS](../../workflow/TASKS.md#people)); and the People page, read by everyone on the board,
+   its changes guarded by administer ([TASKS](../../workflow/TASKS.md#the-people-page)).
 4. **Ownership.** A card and a task have their group, from the board's map of places or a name
    written on them; queues and notices follow it, and any member's answer settles what the
    group owns. Its members move, prioritize and cancel its tasks. The Settings page is one of

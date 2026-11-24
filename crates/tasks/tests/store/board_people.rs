@@ -5,7 +5,7 @@
 //! change; a session's handle is never a person's name, nor theirs a handle.
 
 use crate::common::{Fixture, HOST, NOW, Seed, database, refused};
-use symphony_board::people::{Did, Holder, Power};
+use symphony_board::people::{Did, Holder, People, Power};
 use symphony_board::schema::{ADDED, PEOPLE};
 use symphony_board::workflow::{Host, local_owner, person};
 use symphony_board::{NewSession, NewTask, Opening, Pick, Schema, Store};
@@ -218,7 +218,7 @@ fn a_refused_change_says_why_and_writes_nothing() {
     assert!(refusals[1].starts_with("ana is a person on this board already"));
     assert!(refusals[2].starts_with("staff is a group of this board"));
     assert!(
-        refusals[3].starts_with("amber-heron is a session's handle"),
+        refusals[3].starts_with("amber-heron is a name a session's handle can take"),
         "{}",
         refusals[3]
     );
@@ -289,31 +289,43 @@ impl Pick for First {
     }
 }
 
+/// A name a register can give is no person's or group's, so a register and an add of it at the same
+/// instant never both take it; and a person's or a group's row under one (written before the rule,
+/// or a pair a later word list makes) still keeps a register off it.
 #[test]
-fn no_session_is_given_a_persons_or_a_groups_name_as_its_handle() {
+fn no_person_is_named_as_a_handle_and_no_session_is_given_a_persons_or_a_groups_name() {
     let first = Fixture::empty();
     let plain = (first.other().picking(Box::new(First)))
         .register(&NewSession::new("worker"))
         .unwrap()
         .row
         .handle;
-    for kind in ["person", "group"] {
+    let f = Fixture::empty();
+    for why in [
+        refused(f.store.add_person(&plain, &[], &[Power::Read], BY)),
+        refused(f.store.add_group(&plain, &[], BY)),
+    ] {
+        assert!(
+            why.starts_with(&format!("{plain} is a name a session's handle can take")),
+            "{why}"
+        );
+    }
+    assert_eq!(f.store.people().unwrap(), People::default());
+    for table in ["people", "people_group"] {
         let f = Fixture::empty();
-        match kind {
-            "person" => f
-                .store
-                .add_person(&plain, &[], &[Power::Read], BY)
-                .map(|_| ()),
-            _ => f.store.add_group(&plain, &[], BY).map(|_| ()),
-        }
-        .unwrap();
+        (f.store.raw().row(table, serde_json::json!(plain)))
+            .create(serde_json::json!({"name": plain}))
+            .unwrap();
         let handle = (f.other().picking(Box::new(First)))
             .register(&NewSession::new("worker"))
             .unwrap()
             .row
             .handle;
-        assert_ne!(handle, plain, "{kind}");
-        assert!(handle.starts_with(&format!("{plain}-")), "{kind}: {handle}");
+        assert_ne!(handle, plain, "{table}");
+        assert!(
+            handle.starts_with(&format!("{plain}-")),
+            "{table}: {handle}"
+        );
     }
 }
 
