@@ -1,5 +1,5 @@
 //! What a restore reads beside the dump (`Store::carried`): the rows the board's commands keep for
-//! sessions and programs, and who is on the board, and no copy derives, each with its key, in the
+//! sessions and programs, who is on the board and the words held for people, and no copy derives, each with its key, in the
 //! order of its key.
 
 use crate::common::{Fixture, Seed};
@@ -65,6 +65,13 @@ fn seeded(f: &Fixture) {
         .create(json!({
             "n": 1, "at": 1_800_000_004.5, "by": "amber-heron", "did": "map",
             "place": "area:app", "name": "staff",
+        }))
+        .unwrap();
+    // A message held for people: the board's alone until someone passes it on.
+    raw.row("held_message", json!(41))
+        .create(json!({
+            "id": 41, "slug": "tools/one", "author": "ana", "text": "a picture, please",
+            "at": 1_800_000_005.0,
         }))
         .unwrap();
     // A dispatcher's lease, carried as a row like any other: a move ends it first.

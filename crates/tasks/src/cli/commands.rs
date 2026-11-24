@@ -327,6 +327,18 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let m = store.say(&c.arg("slug"), &c.actor()?, &text, to.as_deref())?;
             c.say(&format!("sent #{} on {}", m.id, m.slug));
         }
+        "pass" => {
+            let slug = c.arg("slug");
+            let id = c.arg("id");
+            let id: i64 = (id.trim_start_matches('#').parse()).map_err(|_| {
+                Stop::Refused(format!(
+                    "{id:?} is no message's number: nothing was written"
+                ))
+            })?;
+            let held = store.pass(&slug, id, &c.actor()?)?;
+            let line = held.passed.map_or(0, |passed| passed.line);
+            c.say(&format!("passed on #{id} on {slug} as #{line}"));
+        }
         "launch" => panes::launch(store, c)?,
         "staff" => panes::staff(store, c)?,
         "restore" => panes::restore(store, c)?,
@@ -945,6 +957,8 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let spent = store.spent_on(&slugs)?;
     let prices = crate::usage::Prices::embedded();
     let tally = crate::usage::Tally::at(&spent, prices);
+    // How many messages are held for people, never what they say (crate::held).
+    let held_messages = store.held_count(&slug)?;
     // Whose it is: the person at the machine's on a board with nobody named, which neither the
     // text nor the JSON says, so such a board's show is as it was.
     let people = store.people()?;
@@ -962,6 +976,7 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
         let mut json = json!({
             "task": shape::task(&task),
             "thread": shape::messages(&thread),
+            "held": held_messages,
             "children": shape::tasks(&children),
             "stages": shape::stages(&stages),
             "tokens": tally.json(&spent, prices),
@@ -1025,6 +1040,14 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
         c.say(&format!("  group: {} ({})", owning.name, owning.said()));
     }
     c.say(&format!("  {}", stages::summary_line(&stages)));
+    if held_messages > 0 {
+        let messages = if held_messages == 1 {
+            "message"
+        } else {
+            "messages"
+        };
+        c.say(&format!("  held for people: {held_messages} {messages}"));
+    }
     for line in tally.lines() {
         c.say(&format!("  {line}"));
     }

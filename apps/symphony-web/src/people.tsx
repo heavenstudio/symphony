@@ -8,9 +8,7 @@
 // Its controls are the read's to give. Where it says the reader administers (the person at the
 // machine, or a person holding administer), each person's powers are toggles that grant or revoke
 // their own, their groups are joined and left, they are taken off the board, a group is made, given
-// powers and removed, and a person is added (PEOPLE_CHANGE_PATH). A power the board gives no one
-// yet (the read's `withheld`) is drawn as not yet givable, its reason the board's. A removal asks
-// first, as the task page's Cancel does. A profile's form is shown on the reader's own card, and on
+// powers and removed, and a person is added (PEOPLE_CHANGE_PATH). A removal asks first, as the task page's Cancel does. A profile's form is shown on the reader's own card, and on
 // every card for the person at the machine, the one who gives a sign-in (PROFILE_PATH): the add's
 // sign-in field is theirs alone too. Each write answers the page as it left it, which the page
 // draws: no read follows it, and what the write did is said on the part that sent it, in the log's
@@ -45,7 +43,6 @@ import {
   type PersonRow,
   PROFILE_PATH,
   type ProfileWrite,
-  type WithheldPower,
 } from "./wire";
 import { savedAt } from "./words";
 
@@ -85,9 +82,6 @@ const isPerson = (value: unknown): value is PersonRow => {
 const isGroup = (value: unknown): value is GroupRow =>
   isText(field(value, "name")) && isTexts(field(value, "powers"));
 
-const isWithheld = (value: unknown): value is WithheldPower =>
-  isText(field(value, "power")) && isText(field(value, "why"));
-
 const isLine = (value: unknown): value is PeopleLogLine => {
   const powers = field(value, "powers");
   return (
@@ -109,7 +103,6 @@ export function readPeople(value: unknown): Page | null {
   const people = field(value, "people");
   const groups = field(value, "groups");
   const log = field(value, "log");
-  const withheld = field(value, "withheld");
   const you = field(value, "you");
   const problem = field(value, "problem");
   if (
@@ -119,8 +112,6 @@ export function readPeople(value: unknown): Page | null {
     !groups.every(isGroup) ||
     !Array.isArray(log) ||
     !log.every(isLine) ||
-    !Array.isArray(withheld) ||
-    !withheld.every(isWithheld) ||
     !isNumber(field(value, "revision")) ||
     typeof field(value, "administers") !== "boolean" ||
     typeof field(value, "machine") !== "boolean" ||
@@ -136,7 +127,6 @@ export function readPeople(value: unknown): Page | null {
     revision: field(value, "revision") as number,
     administers: field(value, "administers") === true,
     machine: field(value, "machine") === true,
-    withheld,
     you: isText(you) ? you : null,
     problem: isText(problem) ? problem : null,
   };
@@ -428,22 +418,10 @@ export function powerState(
   return { state, given, implied };
 }
 
-/** Why the board gives `word` to no one yet, from the read's `withheld`; none where it may. */
-export function withheldWhy(word: string, withheld: readonly WithheldPower[]): string | undefined {
-  return withheld.find((power) => power.power === word)?.why;
-}
-
-/** A withheld power said once in words, as a sentence: `Direct agents is given to no one yet: …`. */
-export function withheldSaid({ power, why }: WithheldPower): string {
-  const name = powerName(power);
-  return `${name.charAt(0).toUpperCase()}${name.slice(1)} is given to no one yet: ${why}.`;
-}
-
 /**
  * The powers a person or a group holds, each a tag: one given them, one held by a group (`held`),
  * none. Where `toggle` is given, each is a button that grants a power not given them and revokes
- * one that is; a power the board gives no one yet (`withheld`) and not given them is drawn as not
- * yet givable, its reason as its title, and a press on it does nothing.
+ * one that is.
  */
 export function PowerTags({
   held,
@@ -451,14 +429,12 @@ export function PowerTags({
   label,
   busy,
   toggle,
-  withheld = [],
 }: {
   held: readonly string[];
   own: readonly string[];
   label: string;
   busy: boolean;
   toggle?: ((word: string, given: boolean) => void) | undefined;
-  withheld?: readonly WithheldPower[];
 }) {
   if (toggle === undefined) {
     return (
@@ -478,7 +454,6 @@ export function PowerTags({
     <ul className="people-powers" aria-label={`${label}'s powers`}>
       {POWERS.map(([word, name]) => {
         const { state, given, implied } = powerState(word, held, own);
-        const why = given ? undefined : withheldWhy(word, withheld);
         return (
           <li key={word}>
             <Button
@@ -486,24 +461,21 @@ export function PowerTags({
               size="xs"
               className="people-power"
               data-held={state}
-              data-withheld={why !== undefined || undefined}
               aria-pressed={given || implied}
               aria-label={`${name} for ${label}`}
               title={
                 implied
                   ? `Held with every other power of ${label}'s own`
-                  : why !== undefined
-                    ? `Given to no one yet: ${why}`
-                    : given
-                      ? `Take ${name} from ${label}`
-                      : state === "group"
-                        ? `Held by a group; give ${label} ${name} of their own`
-                        : `Give ${label} ${name}`
+                  : given
+                    ? `Take ${name} from ${label}`
+                    : state === "group"
+                      ? `Held by a group; give ${label} ${name} of their own`
+                      : `Give ${label} ${name}`
               }
               disabled={busy}
-              aria-disabled={implied || why !== undefined || undefined}
+              aria-disabled={implied || undefined}
               onClick={() => {
-                if (!implied && why === undefined) toggle(word, given);
+                if (!implied) toggle(word, given);
               }}
             >
               {name}
@@ -749,7 +721,6 @@ export function Person({
             ? (word, given) => change(given ? "revoke" : "grant", { powers: [word] })
             : undefined
         }
-        withheld={page.withheld}
       />
       {(person.groups.length > 0 || (admin && joinable.length > 0)) && (
         <div className="people-groups">
@@ -844,7 +815,6 @@ function Group({
                 })
             : undefined
         }
-        withheld={page.withheld}
       />
       {admin && (
         <div className="people-actions">
@@ -864,36 +834,26 @@ function Group({
   );
 }
 
-/** Powers chosen in a form before it is sent, as toggles, each withheld one said once in words. */
+/** Powers chosen in a form before it is sent, as toggles. */
 export function Choose({
   chosen,
   label,
-  withheld,
   onChoose,
 }: {
   chosen: string[];
   label: string;
-  withheld: readonly WithheldPower[];
   onChoose: (chosen: string[]) => void;
 }) {
   return (
-    <>
-      <PowerTags
-        held={chosen}
-        own={chosen}
-        label={label}
-        busy={false}
-        withheld={withheld}
-        toggle={(word, given) =>
-          onChoose(given ? chosen.filter((power) => power !== word) : [...chosen, word])
-        }
-      />
-      {withheld.map((power) => (
-        <p key={power.power} className="people-hint">
-          {withheldSaid(power)}
-        </p>
-      ))}
-    </>
+    <PowerTags
+      held={chosen}
+      own={chosen}
+      label={label}
+      busy={false}
+      toggle={(word, given) =>
+        onChoose(given ? chosen.filter((power) => power !== word) : [...chosen, word])
+      }
+    />
   );
 }
 
@@ -970,12 +930,7 @@ function AddPerson({ page, writes }: { page: Page; writes: Writes }) {
           />
         )}
       </div>
-      <Choose
-        chosen={powers}
-        label="the new person"
-        withheld={page.withheld}
-        onChoose={setPowers}
-      />
+      <Choose chosen={powers} label="the new person" onChoose={setPowers} />
       <Button
         type="submit"
         size="sm"
@@ -990,7 +945,7 @@ function AddPerson({ page, writes }: { page: Page; writes: Writes }) {
 }
 
 /** The form that makes a group. */
-function AddGroup({ page, writes }: { page: Page; writes: Writes }) {
+function AddGroup({ writes }: { writes: Writes }) {
   const [name, setName] = useState("");
   const [powers, setPowers] = useState<string[]>([]);
   const submit = (event: FormEvent) => {
@@ -1011,7 +966,7 @@ function AddGroup({ page, writes }: { page: Page; writes: Writes }) {
           onChange={(event) => setName(event.currentTarget.value)}
         />
       </div>
-      <Choose chosen={powers} label="the new group" withheld={page.withheld} onChoose={setPowers} />
+      <Choose chosen={powers} label="the new group" onChoose={setPowers} />
       <Button type="submit" size="sm" disabled={writes.busy || name.trim() === ""}>
         Make the group
       </Button>
@@ -1094,7 +1049,7 @@ export function PeopleView({ page, error, missing, writes, now = new Date() }: P
               ))}
               {admin && (
                 <div className="people-add">
-                  <AddGroup page={page} writes={writes} />
+                  <AddGroup writes={writes} />
                 </div>
               )}
             </div>

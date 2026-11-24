@@ -1,7 +1,8 @@
 //! The People page's routes: the page as each reader is shown it, no sign-in's subject in any
 //! answer, and its writes through the real router: a change by the person at the machine and by
 //! a person holding administer, each a line of the board's log, a reader without it refused with
-//! nothing written, and a profile written by whom `symphony_board::people::change` lets.
+//! nothing written, and a profile written by whom `symphony_board::people::change` lets. And what
+//! the power to direct agents changes on a task's page: a message held, and passed on.
 
 use super::*;
 use crate::testing::{Board, LAPTOP, Tree, laptop_with, repository_holding};
@@ -9,7 +10,7 @@ use axum::body::Body;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{Request, header};
 use std::net::SocketAddr;
-use symphony_api::{PEOPLE_PATH, PROFILE_PATH};
+use symphony_api::{PEOPLE_PATH, PROFILE_PATH, TaskEntry};
 use symphony_board::people::{Did, Group, Member, Profile};
 use tower::ServiceExt;
 
@@ -131,14 +132,6 @@ fn a_page_lists_each_person_by_their_profile_and_names_no_sign_ins_subject() {
             page.revision
         ),
         ("add", ["speak".to_string()].as_slice(), 4)
-    );
-    assert_eq!(
-        page.withheld,
-        [symphony_api::WithheldPower {
-            power: "direct_agents".into(),
-            why: Power::DirectAgents.withheld().unwrap().into(),
-        }],
-        "the board's own reason, which its refusal of a grant says"
     );
     let said = serde_json::to_string(&page).unwrap();
     for private in ["ana@example.com", "ana@work.example", "ana-lima\""] {
@@ -363,6 +356,16 @@ impl Served {
         }
     }
 
+    /// [`Served::new`], whose gate signs Ana in from the laptop by her profile.
+    fn signing_in(people: &[(&str, &[Power])]) -> Served {
+        let served = Served::new(people);
+        let gate = laptop_with(crate::roster::of(served.machine.clone()))
+            .with_machine(served.machine.clone());
+        let shared = Shared::new(1, 8123, &served.root, None, gate);
+        assert!(shared.api.set(served.shared.hub().ok().unwrap()).is_ok());
+        Served { shared, ..served }
+    }
+
     /// What the router answers `client`'s `method` of `path` with `body`: status and body.
     async fn asked(
         &self,
@@ -458,11 +461,16 @@ async fn the_person_at_the_machine_adds_a_person_puts_them_in_a_group_and_gives_
     let page = served
         .changed(
             HERE,
-            serde_json::json!({"action": "grant", "name": "bo", "powers": ["administer"]}),
+            serde_json::json!({
+                "action": "grant", "name": "bo", "powers": ["administer", "direct_agents"]
+            }),
         )
         .await;
     let bo = &page.people[0];
-    assert_eq!(bo.powers, ["read", "speak", "decide", "administer"]);
+    assert_eq!(
+        bo.powers,
+        ["read", "speak", "decide", "direct_agents", "administer"]
+    );
     assert_eq!(
         (bo.groups.as_slice(), bo.signins.as_slice()),
         (
@@ -484,7 +492,7 @@ async fn the_person_at_the_machine_adds_a_person_puts_them_in_a_group_and_gives_
     assert_eq!(bo.git, ["bo-reis"]);
     // The rest of a person's and a group's changes, each a line.
     for change in [
-        serde_json::json!({"action": "revoke", "name": "bo", "powers": ["administer"]}),
+        serde_json::json!({"action": "revoke", "name": "bo", "powers": ["administer", "direct_agents"]}),
         serde_json::json!({"action": "grant", "group": "staff", "powers": ["speak"]}),
         serde_json::json!({"action": "revoke", "group": "staff", "powers": ["speak"]}),
         serde_json::json!({"action": "leave", "name": "bo", "group": "staff"}),
@@ -505,16 +513,7 @@ async fn the_person_at_the_machine_adds_a_person_puts_them_in_a_group_and_gives_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_person_holding_administer_changes_the_board_and_one_without_it_is_refused() {
-    let served = Served::new(&[("ana", &[Power::Speak, Power::Administer])]);
-    let shared = Shared::new(
-        1,
-        8123,
-        &served.root,
-        None,
-        laptop_with(crate::roster::of(served.machine.clone())).with_machine(served.machine.clone()),
-    );
-    assert!(shared.api.set(served.shared.hub().ok().unwrap()).is_ok());
-    let served = Served { shared, ..served };
+    let served = Served::signing_in(&[("ana", &[Power::Speak, Power::Administer])]);
     let page = served.page(LAPTOP).await;
     assert_eq!(
         (page.administers, page.machine, page.you.as_deref()),
@@ -625,6 +624,98 @@ async fn a_person_holding_administer_changes_the_board_and_one_without_it_is_ref
         assert!(said.contains(refused), "{said}");
     }
     assert_eq!(served.profiles().get("bo").unwrap().display, "Bo");
+}
+
+/// What `client` reads of `slug`'s task page: whether they may pass a held message on, and the
+/// thread's entries.
+async fn task_read(served: &Served, client: &str, slug: &str) -> (bool, Vec<TaskEntry>) {
+    let (status, page) =
+        (served.asked(client, "GET", &format!("/api/task-page?slug={slug}"), "")).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let page: symphony_api::TaskPage = serde_json::from_str(&page).unwrap();
+    let path = format!("/api/task-history?slug={slug}");
+    let (status, history) = served.asked(client, "GET", &path, "").await;
+    assert_eq!(status, StatusCode::OK, "{history}");
+    let history: symphony_api::TaskHistory = serde_json::from_str(&history).unwrap();
+    (page.passes, history.entries)
+}
+
+/// A task's message from a person who may speak and may not direct agents is held: its board line
+/// carries her words to a person's read, nothing of them to the thread's own text, and its pass is
+/// refused her with nothing written; given direct agents, she passes it on under both names, and
+/// writes a message of her own as the person at the machine does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_of_one_who_may_not_direct_agents_is_held_and_one_who_may_passes_it_on() {
+    let served = Served::signing_in(&[("ana", &[Power::Speak])]);
+    let store = Board::store(&served.root);
+    store
+        .create(&symphony_board::NewTask::new("tools/x", "X", "owner"))
+        .unwrap();
+    let hub = served.shared.api.get().unwrap();
+    hub.refresh_page("", &served.root).unwrap();
+    let words = "the phone picture cuts the header off";
+    let message = serde_json::json!({"slug": "tools/x", "text": words}).to_string();
+    let (status, body) = (served.asked(LAPTOP, "POST", "/api/task-message", &message)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let id = answer["held"].as_i64().expect("held");
+    let (passes, entries) = task_read(&served, LAPTOP, "tools/x").await;
+    assert!(!passes);
+    let marker = entries.last().unwrap();
+    assert_eq!(marker.message.id, id);
+    assert!(!marker.message.text.contains(words), "{marker:?}");
+    let held = marker.held.as_ref().unwrap();
+    assert_eq!(
+        (
+            held.id,
+            held.author.as_str(),
+            held.text.as_str(),
+            held.passed_by.as_deref()
+        ),
+        (id, "ana", words, None)
+    );
+    assert!(
+        task_read(&served, HERE, "tools/x").await.0,
+        "the machine's person passes"
+    );
+    let pass = serde_json::json!({"slug": "tools/x", "id": id}).to_string();
+    let (status, body) = (served.asked(LAPTOP, "POST", symphony_api::TASK_PASS_ROUTE, &pass)).await;
+    assert_eq!(
+        (status, body.as_str()),
+        (
+            StatusCode::FORBIDDEN,
+            r#"{"error":"Forbidden: ana may not direct agents on this board"}"#
+        )
+    );
+    assert_eq!(store.thread_rows("tools/x").unwrap().last().unwrap().id, id);
+    store
+        .grant(Holder::Person("ana"), &[Power::DirectAgents], "owner")
+        .unwrap();
+    let (passes, _) = task_read(&served, LAPTOP, "tools/x").await;
+    assert!(passes);
+    let (status, body) = (served.asked(LAPTOP, "POST", symphony_api::TASK_PASS_ROUTE, &pass)).await;
+    assert_eq!((status, body.as_str()), (StatusCode::OK, r#"{"ok":true}"#));
+    let (_, entries) = task_read(&served, LAPTOP, "tools/x").await;
+    let passed = entries.last().unwrap();
+    assert_eq!(
+        (passed.message.sender.as_str(), passed.message.person),
+        ("ana", true)
+    );
+    assert_eq!(passed.message.text, format!("[passed on by ana] {words}"));
+    for entry in [&entries[entries.len() - 2], passed] {
+        let held = entry.held.as_ref().unwrap();
+        assert_eq!((held.id, held.passed_by.as_deref()), (id, Some("ana")));
+    }
+    // Holding the power, her message is said as the person at the machine's is.
+    let message = serde_json::json!({"slug": "tools/x", "text": "and the footer"}).to_string();
+    let (status, body) = (served.asked(LAPTOP, "POST", "/api/task-message", &message)).await;
+    assert_eq!((status, body.as_str()), (StatusCode::OK, r#"{"ok":true}"#));
+    let line = store.thread_rows("tools/x").unwrap().pop().unwrap();
+    assert_eq!(
+        (line.sender.as_str(), line.text.as_str()),
+        ("ana", "and the footer")
+    );
+    assert_eq!(store.held_count("tools/x").unwrap(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -781,14 +872,11 @@ async fn a_change_the_board_refuses_or_profiles_not_had_are_said_with_nothing_wr
             HERE,
             "POST",
             PEOPLE_CHANGE_PATH,
-            r#"{"action":"grant","name":"ana","powers":["direct_agents"]}"#,
+            r#"{"action":"grant","name":"bo","powers":["direct_agents"]}"#,
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{said}");
-    assert!(
-        said.contains("direct agents is given to no one yet"),
-        "{said}"
-    );
+    assert!(said.contains("no person bo is on this board"), "{said}");
     let lock = served.machine.join(symphony_board::people::LOCK);
     let _ = std::fs::remove_file(&lock);
     std::fs::create_dir(&lock).unwrap();
