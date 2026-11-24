@@ -584,7 +584,7 @@ fn a_people_change_runs_by_its_own_recipe_and_the_board_recipe_refuses_it_howeve
         let said = String::from_utf8_lossy(&refused.stderr);
         assert_eq!(refused.status.code(), Some(1), "{args:?}: {refused:?}");
         assert!(
-            said.contains("just tasks refuses people ") && said.contains("`just tasks-people "),
+            said.contains("`just tasks` refuses people ") && said.contains("`just tasks-people "),
             "{args:?}: {said}"
         );
     }

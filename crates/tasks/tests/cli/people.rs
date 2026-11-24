@@ -573,7 +573,7 @@ fn under_the_unasked_recipes_marker_every_action_but_the_reads_is_refused() {
         let action = &form[0];
         assert!(
             ran.err.contains(&format!(
-                "just tasks refuses people {action}: a change to a board's people"
+                "`just tasks` refuses people {action}: a change to a board's people"
             )) && ran
                 .err
                 .contains(&format!("`just tasks-people {action} …`, which asks")),
@@ -595,7 +595,7 @@ fn under_the_unasked_recipes_marker_every_action_but_the_reads_is_refused() {
         let (code, said) = fails(&c, &me, &args);
         assert_eq!(code, 1, "{args:?}: {said}");
         assert!(
-            said.contains(&format!("just tasks refuses people {action}: ")),
+            said.contains(&format!("`just tasks` refuses people {action}: ")),
             "{args:?}: {said}"
         );
     }
