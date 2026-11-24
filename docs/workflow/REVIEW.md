@@ -415,13 +415,14 @@ ending "Approve and say A or B in the note, or comment."
 already decides, its consequences included, is never put to them again
 (`RULES.md` `review/decided-is-not-asked`).
 
-- Before a card is put to the owner, its agent checks the owner's earlier
-  verdicts. A card the owner approved decides a later card only when the choice
-  it approved already answers what the later card asks, and each of the later
-  card's other options would change that choice. A recommendation that leaves
-  alone something the approved card never addressed decides nothing, and that
-  card is asked. An auto-approved card, or a line an agent recorded as answered,
-  is not the owner's approval and decides no further card.
+- Before a card is put to the owner, its agent checks the earlier verdicts of
+  every person, the owner's and any a board named (a person's line is any line
+  not an agent's). A card a person approved decides a later card only when the
+  choice it approved already answers what the later card asks, and each of the
+  later card's other options would change that choice. A recommendation that
+  leaves alone something the approved card never addressed decides nothing, and
+  that card is asked. An auto-approved card, or a line an agent recorded as
+  answered, is no person's approval and decides no further card.
 - A decided card is not asked. The agent records it as answered: a plain agent
   line on the card the owner approved, quoting the owner's words and naming the
   card they are on, and answering any owner note still open there, since any

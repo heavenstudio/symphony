@@ -251,11 +251,12 @@ An approved card is never reopened by a question on it, and nothing an earlier v
 put to the owner. What follows from an approved choice while the option chosen stays the one the
 card described, a cost or a trade it did not state included, is a plain agent line on that card
 quoting the owner's words; only a change that would make the option another is a new card, which
-links the approved one. Before any card goes to the owner its agent checks the owner's earlier
-verdicts: an approved card decides a later one only when the choice it approved already answers
-what the later card asks and each of the later card's other options would change that choice.
-Only the owner's own words decide, never an auto-approved card, an agent's recorded answer or a
-question of the owner's ([REVIEW](docs/workflow/REVIEW.md#before-a-card-goes-to-the-owner)).
+links the approved one. Before any card goes to the owner its agent checks the earlier verdicts
+of every person, the owner's and any a board named: an approved card decides a later one only when
+the choice it approved already answers what the later card asks and each of the later card's other
+options would change that choice. Only a person's own words decide, never an auto-approved card, an
+agent's recorded answer or a person's question
+([REVIEW](docs/workflow/REVIEW.md#before-a-card-goes-to-the-owner)).
 
 ### `docs/cards-clear-and-concise`
 
