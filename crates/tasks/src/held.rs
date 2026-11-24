@@ -108,4 +108,32 @@ mod tests {
         });
         assert!(serde_json::from_value::<Held>(unknown).is_err());
     }
+
+    #[test]
+    fn a_line_may_be_of_a_held_message_only_as_a_persons_or_the_boards_line_to_owner_saying_so() {
+        let line = |recipient: Option<&str>, text: &str, person: bool| crate::rows::MessageRow {
+            id: 1,
+            slug: "t/a".into(),
+            sender: "board".into(),
+            recipient: recipient.map(String::from),
+            kind: "msg".into(),
+            text: text.into(),
+            ts: 1.0,
+            person,
+        };
+        let marker = format!("{MARKER}#4");
+        for (row, may) in [
+            (line(Some("owner"), &marker, false), true),
+            (line(None, "[passed on by owner] Cut", true), true),
+            (line(Some("@executor"), &marker, false), false),
+            (line(None, &marker, false), false),
+            (
+                line(Some("owner"), &format!("said: {marker}"), false),
+                false,
+            ),
+            (line(Some("owner"), "Ready", false), false),
+        ] {
+            assert_eq!(may_be_of_one(&row), may, "{row:?}");
+        }
+    }
 }
