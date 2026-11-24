@@ -89,7 +89,8 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
   .app-header > a.project-switch { margin-right:4px; }
   .app-header .crumbs { display:none; }
   #appearance { width:32px; height:32px; }
-  .app-header > a.app-you { max-width:8em; }
+  .app-header > a.app-you { display:inline-block; width:32px; height:32px; padding:0; border-color:var(--border); border-radius:50%; font-size:0; line-height:30px; text-align:center; }
+  .app-header > a.app-you::first-letter { font-size:var(--fs-sm); text-transform:uppercase; }
   /* The row's own padding is the room a focused page's outline needs (2px, 2px off it), taken
      back from the header around it. */
   .app-pages { order:10; flex-basis:100%; gap:0; overflow-x:auto; padding:4px; margin:0 -4px; }

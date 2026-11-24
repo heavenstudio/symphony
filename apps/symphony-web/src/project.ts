@@ -251,29 +251,16 @@ export function readView(value: unknown): ProjectView {
     !urls.every(isText) ||
     !["guide", "base", "wordmark", "mark"].every(
       (field) => view[field] === undefined || isText(view[field]),
-    )
+    ) ||
+    // Who reads the page and the person at the machine, each a name and how it is shown.
+    !["you", "machine"].every((field) => {
+      const person = view[field] as Record<string, unknown> | null | undefined;
+      return person == null || (isText(person.name) && isText(person.shown));
+    })
   ) {
     return PLAIN;
   }
-  // Who reads the page and the person at the machine are drawn only as names: one of another
-  // shape is left out, and the page draws the role's word as it did.
-  const named = (person: unknown): PersonName | undefined =>
-    typeof person === "object" &&
-    person !== null &&
-    isText((person as Record<string, unknown>).name) &&
-    isText((person as Record<string, unknown>).shown)
-      ? (person as PersonName)
-      : undefined;
-  const { you, machine, ...rest } = value as ProjectView;
-  const reader = named(you);
-  const theirs = named(machine);
-  return {
-    ...rest,
-    nav: nav as NavItem[],
-    entrypoints: urls,
-    ...(reader === undefined ? {} : { you: reader }),
-    ...(theirs === undefined ? {} : { machine: theirs }),
-  };
+  return { ...(value as ProjectView), nav: nav as NavItem[], entrypoints: urls };
 }
 
 let current: ProjectView | undefined;

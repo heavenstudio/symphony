@@ -20,7 +20,12 @@ node it is, and the gate keeps who the request is from:
 
 - **The person at the machine**: loopback, one of this machine's own tailnet addresses, and a
   node under the Tailscale login this machine is under (`Self.UserID` in `tailscale status`, the
-  call the Host check already makes), such as the owner's phone. Their writes read `owner`.
+  call the Host check already makes), such as the owner's phone. Their writes read `owner` until
+  they give themselves a short name from the People page's You section, which the machine's
+  `people.json` keeps as `machine`; from then on they carry that name, read as each request
+  arrives, with every power still theirs. The page the server sends names them in its project
+  view (`you`, and `machine` for drawing their older `owner` lines), so the header and threads ask
+  for nothing more.
 - **Another login's person**: a node under any other user. Tailscale's word says who: the login
   is a sign-in, `tailscale:LOGIN`, of at most one profile in the machine's `people.json`, and a
   board that gives that profile's short name a power has added them. They see nothing else.

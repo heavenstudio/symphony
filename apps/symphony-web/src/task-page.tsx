@@ -699,6 +699,7 @@ export interface TaskHeadProps {
 export function TaskHead({ page, scope, connected }: TaskHeadProps) {
   const { task } = page;
   const { slug } = task;
+  const filer = drawnWriter(task.created_by);
   return (
     <div className="task-head card">
       <p className="eyebrow">
@@ -709,8 +710,8 @@ export function TaskHead({ page, scope, connected }: TaskHeadProps) {
           once, by its own control. */}
       <div className="task-state row">
         <span className={`state pill st-${task.status}`}>{statusWords(task.status)}</span>
-        <span className="by" title={drawnWriter(task.created_by).title}>
-          {`filed by ${drawnWriter(task.created_by).text}`}
+        <span className="by" title={filer.title}>
+          {`filed by ${filer.text}`}
         </span>
         <OwnerControls slug={slug} priority={task.priority} status={task.status} />
       </div>

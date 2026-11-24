@@ -18,12 +18,6 @@
   font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
-/* The link to where the reader writes their own profile, under the page's head. */
-.settings-profile {
-  display: inline-block;
-  margin-top: var(--sp-2);
-  font-size: var(--fs-sm);
-}
 .settings-error,
 .settings-problems {
   margin: 0;

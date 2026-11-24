@@ -190,7 +190,7 @@ describe("the view the server inlined", () => {
     });
   });
 
-  it("keeps who reads it and the person at the machine as names, and leaves out one of another shape", () => {
+  it("keeps who reads it and the person at the machine as names, and takes one of another shape for no view", () => {
     const you = { name: "stefano", shown: "Stefano" };
     expect(readView({ name: "n", register: "r", you, machine: you })).toEqual({
       name: "n",
@@ -200,9 +200,11 @@ describe("the view the server inlined", () => {
       you,
       machine: you,
     });
-    for (const odd of [null, "stefano", { name: "stefano" }, { name: 1, shown: "S" }]) {
-      const read = readView({ name: "n", register: "r", you: odd, machine: odd });
-      expect([read.name, read.you, read.machine]).toEqual(["n", undefined, undefined]);
+    // Left out, or null as serde writes none, it is no one.
+    expect(readView({ name: "n", register: "r", you: null, machine: null }).name).toBe("n");
+    for (const odd of ["stefano", { name: "stefano" }, { name: 1, shown: "S" }]) {
+      expect(readView({ name: "n", register: "r", you: odd })).toBe(PLAIN);
+      expect(readView({ name: "n", register: "r", machine: odd })).toBe(PLAIN);
     }
   });
 
