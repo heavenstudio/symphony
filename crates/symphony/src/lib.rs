@@ -44,6 +44,7 @@ pub mod init;
 pub mod landing;
 pub mod lint;
 pub mod machine;
+pub mod notices;
 pub mod markup;
 pub mod merging;
 pub mod owner_asks;
