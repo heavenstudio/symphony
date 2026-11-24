@@ -102,3 +102,7 @@ pub(crate) fn new_id() -> String {
     }
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
+
+#[cfg(test)]
+#[path = "record_tests.rs"]
+mod tests;

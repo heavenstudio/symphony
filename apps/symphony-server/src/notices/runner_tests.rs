@@ -198,6 +198,12 @@ fn the_first_look_takes_what_stands_as_told_and_waits_for_the_cards() {
     let tree = Tree::new();
     let people = people();
     let (mut runner, _) = opened(&tree);
+    let hands = Hands::default();
+    hands.at(&mut runner, 0.0, &|| Handed::Sent);
+    assert!(
+        hands.given.borrow().is_empty(),
+        "nothing to hand before a look"
+    );
     look(&mut runner, &people, None, vec![], 7);
     assert_eq!(runner.cursor(), None, "no look before the cards are read");
     assert!(!tree.path("artifacts/notices.json").exists());

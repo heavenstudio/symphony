@@ -300,3 +300,71 @@ fn the_worker_hands_what_a_wake_finds_and_ends_at_the_stop() {
 fn hand_bound() -> std::time::Duration {
     crate::notices::hand::MOST
 }
+
+#[test]
+fn what_the_machine_folder_does_not_let_it_trust_tells_no_one_said_once() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let chmod = |path: &std::path::Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    let telling = Telling::new(false);
+    let machine = telling.tree.path("machine");
+    // A key another account may read opens no runner, said once; mended, it opens one.
+    symphony::notices::Key::of(&machine).unwrap();
+    let key = machine.join("notices/record.key");
+    chmod(&key, 0o644);
+    let mut said = Said::default();
+    assert!(telling.hub.open_notices("symphony", &mut said).is_none());
+    assert!(
+        said.0["key"].starts_with("nothing is told: "),
+        "{:?}",
+        said.0
+    );
+    chmod(&key, 0o600);
+    let mut passes = Passes::of(&telling);
+    // Profiles that do not read: no look, said.
+    let profiles = machine.join("people.json");
+    let kept = std::fs::read(&profiles).unwrap();
+    std::fs::write(&profiles, "{ not json").unwrap();
+    passes.pass(&telling.hub);
+    assert_eq!(passes.runner.cursor(), None);
+    assert!(passes.said.0.contains_key("profiles"));
+    std::fs::write(&profiles, kept).unwrap();
+    passes.pass(&telling.hub);
+    assert!(!passes.said.0.contains_key("profiles"));
+    let first = passes.runner.cursor().unwrap();
+    // Programs another account may write: nothing sent, said, and the look goes on.
+    let programs = machine.join("notices/programs.toml");
+    chmod(&programs, 0o666);
+    ask_everything(&telling);
+    passes.pass(&telling.hub);
+    assert!(telling.told().is_empty());
+    assert!(passes.said.0["programs"].contains("may be written by another account"));
+    assert!(
+        passes.runner.cursor().unwrap() > first,
+        "its lines are looked at"
+    );
+    // Mended: what passed while it was refused is not told after.
+    chmod(&programs, 0o600);
+    passes.pass(&telling.hub);
+    assert!(!passes.said.0.contains_key("programs"));
+    assert!(telling.told().is_empty());
+    // A hub with no machine folder opens no runner.
+    let bare = Hub::new(&telling.root, &telling.root.join("build/client"));
+    assert!(
+        bare.open_notices("symphony", &mut Said::default())
+            .is_none()
+    );
+}
+
+#[test]
+fn a_fault_is_said_once_until_it_changes_or_clears() {
+    let mut said = Said::default();
+    said.once("symphony", "board", "down".into());
+    said.once("symphony", "board", "down".into());
+    assert_eq!(said.0["board"], "down");
+    said.once("symphony", "board", "refused".into());
+    assert_eq!(said.0["board"], "refused");
+    said.clear("board");
+    assert!(said.0.is_empty());
+}
