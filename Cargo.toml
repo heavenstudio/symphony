@@ -1,7 +1,7 @@
-# Symphony's workspace: server, client, review library, its own build and release commands, wire types, docs checks, plugin seams, board, optional GitHub issue exchange, notice message and its Slack sender, OS scanner, headless Chrome driver and the tests' time.
+# Symphony's workspace: server, client, review library, its own build and release commands, wire types, docs checks, plugin seams, board, optional GitHub issue exchange, notice message and its Slack and email senders, OS scanner, headless Chrome driver and the tests' time.
 [workspace]
 resolver = "3"
-members = ["apps/symphony-desktop", "apps/symphony-server", "apps/symphony-web-tests", "crates/chrome-devtools", "crates/process-cwd", "crates/repository-read", "crates/symphony", "crates/symphony-api", "crates/symphony-args", "crates/symphony-blocks", "crates/symphony-build", "crates/symphony-docs", "crates/symphony-env", "crates/symphony-github", "crates/symphony-notice", "crates/symphony-notice-slack", "crates/symphony-plugin", "crates/symphony-schema", "crates/tasks", "crates/test-time"]
+members = ["apps/symphony-desktop", "apps/symphony-server", "apps/symphony-web-tests", "crates/chrome-devtools", "crates/process-cwd", "crates/repository-read", "crates/symphony", "crates/symphony-api", "crates/symphony-args", "crates/symphony-blocks", "crates/symphony-build", "crates/symphony-docs", "crates/symphony-env", "crates/symphony-github", "crates/symphony-notice", "crates/symphony-notice-email", "crates/symphony-notice-slack", "crates/symphony-plugin", "crates/symphony-schema", "crates/tasks", "crates/test-time"]
 
 # What every member inherits. `publish = false` keeps a member off crates.io unless its own
 # manifest says `publish = true` with the metadata crates.io shows (docs/workflow/RELEASES.md, "Packages on

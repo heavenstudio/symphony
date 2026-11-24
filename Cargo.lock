@@ -4489,6 +4489,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "symphony-notice-email"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "symphony-notice",
+ "test-time",
+ "toml 1.1.7+spec-1.1.0",
+]
+
+[[package]]
 name = "symphony-notice-slack"
 version = "0.1.0"
 dependencies = [
