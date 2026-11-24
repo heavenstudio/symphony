@@ -3,16 +3,17 @@
 //! sample: on a desk and a phone every person, group and change drawn within the screen's width,
 //! the page lit in the header after Settings, direct agents a power to give as every other is, and
 //! nothing sent on opening; an add from its form (its fields cleared once it is done) and a
-//! power's toggle, direct agents' among them, posted as one change each (`/api/people-change`),
-//! the page drawn from the write's answer and what it did said on the part that sent it, and a
-//! refusal in the server's words; a person put in a group, a group made and a
+//! power's toggle posted as one change each (`/api/people-change`), direct agents given at a
+//! press on a desk and a phone as any power is, the page drawn from the write's answer and what it
+//! did said on the part that sent it, and a refusal in the server's words; a person put in a
+//! group, a group made and a
 //! removal (asked by a named confirmation, kept or confirmed) each posted as one change; a reader
 //! without administer shown no control but their own profile's and notices', which post to
 //! `/api/people-profile`, and no one's addresses but their own; a person's notices set on their
 //! card, what changed posted alone; and a read that fails said in the page's place.
 //!
-//! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page and a person's notices being
-//! set are saved there, whole, at each width and in each scheme: a visitor who is not the person at the machine reaches a server only
+//! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page, a person's notices being set
+//! and direct agents given are saved there, whole, at each width and in each scheme: a visitor who is not the person at the machine reaches a server only
 //! under another Tailscale login, so their page is pictured from the stand-in server.
 use super::{SHOWN, chrome, chrome::Chrome, site, site::Site, texts};
 use serde_json::{Value, json};
@@ -239,28 +240,6 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
         "[...document.querySelectorAll(\"form[aria-label='Add a person'] input\")].every(i => i.value === '')",
         SHOWN
     ));
-    // Direct agents is given at a press as any power is: one change of bo's own.
-    let mut given = after.clone();
-    given["people"][1]["powers"] = json!(["read", "direct_agents", "administer"]);
-    given["people"][1]["own"] = json!(["direct_agents", "administer"]);
-    given["log"].as_array_mut().unwrap().push(json!({
-        "n": 7, "at": 1_763_025_100.0, "by": "owner", "did": "grant", "name": "bo",
-        "powers": ["direct_agents"],
-    }));
-    given["revision"] = json!(7);
-    site.set_json(symphony_api::PEOPLE_CHANGE_PATH, &given);
-    click(
-        &mut chrome,
-        "#person-bo button[aria-label='direct agents for bo']",
-    );
-    assert_eq!(
-        said(&mut chrome, "person-bo", false),
-        "owner gave bo direct agents."
-    );
-    assert!(chrome.wait_for(
-        "document.querySelector(\"#person-bo button[aria-label='direct agents for bo']\").getAttribute('aria-pressed') === 'true'",
-        SHOWN
-    ));
     // A power's toggle is one change of the person's own; a refusal is said on their card.
     let refusal = "Forbidden: ana may not administer on this board";
     site.refuse_route(symphony_api::PEOPLE_CHANGE_PATH, Some(refusal));
@@ -268,22 +247,68 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
     assert!(said(&mut chrome, "person-bo", true).contains(refusal));
     assert_eq!(
         site.posts()[1..],
-        [
-            (
-                symphony_api::PEOPLE_CHANGE_PATH.to_string(),
-                json!({"action": "grant", "name": "bo", "powers": ["direct_agents"]})
-            ),
-            (
-                symphony_api::PEOPLE_CHANGE_PATH.to_string(),
-                json!({"action": "grant", "name": "bo", "powers": ["decide"]})
-            )
-        ]
+        [(
+            symphony_api::PEOPLE_CHANGE_PATH.to_string(),
+            json!({"action": "grant", "name": "bo", "powers": ["decide"]})
+        )]
     );
     assert_eq!(
         texts(&mut chrome, "#person-ana .people-said"),
         ["", ""],
         "said on the part that sent it alone: not on ana's card, nor her notices"
     );
+}
+
+/// Direct agents is given at a press as any power is, on a desk and a phone: one change of bo's
+/// own, the page drawn from its answer, the toggle pressed and what it did said on bo's card.
+#[test]
+fn direct_agents_is_given_at_a_press_as_any_power_is() {
+    for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
+        let site = served(&sample());
+        let mut given = sample();
+        given["people"][1]["powers"] = json!(["read", "direct_agents", "administer"]);
+        given["people"][1]["own"] = json!(["direct_agents", "administer"]);
+        given["log"].as_array_mut().unwrap().push(json!({
+            "n": 6, "at": 1_763_025_100.0, "by": "owner", "did": "grant", "name": "bo",
+            "powers": ["direct_agents"],
+        }));
+        given["revision"] = json!(6);
+        site.set_json(symphony_api::PEOPLE_CHANGE_PATH, &given);
+        let Some(mut chrome) = chrome() else { return };
+        screen(&mut chrome, width, height, mobile);
+        open(&mut chrome, &site, "people");
+        let button = "#person-bo button[aria-label='direct agents for bo']";
+        click(&mut chrome, button);
+        assert_eq!(
+            said(&mut chrome, "person-bo", false),
+            "owner gave bo direct agents.",
+            "{width}"
+        );
+        assert!(chrome.wait_for(
+            &format!(
+                "document.querySelector({}).getAttribute('aria-pressed') === 'true'",
+                json!(button)
+            ),
+            SHOWN
+        ));
+        assert_eq!(
+            site.posts(),
+            [(
+                symphony_api::PEOPLE_CHANGE_PATH.to_string(),
+                json!({"action": "grant", "name": "bo", "powers": ["direct_agents"]})
+            )]
+        );
+        assert_eq!(
+            chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
+            json!(true),
+            "{width}"
+        );
+        shot(
+            &mut chrome,
+            &format!("direct-agents-given-{width}"),
+            (width, height, mobile),
+        );
+    }
 }
 
 /// A press of the mouse on the option `text` of the select open now, once its list is placed.

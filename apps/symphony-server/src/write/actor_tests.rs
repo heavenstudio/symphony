@@ -107,7 +107,7 @@ async fn a_visitor_a_board_added_saves_as_themselves_and_one_it_did_not_writes_n
 
 /// A person the board gives speak and no decide is refused a decision with nothing written, the
 /// refusal naming the power; given decide, the same save is hers; and a comment, which speaks to
-/// the agents, is refused her while the board holds no words for agents from anyone.
+/// the agents, is refused her, as she may not direct agents.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_person_is_refused_each_write_whose_power_she_lacks_and_nothing_is_written() {
     let ana = Actor::new(
@@ -136,7 +136,7 @@ async fn a_person_is_refused_each_write_whose_power_she_lacks_and_nothing_is_wri
         (status, body.as_str()),
         (
             StatusCode::FORBIDDEN,
-            r#"{"error":"Forbidden: this board holds no words for agents from ana yet"}"#
+            r#"{"error":"Forbidden: ana may not direct agents on this board"}"#
         )
     );
     // Powers are read as each write arrives: given decide now, the same save is hers.

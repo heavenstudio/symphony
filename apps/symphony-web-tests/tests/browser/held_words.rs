@@ -4,6 +4,11 @@
 //! press posts the pass (`/api/task-pass`) once and stays pressed, and the line its words became,
 //! brought by the feed, marks it passed on by whom, its words then that line's alone. On a desk and
 //! a phone, the entry is drawn within the screen's width. The task is the look-parity fixture's.
+//!
+//! With `SYMPHONY_HELD_SHOTS` naming a folder, the thread around the held message is saved there,
+//! held and passed on, at each width and in each scheme: a reader who is not the person at the
+//! machine reaches a server only under another Tailscale login, so it is pictured from the
+//! stand-in server.
 use super::{SHOWN, chrome, chrome::Chrome, look_parity, site::Site};
 use serde_json::{Value, json};
 
@@ -66,9 +71,33 @@ fn held(page: &mut Chrome) -> Value {
     )
 }
 
+/// The desk's and the phone's screens.
+const SCREENS: [(u32, u32, bool); 2] = [(1440, 900, false), (390, 844, true)];
+
+/// The screen with the held message in its middle, saved as `NAME-WIDTH-light.png` and
+/// `NAME-WIDTH-dark.png` in the folder `SYMPHONY_HELD_SHOTS` names; nothing without one. The
+/// scheme is put back as it was.
+fn shot(page: &mut Chrome, name: &str, width: u32) {
+    let Some(folder) = std::env::var_os("SYMPHONY_HELD_SHOTS") else {
+        return;
+    };
+    let folder = std::path::PathBuf::from(folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    page.eval("document.querySelector('#message-4').scrollIntoView({block: 'center'})");
+    for scheme in ["light", "dark"] {
+        page.scheme(scheme);
+        page.frames_with_fonts();
+        // The colours' transitions into the scheme, finished.
+        page.wait_for("document.getAnimations().length === 0", SHOWN);
+        let file = folder.join(format!("{name}-{width}-{scheme}.png"));
+        std::fs::write(file, page.screenshot()).unwrap();
+    }
+    page.call("Emulation.setEmulatedMedia", json!({"features": []}));
+}
+
 #[test]
 fn a_held_message_is_its_authors_words_marked_held_with_pass_on_only_for_one_who_may() {
-    for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
+    for (width, height, mobile) in SCREENS {
         let site = served(true);
         let Some(mut page) = chrome() else { return };
         page.viewport(width, height, mobile);
@@ -80,6 +109,7 @@ fn a_held_message_is_its_authors_words_marked_held_with_pass_on_only_for_one_who
             "{width}"
         );
         assert_eq!(site.posts(), []);
+        shot(&mut page, "held", width);
     }
     let site = served(false);
     let Some(mut page) = chrome() else { return };
@@ -93,8 +123,16 @@ fn a_held_message_is_its_authors_words_marked_held_with_pass_on_only_for_one_who
 
 #[test]
 fn pass_on_posts_once_and_the_line_its_words_became_marks_it_passed() {
+    for (width, height, mobile) in SCREENS {
+        passed_on(width, height, mobile);
+    }
+}
+
+/// [`pass_on_posts_once_and_the_line_its_words_became_marks_it_passed`] on a screen `width` wide.
+fn passed_on(width: u32, height: u32, mobile: bool) {
     let site = served(true);
     let Some(mut page) = chrome() else { return };
+    page.viewport(width, height, mobile);
     page.open(&site.url(PAGE));
     held(&mut page);
     super::wait_for_feed(&site).expect("the page never followed the feed");
@@ -133,7 +171,8 @@ fn pass_on_posts_once_and_the_line_its_words_became_marks_it_passed() {
     assert_eq!(
         held(&mut page),
         json!({"held": "passed", "from": "ana → @executor", "mark": "passed on by owner",
-            "words": null, "buttons": [], "within": true})
+            "words": null, "buttons": [], "within": true}),
+        "{width}"
     );
     assert_eq!(
         page.eval(
@@ -146,4 +185,5 @@ fn pass_on_posts_once_and_the_line_its_words_became_marks_it_passed() {
         ])
     );
     assert_eq!(site.posts().len(), 1);
+    shot(&mut page, "passed", width);
 }
