@@ -88,9 +88,9 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     };
     if c.env.var(crate::confine::MARKER).is_some() {
         return Err(Stop::Refused(format!(
-            "just tasks refuses people {action}: a change to a board's people or to a profile asks \
-             first, and an agent runs just tasks unasked. Run it as `{RECIPE} {action} …`, which \
-             asks: nothing was written"
+            "`just tasks` refuses people {action}: a change to a board's people or to a profile \
+             asks first, and an agent runs `just tasks` unasked. Run it as `{RECIPE} {action} …`, \
+             which asks: nothing was written"
         )));
     }
     change(c)
