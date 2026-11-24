@@ -430,11 +430,12 @@ impl Profiles {
     /// # Errors
     ///
     /// When the file cannot be read or does not parse: profiles that are not read are never
-    /// written over.
+    /// written over. One that does not parse is said by where and what kind ([`unparsed`]), never
+    /// by a value found in it.
     pub fn read(dir: &Path) -> Result<Profiles, String> {
         let path = dir.join(FILE);
         match fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display())),
+            Ok(text) => parse(&text).map_err(|(field, e)| unparsed(&path, &field, &e)),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(Profiles::default()),
             Err(e) => Err(format!("{}: {e}", path.display())),
         }
@@ -495,6 +496,85 @@ impl Profiles {
     pub fn signed_in(&self, service: &str, subject: &str) -> Option<&Profile> {
         (self.people.iter()).find(|profile| profile.signins.iter().any(|s| s.is(service, subject)))
     }
+}
+
+/// `people.json`'s text as profiles; else the field it does not parse at ([`field`]) and why.
+fn parse(text: &str) -> Result<Profiles, (String, serde_json::Error)> {
+    let mut json = serde_json::Deserializer::from_str(text);
+    let profiles = serde_path_to_error::deserialize(&mut json)
+        .map_err(|e| (field(e.path()), e.into_inner()))?;
+    json.end().map_err(|e| (String::new(), e))?;
+    Ok(profiles)
+}
+
+/// The names a profile's fields have in `people.json`, the only keys said of a fault in it.
+const FIELDS: [&str; 10] = [
+    "people",
+    "name",
+    "display",
+    "signins",
+    "service",
+    "subject",
+    "git",
+    "emails",
+    "chat",
+    "preferences",
+];
+
+/// The field a fault in `people.json` is at, as `people[0].signins[1].subject`: a profile's own
+/// field names and the places in its lists, up to the first key the file chose, which is never
+/// said: a field no profile has, or one in `chat` or `preferences`, whose keys are the file's.
+fn field(path: &serde_path_to_error::Path) -> String {
+    use serde_path_to_error::Segment;
+    let mut said = String::new();
+    for segment in path {
+        match segment {
+            Segment::Seq { index } => said.push_str(&format!("[{index}]")),
+            Segment::Map { key } if FIELDS.contains(&key.as_str()) => {
+                if !said.is_empty() {
+                    said.push('.');
+                }
+                said.push_str(key);
+                if key == "chat" || key == "preferences" {
+                    break;
+                }
+            }
+            Segment::Map { .. } | Segment::Enum { .. } | Segment::Unknown => break,
+        }
+    }
+    said
+}
+
+/// What a `people.json` at `path` that does not parse is said as: its line and column, the
+/// `field` the fault is at, and its kind, never a value found in it. serde's own words for a value
+/// of the wrong type or form quote it (`invalid type: string "ana@example.com", expected a
+/// sequence`), a sign-in's subject among them, and this is said in the server's log and to the
+/// person at the machine. A syntax error's words quote nothing (`expected `,` or `}``, `EOF while
+/// parsing an object`), and a missing or doubled field's name only one of a profile's own, so those
+/// are kept.
+fn unparsed(path: &Path, field: &str, error: &serde_json::Error) -> String {
+    let said = error.to_string();
+    // serde_json ends its words with where; that is said once, before them.
+    let said = said.split(" at line ").next().unwrap_or_default();
+    let what = match error.classify() {
+        serde_json::error::Category::Data
+            if !(said.starts_with("missing field `") || said.starts_with("duplicate field `")) =>
+        {
+            "a value of a type or form a profile does not take"
+        }
+        _ => said,
+    };
+    let at = if field.is_empty() {
+        String::new()
+    } else {
+        format!("{field}: ")
+    };
+    format!(
+        "{}: line {}, column {}: {at}{what}, so none of its profiles is read",
+        path.display(),
+        error.line(),
+        error.column()
+    )
 }
 
 /// A new file at `path` the machine's account alone reads and writes, replacing none.

@@ -710,6 +710,28 @@ async fn a_change_the_board_refuses_or_profiles_not_had_are_said_with_nothing_wr
     assert_eq!(served.profiles().people, [anas()]);
 }
 
+/// Profiles that do not parse are said to the person at the machine whole, which is what the
+/// server's log keeps of them for anyone else ([`told`]): their file, line and column, and never a
+/// value in them, a sign-in's subject among them.
+#[tokio::test(flavor = "multi_thread")]
+async fn profiles_that_do_not_parse_are_said_by_where_and_never_by_a_value_in_them() {
+    let served = Served::new(&[("ana", &[Power::Speak])]);
+    std::fs::write(
+        served.machine.join(symphony_board::people::FILE),
+        r#"{"people": [{"name": "ana", "signins": "ana@example.com"}]}"#,
+    )
+    .unwrap();
+    let page = served.page(HERE).await;
+    let problem = page.problem.unwrap_or_default();
+    assert!(
+        problem.starts_with("the machine's profiles could not be read: ")
+            && problem.contains("people.json: line 1, column 56: people[0].signins: a value of a type or form"),
+        "{problem}"
+    );
+    assert!(!problem.contains("ana@example.com"), "{problem}");
+    assert_eq!(page.people[0].display, "ana", "listed without the profile");
+}
+
 /// A server whose read hub has not started answers the page 503, as every read of the board, and
 /// one whose project holds no board it can reach answers a change 503, naming the board.
 #[tokio::test(flavor = "multi_thread")]

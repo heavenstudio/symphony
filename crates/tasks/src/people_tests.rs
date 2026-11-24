@@ -261,6 +261,79 @@ fn profiles_none_written_are_none_and_a_file_that_does_not_parse_is_never_writte
     );
 }
 
+/// A `people.json` that does not parse is said by its file, line and column, the field and the
+/// kind of fault, never a value found in it: a sign-in's subject where a list goes, or a number
+/// where a subject goes, is in no word of it. A syntax error keeps serde's words, which quote
+/// nothing, and a missing field its name, one of a profile's own. A key the file chose, in `chat`
+/// or a field no profile has, is never said as where.
+#[test]
+fn profiles_that_do_not_parse_say_where_and_what_kind_and_never_a_value_in_them() {
+    let machine = Machine::new("unparsed-values");
+    fs::create_dir_all(&machine.0).unwrap();
+    let path = machine.0.join(FILE);
+    for (text, said) in [
+        (
+            "{\"people\": [\n  {\"name\": \"ana\", \"signins\": \"ana@example.com\"}\n]}",
+            "line 2, column 46: people[0].signins: a value of a type or form a profile does not take",
+        ),
+        (
+            "{\"people\": [{\"name\": \"ana\", \"signins\": [{\"service\": \"tailscale\", \"subject\": 4155550100}]}]}",
+            "line 1, column 86: people[0].signins[0].subject: a value of a type or form a profile does not take",
+        ),
+        (
+            "{\"people\": [{\"display\": \"ana@example.com\"}]}",
+            "line 1, column 42: people[0]: missing field `name`",
+        ),
+        (
+            "{\"people\": [{\"name\": \"ana\", \"emails\": [\"ana@example.com\"",
+            "line 1, column 56: people[0].emails: EOF while parsing a list",
+        ),
+        (
+            "{\"people\": [{\"name\": \"ana\", \"chat\": {\"ana@example.com\": [\"4155550100\" 1]}}]}",
+            "line 1, column 71: people[0].chat: expected `,` or `]`",
+        ),
+        (
+            "{\"people\": [{\"name\": \"ana\", \"ana@example.com\": {\"subject\": tru}}]}",
+            "line 1, column 63: people[0]: expected ident",
+        ),
+        (
+            "[\"ana@example.com\"]",
+            // serde reads a struct from a list of its fields too: here its first, the people.
+            "line 1, column 18: [0]: a value of a type or form a profile does not take",
+        ),
+        (
+            "{\"people\": []} \"ana@example.com\"",
+            "line 1, column 16: trailing characters",
+        ),
+    ] {
+        fs::write(&path, text).unwrap();
+        let read = Profiles::read(&machine.0).unwrap_err();
+        assert_eq!(
+            read,
+            format!(
+                "{}: {said}, so none of its profiles is read",
+                path.display()
+            )
+        );
+        for value in ["ana@example.com", "4155550100"] {
+            assert!(!read.contains(value), "{value} in {read}");
+        }
+    }
+    // Read through the field's path, a file that parses is read as serde reads it: numbers kept as
+    // written, a field no profile has skipped.
+    let text = r#"{"people": [{"name": "ana", "chat": {"slack": "@ana"}, "since": [1],
+        "preferences": {"width": 1.50, "phone": 4155550100123456789012}}]}"#;
+    fs::write(&path, text).unwrap();
+    assert_eq!(
+        Profiles::read(&machine.0),
+        Ok(serde_json::from_str::<Profiles>(text).unwrap())
+    );
+    assert_eq!(
+        Profiles::read(&machine.0).unwrap().people[0].preferences["phone"].to_string(),
+        "4155550100123456789012"
+    );
+}
+
 #[test]
 fn profiles_and_their_lock_are_the_machine_accounts_alone_and_kept_as_written() {
     let machine = Machine::new("written");
