@@ -41,7 +41,7 @@ import {
   upTo,
   valued,
 } from "./chart";
-import { childrenOf } from "./testing";
+import { childrenOf, elementOf, type Found, fire } from "./testing";
 
 function series(name: string, mark: Mark, values: (number | null)[]): SeriesData {
   return { name, mark, values, hidden: false };
@@ -877,6 +877,87 @@ describe("every shape of chart", () => {
         [swatch("swatch dot", "var(--chart-none)"), "No kind"],
       ]),
     );
+  });
+
+  /** Each shape, called as React calls it, with what it asks of its page. */
+  function shapes() {
+    const picked: number[] = [];
+    const toggled: string[] = [];
+    const onSelect = (at: number) => picked.push(at);
+    const onToggle = (key: string) => toggled.push(key);
+    const drawn = [
+      ChartCard({ chart: openChart(), axis: AXIS, selected: null, onSelect, onToggle }),
+      RowChart({
+        chart: dearest([row("a/b", [3, 1]), row("c/d", [2, 0])]),
+        selected: null,
+        onSelect,
+        onToggle,
+      }),
+      DotChart({
+        chart: spread([dot("a/b", 10, 1), dot("c/d", 100, 5, 1)]),
+        selected: null,
+        onSelect,
+        onToggle,
+      }),
+    ];
+    return { drawn, picked, toggled };
+  }
+
+  /** A key pressed on a plot, and whether the page's own use of it was prevented. */
+  function press(node: ReturnType<typeof shapes>["drawn"][number], key: string): boolean {
+    let prevented = false;
+    fire(node, (element) => element.props.role === "group", "onKeyDown", {
+      key,
+      preventDefault: () => {
+        prevented = true;
+      },
+    });
+    return prevented;
+  }
+
+  it("picks by its plot's keys, and leaves a key it does not take to the page", () => {
+    const { drawn, picked } = shapes();
+    const [periods, rows, dots] = drawn;
+    if (!periods || !rows || !dots) throw new Error("three shapes");
+    // The last period with a value is shown, so the one before it; the first row; the first dot.
+    expect([
+      press(periods, "ArrowLeft"),
+      press(rows, "ArrowDown"),
+      press(dots, "ArrowRight"),
+    ]).toEqual([true, true, true]);
+    expect(picked).toEqual([1, 1, 0]);
+    expect([press(periods, "a"), press(rows, "Enter"), press(dots, "Tab")]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(picked).toEqual([1, 1, 0]);
+  });
+
+  it("hides a series by its legend's button, by its chart's id and the series' name", () => {
+    const { drawn, toggled } = shapes();
+    for (const node of drawn) {
+      const legend = elementOf(node, (element) => "swatch" in element.props);
+      if (legend === undefined) throw new Error("no legend drawn");
+      const list = (legend.type as (props: Found["props"]) => Found)(legend.props);
+      fire(list, (element) => element.type === "button", "onClick");
+    }
+    expect(toggled).toEqual(["open:Ready", "dearest:First round", "spread:feature"]);
+  });
+
+  it("makes the table it opens only once asked, its caption the chart's", () => {
+    const { drawn } = shapes();
+    const tables = drawn.map((node) => {
+      const toggle = elementOf(node, (element) => "label" in element.props);
+      const table = toggle?.props.table;
+      if (typeof table !== "function") throw new Error("no table's button drawn");
+      return renderToStaticMarkup(table());
+    });
+    expect(tables.map((html) => html.match(/<caption>(.*?)<\/caption>/)?.[1])).toEqual([
+      "Open work, by period",
+      "Every task",
+      "Every dot",
+    ]);
   });
 
   it("says in its plot's place what the window cannot show, with no legend or table", () => {
