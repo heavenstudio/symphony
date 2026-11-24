@@ -285,6 +285,10 @@ fn profiles_that_do_not_parse_say_where_and_what_kind_and_never_a_value_in_them(
             "line 1, column 42: people[0]: missing field `name`",
         ),
         (
+            "{\"people\": [{\"name\": \"ana\", \"display\": \"Ana\", \"name\": \"ana@example.com\"}]}",
+            "line 1, column 52: people[0]: duplicate field `name`",
+        ),
+        (
             "{\"people\": [{\"name\": \"ana\", \"emails\": [\"ana@example.com\"",
             "line 1, column 56: people[0].emails: EOF while parsing a list",
         ),
