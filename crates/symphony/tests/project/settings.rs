@@ -12,7 +12,7 @@ use crate::Tree;
 use crate::board::HELD_FLOW;
 use serde_json::json;
 use symphony::commit::pending::{Save, State};
-use symphony::settings::described::GITHUB;
+use symphony::settings::described::{ANSWERS_IN, GITHUB};
 use symphony::settings::stored::Board;
 use symphony::settings::{Machine, class, page, page_with, scopes};
 use symphony_api::{Setting, SettingClass, SettingKind, SettingScope, SettingsEntry, SettingsPage};
@@ -681,7 +681,10 @@ fn an_agent_says_whether_this_machine_has_its_program() {
 }
 
 /// A machine whose search path is `bin` of `tree`, holding a `symphony-github` that runs
-/// `script` for `describe` and refuses any other words.
+/// `script` for `describe` and refuses any other words. What the page makes of its answer is what
+/// these tests read, not the time it has to give one (`described_tests.rs` tries that bound): its
+/// answer is waited for on the wall-clock backstop of the page's own time to answer, which only a
+/// stall reaches.
 fn github(tree: &Tree, script: &str) -> Machine {
     let program = tree.write(
         "bin/symphony-github",
@@ -689,6 +692,7 @@ fn github(tree: &Tree, script: &str) -> Machine {
     );
     std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
     Machine::path(Some(tree.path("bin").into_os_string()))
+        .answering_in(test_time::backstop(ANSWERS_IN))
 }
 
 /// What a program answering for the exchange prints: its entry, its id another than the page's,

@@ -53,8 +53,9 @@ pub const GITHUB: Program = Program {
 };
 
 /// `program`'s entry, its own answer as this machine's build of it gives it for the project whose
-/// main checkout is `main`, judged ([`judged`]), with the program as its first need; absent, or
-/// failing, its entry says so and what holds. Its id is `program`'s.
+/// main checkout is `main`, within the machine's time to answer ([`Machine::answers_in`]), judged
+/// ([`judged`]), with the program as its first need; absent, or failing, its entry says so and
+/// what holds. Its id is `program`'s.
 pub fn program(machine: &Machine, main: &Path, program: &Program) -> SettingsEntry {
     let Some(found) = builds::of_main(main, program.name, &machine.beyond) else {
         return SettingsEntry {
@@ -79,7 +80,7 @@ pub fn program(machine: &Machine, main: &Path, program: &Program) -> SettingsEnt
     let answer = run(
         sys::command(&found).args(program.args).current_dir(main),
         &asked,
-        ANSWERS_IN,
+        machine.answers_in,
     )
     .and_then(|printed| {
         serde_json::from_slice::<SettingsEntry>(&printed)
