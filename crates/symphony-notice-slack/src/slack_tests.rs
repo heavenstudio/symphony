@@ -16,31 +16,6 @@ fn answer(status: u16, body: &str) -> Answer {
 }
 
 #[test]
-fn a_member_id_is_u_or_w_then_capitals_and_digits() {
-    for address in ["U024BE7LH", "W012A3CDE", "U1", "UABC"] {
-        assert!(member(address), "{address}");
-    }
-    for address in [
-        "",
-        "U",
-        "W",
-        "u024BE7LH",
-        "U024be7lh",
-        "U024 BE7LH",
-        "U024-BE7LH",
-        "C024BE7LH",
-        "G024BE7LH",
-        "D024BE7LH",
-        "@ana",
-        "ana@example.com",
-        "#general",
-        "UÄBC",
-    ] {
-        assert!(!member(address), "{address:?}");
-    }
-}
-
-#[test]
 fn the_text_says_what_waits_in_which_project_and_links_it() {
     assert_eq!(
         text(&notice(Kind::Card, LINK)),

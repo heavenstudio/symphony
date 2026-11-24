@@ -9,7 +9,8 @@
 
 use std::fmt;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::io;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 /// The folder of the machine folder that holds what each notice sender keeps.
@@ -68,31 +69,68 @@ impl Secret {
 /// One line naming the path and what is wrong with it, and what to do; never any of its content.
 pub(crate) fn read(folder: &Path) -> Result<Secret, String> {
     let notices = folder.join(NOTICES);
-    let file = notices.join(TOKEN_FILE);
-    owned(&notices, "folder", fs::Metadata::is_dir, "700")?;
-    owned(&file, "file", fs::Metadata::is_file, "600")?;
-    let shown = file.display();
-    let text = fs::read_to_string(&file)
+    let path = notices.join(TOKEN_FILE);
+    let folder_meta = fs::symlink_metadata(&notices).map_err(missing(&notices))?;
+    if folder_meta.file_type().is_symlink() {
+        return Err(linked(&notices, "folder"));
+    }
+    owned(
+        &notices,
+        &folder_meta,
+        "folder",
+        fs::Metadata::is_dir,
+        "700",
+    )?;
+    // The file is opened without following a link, and what is checked is the opened file's own,
+    // so nothing swapped in between the check and the read is read.
+    let shown = path.display();
+    let file = (fs::OpenOptions::new().read(true))
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&path)
+        .map_err(|error| match (error.raw_os_error(), error.kind()) {
+            (Some(libc::ELOOP), _) => linked(&path, "file"),
+            (_, io::ErrorKind::NotFound) => missing(&path)(error),
+            _ => format!("no token was read: {shown}: {}", error.kind()),
+        })?;
+    let meta = (file.metadata())
+        .map_err(|error| format!("no token was read: {shown}: {}", error.kind()))?;
+    owned(&path, &meta, "file", fs::Metadata::is_file, "600")?;
+    // From the file opened and checked, never opened again by its path.
+    let text = io::read_to_string(file)
         .map_err(|error| format!("no token was read: {shown}: {}", error.kind()))?;
     Secret::new(&text).map_err(|why| format!("no token was read from {shown}: {why}"))
 }
 
-/// Whether `path` is a `what` (`is` says), not a link, that its owner alone may read, which
-/// `chmod mode` makes it.
-fn owned(path: &Path, what: &str, is: fn(&fs::Metadata) -> bool, mode: &str) -> Result<(), String> {
-    let shown = path.display();
-    let meta = fs::symlink_metadata(path).map_err(|error| {
+/// What a `path` that could not be reached is said as, with where the token is kept.
+fn missing(path: &Path) -> impl Fn(io::Error) -> String + '_ {
+    move |error| {
         format!(
-            "no token was read: {shown}: {error}; keep the Slack app's bot token in \
-             {NOTICES}/{TOKEN_FILE} of the machine folder (docs/operations/NOTICE_SLACK.md)"
+            "no token was read: {}: {error}; keep the Slack app's bot token in \
+             {NOTICES}/{TOKEN_FILE} of the machine folder (docs/operations/NOTICE_SLACK.md)",
+            path.display()
         )
-    })?;
-    if meta.file_type().is_symlink() {
-        return Err(format!(
-            "no token was read: {shown} is a link; keep the {what} itself there"
-        ));
     }
-    if !is(&meta) {
+}
+
+/// What a link at `path` in the place of a `what` is said as.
+fn linked(path: &Path, what: &str) -> String {
+    format!(
+        "no token was read: {} is a link; keep the {what} itself there",
+        path.display()
+    )
+}
+
+/// Whether `meta`, of the `path` read, is a `what` (`is` says) that its owner alone may read,
+/// which `chmod mode` makes it.
+fn owned(
+    path: &Path,
+    meta: &fs::Metadata,
+    what: &str,
+    is: fn(&fs::Metadata) -> bool,
+    mode: &str,
+) -> Result<(), String> {
+    let shown = path.display();
+    if !is(meta) {
         return Err(format!("no token was read: {shown} is not a {what}"));
     }
     if meta.permissions().mode() & 0o077 != 0 {

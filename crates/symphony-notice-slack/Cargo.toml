@@ -20,6 +20,8 @@ repository.workspace = true
 symphony-notice = { path = "../symphony-notice" }
 # The request's body and Slack's answer.
 serde_json.workspace = true
+# O_NOFOLLOW, so a file in notices/ is read without following a link.
+libc.workspace = true
 
 [lints]
 workspace = true

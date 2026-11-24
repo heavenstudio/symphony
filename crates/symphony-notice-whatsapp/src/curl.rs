@@ -96,8 +96,9 @@ pub(crate) fn post(program: &str, url: &str, token: &Secret, body: &str) -> Resu
                  {stderr}; nothing was sent"
             )));
         }
-        // 5 to 7 are a proxy or a host curl could not resolve or connect to: the request was never
-        // written. After any other failure it may have reached the API.
+        // 6 and 7 are a host curl could not resolve or connect to (5, a proxy's, cannot come, as
+        // `noproxy` uses none): the request was never written. After any other failure it may have
+        // reached the API.
         let reached = match done.status.code() {
             Some(5..=7) => "nothing reached it",
             _ => "it may have taken the notice",

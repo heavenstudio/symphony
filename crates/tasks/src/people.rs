@@ -4,9 +4,17 @@
 //!
 //! A person's profile is kept once, with the server: `people.json` in the machine folder
 //! ([`crate::project::machine_folder`]), their short name, how they are shown, the sign-ins that
-//! are theirs and their git handles, with what they gave of emails, chat and preferences kept as
-//! written. It holds sign-ins and contact details, so it and its lock are written mode 600, and
-//! nothing a board or a log keeps names a sign-in's subject or an email: they name the short name.
+//! are theirs, their git handles, their emails, their chat addresses and which notice goes by which
+//! way. It holds sign-ins and contact details, so it and its lock are written mode 600, and nothing
+//! a board or a log keeps names a sign-in's subject, an email or a chat address: they name the
+//! short name.
+//!
+//! Where a notice reaches a person is [`Profiles::reach`]: the way they chose for its kind
+//! (`preferences`, a kind's word to a way's) and their address for that way (the first of
+//! `emails`, or `chat`'s by the way's word), each address held to the rule its sender enforces
+//! ([`ways`], the notice crate's own file). A kind they chose no way for goes by none, as the page
+//! and the Mac app show every notice. The read is the server's alone: no command prints what it
+//! answers, and no plugin or agent is handed an address.
 //!
 //! Each board keeps who is on it, in the tables of [`crate::schema::PEOPLE`]: a row a person (the
 //! groups they are in and the powers given them), a row a group (its powers), and the log of every
@@ -20,6 +28,7 @@
 //! every power, and no row says so ([`Powers::all`]).
 
 pub mod change;
+pub mod ways;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -397,11 +406,17 @@ pub struct Profile {
     /// Their git handles, the first the one a commit of theirs is authored by.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub git: Vec<String>,
-    /// Kept as written: nothing reads them yet.
+    /// Their emails, the first the one a notice by mail goes to.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emails: Vec<String>,
+    /// Their chat addresses, by the way's word: `slack` their Slack member id, `whatsapp` their
+    /// number. Any JSON is read, so a file written before a key had a meaning reads as it did; a
+    /// value is an address only where it is text its way's rule takes ([`Profile::address`]).
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub chat: Map<String, Value>,
+    /// Which notice goes by which way: a kind's word (`card`, `question`, `verdict`) to a way's
+    /// (`email`, `slack`, `whatsapp`). A kind with none goes by none. Read as `chat` is
+    /// ([`Profile::way`]).
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub preferences: Map<String, Value>,
 }
@@ -414,6 +429,65 @@ impl Profile {
         } else {
             &self.display
         }
+    }
+
+    /// Their address for `way`, one of [`ways::WAYS`]: the first of their emails by mail, `chat`'s
+    /// text by Slack or WhatsApp. None where they hold none, or one their way's rule does not take
+    /// (a file written by hand): no notice goes to an address its sender refuses.
+    pub fn address(&self, way: &str) -> Option<String> {
+        let held = match way {
+            ways::EMAIL => self.emails.first().map(String::as_str),
+            ways::SLACK | ways::WHATSAPP => self.chat.get(way).and_then(Value::as_str),
+            _ => None,
+        }?;
+        ways::address(way, held).ok()
+    }
+
+    /// The way they chose for notices of `kind`, one of [`ways::KINDS`]: one of [`ways::WAYS`], or
+    /// none, where they chose none or `preferences` holds for it what names no way.
+    pub fn way(&self, kind: &str) -> Option<&'static str> {
+        let chosen = self.preferences.get(kind).and_then(Value::as_str)?;
+        (ways::KINDS.contains(&kind))
+            .then(|| ways::WAYS.into_iter().find(|way| *way == chosen))
+            .flatten()
+    }
+
+    /// Where a notice of `kind` reaches them: the way they chose for it and their address for that
+    /// way. None where they chose no way, or hold no address for it ([`Profile::address`]).
+    pub fn reach(&self, kind: &str) -> Option<Reach> {
+        let way = self.way(kind)?;
+        let address = self.address(way)?;
+        Some(Reach { way, address })
+    }
+}
+
+/// Where one notice reaches a person: a way of [`ways::WAYS`] and their address for it, which the
+/// server hands that way's plugin and nothing else. Printed, it shows the way alone.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Reach {
+    way: &'static str,
+    address: String,
+}
+
+impl Reach {
+    /// The way's word, as a notice's `to.way` writes it.
+    pub fn way(&self) -> &'static str {
+        self.way
+    }
+
+    /// The address, as a notice's `to.address` writes it.
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+}
+
+/// The address is never printed, so a log of what was read names none.
+impl fmt::Debug for Reach {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Reach")
+            .field("way", &self.way)
+            .field("address", &"<hidden>")
+            .finish()
     }
 }
 
@@ -495,6 +569,13 @@ impl Profiles {
     /// The profile `service` signs in as `subject` ([`Signin::is`]).
     pub fn signed_in(&self, service: &str, subject: &str) -> Option<&Profile> {
         (self.people.iter()).find(|profile| profile.signins.iter().any(|s| s.is(service, subject)))
+    }
+
+    /// Where a notice of `kind` reaches the person `name` ([`Profile::reach`]): none where the
+    /// machine holds no profile of theirs, they chose no way for it or hold no address for that
+    /// way. The server's read alone, which it hands the way's plugin: nothing prints it.
+    pub fn reach(&self, name: &str, kind: &str) -> Option<Reach> {
+        self.get(name)?.reach(kind)
     }
 }
 

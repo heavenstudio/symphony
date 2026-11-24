@@ -4494,6 +4494,7 @@ dependencies = [
 name = "symphony-notice-email"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "symphony-notice",
@@ -4505,6 +4506,7 @@ dependencies = [
 name = "symphony-notice-slack"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde_json",
  "symphony-notice",
 ]
@@ -4513,6 +4515,7 @@ dependencies = [
 name = "symphony-notice-whatsapp"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "symphony-notice",

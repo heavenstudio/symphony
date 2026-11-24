@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use settings::Settings;
 use std::path::Path;
 use std::process::ExitCode;
-use symphony_notice::{Notice, Unsent, WHATSAPP};
+use symphony_notice::{Notice, Unsent, WHATSAPP, ways};
 
 fn main() -> ExitCode {
     symphony_notice::take(|notice| {
@@ -59,9 +59,9 @@ fn send(notice: &Notice, machine: &Path, curl: &str) -> Result<(), Unsent> {
 }
 
 /// The number `notice` goes to, `+` and its digits. Refused unless it goes by WhatsApp to a number
-/// written with its `+` and country code: without the `+`, Meta puts the country code of the number
-/// it is sent from before it, which may make another person's number. Spaces, dashes and
-/// parentheses between the digits are taken, as Meta takes them.
+/// its rule takes (`symphony_notice::ways::whatsapp`, which a profile's number is held to as well):
+/// written with its `+` and country code, as without the `+` Meta puts the country code of the
+/// number it is sent from before it, which may make another person's number.
 fn number(notice: &Notice) -> Result<String, Unsent> {
     let to = notice.to();
     if to.way() != WHATSAPP {
@@ -70,22 +70,8 @@ fn number(notice: &Notice) -> Result<String, Unsent> {
             to.way()
         )));
     }
-    let never = |why: &str| {
-        Err(Unsent::Never(format!(
-            "the address is no WhatsApp number: {why}"
-        )))
-    };
-    let Some(rest) = to.address().strip_prefix('+') else {
-        return never("it does not start with `+` and its country code");
-    };
-    if !(rest.chars()).all(|c| c.is_ascii_digit() || matches!(c, ' ' | '-' | '(' | ')')) {
-        return never("it holds more than digits, spaces, dashes and parentheses");
-    }
-    let digits: String = rest.chars().filter(char::is_ascii_digit).collect();
-    if !(7..=15).contains(&digits.len()) {
-        return never("it has fewer than 7 digits or more than 15");
-    }
-    Ok(format!("+{digits}"))
+    ways::whatsapp(to.address())
+        .map_err(|why| Unsent::Never(format!("the address is no WhatsApp number: {why}")))
 }
 
 /// The message the Cloud API is sent for `notice` to `number`: the template of its kind, whose

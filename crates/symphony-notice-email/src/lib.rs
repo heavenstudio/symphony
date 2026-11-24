@@ -21,7 +21,7 @@ mod settings;
 
 use std::path::PathBuf;
 use std::time::SystemTime;
-use symphony_notice::{EMAIL, Notice, Unsent, machine_folder};
+use symphony_notice::{EMAIL, Notice, Unsent, machine_folder, ways};
 
 /// Sends `notice` by mail, by the settings the machine folder's `notices/` holds, through the
 /// `curl` on `PATH`.
@@ -56,10 +56,10 @@ impl Sender {
                 "this plugin sends a notice by `{EMAIL}`, and this one is by `{way}`"
             )));
         }
-        if !mail::address(notice.to().address()) {
+        if !ways::email(notice.to().address()) {
             return Err(Unsent::Never(format!(
                 "the notice's address is no plain email address: {}",
-                mail::ADDRESS_RULE
+                ways::EMAIL_RULE
             )));
         }
         let settings = settings::read(&self.folder).map_err(Unsent::Never)?;

@@ -146,6 +146,34 @@ fn a_folder_or_a_file_others_reach_is_refused_unread() {
 }
 
 #[test]
+fn a_file_its_owner_cannot_read_is_said_by_why() {
+    let dir = machine("unreadable");
+    write(&dir, SETTINGS, SETTINGS_TEXT, 0o000);
+    let settings = dir.join(FOLDER).join(SETTINGS);
+    assert_eq!(
+        refused(&dir),
+        format!("{}: permission denied", settings.display())
+    );
+}
+
+#[test]
+fn a_fifo_in_the_place_of_a_file_is_refused_without_waiting_on_it() {
+    let dir = machine("fifo");
+    let settings = dir.join(FOLDER).join(SETTINGS);
+    let made = std::process::Command::new("mkfifo")
+        .args(["-m", "600"])
+        .arg(&settings)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    // Opened without waiting for a writer, it is seen to be no file and never read.
+    assert_eq!(
+        refused(&dir),
+        format!("{} is not a plain file", settings.display())
+    );
+}
+
+#[test]
 fn a_link_in_the_place_of_the_folder_or_a_file_is_refused() {
     // What each link leads to is kept as it should be: the link alone is refused.
     let elsewhere = machine("link-target");
@@ -296,6 +324,14 @@ fn a_value_of_another_type_is_refused_by_its_key_and_never_said() {
         ),
         "line 1: a value is of another type than its key takes"
     );
+}
+
+#[test]
+fn a_bad_unicode_escape_is_said_as_the_syntax_error_it_is() {
+    let text = LINES.join("\n").replace(&token_of(LINES[2]), "\"\\uD800\"");
+    let why = unread_by(&text);
+    assert!(why.starts_with("line 3: invalid value"), "{why}");
+    assert!(!why.contains("another type"), "{why}");
 }
 
 /// The value `line` gives its key.

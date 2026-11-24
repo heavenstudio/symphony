@@ -47,7 +47,9 @@ machine.
    ```
 
    The program refuses a folder or a file anyone else may read, or a link in the place of either,
-   and reads nothing from it: keep the folder and the file themselves there.
+   and reads nothing from it: keep the folder and the file themselves there. The file is opened
+   without following a link, and its mode is read from the file opened, so the file checked is the
+   file read.
    Every notice plugin keeps what it needs in `notices/`, named for its way.
 4. **Build it** in a clone of this repository. It is not on crates.io and no release installs it:
 
@@ -57,7 +59,9 @@ machine.
 
 5. **A person's address** for the way `slack` is their Slack member id (`U024BE7LH`): in Slack,
    their profile, then ⋮, then Copy member ID. An address of any other shape is refused, a
-   channel's id (`C…`) among them, so a notice is never posted to a whole channel.
+   channel's id (`C…`) among them, so a notice is never posted to a whole channel. A person writes
+   theirs on their card of the People page, held to the same rule
+   ([TASKS](../workflow/TASKS.md#the-people-page)).
 
 ## Trying it by hand
 
