@@ -2140,10 +2140,24 @@ impl Landing<'_> {
         }
     }
 
+    /// Say `text` on the task's thread, to `to`, as the land's actor. A line to `@orchestrator`
+    /// that a dispatch or a watcher's round says acting as that orchestrator, who reads none of
+    /// their output, is the board's own, authorized as it ([`Store::say_for`]): an inbox leaves out
+    /// what its own session said, so a line said as itself would reach nobody. A land run by hand
+    /// says each line as whoever runs it, who reads it in its output too.
     fn post(&self, text: &str, to: Option<&str>) {
-        if self.task {
-            let _ = self.store.say(self.slug, self.actor, text, to);
+        if !self.task {
+            return;
         }
+        let unheard = to == Some("@orchestrator")
+            && !matches!(self.mode, Mode::Land)
+            && (self.store.get(self.slug))
+                .is_ok_and(|task| task.holders("orchestrator").contains(&self.actor));
+        let _ = if unheard {
+            self.store.say_for(self.slug, self.actor, text, to)
+        } else {
+            self.store.say(self.slug, self.actor, text, to)
+        };
     }
 
     fn land(mut self) -> Result<String, Stop> {

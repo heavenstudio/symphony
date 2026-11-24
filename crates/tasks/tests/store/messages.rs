@@ -181,6 +181,38 @@ fn a_role_address_reaches_whoever_holds_the_role() {
 }
 
 #[test]
+fn a_line_said_for_the_orchestrator_to_its_own_role_reaches_it_as_the_boards() {
+    let f = Fixture::new(Seed::default());
+    let orch = f.session("orchestrator");
+    f.task("sim/jump");
+    f.store
+        .take_role("sim/jump", &orch, "orchestrator")
+        .unwrap();
+    // Its own line to its own role reaches no inbox of its.
+    f.store
+        .say("sim/jump", &orch, "said as itself", Some("@orchestrator"))
+        .unwrap();
+    assert!(f.store.inbox(&orch).unwrap().is_empty());
+    // Said for it, the line is the board's, to the same role, and it hears it.
+    let said = f
+        .store
+        .say_for("sim/jump", &orch, "said for it", Some("@orchestrator"))
+        .unwrap();
+    assert_eq!(
+        (said.sender.as_str(), said.recipient.as_deref()),
+        ("board", Some("@orchestrator"))
+    );
+    assert_eq!(texts(f.store.inbox(&orch).unwrap()), ["said for it"]);
+    // Authorized as who it is said for: a session that left says nothing.
+    f.store.leave(&orch).unwrap();
+    assert!(
+        (f.store)
+            .say_for("sim/jump", &orch, "after it left", Some("@orchestrator"))
+            .is_err()
+    );
+}
+
+#[test]
 fn only_the_owner_broadcast_reaches_participants() {
     let f = Fixture::new(Seed::default());
     let (a, b, outsider) = (

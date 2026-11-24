@@ -130,6 +130,21 @@ impl Store {
         self.post(slug, actor, BOARD, text, Some(handle), None, false)
     }
 
+    /// A line a tool says for `actor` on a task's thread, to `to` (a role, a session or none),
+    /// authorized as `actor` and authored by the board, as [`Store::notify`]'s is: what a detached
+    /// dispatch or a delivery watcher's round acting as the task's orchestrator says to
+    /// `@orchestrator`, which a line of its own would reach nobody with, as an inbox leaves out
+    /// what its own session said.
+    pub fn say_for(
+        &self,
+        slug: &str,
+        actor: &str,
+        text: &str,
+        to: Option<&str>,
+    ) -> Result<Message, Error> {
+        self.post(slug, actor, BOARD, text, to, None, false)
+    }
+
     /// Post to a task's thread once per `key`: the first post under a key on a thread is made, and
     /// every later one answers that message and writes nothing, whatever it says
     /// (`delivery_key:[slug, key]`, read and written in the post's transaction, so two at once make

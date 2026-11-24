@@ -1093,7 +1093,12 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   `SLUG.dispatching` there, naming who moved it, until a dispatch binds the task's pull request,
   and from then on its binding is what a later write dispatches it by: so a first dispatch that
   stopped before it published is made again by the next write, and a task never moved to review,
-  or delivered and closed, starts none. A dispatch that stops says why on the task's thread, to
+  or delivered and closed, starts none. A task the regenerator files in review is dispatched as
+  one moved there, once its run lets go of the regenerator's lock, as a generated task's dispatch
+  is refused while that lock is held. Where nothing dispatched it yet, its mark names the session
+  that filed it; that session left at once, so the dispatch acts as the task's orchestrator where
+  one holds it, and one that does not start is said once on its thread to `@orchestrator`, as the
+  board's own line. A dispatch that stops says why on the task's thread, to
   `@orchestrator`, with the `just land SLUG --dispatch` that dispatches it again: nobody reads its
   log. A board that `TASKS_SERVER` names (a test's) starts one only under `TASKS_DISPATCH=on`;
   `TASKS_DISPATCH=off` starts none anywhere. One dispatch runs at a time under the land's lock,
@@ -1353,13 +1358,17 @@ is one commit on that tip, of the generators' outputs alone, and it becomes a ta
   `generated/outputs-at-TIP-COMMIT` is pointed at the commit (the tip's first twelve letters and
   the commit's first seven, so no two generations share a name; a branch of that name at another
   commit stops the round, which says so) and the task of that name is filed,
-  claimed by the session that files it and moved to review. Each step is made only where it is
-  not there, so a run cut short at any of them is gone on from by the next, which makes nothing
-  again.
+  claimed by the session that files it and moved to review, and dispatched as any task moved
+  there is once the run lets go of its lock ([a land dispatched at
+  review](#a-land-dispatched-at-review)). Each step is made only where it is not there, so a run
+  cut short at any of them is gone on from by the next, which makes nothing again and dispatches
+  what nothing dispatched.
 - **Assessed as any task.** The regenerator names no stamp and waives none. An assessor reads the
-  head, the catalogue decides what it needs, and `just land generated/outputs-at-TIP-COMMIT` delivers
-  it: the same journal, the same squash, the same proof and receipt, whose `operation` says
-  `generated`. The host is asked nothing a task's land does not ask.
+  head, the catalogue decides what it needs, and each write after it dispatches the task again,
+  so the host merges it once the last stamp stands, with nobody running a land; `just land
+  generated/outputs-at-TIP-COMMIT` delivers one whose merge did not come. Either way it is the
+  same journal, the same squash, the same proof and receipt, whose `operation` says `generated`.
+  The host is asked nothing a task's land does not ask.
 - **One generation for one set of inputs.** While the record stands, a round whose tip holds the
   inputs it was made of makes nothing and says where the task stands: each keyed generator's
   key is the one recorded, and for a generator with no key no path outside the generators'
