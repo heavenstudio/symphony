@@ -4516,7 +4516,13 @@
       ],
       "revision": 5,
       "administers": true,
-      "machine": true
+      "machine": true,
+      "withheld": [
+        {
+          "power": "direct_agents",
+          "why": "until a board speaks to its agents for a person, asking them for work is the person at the machine's"
+        }
+      ]
     },
     "emptyPeople": {
       "people": [],
@@ -4524,7 +4530,13 @@
       "log": [],
       "revision": 0,
       "administers": true,
-      "machine": true
+      "machine": true,
+      "withheld": [
+        {
+          "power": "direct_agents",
+          "why": "until a board speaks to its agents for a person, asking them for work is the person at the machine's"
+        }
+      ]
     },
     "taskTokens": {
       "total": {

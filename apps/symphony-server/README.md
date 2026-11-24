@@ -517,7 +517,9 @@ the person at the machine's any, a person's their own display name and git handl
 only being on the board ([TASKS](../../docs/workflow/TASKS.md#the-people-page)). Each answers the
 page as it reads after the write, is the project's own board's (a worktree's scope answers 404),
 and is refused a hosted visitor; a server that names no machine folder answers 503 to a write of
-a profile.
+a profile. Only the person at the machine gives a sign-in, and a failure's cause (which can name
+the machine folder's path) is told only to them: anyone else is told what failed and what
+stands, and the server's log keeps the cause.
 Writes require an allowed Host and, when supplied, the app's exact Origin. So does the feed's
 WebSocket upgrade, as a page of any site may open a WebSocket and read what it says: its Origin
 must be the server's own page (`src/api/feed_socket.rs`).

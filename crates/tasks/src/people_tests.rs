@@ -79,6 +79,21 @@ fn a_power_is_written_as_the_board_writes_it_and_read_with_a_hyphen_too() {
 }
 
 #[test]
+fn direct_agents_alone_is_given_to_no_one_yet_and_says_why() {
+    let withheld: Vec<(Power, &str)> = (Power::ALL.into_iter())
+        .filter_map(|power| Some((power, power.withheld()?)))
+        .collect();
+    assert_eq!(
+        withheld,
+        [(
+            Power::DirectAgents,
+            "until a board speaks to its agents for a person, asking them for work is the person \
+             at the machine's"
+        )]
+    );
+}
+
+#[test]
 fn every_power_includes_read_and_none_puts_no_one_on_the_board() {
     let none = Powers::default();
     assert!(!none.any() && !none.holds(Power::Read));

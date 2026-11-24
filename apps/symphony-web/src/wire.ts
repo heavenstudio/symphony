@@ -807,6 +807,11 @@ export type PeoplePage = {
    */
   machine: boolean;
   /**
+   * The powers the board gives no one yet, each with why: the page draws them as not yet
+   * givable, and the board refuses a grant of one in the same words.
+   */
+  withheld: Array<WithheldPower>;
+  /**
    * The one reading's short name on the board; none for the person at the machine.
    */
   you?: string | null;
@@ -846,6 +851,17 @@ export type PersonRow = {
 };
 
 export type GroupRow = { name: string; powers: Array<string> };
+
+export type WithheldPower = {
+  /**
+   * Its word, as `direct_agents`.
+   */
+  power: string;
+  /**
+   * Why no one is given it yet, as the board's refusal of a grant says it after the power.
+   */
+  why: string;
+};
 
 export type PeopleLogLine = {
   /**

@@ -162,11 +162,15 @@ fn given(c: &Context) -> Result<Given, Stop> {
     })
 }
 
-/// A change's stop as the command's: a refusal exits 1, a failure 2.
+/// A change's stop as the command's: a refusal exits 1, a failure 2, said with its cause, as the
+/// terminal is the person at the machine's, and with the removal that takes back a person it left
+/// on the board.
 fn stopped(stopped: Stopped) -> Stop {
     match stopped {
         Stopped::Refused(why) => Stop::Refused(why),
-        Stopped::Failed(why) => Stop::Board(why),
+        Stopped::Failed(failure) => Stop::Board(failure.told(true, |name| {
+            format!("`{RECIPE} remove {name}` takes it back")
+        })),
     }
 }
 
