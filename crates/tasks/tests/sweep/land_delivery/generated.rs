@@ -108,7 +108,7 @@ fn a_round_files_what_it_made_as_a_task_and_commits_nothing_to_the_default_branc
         result.unwrap(),
         format!(
             "Regenerate the bundle for main at {}: made as {}, awaiting delivery by pull request \
-             as {slug} (`just land {slug}`, once its stamps stand); nothing committed to main",
+             as {slug}, which the host merges once its stamps stand; nothing committed to main",
             &tip[..7],
             &made_as.head[..7],
             slug = made_as.slug
@@ -177,8 +177,8 @@ fn one_input_key_is_generated_once_however_often_it_is_asked_and_main_moves() {
     assert_eq!(
         result.unwrap(),
         format!(
-            "the bundle: made of main at {}, awaiting delivery by pull request as {slug} (`just \
-             land {slug}`, once its stamps stand): nothing is made again of the same inputs",
+            "the bundle: made of main at {}, awaiting delivery by pull request as {slug}, which \
+             the host merges once its stamps stand: nothing is made again of the same inputs",
             &first.tip[..7],
             slug = first.slug
         ),
@@ -1240,7 +1240,7 @@ fn a_task_it_files_is_dispatched_as_one_moved_to_review_and_merged_once_approved
 #[test]
 fn a_dispatch_of_a_task_it_files_that_does_not_start_is_said_on_its_thread_and_made_by_the_next_write()
  {
-    let (r, _bare, on, record, _) = dispatching();
+    let (r, _bare, on, record, orch) = dispatching();
     // No `tasks` to start: said to its orchestrator as the board's own line, as the session that
     // filed it has left, and its mark left.
     let missing = r.dir.join("no-such-tasks").to_string_lossy().into_owned();
@@ -1264,6 +1264,8 @@ fn a_dispatch_of_a_task_it_files_that_does_not_start_is_said_on_its_thread_and_m
         (post.sender.as_str(), post.recipient.as_deref()),
         ("board", Some("@orchestrator"))
     );
+    let heard = r.board.store.inbox(&orch).unwrap();
+    assert!(heard.iter().any(|line| line.id == post.id), "{heard:?}");
     assert!(
         said.contains(&format!(
             "regenerate: {slug}: its dispatch to the host did not start"
@@ -1292,7 +1294,7 @@ fn a_dispatch_of_a_task_it_files_that_does_not_start_is_said_on_its_thread_and_m
 }
 
 #[test]
-fn a_dispatch_of_a_task_it_files_that_stops_is_said_on_its_thread_by_its_orchestrator() {
+fn a_dispatch_of_a_task_it_files_that_stops_is_said_to_its_orchestrator_who_hears_it() {
     let (r, bare, on, record, orch) = dispatching();
     round_with(&r, &vars(&on)).1.unwrap();
     let slug = pending(&r).unwrap().slug;
@@ -1312,9 +1314,17 @@ fn a_dispatch_of_a_task_it_files_that_stops_is_said_on_its_thread_by_its_orchest
     );
     let post = r.board.store.thread(&slug).unwrap().pop().unwrap();
     assert!(post.text.contains(&why), "{}", post.text);
+    // As the board's own line, authorized as the orchestrator: one of its own would reach no inbox
+    // of its.
     assert_eq!(
         (post.sender.as_str(), post.recipient.as_deref()),
-        (orch.as_str(), Some("@orchestrator"))
+        ("board", Some("@orchestrator"))
+    );
+    let heard = r.board.store.inbox(&orch).unwrap();
+    assert!(
+        heard.iter().any(|line| line.id == post.id),
+        "{:?}",
+        heard.iter().map(|line| &line.text).collect::<Vec<_>>()
     );
 }
 

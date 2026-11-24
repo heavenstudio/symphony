@@ -1170,6 +1170,12 @@ fn a_round_that_cannot_finish_a_land_tries_again_and_says_so_once_past_the_bound
         "{text}"
     );
     assert_eq!(to.as_deref(), Some("@orchestrator"));
+    // The round acts as the task's orchestrator: its line is the board's own, which reaches the
+    // orchestrator's inbox, as a line of the orchestrator's own would not.
+    let post = r.board.store.thread(SLUG).unwrap().pop().unwrap();
+    assert_eq!(post.sender, "board");
+    let heard = r.board.store.inbox(&people.orch).unwrap();
+    assert!(heard.iter().any(|line| line.id == post.id), "{heard:?}");
     assert!(landings(&r, SLUG).is_empty());
     // Put right, the next round finishes it and the watcher ends.
     git(&r.root, &["checkout", "--", "symphony.toml"]);

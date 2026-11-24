@@ -1020,8 +1020,8 @@ impl Regenerator<'_, '_> {
             }
             self.file(pending)?;
             return waits(format!(
-                "{made}, awaiting delivery by pull request as {slug} (`just land {slug}`, once \
-                 its stamps stand): nothing is made again of the same inputs"
+                "{made}, awaiting delivery by pull request as {slug}, which the host merges once \
+                 its stamps stand: nothing is made again of the same inputs"
             ));
         };
         self.say(&format!(
@@ -1224,10 +1224,9 @@ impl Regenerator<'_, '_> {
         Ok(Round::Pending {
             tip: tip.into(),
             line: format!(
-                "{message}: made as {}, awaiting delivery by pull request as {} (`just land {}`, \
-                 once its stamps stand); nothing committed to {}",
+                "{message}: made as {}, awaiting delivery by pull request as {}, which the host \
+                 merges once its stamps stand; nothing committed to {}",
                 short(built),
-                pending.slug,
                 pending.slug,
                 self.landing.settings.default_branch
             ),
