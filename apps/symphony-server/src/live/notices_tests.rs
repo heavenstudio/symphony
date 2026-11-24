@@ -1,9 +1,9 @@
 //! The one server's notices for a project, on a scratch board and a temporary machine folder whose
 //! `notices/programs.toml` names a fake program: a card that starts waiting, an agent's question to
 //! the person at the machine and a reviewer's verdict reach each member of the thing's group once,
-//! by their way, and nobody else; a held message's line tells as such a question, its author among
-//! those told when of the group, and its pass, a person's line, tells no one; a board that names
-//! nobody tells no one; and the worker hands what a wake finds and ends at the stop.
+//! by their way, and nobody else; a held message's line tells who may pass it on, of the task's
+//! group else of the board, never its author, and its pass, a person's line, tells no one; a board
+//! that names nobody tells no one; and the worker hands what a wake finds and ends at the stop.
 
 use super::super::Hub;
 use super::{Said, Turns};
@@ -257,35 +257,220 @@ fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_b
     );
 }
 
-/// A message held for people (`symphony_board::held`) is told of by the board's line for it, a
-/// question to the person at the machine that no person wrote: each member of the task's group is
-/// told, its author too when one of them, a link alone. Its pass is a person's line, which tells no
-/// one.
+impl Telling {
+    /// Gives each of `names` the direct agents power, as the person at the machine.
+    fn direct_agents(&self, names: &[&str]) {
+        for name in names {
+            let holder = symphony_board::people::Holder::Person(name);
+            (self.f.store.grant(holder, &[Power::DirectAgents], "owner")).unwrap();
+        }
+    }
+
+    /// Names a program for WhatsApp too, cy's way.
+    fn whatsapp(&self) {
+        let sender = self.tree.path("machine/notices/sender");
+        self.tree.write(
+            "machine/notices/programs.toml",
+            &format!(
+                "slack = \"{0}\"\nemail = \"{0}\"\nwhatsapp = \"{0}\"\n",
+                sender.display()
+            ),
+        );
+    }
+
+    /// Ana's message on app/x, held, its line read by the hub: its link.
+    fn hold(&self, text: &str) -> (i64, String) {
+        let ana = self.f.other().for_person("ana");
+        let held = (ana.hold_words("app/x", "ana", text, None)).unwrap();
+        self.hub.observe(&self.f.store);
+        (
+            held.id,
+            format!("{ORIGIN}/symphony/task/app/x#message-{}", held.id),
+        )
+    }
+}
+
+/// What the fake program was handed after its first `from`, each its kind, way and address.
+fn told_after(telling: &Telling, from: usize) -> Vec<(String, String, String)> {
+    (telling.told().into_iter().skip(from))
+        .map(|(kind, way, address, _)| (kind, way, address))
+        .collect()
+}
+
+fn notice(kind: &str, way: &str, address: &str) -> (String, String, String) {
+    (kind.into(), way.into(), address.into())
+}
+
+/// A message held for people (`symphony_board::held`) is told of by the board's line for it: as
+/// `held`, a link alone to its place on the task's page, to each of the task's group who may pass
+/// it on, never its author, and to no member who may not; once it is passed on, no one, and its
+/// pass, a person's line, tells no one either. A line to `owner` that only reads as one is a
+/// question to the group.
 #[test]
-fn a_held_messages_line_tells_its_tasks_group_as_a_question_and_its_pass_tells_no_one() {
+fn a_held_message_tells_who_of_its_tasks_group_may_pass_it_never_its_author() {
     let telling = Telling::new(false);
+    telling.whatsapp();
+    // cy joins design without direct agents, and bo is given it.
+    (telling.f.store.join_group("cy", "design", "owner")).unwrap();
+    telling.direct_agents(&["bo"]);
     let mut passes = turns();
     passes.pass(&telling.hub);
-    let ana = telling.f.other().for_person("ana");
-    let held = (ana.hold_words("app/x", "ana", "Cut the header", None)).unwrap();
-    telling.hub.observe(&telling.f.store);
+    let (held, link) = telling.hold("Cut the header");
     passes.pass(&telling.hub);
-    let task = format!("{ORIGIN}/symphony/task/app/x");
-    let told = |kind: &str, way: &str, address: &str| {
-        (kind.into(), way.into(), address.into(), task.clone())
-    };
     assert_eq!(
         telling.told(),
-        [
-            told("question", "slack", ANA_SLACK),
-            told("question", "email", BO_EMAIL)
-        ],
-        "ana and bo are design's; cy is engineering's"
+        [("held".into(), "email".into(), BO_EMAIL.into(), link.clone())],
+        "bo alone: ana wrote it and cy may not direct agents"
     );
-    (telling.f.store.pass("app/x", held.id, "owner")).unwrap();
+    // Ana may pass a message now; hers are still not told to her, two in one look each told.
+    telling.direct_agents(&["ana"]);
+    let (_, second) = telling.hold("And the footer");
+    let (_, third) = telling.hold("And the margins");
+    passes.pass(&telling.hub);
+    let bo = |link: &str| {
+        (
+            "held".into(),
+            "email".into(),
+            BO_EMAIL.into(),
+            link.to_string(),
+        )
+    };
+    assert_eq!(telling.told()[1..], [bo(&second), bo(&third)]);
+    // A pass, a person's line, tells no one.
+    (telling.f.store.pass("app/x", held, "owner")).unwrap();
     telling.hub.observe(&telling.f.store);
     passes.pass(&telling.hub);
-    assert_eq!(telling.told().len(), 2, "the pass is a person's line");
+    assert_eq!(telling.told().len(), 3, "the pass is a person's line");
+    // One passed on before the runner looked at its line tells no one.
+    let ana = telling.f.other().for_person("ana");
+    let early = (ana.hold_words("app/x", "ana", "Never mind", None)).unwrap();
+    (telling.f.store.pass("app/x", early.id, "owner")).unwrap();
+    telling.hub.observe(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 3, "passed before its notice was made");
+    // An agent's line to owner that reads as one is a question to the group, ana, bo and cy.
+    let marker = format!("{}#{held}", symphony_board::held::MARKER);
+    (telling
+        .f
+        .store
+        .say("app/x", "worker", &marker, Some("owner")))
+    .unwrap();
+    telling.hub.observe(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(
+        told_after(&telling, 3),
+        [
+            notice("question", "slack", ANA_SLACK),
+            notice("question", "email", BO_EMAIL),
+            notice("question", "whatsapp", "+15551234567"),
+        ]
+    );
+}
+
+/// With nobody of the task's group able to pass it on but its author, every person of the board
+/// who may is told; with nobody but its author on the whole board, no one is, as the person at the
+/// machine is told by the page.
+#[test]
+fn a_held_message_no_one_of_its_group_may_pass_tells_the_board_who_may_else_no_one() {
+    let telling = Telling::new(false);
+    telling.whatsapp();
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    // Nobody may pass it but ana, its author: no one is told.
+    telling.direct_agents(&["ana"]);
+    telling.hold("Cut the header");
+    passes.pass(&telling.hub);
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    // cy, of engineering, may: told, and design's bo, who may not, is not.
+    telling.direct_agents(&["cy"]);
+    telling.hold("And the footer");
+    passes.pass(&telling.hub);
+    assert_eq!(
+        told_after(&telling, 0),
+        [notice("held", "whatsapp", "+15551234567")]
+    );
+    // Once bo of design may, design's alone are told again.
+    telling.direct_agents(&["bo"]);
+    telling.hold("And the margins");
+    passes.pass(&telling.hub);
+    assert_eq!(told_after(&telling, 1), [notice("held", "email", BO_EMAIL)]);
+}
+
+/// Who of a board is told of a held message, by whose its task is: of a group, its members who may
+/// pass it on; of a person, they where they may; of the person at the machine, or where none of
+/// its owner may, every person of the board who may; never its author; none where nobody but its
+/// author may, and none on a board that names nobody.
+#[test]
+fn who_is_told_of_a_held_message_is_who_may_pass_it_of_its_owner_else_of_the_board() {
+    use super::passers;
+    use symphony_board::people::ownership::{By, Kind, Owning};
+    use symphony_board::people::{Group, Member, People};
+    let passes = [Power::Speak, Power::DirectAgents];
+    let member = |name: &str, group: &str, powers: &[Power]| Member {
+        name: name.into(),
+        groups: vec![group.into()],
+        powers: powers.to_vec(),
+        revision: 0,
+    };
+    let people = People {
+        members: vec![
+            member("ana", "design", &passes),
+            member("bo", "design", &[Power::Speak]),
+            member("cy", "engineering", &passes),
+            member("dee", "design", &passes),
+        ],
+        groups: ["design", "engineering"]
+            .map(|name| Group {
+                name: name.into(),
+                ..Group::default()
+            })
+            .into(),
+        revision: 1,
+    };
+    let owning = |name: &str, kind: Kind| Owning {
+        name: name.into(),
+        kind,
+        by: By::Named,
+        place: None,
+        unheld: None,
+    };
+    let design = owning("design", Kind::Group);
+    assert_eq!(passers(&people, &design, "bo"), ["ana", "dee"]);
+    assert_eq!(
+        passers(&people, &design, "ana"),
+        ["dee"],
+        "never its author"
+    );
+    let engineering = owning("engineering", Kind::Group);
+    assert_eq!(passers(&people, &engineering, "bo"), ["cy"]);
+    assert_eq!(
+        passers(&people, &engineering, "cy"),
+        ["ana", "dee"],
+        "none of engineering but its author: the board's"
+    );
+    assert_eq!(
+        passers(&people, &owning("dee", Kind::Person), "bo"),
+        ["dee"]
+    );
+    assert_eq!(
+        passers(&people, &owning("bo", Kind::Person), "dee"),
+        ["ana", "cy"],
+        "bo may not pass it: the board's"
+    );
+    let machine = owning("owner", Kind::Machine);
+    assert_eq!(passers(&people, &machine, "bo"), ["ana", "cy", "dee"]);
+    let alone = People {
+        members: vec![
+            member("ana", "design", &passes),
+            member("bo", "design", &[]),
+        ],
+        ..people.clone()
+    };
+    assert!(
+        passers(&alone, &design, "ana").is_empty(),
+        "the page tells the machine's person"
+    );
+    assert!(passers(&People::default(), &machine, "ana").is_empty());
 }
 
 #[test]

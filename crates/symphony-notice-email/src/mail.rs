@@ -44,6 +44,7 @@ fn sentence(kind: Kind, project: &str) -> String {
         Kind::Card => "A card waits on you",
         Kind::Question => "A question waits on you",
         Kind::Verdict => "A reviewer gave a verdict",
+        Kind::Held => "A person's words wait on you to pass on",
         // A kind a newer server gives (NOTICES.md, "Kinds").
         _ => "Something waits on you",
     };

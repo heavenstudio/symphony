@@ -179,14 +179,21 @@ fn the_kinds_are_the_messages_kinds() {
         assert_eq!(Kind::of(kind).word(), kind);
         assert_ne!(Kind::of(kind), Kind::Other, "{kind}");
     }
-    // A kind added to `Kind` stops this match building until it is matched here, and so in KINDS.
+    // A kind added to `Kind` stops this match building until it is matched here, and so in KINDS
+    // or not: a held message goes by the way chosen for questions, so a profile chooses it none.
     let made = |kind: Kind| match kind {
         Kind::Card | Kind::Question | Kind::Verdict => Some(kind.word()),
-        Kind::Other => None,
+        Kind::Held | Kind::Other => None,
     };
-    let made: Vec<&str> = [Kind::Card, Kind::Question, Kind::Verdict, Kind::Other]
-        .into_iter()
-        .filter_map(made)
-        .collect();
+    let made: Vec<&str> = [
+        Kind::Card,
+        Kind::Question,
+        Kind::Verdict,
+        Kind::Held,
+        Kind::Other,
+    ]
+    .into_iter()
+    .filter_map(made)
+    .collect();
     assert_eq!(made, KINDS);
 }

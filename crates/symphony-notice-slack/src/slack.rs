@@ -33,6 +33,7 @@ pub(crate) fn text(notice: &Notice) -> String {
         Kind::Card => format!("A card waits on you in *{project}*."),
         Kind::Question => format!("An agent's question waits on you in *{project}*."),
         Kind::Verdict => format!("A reviewer gave a verdict in *{project}*."),
+        Kind::Held => format!("A person's words wait on you to pass on in *{project}*."),
         _ => format!("Something on the Symphony waits on you in *{project}*."),
     };
     format!("{what} <{}|Open it>", link(notice.link()))

@@ -31,7 +31,7 @@ One JSON object, written on one line:
 |---|---|---|
 | `notice` | the format's number | `1` |
 | `id` | the notice's own id, the same on every hand of it and unique on the server ([below](#the-same-notice)) | 1 to 128 ASCII letters, digits, dots, dashes and underscores |
-| `kind` | what it tells of | `card`, `question` or `verdict` ([kinds](#kinds)) |
+| `kind` | what it tells of | `card`, `question`, `verdict` or `held` ([kinds](#kinds)) |
 | `project` | the project's id, as in its `/<id>/` path | lowercase letters and digits, single dashes between them: `[project] id`'s rule |
 | `link` | the page it is about | an absolute `http` or `https` URL with a host, all printable ASCII |
 | `to.way` | the way the person chose | a word: lowercase letters and digits, single dashes between them ([ways](#ways-and-addresses)) |
@@ -47,11 +47,14 @@ approved, one for each kind of notice, and an email needs a subject.
 
 ### Kinds
 
-The three notices the Symphony gives today, which the Mac app shows:
+The notices the Symphony gives today, the first three of which the Mac app shows:
 
 - `card`: a card waits on the person.
 - `question`: an agent's question on a task waits on them.
 - `verdict`: a reviewer gave a verdict.
+- `held`: a person's words held on a task wait on them to pass on
+  ([TASKS](../workflow/TASKS.md#words-held-for-people)). A profile chooses no way for it: it goes by
+  the way chosen for questions.
 
 A kind is added without a new format: a reader that does not know one sends it as a notice that
 something on the Symphony waits on the person, at its link (`Kind::Other` in the crate, which no
@@ -117,16 +120,24 @@ it has the record open (`notices.lock` beside it) keeps a hand still under way a
 replacement's first read. Its module doc is `apps/symphony-server/src/notices.rs`.
 
 - **What tells.** A card starting to wait on the main page's queue, an agent's question on a task
-  to the person at the machine (a thread line to `owner` that no person wrote), and a reviewer's
-  verdict. What stood when the server first looked at a project is taken as told.
+  to the person at the machine (a thread line to `owner` that no person wrote), a reviewer's
+  verdict, and the board's line of a held message, a line to `owner` whose number is a message's
+  held on its task. What stood when the server first looked at a project is taken as told.
 - **Who is told.** Whose the thing is, by the board's map of places and the name written on it
   ([TASKS](../workflow/TASKS.md#which-group-a-thing-belongs-to)): each member of its group, or the
   person it is written to. The person at the machine has no profile, so a board that names nobody
-  tells no one.
-- **By which way.** The way the person's profile chose for that kind, at their address for it. A
-  person who chose none is not told, nor one whose way the machine names no program for.
+  tells no one. A held message tells those who may pass it on (`speak` and `direct_agents`, what
+  its pass needs), never its author: those of whose the task is, else every person of the board
+  who may, else no one, the person at the machine told by the page
+  ([TASKS](../workflow/TASKS.md#words-held-for-people)). Its link is its place on the task page,
+  `/task/SLUG#message-N`.
+- **By which way.** The way the person's profile chose for that kind, at their address for it, and
+  for `held` the way chosen for questions. A person who chose none is not told, nor one whose way
+  the machine names no program for.
 - **Once.** A card waiting tells each person once while it waits, and again only after it stopped
-  waiting, or when it moves to someone not told yet; a line tells once.
+  waiting, or when it moves to someone not told yet; a line tells once. A held message passed on
+  before its line is looked at tells no one; one passed on after its notices were made is still
+  handed them, as the hand reads no board.
 - **The programs are the machine's**: `notices/programs.toml` in the machine folder, each way named
   to its program's absolute path. No `symphony.toml` key names one, so nothing a project or its
   board holds starts a program. The server refuses the folder or the file when another account
@@ -205,10 +216,11 @@ this page. In it:
   above.
 - `ways` is the address each way takes: `email`, `slack` and `whatsapp` check one (the last
   answering the number as `+` and its digits), `address(way, text)` answers it as a profile holds
-  it, each refusal saying the rule and never the address, and `WAYS` and `KINDS` list the words. The
-  three plugins send by it, and the board, which is published where this crate is not, carries the
-  file as a copy (`crates/tasks/src/people/ways.rs`) that `crates/symphony/tests/packages.rs` holds
-  equal byte for byte, so a profile holds no address its plugin refuses.
+  it, each refusal saying the rule and never the address, and `WAYS` lists the ways' words and
+  `KINDS` the kinds a profile chooses a way for, `held` not among them. The three plugins send by
+  it, and the board, which is published where this crate is not, carries the file as a copy
+  (`crates/tasks/src/people/ways.rs`) that `crates/symphony/tests/packages.rs` holds equal byte
+  for byte, so a profile holds no address its plugin refuses.
 - `unstarted` says what came of a notice whose sending program did not start: `75` where the
   machine ran short for a moment (of processes, memory or open files, or the program being
   written as it was started), else `1`.

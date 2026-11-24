@@ -108,8 +108,9 @@ part, its text plain.
 
 - **From** `Symphony <from>`, **To** the person's address.
 - **Subject** what waits on the person and the project: `A card waits on you in symphony`,
-  `A question waits on you in symphony`, `A reviewer gave a verdict in symphony`, and for a kind
-  this build does not know, `Something waits on you in symphony`.
+  `A question waits on you in symphony`, `A reviewer gave a verdict in symphony`,
+  `A person's words wait on you to pass on in symphony`, and for a kind this build does not know,
+  `Something waits on you in symphony`.
 - **The body** that sentence and the notice's link: a notice carries no title and no words
   ([NOTICES](../engineering/NOTICES.md#the-message)).
 - **Message-ID** made from the notice's id, at the domain of `from`, and **Auto-Submitted:
