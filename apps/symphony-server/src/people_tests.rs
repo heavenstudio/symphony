@@ -615,3 +615,100 @@ async fn a_hosted_visitor_reads_no_one_and_changes_no_one() {
     }
     assert_eq!(served.log().len(), 1, "ana is still on the board");
 }
+
+/// A change the board refuses is a 400 in the board's words, and profiles that cannot be had (a
+/// folder where their lock goes) are a 503 to an add and to a profile's write: nothing is
+/// written, on the board or in the machine folder.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_change_the_board_refuses_or_profiles_not_had_are_said_with_nothing_written() {
+    let served = Served::new(&[("ana", &[Power::Speak])]);
+    let (status, said) = served
+        .asked(
+            HERE,
+            "POST",
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"grant","name":"ana","powers":["direct_agents"]}"#,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{said}");
+    assert!(
+        said.contains("direct agents is given to no one yet"),
+        "{said}"
+    );
+    let lock = served.machine.join(symphony_board::people::LOCK);
+    let _ = std::fs::remove_file(&lock);
+    std::fs::create_dir(&lock).unwrap();
+    for (route, body, words) in [
+        (
+            PEOPLE_CHANGE_PATH,
+            r#"{"action":"add","name":"bo"}"#,
+            "the machine's profiles could not be locked or read",
+        ),
+        (
+            PROFILE_PATH,
+            r#"{"name":"ana","display":"Ana"}"#,
+            "ana's profile could not be written",
+        ),
+    ] {
+        let (status, said) = served.asked(HERE, "POST", route, body).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{route}: {said}");
+        assert!(said.contains(words), "{route}: {said}");
+    }
+    assert_eq!(served.log().len(), 1, "ana's add alone");
+    assert_eq!(served.profiles().people, [anas()]);
+}
+
+/// A server whose read hub has not started answers the page 503, as every read of the board, and
+/// one whose project holds no board it can reach answers a change 503, naming the board.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_page_waits_on_the_servers_start_and_a_change_on_a_board_it_reaches() {
+    let tree = Tree::new();
+    let plain = tree.root.join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let shared = Shared::new(1, 8123, &plain, None, crate::testing::open_gate());
+    let app = |shared: &Arc<Shared>| {
+        crate::front::router(shared.clone())
+            .layer(MockConnectInfo(HERE.parse::<SocketAddr>().unwrap()))
+    };
+    let asked = |method: &str, path: &str, body: &str| {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, HOST);
+        if method == "POST" {
+            request = request
+                .header(header::ORIGIN, format!("http://{HOST}"))
+                .header(header::CONTENT_TYPE, "application/json");
+        }
+        request.body(Body::from(body.to_string())).unwrap()
+    };
+    let said = |response: axum::response::Response| async move {
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    };
+    let (status, body) = said(
+        app(&shared)
+            .oneshot(asked("GET", PEOPLE_PATH, ""))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("the Symphony server is starting"), "{body}");
+    let (status, body) = said(
+        app(&shared)
+            .oneshot(asked(
+                "POST",
+                PEOPLE_CHANGE_PATH,
+                r#"{"action":"remove","name":"ana"}"#,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("the task board cannot be reached"), "{body}");
+}

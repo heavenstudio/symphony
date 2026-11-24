@@ -193,6 +193,7 @@ fn declarations() -> Vec<Declared> {
     let cfg = Config::new().with_large_int("number");
     [
         board_declarations(&cfg),
+        page_declarations(&cfg),
         document_declarations(&cfg),
         task_declarations(&cfg),
     ]
@@ -201,7 +202,7 @@ fn declarations() -> Vec<Declared> {
     .collect()
 }
 
-/// The types the frame, the feed, the queue, Reports, the task board and the agents page read.
+/// The types the frame, the feed, the queue, Reports and Settings read.
 fn board_declarations(cfg: &Config) -> Vec<Declared> {
     vec![
         declared::<api::ProjectView>(cfg),
@@ -250,6 +251,13 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::SettingValue>(cfg),
         declared::<api::SettingWrite>(cfg),
         declared::<api::SettingWritten>(cfg),
+    ]
+}
+
+/// The types the People page, the Runs page, the task board and the agents page read, after the
+/// board's in wire.ts.
+fn page_declarations(cfg: &Config) -> Vec<Declared> {
+    vec![
         // The People page's.
         declared::<api::PeoplePage>(cfg),
         declared::<api::PersonRow>(cfg),
@@ -2643,9 +2651,9 @@ fn people() -> api::PeoplePage {
         }
     };
     let line =
-        |n: i64, did: &str, name: &str, group: Option<&str>, powers: &[&str]| api::PeopleLogLine {
-            n,
-            at: 1_763_000_000.0 + 3600.0 * n as f64,
+        |n: i32, did: &str, name: &str, group: Option<&str>, powers: &[&str]| api::PeopleLogLine {
+            n: n.into(),
+            at: 1_763_000_000.0 + 3600.0 * f64::from(n),
             by: "owner".into(),
             did: did.into(),
             name: name.into(),
