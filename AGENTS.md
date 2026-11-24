@@ -7,8 +7,8 @@ and release commands (`crates/symphony-build`), the wire types, the task board (
 the plugin kit, the headless Chrome driver, the optional GitHub issue exchange
 (`crates/symphony-github`, [GITHUB](docs/operations/GITHUB.md)), the notice message a notice plugin
 takes (`crates/symphony-notice`, [NOTICES](docs/engineering/NOTICES.md)) and the tests' CPU meters
-and waits (`crates/test-time`). The app's formats and operating contract live in [docs/](docs/README.md). A
-consuming project owns its landing policy and shared-service safeguards.
+and waits (`crates/test-time`). The app's formats and operating contract live in
+[docs/](docs/README.md). A consuming project owns its landing policy and shared-service safeguards.
 
 This guide holds what every session here needs, each rule in one place: the standing rules are
 [RULES.md](RULES.md), which every agent follows, and how a part works is the document or module

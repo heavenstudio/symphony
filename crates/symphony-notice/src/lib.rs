@@ -10,14 +10,15 @@
 //! The message is one JSON object of format [`FORMAT`]. [`Notice::line`] writes it and
 //! [`Notice::read`] reads it, refusing one that breaks a rule of [`Notice::new`] and one of a format
 //! it does not read. A field it does not know is ignored, so what a newer server adds reaches an
-//! older plugin unread, and a kind it does not know is read as [`Kind::Other`]. A plugin's `main`
-//! is [`take`]: the one notice on stdin, handed to its send, and the exit status saying what came
-//! of it.
+//! older plugin unread, and a kind it does not know is read as [`Kind::Other`]. A refusal names the
+//! field and its rule, never the value found, so a plugin that says why on stderr repeats no
+//! address and no link. A plugin's `main` is [`take`]: the one notice on stdin, handed to its send,
+//! and the exit status saying what came of it.
 
 #![forbid(unsafe_code)]
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Serialize;
+use serde_json::{Map, Value};
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
@@ -45,8 +46,7 @@ pub const NEVER: u8 = 1;
 pub const ID_MOST: usize = 128;
 
 /// What a notice tells of.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Kind {
     /// A card waits on them.
@@ -57,11 +57,20 @@ pub enum Kind {
     Verdict,
     /// A kind this build does not know, from a newer server: sent as a notice that something on the
     /// Symphony waits on them, at its link. Never made: [`Notice::new`] refuses it.
-    #[serde(other)]
     Other,
 }
 
 impl Kind {
+    /// The kind `word` names: [`Kind::Other`] for one this build does not know.
+    pub fn of(word: &str) -> Kind {
+        match word {
+            "card" => Kind::Card,
+            "question" => Kind::Question,
+            "verdict" => Kind::Verdict,
+            _ => Kind::Other,
+        }
+    }
+
     /// How the message writes it: `card`, `question`, `verdict`; `other` for [`Kind::Other`].
     pub fn word(self) -> &'static str {
         match self {
@@ -87,13 +96,11 @@ impl To {
     /// # Errors
     ///
     /// When the way is no word (lowercase letters and digits, single dashes between them), or the
-    /// address is empty, holds a control character or a space at either end. A refusal never
-    /// repeats the address.
+    /// address is empty, holds a control character or a space at either end. A refusal repeats
+    /// neither.
     pub fn new(way: &str, address: &str) -> Result<To, String> {
         if !word(way) {
-            return Err(format!(
-                "the way {way:?} is no word (lowercase letters, digits and single dashes)"
-            ));
+            return Err("the way is no word (lowercase letters, digits and single dashes)".into());
         }
         if address.trim().is_empty() {
             return Err("the address is empty".to_string());
@@ -148,7 +155,7 @@ impl Notice {
     /// When the id is not 1 to [`ID_MOST`] ASCII letters, digits, dots, dashes and underscores; the
     /// kind is [`Kind::Other`]; the project is no project id (lowercase letters and digits, single
     /// dashes between them, as `[project] id`); or the link is no absolute `http` or `https` URL of
-    /// printable ASCII. A refusal never repeats the link.
+    /// printable ASCII. A refusal repeats none of them.
     pub fn new(id: &str, kind: Kind, project: &str, link: &str, to: To) -> Result<Notice, String> {
         if kind == Kind::Other {
             return Err(
@@ -163,15 +170,13 @@ impl Notice {
         let id_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_');
         if id.is_empty() || id.len() > ID_MOST || !id.chars().all(id_char) {
             return Err(format!(
-                "the id {id:?} is none: 1 to {ID_MOST} ASCII letters, digits, dots, dashes and \
-                 underscores"
+                "the id is none: 1 to {ID_MOST} ASCII letters, digits, dots, dashes and underscores"
             ));
         }
         if !word(project) {
-            return Err(format!(
-                "the project {project:?} is no project id (lowercase letters, digits and single \
-                 dashes)"
-            ));
+            return Err(
+                "the project is no project id (lowercase letters, digits and single dashes)".into(),
+            );
         }
         if !absolute(link) {
             return Err("the link is no absolute http or https URL of printable ASCII".into());
@@ -186,7 +191,9 @@ impl Notice {
     }
 
     /// The id the notice has on every hand of it: the same notice to the same address by the same
-    /// way, handed again after [`LATER`], keeps it, so a plugin can tell it sent it already.
+    /// way, handed again after [`LATER`], keeps it. It is unique across every project the server
+    /// serves and never given to another notice, so a plugin keys on it alone: to tell it sent a
+    /// notice already, or as a service's idempotency key.
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -213,13 +220,13 @@ impl Notice {
     pub fn line(&self) -> String {
         let wire = Wire {
             notice: FORMAT,
-            id: self.id.clone(),
-            kind: self.kind,
-            project: self.project.clone(),
-            link: self.link.clone(),
+            id: &self.id,
+            kind: self.kind.word(),
+            project: &self.project,
+            link: &self.link,
             to: WireTo {
-                way: self.to.way.clone(),
-                address: self.to.address.clone(),
+                way: &self.to.way,
+                address: &self.to.address,
             },
         };
         serde_json::to_string(&wire).expect("a notice serializes") + "\n"
@@ -229,33 +236,41 @@ impl Notice {
     ///
     /// # Errors
     ///
-    /// When it is no JSON object, names no format or another than [`FORMAT`], lacks a field or
-    /// breaks a rule of [`Notice::new`] or [`To::new`].
+    /// When it is no JSON object, names no format or another than [`FORMAT`], lacks a field, holds
+    /// one of another type (`to` an object, the rest text) or breaks a rule of [`Notice::new`] or
+    /// [`To::new`]. A refusal names the field and its rule, never the value found.
     pub fn read(message: impl AsRef<[u8]>) -> Result<Notice, String> {
         let message: Value = serde_json::from_slice(message.as_ref())
             .map_err(|e| format!("the message is no JSON: {e}"))?;
         let Some(fields) = message.as_object() else {
             return Err("the message is no JSON object".into());
         };
-        match fields.get("notice") {
+        match fields.get("notice").map(Value::as_u64) {
             None => return Err("the message is no notice: it names no format (`notice`)".into()),
-            Some(format) if format.as_u64() == Some(FORMAT) => {}
-            Some(format) if format.is_u64() => {
+            Some(Some(FORMAT)) => {}
+            Some(Some(format)) => {
                 return Err(format!(
                     "the notice is of format {format}, and this program reads format {FORMAT}: \
                      take a build of it that reads format {format}"
                 ));
             }
-            Some(format) => {
-                return Err(format!(
-                    "the notice's format (`notice`) is {format}, where a whole number is"
-                ));
+            Some(None) => {
+                return Err("the notice's format (`notice`) is no whole number".into());
             }
         }
-        let wire: Wire = serde_json::from_value(message)
-            .map_err(|e| format!("the notice of format {FORMAT} is refused: {e}"))?;
-        let to = To::new(&wire.to.way, &wire.to.address)?;
-        Notice::checked(&wire.id, wire.kind, &wire.project, &wire.link, to)
+        let to = match fields.get("to") {
+            None => return Err("the notice has no `to`".into()),
+            Some(Value::Object(to)) => to,
+            Some(_) => return Err("the notice's `to` is no JSON object".into()),
+        };
+        let to = To::new(text(to, "to.way")?, text(to, "to.address")?)?;
+        let kind = Kind::of(text(fields, "kind")?);
+        let (id, project, link) = (
+            text(fields, "id")?,
+            text(fields, "project")?,
+            text(fields, "link")?,
+        );
+        Notice::checked(id, kind, project, link, to)
     }
 }
 
@@ -347,21 +362,32 @@ fn absolute(link: &str) -> bool {
     })
 }
 
-/// The message as it is written.
-#[derive(Serialize, Deserialize)]
-struct Wire {
-    notice: u64,
-    id: String,
-    kind: Kind,
-    project: String,
-    link: String,
-    to: WireTo,
+/// The text `fields` holds for the field `name` (`to.way` the field `way` of `to`): a refusal names
+/// the field, never the value found.
+fn text<'a>(fields: &'a Map<String, Value>, name: &str) -> Result<&'a str, String> {
+    let key = name.rsplit('.').next().unwrap_or(name);
+    match fields.get(key) {
+        None => Err(format!("the notice has no `{name}`")),
+        Some(Value::String(text)) => Ok(text),
+        Some(_) => Err(format!("the notice's `{name}` is no string")),
+    }
 }
 
-#[derive(Serialize, Deserialize)]
-struct WireTo {
-    way: String,
-    address: String,
+/// The message as it is written, in this order.
+#[derive(Serialize)]
+struct Wire<'a> {
+    notice: u64,
+    id: &'a str,
+    kind: &'static str,
+    project: &'a str,
+    link: &'a str,
+    to: WireTo<'a>,
+}
+
+#[derive(Serialize)]
+struct WireTo<'a> {
+    way: &'a str,
+    address: &'a str,
 }
 
 #[cfg(test)]

@@ -2,13 +2,15 @@ use super::*;
 use serde_json::json;
 use std::cell::Cell;
 
+/// An id the rule allows, unique to one notice: a UUID, as the core may make one.
+const ID: &str = "0193f1c2-7a4e-7b3c-9d2e-5f6a7b8c9d0e";
 const ADDRESS: &str = "ana@example.com";
 const LINK: &str = "https://mac.example.ts.net/symphony/cards#notice-sender";
 
 /// A notice of each field's usual value.
 fn notice() -> Notice {
     Notice::new(
-        "card-notice-sender-ana-email",
+        ID,
         Kind::Card,
         "symphony",
         LINK,
@@ -21,7 +23,7 @@ fn notice() -> Notice {
 fn wire() -> Value {
     json!({
         "notice": 1,
-        "id": "card-notice-sender-ana-email",
+        "id": ID,
         "kind": "card",
         "project": "symphony",
         "link": LINK,
@@ -57,7 +59,7 @@ fn the_message_is_one_json_line_of_format_1_in_the_written_order() {
     assert_eq!(
         notice().line(),
         format!(
-            "{{\"notice\":1,\"id\":\"card-notice-sender-ana-email\",\"kind\":\"card\",\
+            "{{\"notice\":1,\"id\":\"{ID}\",\"kind\":\"card\",\
              \"project\":\"symphony\",\"link\":\"{LINK}\",\"to\":{{\"way\":\"email\",\
              \"address\":\"{ADDRESS}\"}}}}\n"
         )
@@ -70,7 +72,7 @@ fn a_notice_written_reads_back_the_same() {
     let written = notice();
     let read = Notice::read(written.line()).unwrap();
     assert_eq!(read, written);
-    assert_eq!(read.id(), "card-notice-sender-ana-email");
+    assert_eq!(read.id(), ID);
     assert_eq!(read.kind(), Kind::Card);
     assert_eq!(read.project(), "symphony");
     assert_eq!(read.link(), LINK);
@@ -82,7 +84,7 @@ fn a_notice_written_reads_back_the_same() {
 fn a_message_reads_whatever_the_order_of_its_members_and_the_whitespace_around_it() {
     let reversed = format!(
         "\n  {{\"to\":{{\"address\":\"{ADDRESS}\",\"way\":\"email\"}},\"link\":\"{LINK}\",\
-         \"project\":\"symphony\",\"kind\":\"card\",\"id\":\"card-notice-sender-ana-email\",\
+         \"project\":\"symphony\",\"kind\":\"card\",\"id\":\"{ID}\",\
          \"notice\":1}}\r\n\n"
     );
     assert_eq!(Notice::read(reversed).unwrap(), notice());
@@ -150,11 +152,20 @@ fn a_message_that_names_no_format_or_names_one_by_no_whole_number_is_refused() {
     let why = refused(&message);
     assert!(why.contains("names no format (`notice`)"), "{why}");
 
-    for format in [json!("1"), json!(1.5), json!(-1), json!(null)] {
+    for format in [
+        json!("1"),
+        json!(1.5),
+        json!(-1),
+        json!(null),
+        json!(ADDRESS),
+    ] {
         let mut message = wire();
         message["notice"] = format.clone();
         let why = refused(&message);
-        assert!(why.contains("where a whole number is"), "{format}: {why}");
+        assert!(
+            why.ends_with("(`notice`) is no whole number"),
+            "{format}: {why}"
+        );
     }
 }
 
@@ -174,28 +185,88 @@ fn what_is_no_json_object_is_refused() {
 }
 
 #[test]
-fn a_field_missing_or_of_another_type_is_refused_by_its_name() {
+fn a_field_missing_is_refused_by_its_name() {
     for field in ["id", "kind", "project", "link", "to"] {
         let mut message = wire();
         message.as_object_mut().unwrap().remove(field);
+        assert_eq!(refused(&message), format!("the notice has no `{field}`"));
+    }
+    for field in ["way", "address"] {
+        let mut message = wire();
+        message["to"].as_object_mut().unwrap().remove(field);
+        assert_eq!(refused(&message), format!("the notice has no `to.{field}`"));
+    }
+}
+
+#[test]
+fn a_to_that_is_no_json_object_is_refused_and_the_refusal_repeats_no_address() {
+    for to in [
+        json!(ADDRESS),
+        json!([EMAIL, ADDRESS]),
+        json!(15_551_234_567_u64),
+        json!(null),
+        json!(true),
+    ] {
+        let mut message = wire();
+        message["to"] = to.clone();
+        assert_eq!(
+            refused(&message),
+            "the notice's `to` is no JSON object",
+            "{to}"
+        );
+    }
+}
+
+#[test]
+fn a_text_field_of_another_type_is_refused_by_its_name_never_repeating_the_value() {
+    for value in [
+        json!([ADDRESS]),
+        json!({"a": ADDRESS}),
+        json!(7),
+        json!(null),
+    ] {
+        for field in ["id", "kind", "project", "link"] {
+            let mut message = wire();
+            message[field] = value.clone();
+            assert_eq!(
+                refused(&message),
+                format!("the notice's `{field}` is no string"),
+                "{field}: {value}"
+            );
+        }
+        for field in ["way", "address"] {
+            let mut message = wire();
+            message["to"][field] = value.clone();
+            assert_eq!(
+                refused(&message),
+                format!("the notice's `to.{field}` is no string"),
+                "{field}: {value}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_refusal_never_repeats_the_value_it_found_wherever_it_stands() {
+    let misplaced = "ana@example.com\nBcc: eve@example.com";
+    for field in ["id", "project", "link"] {
+        let mut message = wire();
+        message[field] = json!(misplaced);
         let why = refused(&message);
         assert!(
-            why.contains(&format!("missing field `{field}`")),
+            !why.contains("ana") && !why.contains("eve"),
             "{field}: {why}"
         );
     }
     for field in ["way", "address"] {
         let mut message = wire();
-        message["to"].as_object_mut().unwrap().remove(field);
+        message["to"][field] = json!(misplaced);
         let why = refused(&message);
         assert!(
-            why.contains(&format!("missing field `{field}`")),
+            !why.contains("ana") && !why.contains("eve"),
             "{field}: {why}"
         );
     }
-    let mut message = wire();
-    message["id"] = json!(7);
-    assert!(refused(&message).contains("refused"));
 }
 
 #[test]
@@ -213,11 +284,11 @@ fn an_id_is_1_to_128_ascii_letters_digits_dots_dashes_and_underscores() {
         "a\nb",
     ] {
         let why = with_id(id).unwrap_err();
-        assert!(why.contains("the id"), "{id:?}: {why}");
+        assert!(why.starts_with("the id is none: 1 to 128"), "{id:?}: {why}");
     }
     let mut message = wire();
     message["id"] = json!("two words");
-    assert!(refused(&message).contains("the id \"two words\""));
+    assert!(refused(&message).starts_with("the id is none"));
 }
 
 #[test]
@@ -307,10 +378,7 @@ fn a_notice_printed_shows_neither_its_link_nor_its_address() {
     let printed = format!("{:?}", notice());
     assert!(!printed.contains(ADDRESS), "{printed}");
     assert!(!printed.contains("mac.example"), "{printed}");
-    assert!(
-        printed.contains("card-notice-sender-ana-email"),
-        "{printed}"
-    );
+    assert!(printed.contains(ID), "{printed}");
     assert!(
         printed.contains("Card") && printed.contains("symphony"),
         "{printed}"
