@@ -738,6 +738,18 @@ impl Reloading {
         self.home.join("bin/symphony-server")
     }
 
+    /// The source `rel` changed to `text` in one step, as a running worker must see an edit:
+    /// written whole in the case's folder, outside every build input, then renamed over it. A
+    /// worker reads the sources every [`PERIOD`] while a test edits them, and a plain write
+    /// empties the file before it fills it again: a read between the two is a version of its
+    /// own, built and then dropped as the sources moved during its build, so the edit's build
+    /// comes second.
+    fn edit(&self, rel: &str, text: &str) {
+        let whole = self.folder().join("edit");
+        std::fs::write(&whole, text).unwrap();
+        std::fs::rename(&whole, self.tree.path(rel)).unwrap();
+    }
+
     /// The setup of a start from the installed image, the image it runs: unstamped, as an install
     /// by a recipe leaves it, or `stamped` as built from the sources as they are.
     fn setup(&self, stamped: bool) -> Setup {
@@ -1186,7 +1198,7 @@ fn a_version_whose_hand_over_failed_is_tried_again_after_a_wait_that_grows() {
         "10 min this time"
     );
     let before = symphony::reload::fingerprint(&server.root).unwrap();
-    server.tree.write(
+    server.edit(
         "main/symphony/apps/symphony-server/src/main.rs",
         "fn main() { /* changed */ }\n",
     );
@@ -1303,7 +1315,7 @@ fn a_starters_failed_hand_over_keeps_a_waiting_retrys_time_on_the_notice() {
     assert_eq!(server.notice_after(""), asked);
     assert_eq!((server.builds().len(), started(&server)), (0, 1));
 
-    server.tree.write(
+    server.edit(
         "main/symphony/apps/symphony-server/src/main.rs",
         "fn main() { /* changed */ }\n",
     );
@@ -1571,7 +1583,7 @@ fn a_kept_build_leaves_no_retry_for_a_failed_hand_over_to_name() {
         clock.minute(5 * MINUTE)
     );
     assert_eq!(server.notice_after(""), failed);
-    server.tree.write(
+    server.edit(
         "main/symphony/apps/symphony-server/src/main.rs",
         "fn main() { /* changed */ }\n",
     );
@@ -1655,7 +1667,7 @@ fn a_retrys_dropped_build_names_on_the_notice_when_it_is_tried_again() {
     // A source change, whose build leaves the checkout off main again. With nothing waiting since
     // the kept build, the clock is read for that drop's wait first: then the sources are put back.
     let read = clock.reads.load(Ordering::SeqCst);
-    server.tree.write(
+    server.edit(
         "main/symphony/apps/symphony-server/src/main.rs",
         "fn main() { /* changed */ }\n",
     );
@@ -1731,7 +1743,7 @@ fn a_stamped_start_builds_nothing_until_the_sources_change() {
     .unwrap();
     assert_eq!(server.builds(), Vec::<String>::new());
 
-    server.tree.write(
+    server.edit(
         "main/symphony/apps/symphony-server/src/main.rs",
         "fn main() { /* changed */ }\n",
     );
