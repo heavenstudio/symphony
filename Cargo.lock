@@ -4489,6 +4489,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "symphony-notice-slack"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "symphony-notice",
+]
+
+[[package]]
 name = "symphony-plugin"
 version = "1.3.0"
 dependencies = [

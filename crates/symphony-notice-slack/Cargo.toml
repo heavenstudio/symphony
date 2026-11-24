@@ -1,0 +1,25 @@
+# `symphony-notice-slack`: the notice plugin that sends a person's notice by Slack, a direct message
+# from the workspace's Slack app to the person's member id (docs/operations/NOTICE_SLACK.md). A
+# program of its own on the notice message's contract (docs/engineering/NOTICES.md): the server
+# hands it one notice on stdin and reads its exit status. It keeps its own secret, the app's bot
+# token in the machine folder, and reaches Slack through `curl`. Never published and never in a
+# release: neither the library every project links, the board nor the server compiles any of it,
+# and whoever runs the server builds it (`cargo install --locked --path crates/symphony-notice-slack`).
+[package]
+name = "symphony-notice-slack"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The message and the hand-off: `take` is the program's `main`.
+symphony-notice = { path = "../symphony-notice" }
+# The request's body and Slack's answer.
+serde_json.workspace = true
+
+[lints]
+workspace = true

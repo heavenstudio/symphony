@@ -21,6 +21,9 @@ Setting the Symphony up and running it: a first project, the commands, the proje
   turned off unless the default branch commits its settings: its settings and token files, its
   commands, what a reconcile writes, what it keeps, what pauses it, and how a land is delivered
   and the protection that delivery reads.
+- [Sending notices by Slack](NOTICE_SLACK.md) — the optional `symphony-notice-slack`, a notice
+  plugin apart from the core: the Slack app and its token, where the token is kept, building it,
+  what it sends, its exit statuses and what each Slack refusal asks of you.
 - [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
   public repository into a private copy with its ancestry kept, the export of selected reusable
   changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.
