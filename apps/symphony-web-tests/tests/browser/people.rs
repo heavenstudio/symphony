@@ -7,11 +7,12 @@
 //! write's answer and what it did said on the part that sent it, a refusal in the server's words,
 //! and a press on direct agents sending nothing; a person put in a group, a group made and a
 //! removal (asked by a named confirmation, kept or confirmed) each posted as one change; a reader
-//! without administer shown no control but their own profile's, which posts to
-//! `/api/people-profile`; and a read that fails said in the page's place.
+//! without administer shown no control but their own profile's and notices', which post to
+//! `/api/people-profile`, and no one's addresses but their own; a person's notices set on their
+//! card, what changed posted alone; and a read that fails said in the page's place.
 //!
-//! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page is saved there, whole, at each
-//! width and in each scheme: a visitor who is not the person at the machine reaches a server only
+//! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page and a person's notices being
+//! set are saved there, whole, at each width and in each scheme: a visitor who is not the person at the machine reaches a server only
 //! under another Tailscale login, so their page is pictured from the stand-in server.
 use super::{SHOWN, chrome, chrome::Chrome, site, site::Site, texts};
 use serde_json::{Value, json};
@@ -257,8 +258,8 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
     );
     assert_eq!(
         texts(&mut chrome, "#person-ana .people-said"),
-        [""],
-        "said on the part that sent it alone"
+        ["", ""],
+        "said on the part that sent it alone: not on ana's card, nor her notices"
     );
 }
 
@@ -370,6 +371,14 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
     reader["administers"] = json!(false);
     reader["machine"] = json!(false);
     reader["you"] = json!("cy");
+    // As the server answers cy: no one's addresses or ways but cy's own.
+    for person in reader["people"].as_array_mut().unwrap() {
+        if person["name"] != "cy" {
+            let person = person.as_object_mut().unwrap();
+            person.remove("addresses");
+            person.remove("notices");
+        }
+    }
     let site = served(&reader);
     site.set_json(symphony_api::PROFILE_PATH, &reader);
     let Some(mut chrome) = chrome() else { return };
@@ -385,6 +394,8 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
                         outside: controls.filter(e => !e.closest('#person-cy .people-profile')).length,
                         signin: document.querySelector('input[aria-label="Sign-in of cy"]') !== null,
                         you: document.querySelector('#person-cy .people-you')?.textContent,
+                        addresses: [...document.querySelectorAll('.people-addresses')].map(p => p.closest('.people-person').id),
+                        notices: [...document.querySelectorAll('.people-notices')].map(d => d.closest('.people-person').id),
                         said: document.querySelector('.people-sub').textContent.includes('needs administer'),
                         // What a group holds, read among it, as each of its powers includes read.
                         staff: [...document.querySelectorAll('#group-staff .people-power')].map(t => `${t.textContent}:${t.dataset.held}`),
@@ -394,6 +405,7 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
             ),
             json!({
                 "outside": 0, "signin": false, "you": "you", "said": true,
+                "addresses": ["person-cy"], "notices": ["person-cy"],
                 "staff": ["read:own", "decide:own"],
                 "bo": ["read:own", "administer:own"],
             }),
@@ -420,6 +432,93 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
             json!({"name": "cy", "git": ["cy-o"], "signins": []})
         )]
     );
+}
+
+#[test]
+fn a_persons_notices_are_set_on_their_card_and_posted_as_what_changed() {
+    let site = served(&sample());
+    let mut after = sample();
+    after["people"][0]["addresses"]["whatsapp"] = json!("+15551234567");
+    after["people"][0]["notices"][1]["way"] = json!("whatsapp");
+    site.set_json(symphony_api::PROFILE_PATH, &after);
+    let Some(mut chrome) = chrome() else { return };
+    for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
+        screen(&mut chrome, width, height, mobile);
+        open(&mut chrome, &site, "people");
+        click(&mut chrome, "#person-ana .people-notices summary");
+        assert_eq!(
+            chrome.eval(
+                r#"(() => {
+                    const page = document.querySelector('.people');
+                    const ana = document.querySelector('#person-ana');
+                    const form = ana.querySelector('form[aria-label="Notices of ana"]');
+                    return {
+                        addresses: ana.querySelector('.people-addresses').textContent,
+                        held: [...form.querySelectorAll('input')].map(i => `${i.getAttribute('aria-label')}=${i.value}`),
+                        ways: [...form.querySelectorAll('.people-way')].map(w => w.textContent),
+                        keep: form.querySelector('button[type=submit]') !== null,
+                        // cy has no address: said so, and their form is there to set one.
+                        cy: document.querySelector('#person-cy .people-addresses').textContent,
+                        forms: [...document.querySelectorAll('.people-notices')].map(d => d.closest('.people-person').id),
+                        withinTheScreen: document.documentElement.scrollWidth <= innerWidth,
+                        withinThePage: [...page.querySelectorAll('*')].every(e => e.getBoundingClientRect().right <= innerWidth + 0.5),
+                    };
+                })()"#
+            ),
+            json!({
+                "addresses": "Notices reach them by email ana@example.com · Slack U024BE7LH",
+                "held": [
+                    "Email for notices of ana=ana@example.com",
+                    "Slack member id of ana=U024BE7LH",
+                    "WhatsApp number of ana=",
+                ],
+                "ways": ["CardsSlack", "Questionsthe page alone", "Verdictsemail"],
+                "keep": false,
+                "cy": "No address for notices",
+                "forms": ["person-ana", "person-cy"],
+                "withinTheScreen": true,
+                "withinThePage": true,
+            }),
+            "{width}"
+        );
+        type_into(&mut chrome, "WhatsApp number of ana", "+1 555 123 4567");
+        click(&mut chrome, "[aria-label='Questions for ana by']");
+        pick(&mut chrome, "WhatsApp");
+        assert!(
+            chrome.wait_for(
+                "document.querySelector('form[aria-label=\"Notices of ana\"] button[type=submit]') !== null",
+                SHOWN
+            ),
+            "{width}: a change, and Keep is there to keep it"
+        );
+        let view = if mobile { "phone" } else { "wide" };
+        shot(
+            &mut chrome,
+            &format!("people-notices-{view}"),
+            (width, height, mobile),
+        );
+    }
+    chrome.eval("document.querySelector('form[aria-label=\"Notices of ana\"]').requestSubmit()");
+    assert_eq!(
+        said(&mut chrome, "person-ana", false),
+        "The profile is written."
+    );
+    assert_eq!(
+        site.posts(),
+        [(
+            symphony_api::PROFILE_PATH.to_string(),
+            json!({
+                "name": "ana",
+                "whatsapp": "+1 555 123 4567",
+                "notices": [{"kind": "question", "way": "whatsapp"}],
+            })
+        )]
+    );
+    // Drawn again from what the write left held, the form has nothing left to keep.
+    assert!(chrome.wait_for(
+        "document.querySelector('form[aria-label=\"Notices of ana\"] button[type=submit]') === null",
+        SHOWN
+    ));
 }
 
 #[test]

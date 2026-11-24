@@ -110,7 +110,8 @@ impl fmt::Debug for Given {
 fn writable(given: &Given, writer: Writer) -> Result<Given, Stopped> {
     if writer == Writer::Other && given.reaches() {
         return Err(Stopped::Refused(
-            "a person's addresses and the ways their notices go by are theirs and the person at              the machine's to write: nothing was written"
+            "a person's addresses and the ways their notices go by are theirs and the person at \
+             the machine's to write: nothing was written"
                 .into(),
         ));
     }
@@ -374,7 +375,9 @@ fn fill(profiles: &mut Profiles, name: &str, given: &Given) {
             if address.is_empty() {
                 profile.chat.shift_remove(way.as_str());
             } else {
-                profile.chat.insert(way.clone(), Value::from(address.as_str()));
+                profile
+                    .chat
+                    .insert(way.clone(), Value::from(address.as_str()));
             }
         } else if address.is_empty() {
             // The email a notice goes to is the first: taking it away takes that one.

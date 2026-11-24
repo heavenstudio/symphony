@@ -2667,10 +2667,13 @@ fn people() -> api::PeoplePage {
         };
     let notices = |ways: [Option<&str>; 3]| {
         let kinds = ["card", "question", "verdict"];
-        let ways = kinds.into_iter().zip(ways).map(|(kind, way)| api::NoticeWay {
-            kind: kind.into(),
-            way: way.map(Into::into),
-        });
+        let ways = kinds
+            .into_iter()
+            .zip(ways)
+            .map(|(kind, way)| api::NoticeWay {
+                kind: kind.into(),
+                way: way.map(Into::into),
+            });
         Some(ways.collect())
     };
     api::PeoplePage {
