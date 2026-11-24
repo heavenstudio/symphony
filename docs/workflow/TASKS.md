@@ -698,8 +698,11 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   which answers it once that land advanced the candidate; one covered by any other landing has
   its fix on main and not in the candidate, which is dropped. A red fixed outside this
   repository is answered by its task cancelled, saying where; one done otherwise waits for its
-  land. Where a pull request delivers it ([below](#a-land-delivered-by-a-pull-request)), a fix
-  that changes what the client is built from is the one branch that merges main before its land:
+  land. Where a pull request delivers it ([below](#a-land-delivered-by-a-pull-request)), the fix
+  never merges `release-candidate`, which an advance moves to a head main's history does not
+  hold: one started before that advance is rebased onto it while not yet published or approved,
+  a new head, and left as it is after, its land dropping the candidate. And a fix that changes
+  what the client is built from is the one branch that merges main before its land:
   once from a second head, after the head that commits its own outputs is approved
   ([RELEASES](RELEASES.md#the-release-candidate)).
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]

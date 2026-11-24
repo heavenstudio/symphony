@@ -2067,6 +2067,14 @@ fn closes(root: &Path, earlier: &[Run], record: &Run, key: &str) -> bool {
     }
 }
 
+/// Whether the project's land delivers by pull request: `[land] delivery` names a command in the
+/// project file the main checkout `main` has committed at its head, read as the land reads it
+/// ([`symphony_board::land::delivery::command`]). A file the land cannot read lands nothing, so
+/// it delivers nothing either.
+fn delivers(main: &Path) -> bool {
+    symphony_board::land::delivery::command(main).is_ok_and(|command| !command.is_empty())
+}
+
 /// Tell the board of `record`: its reds filed or updated, the reds it found green closed, and the
 /// red [`board::RUN`] when it stopped short, never a refresh step that is its project's to finish
 /// ([`record::Refresh::told`]); that red is the owner's to clear when it is
@@ -2106,6 +2114,7 @@ fn tell(
         closes: &closing,
         whole: !options.refresh,
         candidate: holding,
+        delivered: holding.is_some() && delivers(&repo.main),
         rerun: record.rerun.is_some(),
         slept: record.slept,
         rulesets: !repo.project.releases.rulesets.is_empty(),
@@ -3162,6 +3171,32 @@ fn when_day(seconds: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A candidate's red says rebase where the land delivers by pull request ([`board::Night`]):
+    /// [`delivers`] reads `[land] delivery` from what the main checkout committed, as the land
+    /// does, and a file the land cannot read delivers nothing.
+    #[test]
+    fn the_land_delivers_by_pull_request_only_where_its_committed_project_file_names_a_command() {
+        let tree = crate::test_tree::Tree::new();
+        let root = receipts::tests::repository(&tree);
+        assert!(!delivers(&root), "no project file");
+        let committed = |text: &str| {
+            std::fs::write(root.join("symphony.toml"), text).unwrap();
+            receipts::tests::run(&root, &["add", "symphony.toml"]);
+            receipts::tests::run(&root, &["commit", "-q", "-m", "settings"]);
+        };
+        committed("[land]\npush = false\n");
+        assert!(!delivers(&root), "a land with no delivery lands here");
+        committed("[land]\ndelivery = []\n");
+        assert!(!delivers(&root), "an empty delivery lands here");
+        let delivery = "[land]\ndelivery = [\"host\", \"deliver\"]\n";
+        std::fs::write(root.join("symphony.toml"), delivery).unwrap();
+        assert!(!delivers(&root), "only what the head committed counts");
+        committed(delivery);
+        assert!(delivers(&root));
+        committed("[land]\ndelivery = [\"host\"\n");
+        assert!(!delivers(&root), "a file the land cannot read");
+    }
 
     #[test]
     fn checks_are_named_once_each_and_default_to_the_full_verify() {
