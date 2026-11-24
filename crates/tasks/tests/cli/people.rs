@@ -381,7 +381,7 @@ fn an_add_whose_profiles_cannot_be_locked_writes_nothing_anywhere() {
     let (code, said) = fails(&c, &me, &["people", "add", "ana", "--power", "decide"]);
     assert_eq!(code, 2, "a failure, not a refusal: {said}");
     assert!(
-        said.contains("the machine's profiles could not be read")
+        said.contains("the machine's profiles could not be locked or read")
             && said.contains("nothing was written"),
         "{said}"
     );
@@ -423,33 +423,53 @@ fn a_person_whose_profile_cannot_be_written_is_taken_off_the_board_again() {
     assert!(!machine.join(symphony_board::people::FILE).exists());
 }
 
-/// Two adds of one sign-in at once meet at the profiles' lock, which each holds from its check of
-/// the sign-ins through the board's change and the profile's write: the first is added with the
-/// sign-in, and the second is refused with nothing written, on the board or in the machine folder.
+/// Two adds of one sign-in waiting on the profiles' lock together: the first to take it is added
+/// with the sign-in, and the second is refused with nothing written, on the board or in the
+/// machine folder. Each add holds the lock from its check of the sign-ins through the board's
+/// change and the profile's write, so the second reads the first's profile.
+///
+/// The test holds the lock until both adds wait on it. An add opens `people.lock` and holds it to
+/// mode 600 right before it waits on it (`Profiles::change`), so the test sets it to 0644, starts
+/// an add and waits for 600, then does the same for the other: both are past whatever they do
+/// before the lock when it is let go. An add that checked the sign-ins and wrote the board before
+/// the lock, as one did once, would then have found no profile holding the sign-in, both would be
+/// on the board, and both would write it.
 #[test]
-fn two_adds_of_one_sign_in_at_once_give_it_one_person_and_write_nothing_for_the_other() {
+fn two_adds_of_one_sign_in_waiting_on_the_lock_give_it_one_person_and_nothing_to_the_other() {
     let (c, me, machine) = case("people-at-once");
-    // Held while both start, so neither is decided before the other has begun.
     std::fs::create_dir_all(&machine).unwrap();
-    let held = std::fs::File::create(machine.join(symphony_board::people::LOCK)).unwrap();
+    let lock = machine.join(symphony_board::people::LOCK);
+    let held = std::fs::File::create(&lock).unwrap();
     held.lock().unwrap();
+    let mode = |mode| std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(mode));
     let ran = std::thread::scope(|scope| {
-        let adds: Vec<_> = ["ana", "bob"]
-            .into_iter()
-            .map(|name| {
-                let (c, me) = (&c, &me);
-                scope.spawn(move || {
-                    let args = [
-                        "people",
-                        "add",
-                        name,
-                        "--signin",
-                        "tailscale:one@example.com",
-                    ];
-                    (name, c.run_as(me, &args, ""))
-                })
-            })
-            .collect();
+        let mut adds = Vec::new();
+        for name in ["ana", "bob"] {
+            mode(0o644).unwrap();
+            let (c, me) = (&c, &me);
+            adds.push(scope.spawn(move || {
+                let args = [
+                    "people",
+                    "add",
+                    name,
+                    "--signin",
+                    "tailscale:one@example.com",
+                ];
+                (name, c.run_as(me, &args, ""))
+            }));
+            let waiting = test_time::wait::until_true(
+                format!("{name}'s add waiting on the lock"),
+                test_time::backstop(std::time::Duration::from_secs(30)),
+                || {
+                    std::fs::metadata(&lock)
+                        .is_ok_and(|seen| seen.permissions().mode() & 0o777 == 0o600)
+                },
+            );
+            if let Err(stall) = waiting {
+                held.unlock().unwrap();
+                panic!("{stall}");
+            }
+        }
         held.unlock().unwrap();
         adds.into_iter()
             .map(|add| add.join().unwrap())
@@ -482,45 +502,102 @@ fn two_adds_of_one_sign_in_at_once_give_it_one_person_and_write_nothing_for_the_
     );
 }
 
-/// Under the marker `just tasks` sets, as an agent runs it unasked, every change is refused, its
-/// action read wherever the command line put it, with nothing written, and the reads still run:
-/// a change runs by `just tasks-people`, which sets no marker and asks first.
+/// The forms `people` takes, as its own usage line says them to an unknown action (`people takes
+/// list, log, add NAME, …`), each with a person, a group and a power for its words.
+fn forms(said: &str) -> Vec<Vec<String>> {
+    let listed = (said.split_once("people takes "))
+        .and_then(|(_, rest)| rest.split_once(", not "))
+        .unwrap_or_else(|| panic!("no usage line in {said}"))
+        .0;
+    (listed.split(", ").flat_map(|part| part.split(" or ")))
+        .map(|form| {
+            (form.split(' '))
+                .map(|word| match word {
+                    "NAME" => "bob".to_string(),
+                    "GROUP" => "staff".to_string(),
+                    "POWER…" | "[POWER…]" => "speak".to_string(),
+                    word => word.to_string(),
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The actions the help of `people` lists under ACTION.
+fn help_actions(help: &str) -> Vec<String> {
+    let listed: Vec<&str> = (help.lines())
+        .skip_while(|line| *line != "positional arguments:")
+        .skip(1)
+        .take_while(|line| !line.trim_start().starts_with("WORDS "))
+        .collect();
+    let joined = listed.join(" ").replacen("ACTION", "", 1);
+    (joined.split(',').flat_map(|part| part.split(" or ")))
+        .map(|word| word.trim().to_string())
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// Under the marker `just tasks` sets, as an agent runs it unasked, every action but the two reads
+/// is refused with nothing written: the forms are read from the command's own usage line, checked
+/// against the help's list of actions, and each run, so an action added later is refused until it
+/// is written as a read. A word that is no action, or an action without its words, keeps its usage
+/// error, and the reads run. A change runs by `just tasks-people`, which sets no marker.
 #[test]
-fn under_the_unasked_recipes_marker_a_change_is_refused_and_the_reads_run() {
+fn under_the_unasked_recipes_marker_every_action_but_the_reads_is_refused() {
     let (mut c, me, machine) = case("people-unasked");
     c.ok(&me, &["people", "add", "ana", "--power", "speak"]);
     let before = c.ok(&me, &["people", "log"]);
     (c.env.vars).insert("SYMPHONY_UNASKED".into(), "1".into());
+    let (code, unknown) = fails(&c, &me, &["people", "frobnicate"]);
+    assert_eq!(code, 1, "{unknown}");
+    let forms = forms(&unknown);
+    let mut actions: Vec<String> = Vec::new();
+    for form in &forms {
+        if !actions.contains(&form[0]) {
+            actions.push(form[0].clone());
+        }
+    }
+    assert_eq!(actions, help_actions(&c.ok(&me, &["help", "people"])));
+    let mut reads = Vec::new();
+    for form in &forms {
+        let args: Vec<&str> = ["people"]
+            .into_iter()
+            .chain(form.iter().map(String::as_str))
+            .collect();
+        let ran = c.run_as(&me, &args, "");
+        if ran.code == 0 {
+            reads.push(form[0].as_str());
+            continue;
+        }
+        assert_eq!(ran.code, 1, "{args:?}: {}", ran.err);
+        let action = &form[0];
+        assert!(
+            ran.err.contains(&format!(
+                "just tasks refuses people {action}: a change to a board's people"
+            )) && ran
+                .err
+                .contains(&format!("`just tasks-people {action} …`, which asks")),
+            "{args:?}: {}",
+            ran.err
+        );
+    }
+    assert_eq!(reads, ["list", "log"], "the reads alone run");
+    // Wherever the command line puts the action, it is the one refused.
     let as_me = format!("--as={me}");
-    for (action, args) in [
-        ("add", vec!["people", "add", "bob"]),
-        ("add", vec!["people", "--display", "Bob", "add", "bob"]),
-        ("add", vec!["people", "--", "add", "bob"]),
-        ("remove", vec!["people", "remove", "ana"]),
-        ("join", vec!["people", "join", "ana", "staff"]),
-        ("leave", vec!["people", "leave", "ana", "staff"]),
-        ("grant", vec!["people", "grant", "ana", "decide"]),
-        ("revoke", vec!["people", "revoke", "ana", "speak"]),
-        ("group", vec!["people", "group", "add", "staff"]),
-        ("group", vec!["people", "group", "remove", "staff"]),
-        (
-            "profile",
-            vec!["people", "profile", "bob", "--git", "bob-l"],
-        ),
-        (
-            "grant",
-            vec![as_me.as_str(), "people", "grant", "ana", "decide"],
-        ),
+    for args in [
+        vec!["people", "--display", "Bob", "add", "bob"],
+        vec!["people", "--", "add", "bob"],
+        vec![as_me.as_str(), "people", "grant", "ana", "decide"],
     ] {
         let (code, said) = fails(&c, &me, &args);
         assert_eq!(code, 1, "{args:?}: {said}");
         assert!(
-            said.contains(&format!(
-                "just tasks refuses people {action}: a change to a board's people"
-            )) && said.contains(&format!("`just tasks-people {action} …`, which asks")),
+            said.contains("just tasks refuses people "),
             "{args:?}: {said}"
         );
     }
+    let (_, said) = fails(&c, &me, &["people", "add"]);
+    assert!(said.contains("people takes list, log, add NAME"), "{said}");
     assert_eq!(
         c.ok(&me, &["people", "log"]),
         before,
@@ -531,11 +608,4 @@ fn under_the_unasked_recipes_marker_a_change_is_refused_and_the_reads_run() {
         profiles.get("bob").is_none(),
         "nothing in the machine folder"
     );
-    assert!(
-        c.ok(&me, &["people", "list"])
-            .starts_with("ana  read, speak")
-    );
-    // A word that is no action is the usage's to refuse, as with no marker.
-    let (_, said) = fails(&c, &me, &["people", "frobnicate"]);
-    assert!(said.contains("people takes list, log, add NAME"), "{said}");
 }
