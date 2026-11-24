@@ -728,12 +728,40 @@ fn a_pull_request_closed_by_someone_sends_the_task_back_to_work_and_is_bound_no_
         "the next dispatch opens another"
     );
     // Its next move to review publishes naming no pull request, which is what lets the program
-    // forget the one closed and open another (its own tests); the host here opens it.
-    *host.pull.borrow_mut() = Default::default();
+    // forget the one closed and open another (its own tests). An exchange older than `pull`
+    // keeps the one closed whatever the request names and refuses it, as the host here does:
+    // the dispatch stops and says so, and the task waits in review bound to none, nothing merged.
+    let before = head(&bare, "main");
     let asked = host.verbs().len();
     (r.board.store)
         .move_to(SLUG, "review", &people.exe)
         .unwrap();
+    let (_, result) = dispatched(&r, SLUG, &people.exe, &host);
+    let why = result.unwrap_err();
+    assert!(
+        why.contains("was not published (refused): pull request #3 is merged or closed"),
+        "{why}"
+    );
+    assert_eq!(
+        host.verbs()[asked..],
+        ["publish"],
+        "no result of the one closed"
+    );
+    assert_eq!(host.request("publish")["pull"], Value::Null);
+    let (text, to) = last_post(&r, SLUG);
+    assert!(text.contains("its dispatch stopped"), "{text}");
+    assert!(
+        text.contains(&format!("`just land {SLUG} --dispatch`")),
+        "{text}"
+    );
+    assert_eq!(to.as_deref(), Some("@orchestrator"));
+    assert_eq!(status(&r, SLUG), "review");
+    assert!(journal(&r, SLUG).binding.is_none(), "bound to none");
+    assert_nothing_landed(&r, &bare, &before);
+    // Dispatched again once the exchange forgets it, still naming none: the host here opens
+    // another, and the task is bound to it.
+    *host.pull.borrow_mut() = Default::default();
+    let asked = host.verbs().len();
     let (_, result) = dispatched(&r, SLUG, &people.exe, &host);
     result.unwrap();
     assert_eq!(

@@ -273,9 +273,10 @@ no worktree and no commit, and backed up with the repository's common dir or not
   digest), the curated texts, and what pauses the exchange.
 - `state.json` holds as well the pull request each delivered task is bound to, with the task's
   number and, once it landed, the commit (one closed unmerged is dropped, journaled as
-  `unbound`, at the publication that binds the next), the issues dropped from each task's
-  mapping, and the GitHub Release each release's tag is published as, with its number, its page
-  and the commit.
+  `unbound`, before the push of the first publication whose `pull` is `null`: where that push
+  or the pull request's opening then fails, the task is bound to none until a later publication
+  finds or opens one), the issues dropped from each task's mapping, and the GitHub Release each
+  release's tag is published as, with its number, its page and the commit.
 - `preview.json`: the preview that waits.
 - `journal.jsonl`: a line before each operation is dispatched (its id, target, the digest of
   what it writes, what it expects to find, the settings' revision, who ran it) and a line with
@@ -351,10 +352,12 @@ evidence, and it reads no board for it.
   that has not moved then is answered `unavailable`, and the next run reads it first. A head
   that is neither, as someone else pushed, is answered as it is, and the land refuses it. A pull
   request bound to the task that GitHub shows closed unmerged, never landed, is forgotten before
-  the push where the request's `pull` (the one the land's journal binds) does not name it, as the
-  land drops its journal once it reads one closed: the push finds or opens another, and nothing
-  is written to the one closed. One the request still names stays bound, and the publication is
-  refused as closed. A merged one is never forgotten.
+  the push where the request's `pull` is `null`, which the land sends once it drops its journal
+  of one it read closed: the push finds or opens another, and nothing is written to the one
+  closed. Any other request keeps it bound and refuses the publication as closed: one whose
+  `pull` is a number, the one the land's journal binds, and one with no `pull` at all, as a
+  board older than the field asks. A merged one is never forgotten, and a `pull` that is
+  neither a number nor `null` is refused before anything is pushed.
 - **`arm`** reads the protection again, refusing as `publish` does, then turns on GitHub's
   auto-merge of the bound pull request at the head it is given (`expectedHeadOid`), by the method
   and commit text `merge` would ask for. GitHub then merges it itself once every check the branch
@@ -428,6 +431,16 @@ said, by its checks alone, on the pull request already bound and at the head it 
 is pushed and no pull request opened past a policy that does not hold. A waived stamp's check is
 neutral and says only that the assessment waived it: the assessor's reason is board text and is
 sent nowhere.
+
+A board and a program of two releases deliver in either order, as only a `pull` that is `null`
+forgets a pull request. A program older than the request's `pull` reads none: a pull request
+closed unmerged stays bound, and each publication of its task is refused as closed, which the
+land says as a dispatch that stopped, the task waiting in review bound to none and nothing
+merged, until a program that forgets it is installed and the task is dispatched again
+(`just land SLUG --dispatch`). A board older than the request's `pull` sends none: the program
+keeps the one closed bound as that board's own binding does, refuses its publication as closed
+and answers its `result` as closed, as before, so no other pull request is opened that the board
+would refuse; its task is bound again once a board that sends `null` publishes it.
 
 Every write is journaled before it is made and looked for before it is made again: a pull
 request by its branch, a check by its name, its conclusion and the evidence's revision, a merge,
