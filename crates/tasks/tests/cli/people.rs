@@ -1,7 +1,8 @@
 //! `tasks people` as the command line holds to it: who is on the board and what each may do,
 //! changed as `--as`'s with every change a line of the log; the machine's profiles written mode 600
 //! in the machine folder the environment names; a sign-in one person's alone; a refusal that says
-//! why and writes nothing; and nothing printed that names a sign-in's subject.
+//! why and writes nothing; a profile's addresses and ways written by the person at the machine;
+//! and nothing printed that names a sign-in's subject, an address or a way.
 
 use crate::{Case, scratch};
 use std::os::unix::fs::PermissionsExt;
@@ -350,6 +351,85 @@ fn a_profile_is_filled_on_no_board_and_a_person_already_named_keeps_theirs() {
     assert_eq!(
         (ana.display.as_str(), ana.git.len(), ana.signins.len()),
         ("Ana", 1, 1)
+    );
+}
+
+#[test]
+fn a_profiles_addresses_and_ways_are_written_by_the_machine_and_printed_by_nothing() {
+    let (c, me, machine) = case("people-reach");
+    c.ok(&me, &["people", "add", "ana", "--power", "speak"]);
+    let reach = |kind: &str| {
+        let profiles = symphony_board::people::Profiles::read(&machine).unwrap();
+        profiles
+            .reach("ana", kind)
+            .map(|reach| (reach.way(), reach.address().to_string()))
+    };
+    assert_eq!(
+        c.ok(
+            &me,
+            &[
+                "people",
+                "profile",
+                "ana",
+                "--email",
+                "ana@example.com",
+                "--slack",
+                "U024BE7LH",
+                "--whatsapp",
+                "+1 555 123 4567",
+                "--notice",
+                "card=slack",
+                "--notice",
+                "verdict=whatsapp",
+            ]
+        ),
+        "ana's profile is written in the machine folder\n"
+    );
+    assert_eq!(reach("card"), Some(("slack", "U024BE7LH".into())));
+    assert_eq!(reach("question"), None);
+    assert_eq!(reach("verdict"), Some(("whatsapp", "+15551234567".into())));
+    let listed = c.ok(&me, &["people", "list"]);
+    for private in ["ana@example.com", "U024BE7LH", "555", "slack", "whatsapp"] {
+        assert!(!listed.contains(private), "{private} in {listed}");
+    }
+    // A way of none and an empty address each take one away.
+    c.ok(
+        &me,
+        &[
+            "people", "profile", "ana", "--notice", "card=", "--slack", "",
+        ],
+    );
+    assert_eq!(reach("card"), None);
+    let profiles = symphony_board::people::Profiles::read(&machine).unwrap();
+    assert!(!profiles.get("ana").unwrap().chat.contains_key("slack"));
+    // A refusal says the rule, never the value, and writes nothing.
+    let before = std::fs::read(machine.join(symphony_board::people::FILE)).unwrap();
+    for (args, said) in [
+        (
+            ["--notice", "card"],
+            "a notice is KIND=WAY, as card=slack, or KIND= for none: nothing was written",
+        ),
+        (
+            ["--notice", "poll=slack"],
+            "a notice is of one of card, question, verdict, and that kind is none of them: \
+             nothing was written",
+        ),
+        (
+            ["--slack", "C0SECRET1"],
+            "the Slack member id is none: `U`, or `W` in an Enterprise organization, then capital \
+             letters and digits, as U024BE7LH: nothing was written",
+        ),
+    ] {
+        let mut asked = vec!["people", "profile", "ana"];
+        asked.extend(args);
+        let (code, err) = fails(&c, &me, &asked);
+        assert_eq!(code, 1, "{err}");
+        assert!(err.contains(said), "{args:?}: {err}");
+        assert!(!err.contains("C0SECRET1"), "{err}");
+    }
+    assert_eq!(
+        std::fs::read(machine.join(symphony_board::people::FILE)).unwrap(),
+        before
     );
 }
 

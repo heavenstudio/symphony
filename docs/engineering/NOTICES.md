@@ -8,9 +8,10 @@ This page is the message and its hand-off, a contract kept stable across release
 built on it keeps working. A program in any language that reads this page takes the message; the
 Rust form is `crates/symphony-notice`.
 
-Nothing makes notices yet: who is told, of what and by which way is step 4 of
-[the way from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner), and so
-is the server's part of the hand-off, its settings naming each way's program among it.
+A person's profile holds their address for each way and the way each kind of notice goes by
+([TASKS](../workflow/TASKS.md#people)). Nothing makes notices yet: who is told, of what, is step 4
+of [the way from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner), and
+so is the server's part of the hand-off, its settings naming each way's program among it.
 
 ## The message
 
@@ -65,7 +66,9 @@ notice is made of).
   (`+15551234567`).
 
 Another way is another word, with no new format. The address is written as the profile holds it;
-a plugin that cannot send to it says so ([the hand-off](#the-hand-off)).
+a plugin that cannot send to it says so ([the hand-off](#the-hand-off)). A profile holds an
+address of these three ways by the rule its plugin sends by (`ways` in [the crate](#the-crate)),
+so the server hands none a plugin refuses.
 
 ## The same notice
 
@@ -147,6 +150,12 @@ this page. In it:
   all is a `75`, as nothing was read to send.
 - `EMAIL`, `SLACK`, `WHATSAPP`, `SENT`, `LATER`, `NEVER` and `FORMAT` name the words and numbers
   above.
+- `ways` is the address each way takes: `email`, `slack` and `whatsapp` check one (the last
+  answering the number as `+` and its digits), `address(way, text)` answers it as a profile holds
+  it, each refusal saying the rule and never the address, and `WAYS` and `KINDS` list the words. The
+  three plugins send by it, and the board, which is published where this crate is not, carries the
+  file as a copy (`crates/tasks/src/people/ways.rs`) that `crates/symphony/tests/packages.rs` holds
+  equal byte for byte, so a profile holds no address its plugin refuses.
 - `unstarted` says what came of a notice whose sending program did not start: `75` where the
   machine ran short for a moment (of processes, memory or open files, or the program being
   written as it was started), else `1`.

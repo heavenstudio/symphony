@@ -842,6 +842,43 @@ export type PersonRow = {
    * Whether the machine holds a profile of theirs.
    */
   profile: boolean;
+  /**
+   * Where their notices reach them: in the answer of the person themself, of the person at the
+   * machine and of the board's admins; in no one else's.
+   */
+  addresses?: Addresses | null;
+  /**
+   * The way each kind of notice goes by, every kind the board knows in its order: in the answer
+   * of the person themself and of the person at the machine; in no one else's.
+   */
+  notices?: Array<NoticeWay> | null;
+};
+
+export type Addresses = {
+  /**
+   * The email a notice by mail goes to: the first of their emails.
+   */
+  email?: string | null;
+  /**
+   * Their Slack member id (`U024BE7LH`).
+   */
+  slack?: string | null;
+  /**
+   * Their WhatsApp number, `+` and its digits.
+   */
+  whatsapp?: string | null;
+};
+
+export type NoticeWay = {
+  /**
+   * The kind, as a notice writes it: `card`, `question`, `verdict`.
+   */
+  kind: string;
+  /**
+   * The way it goes by, `email`, `slack` or `whatsapp`; none where it goes by none, as the page
+   * and the Mac app show every notice.
+   */
+  way?: string | null;
 };
 
 export type GroupRow = { name: string; powers: Array<string> };
@@ -935,6 +972,23 @@ export type ProfileWrite = {
    * Sign-ins added to it, each `SERVICE:SUBJECT`: the person at the machine's alone to give.
    */
   signins?: Array<string>;
+  /**
+   * The email a notice by mail goes to, put first among their emails; an empty one takes the
+   * first away.
+   */
+  email?: string | null;
+  /**
+   * Their Slack member id; an empty one takes it away.
+   */
+  slack?: string | null;
+  /**
+   * Their WhatsApp number, `+` and its country code; an empty one takes it away.
+   */
+  whatsapp?: string | null;
+  /**
+   * The ways kinds of notice go by, each kind named set: a way of none sends it by none.
+   */
+  notices?: Array<NoticeWay>;
 };
 
 export type RunsPage = {

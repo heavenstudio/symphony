@@ -4444,7 +4444,13 @@
           "groups": ["staff"],
           "signins": ["tailscale", "github"],
           "git": ["ana-lima"],
-          "profile": true
+          "profile": true,
+          "addresses": { "email": "ana@example.com", "slack": "U024BE7LH" },
+          "notices": [
+            { "kind": "card", "way": "slack" },
+            { "kind": "question" },
+            { "kind": "verdict", "way": "email" }
+          ]
         },
         {
           "name": "bo",
@@ -4464,7 +4470,9 @@
           "groups": [],
           "signins": ["tailscale"],
           "git": [],
-          "profile": true
+          "profile": true,
+          "addresses": {},
+          "notices": [{ "kind": "card" }, { "kind": "question" }, { "kind": "verdict" }]
         }
       ],
       "groups": [{ "name": "staff", "powers": ["decide"] }],

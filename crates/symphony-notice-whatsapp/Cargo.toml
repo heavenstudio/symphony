@@ -20,6 +20,8 @@ serde_json.workspace = true
 symphony-notice = { path = "../symphony-notice" }
 # Its settings file.
 toml.workspace = true
+# O_NOFOLLOW, so a file in notices/ is read without following a link.
+libc.workspace = true
 
 [lints]
 workspace = true

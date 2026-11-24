@@ -79,8 +79,10 @@ Support/Symphony/notices/` on macOS, `$XDG_DATA_HOME/symphony/notices/` or
 `~/.local/share/symphony/notices/` elsewhere, and `$SYMPHONY_MACHINE_DIR/notices/` where that
 variable names the machine folder, as it does in a test. The folder is its owner's alone (mode
 700) and so is each file in it (mode 600); one open to anyone else, or a link in the place of
-one, is refused before anything in it is read. Keep the folder and the files themselves there,
-and a token kept elsewhere at the path `token_file` names, which is held to the same.
+one, is refused before anything in it is read. A file is opened without following a link, and its
+mode is read from the file opened, so the file checked is the file read. Keep the folder and the
+files themselves there, and a token kept elsewhere at the path `token_file` names, which is held to
+the same.
 
 ```sh
 mkdir -p ~/Library/Application\ Support/Symphony/notices

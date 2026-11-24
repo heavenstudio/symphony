@@ -6,35 +6,118 @@
 //! [`Writer`]: the person at the machine writes any, and alone gives a sign-in, as a sign-in decides
 //! who acts under the name on every board holding it, now or later; a board's admin who is not
 //! that person makes one only for someone who has none, as they add them, with no sign-in; a
-//! person writes their own display name and git handles. A sign-in is one person's, checked under
-//! the profiles' lock where the profiles are written, so two writes at once cannot give one
-//! sign-in to two people.
+//! person writes their own display name, git handles, addresses and the ways their notices go by.
+//! An address and a way are where a person's notices go, theirs to say, so an admin who is not the
+//! person at the machine writes neither. A sign-in is one person's, checked under the profiles'
+//! lock where the profiles are written, so two writes at once cannot give one sign-in to two
+//! people. An address is held to the rule its sender enforces ([`super::ways`]), and a refusal of
+//! one says the rule, never the address.
 //!
 //! A refusal to anyone but the person at the machine names no other person and no profile: what
 //! another board's people hold is not theirs to learn. A failure keeps its cause apart
 //! ([`Failure`]), as a cause can name the machine folder's path, which only the person at the
 //! machine is shown.
 
-use super::{Change, Power, Profile, Profiles, Signin};
+use super::{Change, Power, Profile, Profiles, Signin, ways};
 use crate::Store;
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::fmt;
 use std::path::Path;
 
 /// What a profile is given: a display name, sign-ins and git handles, each kept where the profile
-/// does not hold it already.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// does not hold it already; addresses and the ways notices go by, each set as given.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Given {
     pub display: Option<String>,
     pub signins: Vec<Signin>,
     pub git: Vec<String>,
+    /// Addresses by the way's word ([`ways::WAYS`]): the address for that way, the email's put
+    /// first among the profile's emails; an empty one takes the way's address away.
+    pub addresses: BTreeMap<String, String>,
+    /// Ways notices go by, by the kind's word ([`ways::KINDS`]): the way's word; an empty one sends
+    /// that kind by none, as the page and the Mac app show every notice.
+    pub notices: BTreeMap<String, String>,
 }
 
 impl Given {
-    /// Whether it gives nothing: no display name, sign-in or git handle.
+    /// Whether it gives nothing: no display name, sign-in, git handle, address or way.
     pub fn is_empty(&self) -> bool {
         self.display.as_deref().is_none_or(|d| d.trim().is_empty())
             && self.signins.is_empty()
             && self.git.iter().all(|git| git.trim().is_empty())
+            && self.addresses.is_empty()
+            && self.notices.is_empty()
     }
+
+    /// Whether it gives an address or a way, which only the person and the person at the machine
+    /// write.
+    fn reaches(&self) -> bool {
+        !self.addresses.is_empty() || !self.notices.is_empty()
+    }
+
+    /// Itself with each address and way trimmed and held to its rule, an address as the profile
+    /// holds it ([`ways::address`]: a WhatsApp number as `+` and its digits).
+    ///
+    /// # Errors
+    ///
+    /// An address its way's rule does not take, a way that is none, or a kind that is none: the
+    /// rule said, never the address.
+    fn checked(&self) -> Result<Given, String> {
+        let mut checked = self.clone();
+        for (way, text) in &mut checked.addresses {
+            let trimmed = text.trim();
+            *text = if trimmed.is_empty() && ways::WAYS.contains(&way.as_str()) {
+                String::new()
+            } else {
+                ways::address(way, trimmed)?
+            };
+        }
+        for (kind, way) in &mut checked.notices {
+            if !ways::KINDS.contains(&kind.as_str()) {
+                return Err(format!(
+                    "a notice is of one of {}, and that kind is none of them",
+                    ways::KINDS.join(", ")
+                ));
+            }
+            *way = way.trim().to_string();
+            if !way.is_empty() && !ways::WAYS.contains(&way.as_str()) {
+                return Err(format!(
+                    "a notice goes by one of {}, or by none, and that way is none of them",
+                    ways::WAYS.join(", ")
+                ));
+            }
+        }
+        Ok(checked)
+    }
+}
+
+/// What is given is printed without its addresses: a log of a change names none.
+impl fmt::Debug for Given {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Given")
+            .field("display", &self.display)
+            .field("signins", &self.signins.len())
+            .field("git", &self.git)
+            .field("addresses", &self.addresses.keys().collect::<Vec<_>>())
+            .field("notices", &self.notices)
+            .finish()
+    }
+}
+
+/// Why `given` cannot be written: its addresses and ways where `writer` is no person who writes
+/// them, else one its rules refuse; `given` as it is written where it can be.
+fn writable(given: &Given, writer: Writer) -> Result<Given, Stopped> {
+    if writer == Writer::Other && given.reaches() {
+        return Err(Stopped::Refused(
+            "a person's addresses and the ways their notices go by are theirs and the person at \
+             the machine's to write: nothing was written"
+                .into(),
+        ));
+    }
+    given
+        .checked()
+        .map_err(|why| Stopped::Refused(format!("{why}: nothing was written")))
 }
 
 /// Who writes a profile.
@@ -45,7 +128,8 @@ pub enum Writer {
     /// Someone a board named, writing a profile not their own: as that board's admin adding a
     /// person who has none, they make it with no sign-in, and they write no other.
     Other,
-    /// The person themself: their own display name and git handles.
+    /// The person themself: their own display name, git handles, addresses and the ways their
+    /// notices go by.
     Own,
 }
 
@@ -128,6 +212,7 @@ pub fn add(
     writer: Writer,
     by: &str,
 ) -> Result<Added, Stopped> {
+    let given = &writable(given, writer)?;
     let mut taken: Option<Change> = None;
     let written = Profiles::change(dir, |profiles| {
         let line = match addable(profiles, name, given, writer)
@@ -177,8 +262,8 @@ pub fn add(
 /// The machine's profile of `name` in `dir` made or given `given`, as `writer` may, on no board:
 /// whether it changed. Refused, with nothing written: a name no board could give a person
 /// ([`super::refused_person_name`]), a profile not the writer's
-/// ([`Writer::Other`]), a sign-in from anyone but the person at the machine, and a sign-in another
-/// profile holds, read under the lock.
+/// ([`Writer::Other`]), a sign-in from anyone but the person at the machine, an address or a way
+/// its rule refuses ([`ways`]), and a sign-in another profile holds, read under the lock.
 pub fn profile(dir: &Path, name: &str, given: &Given, writer: Writer) -> Result<bool, Stopped> {
     if let Some(why) = super::refused_person_name(name) {
         return Err(Stopped::Refused(format!("{why}: nothing was written")));
@@ -197,6 +282,7 @@ pub fn profile(dir: &Path, name: &str, given: &Given, writer: Writer) -> Result<
         }
         Writer::Own | Writer::Machine => {}
     }
+    let given = &writable(given, writer)?;
     Profiles::change(dir, |profiles| {
         if let Err(why) = taken_signins(profiles, name, &given.signins) {
             return Ok(Err(why));
@@ -255,7 +341,7 @@ fn taken_signins(profiles: &Profiles, name: &str, signins: &[Signin]) -> Result<
 }
 
 /// `name`'s profile among `profiles`, made where there is none, given what `given` names where it
-/// does not hold it.
+/// does not hold it, and its addresses and ways as `given` sets them.
 fn fill(profiles: &mut Profiles, name: &str, given: &Given) {
     let at = match (profiles.people.iter()).position(|profile| profile.name == name) {
         Some(at) => at,
@@ -282,6 +368,34 @@ fn fill(profiles: &mut Profiles, name: &str, given: &Given) {
     for git in given.git.iter().map(|git| git.trim()) {
         if !git.is_empty() && !profile.git.iter().any(|held| held == git) {
             profile.git.push(git.into());
+        }
+    }
+    for (way, address) in &given.addresses {
+        if way != ways::EMAIL {
+            if address.is_empty() {
+                profile.chat.shift_remove(way.as_str());
+            } else {
+                profile
+                    .chat
+                    .insert(way.clone(), Value::from(address.as_str()));
+            }
+        } else if address.is_empty() {
+            // The email a notice goes to is the first: taking it away takes that one.
+            if !profile.emails.is_empty() {
+                profile.emails.remove(0);
+            }
+        } else {
+            profile.emails.retain(|held| held != address);
+            profile.emails.insert(0, address.clone());
+        }
+    }
+    for (kind, way) in &given.notices {
+        if way.is_empty() {
+            profile.preferences.shift_remove(kind.as_str());
+        } else {
+            profile
+                .preferences
+                .insert(kind.clone(), Value::from(way.as_str()));
         }
     }
 }

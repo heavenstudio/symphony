@@ -20,6 +20,8 @@ symphony-notice = { path = "../symphony-notice" }
 # Its settings file, notices/email.toml.
 serde = { version = "1", features = ["derive"] }
 toml.workspace = true
+# O_NOFOLLOW, so a file in notices/ is read without following a link.
+libc.workspace = true
 
 [dev-dependencies]
 # The boundary test reads `cargo metadata`.

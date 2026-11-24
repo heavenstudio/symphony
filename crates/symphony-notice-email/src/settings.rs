@@ -15,11 +15,11 @@
 use serde::Deserialize;
 use std::fmt;
 use std::fs;
-use std::io::ErrorKind;
-use std::os::unix::fs::PermissionsExt;
+use std::io::{self, ErrorKind};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
-use crate::mail;
+use symphony_notice::ways;
 
 /// How the connection to the mail server is kept private.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,11 +156,11 @@ pub(crate) fn read(folder: &Path) -> Result<Settings, String> {
         .map_err(|error| format!("{}: {}", settings.display(), unread(&text, &error)))?;
     let (server, tls) =
         server(&file.server).map_err(|why| format!("{}: {why}", settings.display()))?;
-    if !mail::address(&file.from) {
+    if !ways::email(&file.from) {
         return Err(format!(
             "{}: `from` is no plain email address: {}",
             settings.display(),
-            mail::ADDRESS_RULE
+            ways::EMAIL_RULE
         ));
     }
     let token = notices.join(TOKEN);
@@ -211,24 +211,32 @@ pub(crate) fn read(folder: &Path) -> Result<Settings, String> {
 }
 
 /// The text of the file at `path`, where it is a plain file its owner alone reads; none where it
-/// does not exist.
+/// does not exist. It is opened without following a link, and what is checked is the opened
+/// file's own, so nothing swapped in between the check and the read is read.
 fn private(path: &Path) -> Result<Option<String>, String> {
     let named = path.display();
-    let meta = match fs::symlink_metadata(path) {
+    let opened = (fs::OpenOptions::new().read(true))
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path);
+    let file = match opened {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("{named}: {error}")),
-        Ok(meta) => meta,
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+            return Err(format!("{named} is a link: keep the file itself there"));
+        }
+        Err(error) => return Err(format!("{named}: {}", error.kind())),
+        Ok(file) => file,
     };
-    if meta.file_type().is_symlink() {
-        return Err(format!("{named} is a link: keep the file itself there"));
-    }
+    let meta = file
+        .metadata()
+        .map_err(|error| format!("{named}: {}", error.kind()))?;
     if !meta.is_file() {
         return Err(format!("{named} is not a plain file"));
     }
     if meta.permissions().mode() & 0o077 != 0 {
         return Err(format!("{named} is readable by others: chmod 600 it"));
     }
-    fs::read_to_string(path)
+    // From the file opened and checked, never opened again by its path.
+    io::read_to_string(file)
         .map(Some)
         .map_err(|error| format!("{named}: {}", error.kind()))
 }
@@ -250,7 +258,9 @@ fn unread(text: &str, error: &toml::de::Error) -> String {
         .and_then(|at| text.get(..at.start))
         .map(|before| before.matches('\n').count() + 1);
     let message = error.message();
-    let quotes_a_value = ["invalid type", "invalid value", "unknown variant"]
+    // serde's words, which quote the value; toml's own `invalid value` (a bad unicode escape) has
+    // no colon and quotes nothing, so it is said as the syntax error it is.
+    let quotes_a_value = ["invalid type: ", "invalid value: ", "unknown variant `"]
         .iter()
         .any(|serde_says| message.starts_with(serde_says));
     // The settings have no table, so a key serde does not know is never one of [`KEYS`].
