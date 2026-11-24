@@ -138,9 +138,7 @@ describe("a document no file has at its route", () => {
         <Missing path="docs/GONE.md" scope="" moved={moved} hash="" retry={() => {}} />,
       );
       expect(html).toContain("<h1>Document not found</h1>");
-      expect(html).toContain(
-        "<p>There is no document at docs/GONE.md: it may have been moved, renamed or removed.</p>",
-      );
+      expect(html).toContain("<p>There is no document at docs/GONE.md.</p>");
       expect(html).toContain('<a class="trouble-back" href="/docs/">');
       expect(html).toContain(">Retry</button>");
       expect(html).not.toContain("trouble-choices");

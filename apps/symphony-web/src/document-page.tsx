@@ -179,7 +179,7 @@ export function Missing({ path, scope, moved, hash, retry }: MissingProps) {
   return (
     <Trouble
       title="Document not found"
-      text={`There is no document at ${path}: it may have been moved, renamed or removed.`}
+      text={`There is no document at ${path}.`}
       back={[scoped(scope, documentsHref(project())), "All documents"]}
       retry={retry}
     >
@@ -992,7 +992,7 @@ export function FolderPage({ path, scope }: { path: string; scope: string }) {
     body = (
       <Trouble
         title="Folder not found"
-        text={`There is no folder at ${path}: it may have been moved, renamed or removed.`}
+        text={`There is no folder at ${path}.`}
         back={[scoped(scope, documentsHref(project())), "All documents"]}
         retry={retry}
       />

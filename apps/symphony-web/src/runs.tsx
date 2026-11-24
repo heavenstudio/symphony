@@ -1245,11 +1245,7 @@ function LogView({
 >) {
   let body: ReactNode;
   if (page.run.log === undefined || page.run.log === null) {
-    body = (
-      <p className="runs-quiet">
-        No log was kept: its command wrote to a terminal, where its output stayed.
-      </p>
-    );
+    body = <p className="runs-quiet">No log was kept.</p>;
   } else if (log === null && logMissing) {
     body = (
       <p className="runs-quiet">
