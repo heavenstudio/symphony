@@ -12,6 +12,9 @@ The contracts a project or a provider builds against, and how the Symphony's own
   line, each call's minor, the versions and the wire's shape.
 - [Plugin calls](PLUGIN_CALLS.md) — each call into a project's plugins timed: the setting, the
   record and how to read it.
+- [Notices](NOTICES.md) — the message the server hands a notice plugin, one person's notice and
+  address at a time: its fields, a link alone, what makes two hands one notice, the hand-off on
+  stdin and its exit statuses, what a plugin must not do, and its versions.
 - [Commands for a project's tools](TOOL_COMMANDS.md) — draw one card, check a branch for a
   landing, read status and triage, and share the document write lock.
 - [Working artifact contracts](ARTIFACTS.md) — optional verified publication and scoped private

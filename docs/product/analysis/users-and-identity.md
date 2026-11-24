@@ -1253,8 +1253,8 @@ What follows:
   way, it stays on the page and in the Mac app, where every notice is shown anyway.
 - **A person's profile gains a WhatsApp number**, beside their emails and Slack user
   ([above](#a-persons-profile)).
-- **The format comes first**, then the three plugins, each built and released on its own, in any
-  order. What each needs:
+- **The format comes first** ([NOTICES](../../engineering/NOTICES.md)), then the three plugins,
+  each built and released on its own, in any order. What each needs:
   - **Slack**: a Slack app installed in the workspace and its bot token; a direct message to the
     person's Slack user. It follows Slack's interface as Slack changes it.
   - **WhatsApp**: a WhatsApp business account with a number to send from, and its token. A
@@ -1407,6 +1407,8 @@ Each step can ship alone, and a machine with one person sees none of them.
    group owns. Its members move, prioritize and cancel its tasks. The Settings page is one of
    the places, and its group's members change its settings. The core makes notice messages, and
    the server's plugins for Slack, WhatsApp and email send them, each shipping on its own.
+   Built: the notice message's format and its hand-off, which a plugin builds on
+   ([NOTICES](../../engineering/NOTICES.md)).
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
    The note beside a verdict is written with it. A personal agent, tied to its person on the
