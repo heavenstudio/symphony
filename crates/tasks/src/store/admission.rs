@@ -191,9 +191,13 @@ impl Store {
     /// fenced on everything its decision read, or refused, its code first
     /// ([`admit::Refusal`]); capacity under the project's cap is decided in the write's own
     /// counters. Answers the transition it wrote, its effects and the principal's next actions
-    /// after it. A request repeating a key the principal used answers that request's result when
-    /// it is the same request, and is refused when it is another. Given no attestation, a guarded
-    /// edge is refused ([`Store::apply_attested`]).
+    /// after it, read once the write has committed. If that read fails, because the board moved on
+    /// since (a return to the board's own writers leaves no workflow to preview), the answer
+    /// still says the operation was taken, and its next actions are the snapshot the write left
+    /// with no edge open: a refusal is never the answer of a write that stands. A request
+    /// repeating a key the principal used answers that request's result when it is the same
+    /// request, and is refused when it is another. Given no attestation, a guarded edge is
+    /// refused ([`Store::apply_attested`]).
     pub fn apply_operation(
         &self,
         principal: &Principal,
@@ -269,11 +273,13 @@ impl Store {
         let receipt_id = receipt_id(principal, &request.idempotency_key);
         let digest = request_digest(request);
         let slug = request.task.as_str();
-        let receipt = self.retrying(|| {
+        // The receipt, and the snapshot this call's own write left: none for a repeat answered
+        // from its receipt, which writes nothing.
+        let (receipt, wrote) = self.retrying(|| {
             let decided = self.decided(slug, principal, Some(&receipt_id))?;
             if let Some(receipt) = decided.receipt {
                 if receipt.request == digest && receipt.slug == slug {
-                    return Ok(receipt);
+                    return Ok((receipt, None));
                 }
                 return Err(refusal(Refusal::new(
                     RefusalCode::ExplicitActionRequired,
@@ -340,9 +346,21 @@ impl Store {
             ))
             .posting();
             self.written(body, vars, slug)?;
-            Ok(receipt)
+            let left = admit::snapshot(context, &admitted.transition.position());
+            Ok((receipt, Some(left)))
         })?;
-        let next = self.workflow_actions(slug, principal, host)?;
+        // The write has committed, so this call took the edge whatever the next actions' read
+        // meets. A board that moved on since (a return to its own writers, written after this
+        // write) can answer that read with a refusal or a failure, and neither is the
+        // operation's answer.
+        let next = match (self.workflow_actions(slug, principal, host), wrote) {
+            (Ok(next), _) => next,
+            (Err(_), Some(snapshot)) => NextActions {
+                snapshot,
+                actions: Vec::new(),
+            },
+            (Err(error), None) => return Err(error),
+        };
         Ok(OperationResult {
             transition: receipt.transition,
             next,
