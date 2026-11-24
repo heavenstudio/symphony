@@ -1104,7 +1104,10 @@ fn dispatching() -> (Repo, PathBuf, Vec<(String, String)>, PathBuf, String) {
     let (program, record) = stand_in(&r);
     let on = vec![
         ("TASKS_DISPATCH".to_string(), "on".to_string()),
-        ("TASKS_BIN".to_string(), program.to_string_lossy().into_owned()),
+        (
+            "TASKS_BIN".to_string(),
+            program.to_string_lossy().into_owned(),
+        ),
     ];
     let orch = r.board.session("orchestrator");
     r.task("sim/other");
@@ -1169,7 +1172,10 @@ fn a_task_it_files_is_dispatched_as_one_moved_to_review_and_merged_once_approved
     );
     assert_eq!(published["snapshot"]["eligible"], false);
     assert!(host.is_armed());
-    assert!(!mark.exists(), "bound, its binding dispatches it from now on");
+    assert!(
+        !mark.exists(),
+        "bound, its binding dispatches it from now on"
+    );
     // Its assessor's needs dispatch it again, by its binding: still pending on its review.
     let assessor = r.board.session("reviewer");
     let needs = [
@@ -1190,7 +1196,10 @@ fn a_task_it_files_is_dispatched_as_one_moved_to_review_and_merged_once_approved
     assert_eq!(host.request("publish")["snapshot"]["eligible"], false);
     // A fresh reviewer's approve naming its head: published eligible, which the host merges by.
     let reviewer = r.board.session("reviewer");
-    r.board.store.take_role(slug, &reviewer, "reviewer").unwrap();
+    r.board
+        .store
+        .take_role(slug, &reviewer, "reviewer")
+        .unwrap();
     let approve = format!("{}: the outputs alone", made_as.head);
     let (code, out, err) = tasks(&r, &reviewer, &["verdict", slug, "approve", &approve], &on);
     assert_eq!(code, 0, "{out}{err}");
@@ -1201,7 +1210,11 @@ fn a_task_it_files_is_dispatched_as_one_moved_to_review_and_merged_once_approved
     assert_eq!(host.request("publish")["snapshot"]["eligible"], true);
     // Nobody ran a land: no merge was asked, the host's own armed merge is what lands it, and the
     // watcher's round closes the task.
-    assert!(!host.verbs().iter().any(|verb| verb == "merge"), "{:?}", host.verbs());
+    assert!(
+        !host.verbs().iter().any(|verb| verb == "merge"),
+        "{:?}",
+        host.verbs()
+    );
     let watching = symphony_board::land::dispatch::Watching {
         transport: Some(&host),
         clock: &symphony_board::land::dispatch::seconds,
@@ -1211,7 +1224,12 @@ fn a_task_it_files_is_dispatched_as_one_moved_to_review_and_merged_once_approved
     let mut out = Vec::new();
     symphony_board::land::dispatch::watch(&r.board.store, &landing(&r, &[]), &mut out, &watching)
         .unwrap();
-    assert_eq!(status(&r, slug), "done", "{}", String::from_utf8_lossy(&out));
+    assert_eq!(
+        status(&r, slug),
+        "done",
+        "{}",
+        String::from_utf8_lossy(&out)
+    );
     assert_eq!(
         Receipt::read(&lands(&r), slug).unwrap().operation,
         "generated"
@@ -1221,7 +1239,7 @@ fn a_task_it_files_is_dispatched_as_one_moved_to_review_and_merged_once_approved
 
 #[test]
 fn a_dispatch_of_a_task_it_files_that_does_not_start_is_said_on_its_thread_and_made_by_the_next_write()
-{
+ {
     let (r, _bare, on, record, _) = dispatching();
     // No `tasks` to start: said to its orchestrator as the board's own line, as the session that
     // filed it has left, and its mark left.
@@ -1254,12 +1272,22 @@ fn a_dispatch_of_a_task_it_files_that_does_not_start_is_said_on_its_thread_and_m
     );
     // The next write to it dispatches it by its mark: its assessor's needs.
     let assessor = r.board.session("reviewer");
-    let needs = ["needs", slug, "review", "--tip", &made_as.head, "--why", "w"];
+    let needs = [
+        "needs",
+        slug,
+        "review",
+        "--tip",
+        &made_as.head,
+        "--why",
+        "w",
+    ];
     let (code, out, err) = tasks(&r, &assessor, &needs, &vars(&on));
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(
         started(&record, 1),
-        [format!("land {slug} --dispatch --as {assessor}|dispatch|unset")]
+        [format!(
+            "land {slug} --dispatch --as {assessor}|dispatch|unset"
+        )]
     );
 }
 
@@ -1310,7 +1338,10 @@ fn a_task_a_round_cut_short_left_claimed_is_dispatched_once_the_next_moves_it_to
     // No orchestrator holds it: its dispatch acts as the session that moved it.
     assert_eq!(
         started(&record, 1),
-        [format!("land {} --dispatch --as {filer}|dispatch|unset", kept.slug)]
+        [format!(
+            "land {} --dispatch --as {filer}|dispatch|unset",
+            kept.slug
+        )]
     );
 }
 
