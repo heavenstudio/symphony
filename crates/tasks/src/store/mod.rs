@@ -1523,11 +1523,17 @@ impl Store {
                 && symphony_docs::syntax::is_short_name(actor))
     }
 
+    /// Whether `actor` writes as the person at the machine: the owner, or the name this store writes
+    /// them under ([`Store::for_machine`]).
+    pub(crate) fn is_machine(&self, actor: &str) -> bool {
+        actor == work::OWNER || (self.machine && self.is_person(actor))
+    }
+
     /// The principal `actor`'s write is taken as: the person at the machine for the owner and for
     /// the name this store writes them under ([`Store::for_machine`]), a person a board named for
     /// the one this store writes for ([`Store::is_person`]), else the session of that handle.
     pub(crate) fn principal_of(&self, actor: &str) -> symphony_plugin::execution::Principal {
-        if actor == work::OWNER || (self.machine && self.is_person(actor)) {
+        if self.is_machine(actor) {
             crate::workflow::local_owner()
         } else if self.is_person(actor) {
             crate::workflow::person(actor)

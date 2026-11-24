@@ -12,7 +12,7 @@
 use super::postgres::ownership as pg;
 use super::postgres::{Pg, work::said};
 use super::statement::Statement;
-use super::work::{OWNER, no_task};
+use super::work::no_task;
 use super::{Error, Failure, REFUSED, Store, Task, refused};
 use crate::people::People;
 use crate::people::ownership::{By, Did, Line, Map, Owning, Place, Thing, owning, refused_hand};
@@ -115,8 +115,8 @@ impl Store {
         Ok(line.expect("an unmap always changes the map"))
     }
 
-    /// Records that `actor`, a person ([`Store::is_person`]; `owner` the person at the machine),
-    /// hands the card `thing`, written to `written` now, to `to`: the line, or none, and nothing
+    /// Records that `actor`, a person ([`Store::is_person`]; `owner`, or the name this store writes
+    /// them under, the person at the machine: [`Store::is_machine`]), hands the card `thing`, written to `written` now, to `to`: the line, or none, and nothing
     /// written, where it is written to `to` already. The card's file is its caller's to write: the
     /// board keeps who did. Refused, with nothing written, as [`refused_hand`] refuses, and for an
     /// actor who is no person.
@@ -128,14 +128,16 @@ impl Store {
         actor: &str,
     ) -> Result<Option<Line>, Error> {
         self.handing(actor)?;
+        let machine = self.is_machine(actor);
         self.write_line(actor, true, |people, map| {
             let owning = owning(people, map, written, &thing.places());
-            decided_hand(people, &owning, thing, to, actor)
+            decided_hand(people, &owning, thing, to, actor, machine)
         })
     }
 
-    /// Hands the open task `slug` to `to` as `actor`'s, a person ([`Store::is_person`]; `owner`
-    /// the person at the machine): the name written on it, its line in the log and the board's line
+    /// Hands the open task `slug` to `to` as `actor`'s, a person ([`Store::is_person`]; `owner`,
+    /// or the name this store writes them under, the person at the machine: [`Store::is_machine`]):
+    /// the name written on it, its line in the log and the board's line
     /// on its thread naming who handed it, whose it was and whose it is, in one write. None, and
     /// nothing written, where it is written to `to` already. Refused, with nothing written, as
     /// [`refused_hand`] refuses, for a task missing or closed, and for an actor who is no person.
@@ -157,7 +159,8 @@ impl Store {
             let map = self.ownership_map()?;
             let was = task.group().map(str::to_string);
             let owning = owning(&people, &map, was.as_deref(), &thing.places());
-            let Some(mut line) = decided_hand(&people, &owning, &thing, to, actor)? else {
+            let machine = self.is_machine(actor);
+            let Some(mut line) = decided_hand(&people, &owning, &thing, to, actor, machine)? else {
                 return Ok(None);
             };
             line.n = map.revision + 1;
@@ -272,7 +275,8 @@ impl Store {
     }
 }
 
-/// The hand-over of `thing`, whose `owning` says it is, to `to` by `actor`, decided: refused as
+/// The hand-over of `thing`, whose `owning` says it is, to `to` by `actor` (`machine`: the person
+/// at the machine, under `owner` or the name they gave themselves), decided: refused as
 /// [`refused_hand`] refuses; none where it is written to `to` already; else its line, numbered and
 /// dated by its writer.
 fn decided_hand(
@@ -281,8 +285,9 @@ fn decided_hand(
     thing: &Thing,
     to: &str,
     actor: &str,
+    machine: bool,
 ) -> Result<Option<Line>, Error> {
-    if let Some(why) = refused_hand(people, owning, to, actor, actor == OWNER) {
+    if let Some(why) = refused_hand(people, owning, to, actor, machine) {
         return Err(nothing(why));
     }
     if owning.by == By::Named && owning.name == to {

@@ -1,7 +1,7 @@
 // The person at the machine drawn by the name they gave themselves, on every page that draws a line
-// of theirs or names who reads it: a task's thread, a card's history and the header, each from the
-// project view the server inlined (`ProjectView.you`, `.profile`, `.machine`). The rest of their
-// tests, with no name given, draw `owner` as before.
+// of theirs, names who reads it or says whose a thing is: a task's thread, a card's history, the
+// header and the owner's line, each from the project view the server inlined (`ProjectView.you`,
+// `.profile`, `.machine`). The rest of their tests, with no name given, draw `owner` as before.
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,18 @@ vi.mock(import("./project"), async (original) => {
     ...real,
     project: () => view.current as ProjectView,
     writer: (name: string) => real.drawnName(name, (view.current as ProjectView).machine),
+  };
+});
+// The choices a select is given, as it draws none while closed.
+const select = vi.hoisted(() => ({ options: [] as unknown }));
+vi.mock(import("./select"), async (original) => {
+  const real = await original();
+  return {
+    ...real,
+    SelectField: (props: Parameters<typeof real.SelectField>[0]) => {
+      select.options = props.options;
+      return real.SelectField(props);
+    },
   };
 });
 // What waits to come near the screen is drawn as its content alone.
@@ -174,6 +186,36 @@ describe("every other writer a page draws from a stored line or row", () => {
     // An agent and a person a board named are drawn as written.
     expect(byline({ ...gate, by: "amber" }, 0)[0]).toBe("amber");
     expect(logLine({ ...line, by: "ana" })).toBe("ana put ana on the board, holding read");
+  });
+
+  it("names whose a thing is, whom it is handed to and to whom it went", async () => {
+    const { handOver, OwnerLine } = await import("./owner");
+    const theirs = {
+      name: "owner",
+      kind: "machine",
+      by: "default",
+      said: "the board's default",
+      hand_to: ["design", "owner"],
+    };
+    const line = () =>
+      renderToStaticMarkup(<OwnerLine owner={theirs} id="hand" hand={async () => ({})} />);
+    view.current = UNNAMED;
+    expect(line()).toContain('<span class="owner-name">person: owner</span>');
+    expect(select.options).toEqual([
+      ["", "Hand to…"],
+      ["design", "design"],
+      ["owner", "owner"],
+    ]);
+    expect(await handOver("owner", async () => ({}))).toBe("Handed to owner");
+    view.current = NAMED;
+    expect(line()).toContain('<span class="owner-name">person: Stefano</span>');
+    expect(select.options).toEqual([
+      ["", "Hand to…"],
+      ["design", "design"],
+      ["owner", "Stefano"],
+    ]);
+    expect(await handOver("owner", async () => ({}))).toBe("Handed to Stefano");
+    expect(await handOver("design", async () => ({}))).toBe("Handed to design");
   });
 
   it("names who filed a task and to whom a line went", async () => {
