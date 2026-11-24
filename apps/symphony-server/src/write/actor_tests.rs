@@ -11,6 +11,7 @@ use axum::http::{Request, StatusCode, header};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use symphony_board::people::{Holder, Power};
 use symphony_plugin::execution::{Principal, PrincipalKind};
 use symphony_plugin::{Actor, Sender};
 use tower::ServiceExt;
@@ -71,10 +72,33 @@ fn laptop_gate(added: &Path, ana: &Actor) -> crate::gate::Gate {
 const LAPTOP_IP: &str = "100.101.102.104";
 const LAPTOP: &str = "100.101.102.104:5000";
 
-/// A visitor under another login whom the board added saves as the actor the board names them,
-/// never as the person at the machine; on a board that has not added them, a server of its own
-/// refuses them before any route, and nothing is written.
-#[tokio::test]
+/// The board of the project at `root`, made on PostgreSQL as its command line makes it, Ana on it
+/// holding `powers`: its server stopped when it drops.
+struct Board(symphony_board::server::Home);
+
+impl Board {
+    fn holding(root: &Path, powers: &[Power]) -> Board {
+        let env = symphony_board::cli::Env {
+            vars: Default::default(),
+            cwd: root.to_path_buf(),
+        };
+        let board = Board(symphony_board::server::Home::in_common(&root.join(".git")));
+        let store = symphony_board::cli::connect(&env).unwrap();
+        store.add_person("ana", &[], powers, "owner").unwrap();
+        board
+    }
+}
+
+impl Drop for Board {
+    fn drop(&mut self) {
+        let _ = self.0.stop_board();
+    }
+}
+
+/// A visitor under another login whom the board added, holding decide, saves as the actor the board
+/// names them, never as the person at the machine; on a board that has not added them, a server of
+/// its own refuses them before any route, and nothing is written.
+#[tokio::test(flavor = "multi_thread")]
 async fn a_visitor_a_board_added_saves_as_themselves_and_one_it_did_not_writes_nothing() {
     let ana = Actor::new(
         Sender::new("ana", "Ana Lima", vec![]),
@@ -86,6 +110,7 @@ async fn a_visitor_a_board_added_saves_as_themselves_and_one_it_did_not_writes_n
     );
     let tree = Tree::new();
     let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
+    let _board = Board::holding(&root, &[Power::Decide]);
     let shared = Shared::new(1, 8123, &root, None, laptop_gate(&root, &ana));
     let (status, body) = asked_from(&shared, LAPTOP).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -113,6 +138,83 @@ async fn a_visitor_a_board_added_saves_as_themselves_and_one_it_did_not_writes_n
         std::fs::read_to_string(other.join("docs/TOPIC.md")).unwrap(),
         PAGE
     );
+}
+
+/// A person the board gives speak and no decide is refused a decision with nothing written, the
+/// refusal naming the power; given decide, the same save is hers; and a comment, which speaks to
+/// the agents, is refused her while the board holds no words for agents from anyone.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_is_refused_each_write_whose_power_she_lacks_and_nothing_is_written() {
+    let ana = Actor::new(
+        Sender::new("ana", "Ana Lima", vec![]),
+        symphony_board::workflow::person("ana"),
+    );
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
+    let _board = Board::holding(&root, &[Power::Speak]);
+    let shared = Shared::new(1, 8123, &root, None, laptop_gate(&root, &ana));
+    let (status, body) = asked_from(&shared, LAPTOP).await;
+    assert_eq!(
+        (status, body.as_str()),
+        (
+            StatusCode::FORBIDDEN,
+            r#"{"error":"Forbidden: ana may not decide on this board"}"#
+        )
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap(),
+        PAGE
+    );
+    let comment = r#"{"path":"docs/TOPIC.md","slug":"one","text":"Wider?"}"#;
+    let (status, body) = posted(&shared, "/api/comment", comment).await;
+    assert_eq!(
+        (status, body.as_str()),
+        (
+            StatusCode::FORBIDDEN,
+            r#"{"error":"Forbidden: this board holds no words for agents from ana yet"}"#
+        )
+    );
+    // Powers are read as each write arrives: given decide now, the same save is hers.
+    let store = symphony_board::cli::connect(&symphony_board::cli::Env {
+        vars: Default::default(),
+        cwd: root.clone(),
+    })
+    .unwrap();
+    store
+        .grant(Holder::Person("ana"), &[Power::Decide], "owner")
+        .unwrap();
+    let (status, body) = asked_from(&shared, LAPTOP).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    shared.saves.get().unwrap().close();
+    let page = std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap();
+    assert!(
+        page.lines()
+            .any(|l| l.ends_with("] ana · question — Which one?")),
+        "{page}"
+    );
+    // And once she holds it no more, the next is refused again.
+    store
+        .revoke(Holder::Person("ana"), &[Power::Decide], "owner")
+        .unwrap();
+    let (status, _) = asked_from(&shared, LAPTOP).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+/// `body` posted at `route` through the router of `shared` from Ana's laptop: the status and body.
+async fn posted(shared: &Arc<Shared>, route: &str, body: &str) -> (StatusCode, String) {
+    let app = router(shared.clone()).layer(MockConnectInfo(LAPTOP.parse::<SocketAddr>().unwrap()));
+    let request = Request::post(route)
+        .header(header::HOST, HOST)
+        .header(header::ORIGIN, format!("http://{HOST}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, String::from_utf8_lossy(&body).into_owned())
 }
 
 #[tokio::test]

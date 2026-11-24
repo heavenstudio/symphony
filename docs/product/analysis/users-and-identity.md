@@ -5,8 +5,9 @@ that signs them in; what each may do is the Symphony's own, kept with the board:
 own what waits to be decided, and the powers to speak, decide and direct agents. This is
 a concept: it questions the idea against what the Symphony has, says the shape that fits, and
 puts its choices to the owner a few at a time; those not asked yet are [listed at its
-end](#later-rounds). Nothing here is built,
-and nothing is built from it but by a task filed from an approved card.
+end](#later-rounds). What is built of it is said at each step of [the way from one
+owner](#the-way-from-one-owner), and nothing is built from it but by a task filed from an approved
+card.
 
 Read at `59538b83e`, and the settings concept as it landed on main at `b31695d8d`. The links name
 the modules and documents read.
@@ -628,9 +629,11 @@ alone: it concerns people the board already knows, however they signed in.
 What follows for the rules that say "the owner":
 
 - **The `owner` stamp** on a task is the approve of any one member of the group the task belongs
-  to, naming the tip, under that member's name. Until a board holds its people and their powers,
-  it is the owner's own approve alone, on a card or a thread: a named person's `ana · approved`
-  meets no stamp, and her later word that is no approve keeps the owner's from standing.
+  to, naming the tip, under that member's name. Until ownership (step 4 below) gives a task its
+  group, it is the approve of the owner or of anyone holding decide on the board, on a card and
+  on a thread at once ([TASKS](../../workflow/TASKS.md#people)): a named person's
+  `ana · approved` meets it while she holds decide there, and her later word that is no approve,
+  or anyone's, keeps an approve from standing.
 - **An approved card decides a later one** whoever of its group approved it. An agent checking
   earlier verdicts reads the verdict, not who gave it.
 - **A line no commit has yet** keeps its worktree from being removed, whoever's line it is.
@@ -1389,6 +1392,11 @@ Each step can ship alone, and a machine with one person sees none of them.
    login is its person. A peer under another login is that login's person, and until a board
    adds them the server shows them nothing.
 3. **People, groups and powers on a board.** The rows, the People page, names on lines.
+   Built: names on lines; a board's people, groups and powers as rows, the command that changes
+   them and the log it keeps; the profiles in the machine folder; a visitor under another login
+   on the boards that give them a power; each write checked against the powers it needs; and the
+   `owner` stamp opened by decide ([TASKS](../../workflow/TASKS.md#people)). The People page is
+   still to build.
 4. **Ownership.** A card and a task have their group, from the board's map of places or a name
    written on them; queues and notices follow it, and any member's answer settles what the
    group owns. Its members move, prioritize and cancel its tasks. The Settings page is one of

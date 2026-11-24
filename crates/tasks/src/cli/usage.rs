@@ -133,6 +133,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "the preferences the board keeps: list, set KEY VALUE, remove KEY",
             ),
             (
+                "people",
+                "people, groups and powers: list, log, add, grant, revoke",
+            ),
+            (
                 "stamps",
                 "the stamps a land can require, and what a task needs of them",
             ),
@@ -612,6 +616,54 @@ options:
   -h, --help  show this help message and exit
   --as ACTOR  who the change is recorded as made by (set, remove)
   --json      the entries as JSON (list)
+"#,
+    ),
+    (
+        "people",
+        r#"usage: just tasks people [-h] [--as ACTOR] [--json] [--display DISPLAY]
+                         [--signin SIGNIN] [--git GIT] [--power POWER]
+                         [--group GROUP] ACTION [WORDS ...]
+"#,
+        r#"usage: just tasks people [-h] [--as ACTOR] [--json] [--display DISPLAY]
+                         [--signin SIGNIN] [--git GIT] [--power POWER]
+                         [--group GROUP] ACTION [WORDS ...]
+
+Who is on this board and what each may do there, and the machine's profiles
+of them. With nobody added, the person at the machine is the only one on it,
+holding every power, as before. A person is on the board while they hold a
+power, their own or a group's, and every power includes read: read, speak,
+decide, direct_agents (direct-agents), administer. No one is given
+direct_agents yet: until a board speaks to its agents for a person, every
+route that asks them for work is the person at the machine's alone.
+
+`list` prints each person with the powers they hold and their groups, and
+each group; `log` every change, numbered, with who made it. `add NAME` puts a
+person on the board, with --power and --group, and makes or fills their
+profile in the machine folder (people.json, mode 600) with --display,
+--signin SERVICE:SUBJECT (tailscale:LOGIN) and --git; `profile NAME` fills a
+profile alone. `remove NAME` takes a person off the board: their lines stay
+theirs, and their profile stays. `join NAME GROUP` and `leave NAME GROUP`;
+`grant NAME POWER...` and `revoke NAME POWER...`, or with --group GROUP the
+group's powers; `group add GROUP [POWER...]` and `group remove GROUP`, which
+takes its members out of it. People and groups share one name space, a short
+name no session's handle is. A refusal says why and writes nothing. Nothing
+printed or logged names a sign-in's subject.
+
+positional arguments:
+  ACTION             list, log, add, remove, join, leave, grant, revoke,
+                     group or profile
+  WORDS              a name, a group, powers: what ACTION takes
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR         who a change is recorded as made by
+  --json             the people, or the log, as JSON (list, log)
+  --display DISPLAY  how the person is shown (add, profile)
+  --signin SIGNIN    SERVICE:SUBJECT, a sign-in of theirs (add, profile)
+  --git GIT          a git handle of theirs (add, profile)
+  --power POWER      a power the person is added with (add)
+  --group GROUP      a group the person is added in (add), or the group
+                     whose powers change (grant, revoke)
 "#,
     ),
     (

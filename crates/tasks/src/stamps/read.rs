@@ -13,7 +13,7 @@
 //! it built and ran nothing, so it is neither a red nor a green at its commit, and what the command
 //! showed there before it still stands.
 
-use super::posted::{self, Posted};
+use super::posted::{self, Approval, Posted};
 use super::{Catalogue, Needs, short};
 use crate::Message;
 use crate::cli::machine_work::recorded::{Phase, Record, Step};
@@ -368,19 +368,42 @@ fn newest<'a>(
 
 /// Whether `post` is the owner's approve: a line of the owner's whose first word is `approve`.
 pub fn owner_approves(post: &Message) -> bool {
+    approves_by(post, &[])
+}
+
+/// Whether `post` is an approve the `owner` stamp takes on a board where `deciders` hold the
+/// decide power ([`crate::people::People::holding`]): a line of the owner's or of one of them,
+/// whose first word is `approve`. A line under a decider's name is theirs: a person's or a group's
+/// name is never a session's handle, nor a handle a person's name
+/// ([`crate::people::refused_name`], [`crate::Store::register`]), and the board's own lines are
+/// `system`.
+pub fn approves_by(post: &Message, deciders: &[String]) -> bool {
     let first = (post.text.trim_start())
         .split(|c: char| c.is_whitespace() || c == ':')
         .next()
         .unwrap_or_default();
-    post.sender == OWNER && post.kind != "system" && first.eq_ignore_ascii_case(APPROVE)
+    let whose = post.sender == OWNER || deciders.contains(&post.sender);
+    whose && post.kind != "system" && first.eq_ignore_ascii_case(APPROVE)
 }
 
 /// The `owner` stamp at `tip`, the one reader every caller goes by: met by the owner's approve
 /// naming the tip on the task's `thread` ([`owner`]), else by the owner's approve of every card the
 /// task's branch posted, with nothing but the owner's lines and merges of the default branch after
-/// it, read from git in the main checkout `main` ([`posted::read`]).
+/// it, read from git in the main checkout `main` ([`posted::read`]). [`owner_at_by`] reads it on a
+/// board whose people may decide.
 pub fn owner_at(thread: &[Message], tip: &str, main: &Path) -> Reading {
-    owner_with(thread, tip, || posted::read(main, tip))
+    owner_at_by(thread, tip, main, &[])
+}
+
+/// [`owner_at`] on a board where `deciders` hold the decide power: an approve of theirs meets it as
+/// the owner's does, on the thread ([`approves_by`]) and on the cards ([`posted::read_by`]). Their
+/// powers are the board's now, so a revoke withdraws an approve given while they held it, and a
+/// grant counts one given before it: the server refused their decision while they lacked the
+/// power, so no such line was written through it.
+pub fn owner_at_by(thread: &[Message], tip: &str, main: &Path, deciders: &[String]) -> Reading {
+    owner_with_by(thread, tip, deciders, || {
+        posted::read_by(main, tip, deciders)
+    })
 }
 
 /// [`owner_at`], what the cards the branch posted say asked of `posted` only where the thread
@@ -388,32 +411,66 @@ pub fn owner_at(thread: &[Message], tip: &str, main: &Path) -> Reading {
 /// Met by the cards, it says so, naming them; where a commit after their approve keeps them from
 /// standing, the thread's reading says which.
 pub fn owner_with(thread: &[Message], tip: &str, posted: impl FnOnce() -> Posted) -> Reading {
-    let reading = owner(thread, tip);
+    owner_with_by(thread, tip, &[], || Approval {
+        posted: posted(),
+        by: OWNER.into(),
+    })
+}
+
+/// [`owner_with`] on a board where `deciders` hold the decide power ([`owner_at_by`]), `posted`
+/// saying who gave the cards' newest approve.
+pub fn owner_with_by(
+    thread: &[Message],
+    tip: &str,
+    deciders: &[String],
+    posted: impl FnOnce() -> Approval,
+) -> Reading {
+    let reading = owner_by(thread, tip, deciders);
     if reading.met {
         return reading;
     }
-    match posted() {
+    let Approval { posted, by } = posted();
+    match posted {
         Posted::Nothing => reading,
         Posted::Approved { cards } => Reading {
             met: true,
-            by: Some(OWNER.into()),
+            detail: format!(
+                "Approved by {} on {}, at {}",
+                said(&by),
+                on(&cards),
+                short(tip)
+            ),
+            by: Some(by),
             at: None,
             commit: Some(tip.to_string()),
-            detail: format!("Approved by the owner on {}, at {}", on(&cards), short(tip)),
             line: None,
             cards,
         },
         Posted::Changed { cards, commit } => Reading {
             detail: format!(
-                "{}; the owner's approve of {} came before {}, which changes more than the \
-                 owner's lines",
+                "{}; {} approve of {} came before {}, which changes more than the owner's lines",
                 reading.detail,
+                whose(&by),
                 on(&cards),
                 short(&commit)
             ),
             ..reading
         },
     }
+}
+
+/// Who gave an approve, as a reading says it: `the owner`, or a person by their short name.
+fn said(by: &str) -> String {
+    if by == OWNER {
+        "the owner".into()
+    } else {
+        by.into()
+    }
+}
+
+/// [`said`], possessive: `the owner's`, `ana's`.
+fn whose(by: &str) -> String {
+    format!("{}'s", said(by))
 }
 
 /// `cards` as a reading names them: `card NAME`, `cards NAME, OTHER`.
@@ -429,21 +486,38 @@ pub fn on(cards: &[String]) -> String {
 /// while the newest names another commit or none, or there is none. [`owner_at`] reads the cards the
 /// task posted beside it.
 pub fn owner(thread: &[Message], tip: &str) -> Reading {
-    let approves = thread.iter().filter(|post| owner_approves(post));
+    owner_by(thread, tip, &[])
+}
+
+/// [`owner`] on a board where `deciders` hold the decide power: their approve counts as the owner's
+/// ([`approves_by`]), the reading naming whose it was.
+pub fn owner_by(thread: &[Message], tip: &str, deciders: &[String]) -> Reading {
+    let approves = thread.iter().filter(|post| approves_by(post, deciders));
     let at_tip = short(tip);
-    let Some((_, reading)) = newest(approves, tip, |_| OWNER.into()) else {
+    let Some((post, reading)) = newest(approves, tip, |post| post.sender.clone()) else {
+        let waits = if deciders.is_empty() {
+            "the owner's approve".to_string()
+        } else {
+            "an approve of the owner's or a decider's".to_string()
+        };
         return Reading {
             commit: Some(tip.to_string()),
-            detail: format!("Waits on the owner's approve of {at_tip}"),
+            detail: format!("Waits on {waits} of {at_tip}"),
             ..Reading::default()
         };
     };
+    // A sentence starts with the owner as `The owner`, and with a person's short name as it is.
+    let first = if post.sender == OWNER {
+        "The owner".to_string()
+    } else {
+        post.sender.clone()
+    };
     let detail = match (reading.met, reading.commit.as_deref()) {
-        (true, _) => format!("Approved by the owner at {at_tip}"),
+        (true, _) => format!("Approved by {} at {at_tip}", said(&post.sender)),
         (false, Some(commit)) => {
-            format!("The owner approved {}, not the tip {at_tip}", short(commit))
+            format!("{first} approved {}, not the tip {at_tip}", short(commit))
         }
-        (false, None) => format!("The owner approved naming no commit, not the tip {at_tip}"),
+        (false, None) => format!("{first} approved naming no commit, not the tip {at_tip}"),
     };
     Reading { detail, ..reading }
 }

@@ -5,6 +5,7 @@
 use super::*;
 use std::collections::BTreeMap;
 use symphony_board::cli::machine_work::recorded::{Phase, Step};
+use symphony_board::stamps::posted::Posted;
 use symphony_board::stamps::{NEEDS, Needs};
 
 const TIP: &str = "4be91c2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -151,6 +152,41 @@ fn read_posted(
     catalogue: &Catalogue,
     posted: &dyn Fn(&str) -> Posted,
 ) -> Vec<Gate> {
+    let approval = |tip: &str| Approval {
+        posted: posted(tip),
+        by: "owner".into(),
+    };
+    let read = Reads {
+        thread,
+        runs,
+        tip,
+        cards,
+    };
+    read_deciding(record, &read, catalogue, &[], &approval)
+}
+
+/// What a case's gates are read from.
+struct Reads<'a> {
+    thread: &'a [Message],
+    runs: &'a [Record],
+    tip: Option<&'a str>,
+    cards: &'a [&'a PendingItem],
+}
+
+/// [`read_posted`] on a board where `deciders` hold decide, the cards saying `posted`.
+fn read_deciding(
+    record: &Task,
+    read: &Reads<'_>,
+    catalogue: &Catalogue,
+    deciders: &[String],
+    posted: &dyn Fn(&str) -> Approval,
+) -> Vec<Gate> {
+    let Reads {
+        thread,
+        runs,
+        tip,
+        cards,
+    } = *read;
     let ours = [SLUG.to_string(), "tools/x/work".to_string()];
     let evidence = Evidence {
         thread,
@@ -160,6 +196,7 @@ fn read_posted(
         branch: SLUG,
         tip,
         cards,
+        deciders,
         posted,
     };
     stamps(record, catalogue, &evidence)
@@ -691,6 +728,50 @@ fn the_owners_approve_is_one_commits_id_posted_as_an_approve_line() {
 
 /// The land leaves a task lacking only the owner's stamp done by its approve, so the page offers
 /// the owner's approve there too, until a landing or the owner's approve of the tip answers it.
+/// A decider's approve meets the task's `owner` gate as the owner's does, on the thread and on the
+/// cards, named as theirs; the same approve on a board where they hold no decide does not.
+#[test]
+fn a_deciders_approve_meets_the_owner_gate_on_the_thread_and_on_the_cards() {
+    let record = task("review", Some(assessed(&["owner"], Some(TIP))));
+    let catalogue = Catalogue::symphony();
+    let hers = [line(4, "msg", "ana", &format!("approve {TIP}"))];
+    let deciders = ["ana".to_string()];
+    let nothing = |_: &str| Approval {
+        posted: Posted::Nothing,
+        by: "owner".into(),
+    };
+    let owner_gate =
+        |thread: &[Message], deciders: &[String], posted: &dyn Fn(&str) -> Approval| {
+            let read = Reads {
+                thread,
+                runs: &[],
+                tip: Some(TIP),
+                cards: &[],
+            };
+            let gates = read_deciding(&record, &read, &catalogue, deciders, posted);
+            let owner = gates.into_iter().find(|gate| gate.name == "owner").unwrap();
+            (owner.state, owner.detail)
+        };
+    assert_eq!(
+        owner_gate(&hers, &deciders, &nothing),
+        (GateState::Met, "Approved by ana at 4be91c2".to_string())
+    );
+    assert_eq!(owner_gate(&hers, &[], &nothing).0, GateState::Held);
+    let cards = |_: &str| Approval {
+        posted: Posted::Approved {
+            cards: vec!["look".into()],
+        },
+        by: "ana".into(),
+    };
+    assert_eq!(
+        owner_gate(&[], &deciders, &cards),
+        (
+            GateState::Met,
+            "Approved by ana on card look, at 4be91c2".to_string()
+        )
+    );
+}
+
 #[test]
 fn the_owner_is_waited_on_while_open_or_done_by_an_approve_no_landing_closed() {
     let approve = line(
@@ -701,9 +782,9 @@ fn the_owner_is_waited_on_while_open_or_done_by_an_approve_no_landing_closed() {
     );
     let owner = line(4, "msg", "owner", &format!("approve {TIP}"));
     for status in ["ready", "in_progress", "review", "blocked"] {
-        assert!(awaits_owner(status, &[], TIP, nowhere()), "{status}");
+        assert!(awaits_owner(status, &[], TIP, nowhere(), &[]), "{status}");
         assert!(
-            !awaits_owner(status, std::slice::from_ref(&owner), TIP, nowhere()),
+            !awaits_owner(status, std::slice::from_ref(&owner), TIP, nowhere(), &[]),
             "{status}"
         );
     }
@@ -711,13 +792,15 @@ fn the_owner_is_waited_on_while_open_or_done_by_an_approve_no_landing_closed() {
         "done",
         std::slice::from_ref(&approve),
         TIP,
-        nowhere()
+        nowhere(),
+        &[]
     ));
     assert!(!awaits_owner(
         "done",
         &[approve.clone(), owner.clone()],
         TIP,
-        nowhere()
+        nowhere(),
+        &[]
     ));
     // The owner's approve of another commit leaves it waiting on the tip.
     let other = line(4, "msg", "owner", &format!("approve {LATER}"));
@@ -725,7 +808,8 @@ fn the_owner_is_waited_on_while_open_or_done_by_an_approve_no_landing_closed() {
         "done",
         &[approve.clone(), other],
         TIP,
-        nowhere()
+        nowhere(),
+        &[]
     ));
     // Done by a landing, a covered close or no verdict at all: nothing waits.
     let landed = line(
@@ -745,9 +829,42 @@ fn the_owner_is_waited_on_while_open_or_done_by_an_approve_no_landing_closed() {
         vec![approve.clone(), covered],
         Vec::new(),
     ] {
-        assert!(!awaits_owner("done", &thread, TIP, nowhere()), "{thread:?}");
+        assert!(
+            !awaits_owner("done", &thread, TIP, nowhere(), &[]),
+            "{thread:?}"
+        );
     }
-    assert!(!awaits_owner("cancelled", &[approve], TIP, nowhere()));
+    assert!(!awaits_owner(
+        "cancelled",
+        std::slice::from_ref(&approve),
+        TIP,
+        nowhere(),
+        &[]
+    ));
+    // A decider's approve ends the wait as the owner's does, and only while they decide.
+    let hers = line(4, "msg", "ana", &format!("approve {TIP}"));
+    let deciders = ["ana".to_string()];
+    assert!(!awaits_owner(
+        "review",
+        std::slice::from_ref(&hers),
+        TIP,
+        nowhere(),
+        &deciders
+    ));
+    assert!(awaits_owner(
+        "review",
+        std::slice::from_ref(&hers),
+        TIP,
+        nowhere(),
+        &[]
+    ));
+    assert!(!awaits_owner(
+        "done",
+        &[approve, hers],
+        TIP,
+        nowhere(),
+        &deciders
+    ));
 }
 
 #[test]

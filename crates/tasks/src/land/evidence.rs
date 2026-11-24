@@ -218,7 +218,7 @@ pub fn snapshot(
                 .into_iter()
                 .collect(),
             needs::OWNER => {
-                let reading = read::owner_at(thread, head, main);
+                let reading = read::owner_at_by(thread, head, main, &evidence.deciders);
                 (reading
                     .line
                     .map(|line| format!("thread:{line}"))

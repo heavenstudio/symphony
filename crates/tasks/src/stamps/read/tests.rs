@@ -572,6 +572,98 @@ fn the_owners_stamp_is_the_owners_approve_naming_the_tip_and_stale_at_a_later_co
     );
 }
 
+/// A decider's approve on the thread meets the stamp as the owner's does, named as theirs; one
+/// who holds no decide, or a line of the board's under their name, is no approve. Who decides is
+/// the board's now: the same approve meets it only while its sender is among `deciders`.
+#[test]
+fn a_deciders_approve_on_the_thread_meets_the_owners_stamp_and_only_while_they_decide() {
+    let deciders = ["ana".to_string()];
+    let theirs = post(4, "msg", "ana", &format!("approve {TIP}"));
+    assert!(approves_by(&theirs, &deciders));
+    assert!(!approves_by(&theirs, &[]), "a revoke withdraws it");
+    assert!(!owner_approves(&theirs));
+    assert!(!approves_by(
+        &post(5, "system", "ana", &format!("approve {TIP}")),
+        &deciders
+    ));
+    assert!(!approves_by(
+        &post(6, "msg", "bob", &format!("approve {TIP}")),
+        &deciders
+    ));
+    assert!(approves_by(
+        &post(7, "msg", "owner", &format!("approve {TIP}")),
+        &deciders
+    ));
+    let met = owner_by(std::slice::from_ref(&theirs), TIP, &deciders);
+    assert_eq!(
+        met,
+        Reading {
+            met: true,
+            by: Some("ana".into()),
+            at: Some(400.0),
+            commit: Some(TIP.into()),
+            detail: "Approved by ana at 4be91c2".into(),
+            line: Some(4),
+            ..Reading::default()
+        }
+    );
+    let stale = owner_by(std::slice::from_ref(&theirs), LATER, &deciders);
+    assert_eq!(
+        (stale.met, stale.detail.as_str()),
+        (false, "ana approved 4be91c2, not the tip 7c0ffee")
+    );
+    let unnamed = owner_by(&[post(8, "msg", "ana", "approve")], TIP, &deciders);
+    assert_eq!(
+        unnamed.detail,
+        "ana approved naming no commit, not the tip 4be91c2"
+    );
+    let waits = owner_by(&[], TIP, &deciders);
+    assert_eq!(
+        (waits.met, waits.detail.as_str()),
+        (
+            false,
+            "Waits on an approve of the owner's or a decider's of 4be91c2"
+        )
+    );
+    assert_eq!(
+        owner_by(std::slice::from_ref(&theirs), TIP, &[]),
+        owner(std::slice::from_ref(&theirs), TIP)
+    );
+    // Her approve of the cards, read for a board where she decides, is named hers.
+    let cards = owner_with_by(&[], TIP, &deciders, || Approval {
+        posted: Posted::Approved {
+            cards: strings(&["layout"]),
+        },
+        by: "ana".into(),
+    });
+    assert_eq!(
+        (cards.met, cards.by.as_deref(), cards.detail.as_str()),
+        (
+            true,
+            Some("ana"),
+            "Approved by ana on card layout, at 4be91c2"
+        )
+    );
+    let changed = owner_with_by(&[], TIP, &deciders, || Approval {
+        posted: Posted::Changed {
+            cards: strings(&["layout"]),
+            commit: LATER.into(),
+        },
+        by: "ana".into(),
+    });
+    assert!(
+        changed.detail.ends_with(
+            "; ana's approve of card layout came before 7c0ffee, which \
+                                   changes more than the owner's lines"
+        ),
+        "{}",
+        changed.detail
+    );
+    let nowhere = std::path::Path::new("/nowhere");
+    assert!(owner_at_by(std::slice::from_ref(&theirs), TIP, nowhere, &deciders).met);
+    assert!(!owner_at_by(std::slice::from_ref(&theirs), TIP, nowhere, &[]).met);
+}
+
 /// The one reader of the `owner` stamp: the thread's approve of the tip first, the cards the branch
 /// posted asked only without it; met by the cards, it names them and stands on no thread line.
 #[test]

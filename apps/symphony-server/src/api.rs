@@ -1317,11 +1317,8 @@ fn next_actions(
     slug: &str,
     asker: &symphony_plugin::execution::Principal,
 ) -> Result<symphony_api::workflow::ActionsRead, symphony_board::Error> {
-    let (next, outputs) = store.workflow_actions_with_outputs(
-        slug,
-        asker,
-        &symphony_board::workflow::Host::local(),
-    )?;
+    let (next, outputs) =
+        store.workflow_actions_with_outputs(slug, asker, &store.host_for(asker)?)?;
     let takes = (outputs.takes.into_iter())
         .map(|(task, output)| symphony_api::workflow::TakenOutput { task, output })
         .collect();

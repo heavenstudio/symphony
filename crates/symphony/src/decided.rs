@@ -216,15 +216,27 @@ fn fnv(text: &str) -> u64 {
 }
 
 /// Why the land's `owner` stamp stands on `tip`, read from the task's `thread` and the cards its
-/// branch posted in the main checkout `root` as the land reads it
-/// ([`symphony_board::stamps::read::owner_at`]): [`approved_why`] or [`approved_cards_why`]; none
-/// while it does not.
-pub fn approves(thread: &[Message], tip: &str, root: &Path) -> Option<String> {
-    let reading = symphony_board::stamps::read::owner_at(thread, tip, root);
-    reading.met.then(|| match reading.cards.as_slice() {
-        [] => approved_why(tip),
-        cards => approved_cards_why(cards, tip),
-    })
+/// branch posted in the main checkout `root` as the land reads it, on a board whose `deciders`
+/// hold decide ([`symphony_board::stamps::read::owner_at_by`]): [`approved_why`] or
+/// [`approved_cards_why`]; none while it does not.
+pub fn approves(thread: &[Message], tip: &str, root: &Path, deciders: &[String]) -> Option<String> {
+    let reading = symphony_board::stamps::read::owner_at_by(thread, tip, root, deciders);
+    // A decider's approve is said as theirs: `ana approved 1a2b3c4`.
+    let decider = reading
+        .by
+        .as_deref()
+        .filter(|by| *by != crate::postpone::OWNER);
+    reading
+        .met
+        .then(|| match (decider, reading.cards.as_slice()) {
+            (None, []) => approved_why(tip),
+            (None, cards) => approved_cards_why(cards, tip),
+            (Some(by), []) => format!("{by} approved {}", short(tip)),
+            (Some(by), cards) => {
+                let named = symphony_board::stamps::read::on(cards);
+                format!("{by} approved {named}, at {}", short(tip))
+            }
+        })
 }
 
 /// The tip of the branch of the task `slug` in the checkout at `root`, as the land reads it.
@@ -350,7 +362,7 @@ fn approve(store: &Store, root: &Path, slug: &str, block: &Blocked, looked: &mut
     };
     match store
         .thread(slug)
-        .map(|thread| approves(&thread, &tip, root))
+        .map(|thread| approves(&thread, &tip, root, &store.deciders()))
     {
         Ok(Some(why)) => resume(store, slug, block, &why, looked),
         Ok(None) => {}

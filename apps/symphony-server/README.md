@@ -21,8 +21,9 @@ node it is, and the gate keeps who the request is from:
 - **The person at the machine**: loopback, one of this machine's own tailnet addresses, and a
   node under the Tailscale login this machine is under (`Self.UserID` in `tailscale status`, the
   call the Host check already makes), such as the owner's phone. Their writes read `owner`.
-- **Another login's person**: a node under any other user. Tailscale's word says who; no board
-  has added them, so they see nothing.
+- **Another login's person**: a node under any other user. Tailscale's word says who: the login
+  is a sign-in, `tailscale:LOGIN`, of at most one profile in the machine's `people.json`, and a
+  board that gives that profile's short name a power has added them. They see nothing else.
 - **Nobody**: a tagged node, or one whose answer names no user.
 
 A status call that gives no answer keeps the login it last gave, as it keeps the names. Until one
@@ -30,16 +31,24 @@ has answered, only loopback is the person at the machine: this machine's own tai
 known from that answer too, so every node, the Mac's own included, counts as another login's or as
 nobody's. A Mac that is itself tagged is under no login, so only the Mac reaches its boards.
 
-What a visitor reaches is each board's word (`Gate::member`): the person at the machine is on
-every board, and until a board holds people
-([users and identity](../../docs/product/analysis/users-and-identity.md#the-way-from-one-owner),
-step 3) nobody else is on any. The one server judges each request once and keeps only the
+What a visitor reaches is each board's word (`Gate::member`, asked of `src/roster.rs`): the
+person at the machine is on every board, and another login's person is on a board that gives
+their short name any power ([People](../../docs/workflow/TASKS.md#people)), as the actor of that
+name, shown by their profile's display name. A failed read of the profiles or of the board adds
+nobody. The one server judges each request once and keeps only the
 projects whose board has added its visitor: to them every other project is one the server does
 not hold, in no list, and each path under its id answers as an id nobody registered, the same
 bytes. `/api/front` and the list's installation id are the machine's, answered to the person at
 it alone. A server of its own refuses a visitor its board has not added, as an address the gate
 refuses. A project's router takes the visitor's actor with the request, and every save, workflow
 action and attempt control is that actor's.
+
+A write from anyone but the person at the machine is checked against that board's people as it
+arrives, before its body is read (`src/powers.rs`, the table of what each route needs, and
+`src/write.rs`): read fresh from the board, so a revoke holds from the next write. One whose
+power the person lacks is answered 403 with the power it needs, `Forbidden: ana may not decide on
+this board`, and nothing is written; a board that cannot be read answers 503. The server's log
+line for a refusal names the person's short name, never a sign-in or an email.
 
 ## Hosted admission
 
@@ -94,7 +103,9 @@ No production host adapter or CLI switch is supplied here.
 The one server (`serve --home`) keeps its record (`server.json`), log, lease and lock in the
 machine folder: `~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_HOME/symphony`
 elsewhere, `SYMPHONY_MACHINE_DIR` when set (every test sets a temporary one). The registry
-beside them (`projects.json`) holds each project's root, id and `symphony.toml`, and the
+beside them (`projects.json`) holds each project's root, id and `symphony.toml`; the people's
+profiles (`people.json`, with its lock `people.lock`, both mode 600: they hold sign-ins and
+contact details) are there, which `just tasks people` writes; and the
 releases installed on the machine are there too (`releases/NAME/`, with the `current` link); `symphony
 project add [DIR]` writes it, and every start runs it. The build and client stay in the
 starter's install folder (`--install`, `symphony/server/` in its git common dir), where a record

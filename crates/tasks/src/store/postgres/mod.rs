@@ -32,6 +32,7 @@ pub(in crate::store) mod launches;
 pub(in crate::store) mod messages;
 pub(in crate::store) mod opening;
 pub(in crate::store) mod pane_watch;
+pub(in crate::store) mod people;
 pub(in crate::store) mod pool;
 pub(in crate::store) mod raw;
 pub(in crate::store) mod reading;

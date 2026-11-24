@@ -126,6 +126,7 @@ pub const ADDED: &[Addition] = &[
               the same rows by scanning the table, and writes them as it did",
     },
     PERSON_LINES,
+    PEOPLE,
 ];
 
 /// The step that marks a person's line ([`crate::rows::MessageRow::person`]): the nullable column
@@ -141,6 +142,30 @@ pub const PERSON_LINES: Addition = Addition {
           not hear; a build with it sets the column only for a person, which needs the step, and \
           reads it through the row, so a board without it reads every line as no person's",
 };
+
+/// The step that keeps who is on a board ([`crate::people`]): the tables `people` (a row a person,
+/// the groups they are in and the powers given them), `people_group` (a row a group, its powers)
+/// and `people_log` (every change, numbered), each row whole in its `doc`, as `setting` keeps one.
+pub const PEOPLE: Addition = Addition {
+    postgres: "CREATE TABLE IF NOT EXISTS people (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));\n\
+               CREATE TABLE IF NOT EXISTS people_group (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));\n\
+               CREATE TABLE IF NOT EXISTS people_log (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));",
+    tables: &["people", "people_group", "people_log"],
+    why: "the tables people, people_group and people_log, who is on a board with their powers \
+          and the record of each change (crate::people): a build without them never reads or \
+          writes them, so it admits nobody but the person at the machine and checks no power, as \
+          every build before them did, and no rule on a table there before reads them",
+};
+
+/// The number of [`PEOPLE`] among [`ADDED`], counted from 1: 0 once a breaking step made its tables
+/// the contract's own, which every board of it has.
+pub(crate) fn people_step() -> i64 {
+    let at = ADDED.iter().position(|step| *step == PEOPLE);
+    at.map_or(0, |at| i64::try_from(at + 1).unwrap_or(i64::MAX))
+}
 
 /// The number of [`PERSON_LINES`] among [`ADDED`], counted from 1: 0 once a breaking step made the
 /// field the contract's own, which every board of it has.

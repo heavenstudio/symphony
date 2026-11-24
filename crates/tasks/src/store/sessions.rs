@@ -170,11 +170,14 @@ impl Store {
             .parent
             .as_ref()
             .map(|parent| format!("{REFUSED}no parent session {}", repr(parent)));
+        // A person's or a group's name is never a session's handle, so a line under it is never
+        // read as the other's ([`crate::people::refused_name`] keeps out the reverse).
+        let named = self.people_names()?;
         let (handle, found) = self.retrying(|| {
             let handles = Statement::from(pg::HANDLES);
             let taken: Vec<String> = self.read_together(handles, json!({}))?;
             let handle = self
-                .new_handle(&taken.into_iter().collect())
+                .new_handle(&taken.into_iter().chain(named.iter().cloned()).collect())
                 .map_err(Failure::Stop)?;
             let now = (self.clock)();
             let row = SessionRow {

@@ -227,6 +227,27 @@ const COMMANDS: &[Command] = &[
         opts: &[AS, opt("--json", "json", Takes::Bool)],
     },
     Command {
+        name: "people",
+        pos: &[
+            pos("action"),
+            Pos {
+                dest: "words",
+                optional: true,
+                choices: &[],
+                many: true,
+            },
+        ],
+        opts: &[
+            AS,
+            opt("--display", "display", STR),
+            opt("--signin", "signin", Takes::Append),
+            opt("--git", "git", Takes::Append),
+            opt("--power", "power", Takes::Append),
+            opt("--group", "group", Takes::Append),
+            opt("--json", "json", Takes::Bool),
+        ],
+    },
+    Command {
         name: "create",
         pos: &[pos("slug"), pos("title")],
         opts: &[
