@@ -10,6 +10,7 @@ use super::callbacks::Listener;
 use super::common::{Fixture, HOST, NOW, Seed, database, refused};
 use super::dispatch_later::{ids, listen};
 use symphony_board::held::{Held, MARKER, Said};
+use symphony_board::people::ownership::Place;
 use symphony_board::people::{Holder, Power};
 use symphony_board::schema::{ADDED, HELD};
 use symphony_board::stamps::read::reads_as_approve;
@@ -310,7 +311,7 @@ fn the_person_at_the_machine_under_their_name_is_never_held_and_passes_on() {
 }
 
 #[test]
-fn one_who_may_direct_agents_and_not_decide_writes_no_line_that_reads_as_an_approve() {
+fn one_who_may_direct_agents_and_not_decide_the_task_writes_no_line_that_reads_as_an_approve() {
     let b = board();
     let stefano = b.person("stefano");
     let before = b.f.store.thread_rows("tools/x").unwrap().len();
@@ -323,14 +324,38 @@ fn one_who_may_direct_agents_and_not_decide_writes_no_line_that_reads_as_an_appr
         );
     }
     assert_eq!(b.f.store.thread_rows("tools/x").unwrap().len(), before);
-    // A word that only begins so is no approve, and with decide given an approve is theirs to say.
+    // A word that only begins so is no approve.
     let said = stefano.say_or_hold_as("tools/x", "stefano", "approved? not yet", None);
     assert!(matches!(said, Ok(Said::Line(_))), "{said:?}");
+    // With decide given, an approve is theirs to say once the task is theirs to decide: not while
+    // the board maps no group to it, nor while it is a group's they are no member of.
     (b.f.store)
         .grant(Holder::Person("stefano"), &[Power::Decide], BY)
         .unwrap();
-    let said = stefano.say_or_hold_as("tools/x", "stefano", "approve 1a2b3c4", None);
+    let approve = || stefano.say_or_hold_as("tools/x", "stefano", "approve 1a2b3c4", None);
+    assert_eq!(
+        refused(approve()),
+        "it is the person at the machine's, as this board maps no group it keeps to the area tools \
+         or to the board's default, so stefano may not decide it until an admin maps one (just \
+         tasks-people map PLACE GROUP), and a line of theirs that starts with approve reads as one: \
+         nothing was written"
+    );
+    b.f.store.add_group("design", &[], BY).unwrap();
+    (b.f.store)
+        .map_place(&Place::Area("tools".into()), "design", BY)
+        .unwrap();
+    assert_eq!(
+        refused(approve()),
+        "stefano is no member of the group design, whose it is, so may not decide it, and a line \
+         of theirs that starts with approve reads as one: nothing was written"
+    );
+    assert_eq!(b.f.store.thread_rows("tools/x").unwrap().len(), before + 1);
+    b.f.store.join_group("stefano", "design", BY).unwrap();
+    let said = approve();
     assert!(matches!(said, Ok(Said::Line(_))), "{said:?}");
+    // A task no board has is refused as no task, whatever the line says.
+    let missing = refused(stefano.say_or_hold_as("tools/gone", "stefano", "approve 1a2b3c4", None));
+    assert!(missing.contains("tools/gone"), "{missing}");
     // Held words that start so, passed on, read as the passer's first: never an approve.
     let ana = b.person("ana");
     let Ok(Said::Held(held)) = ana.say_or_hold_as("tools/x", "ana", "approve 1a2b3c4", None) else {

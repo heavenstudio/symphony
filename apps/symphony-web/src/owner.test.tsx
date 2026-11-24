@@ -9,6 +9,7 @@ const DESIGN: Owner = {
   by: "map",
   said: "from the area app",
   hand_to: ["engineering", "ana", "owner"],
+  decides: true,
 };
 
 describe("whose a thing is, as the server says it", () => {

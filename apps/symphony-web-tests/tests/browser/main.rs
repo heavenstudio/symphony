@@ -45,6 +45,7 @@ mod feed_deltas;
 #[path = "../../../../tools/test-support/script_std.rs"]
 mod fixture_script;
 mod floating_controls;
+mod group_decides;
 mod header;
 mod held_words;
 mod html_documents;

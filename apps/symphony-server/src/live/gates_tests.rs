@@ -1175,10 +1175,12 @@ fn state(answer: &Value, name: &str) -> GateState {
 }
 
 /// A decider's approve of the tip on the task's thread meets its `owner` gate, named as theirs,
-/// only while the board gives them decide: who decides comes with the task's stamp, so a grant or
-/// a revoke is read at the next read, and a read with nothing new still asks the board once.
+/// only while the board gives them decide and maps their group the task's: who decides comes with
+/// the task's stamp, so a grant, a revoke or an unmap is read at the next read, and a read with
+/// nothing new still asks the board once.
 #[test]
 fn a_deciders_approve_meets_the_owner_gate_while_the_board_gives_them_decide() {
+    use symphony_board::people::ownership::Place;
     use symphony_board::people::{Holder, Power};
     use symphony_board::stamps::{Catalogue, Needs};
     let tree = Tree::new();
@@ -1209,6 +1211,10 @@ fn a_deciders_approve_meets_the_owner_gate_while_the_board_gives_them_decide() {
     f.store
         .add_person("ana", &[], &[Power::Speak], &by)
         .unwrap();
+    f.store.add_group("tools", &[], &by).unwrap();
+    f.store.join_group("ana", "tools", &by).unwrap();
+    let area = Place::Area("tools".into());
+    f.store.map_place(&area, "tools", &by).unwrap();
     let said = symphony::gates::stamps::approve_line(&tip).unwrap();
     (f.other().for_person("ana"))
         .say("tools/kept", "ana", &said, None)
@@ -1226,6 +1232,16 @@ fn a_deciders_approve_meets_the_owner_gate_while_the_board_gives_them_decide() {
         .revoke(Holder::Person("ana"), &[Power::Decide], &by)
         .unwrap();
     assert_eq!(owner_gate().0, GateState::Held, "a revoke withdraws it");
+    f.store
+        .grant(Holder::Person("ana"), &[Power::Decide], &by)
+        .unwrap();
+    assert_eq!(owner_gate(), met);
+    f.store.unmap_place(&area, &by).unwrap();
+    assert_eq!(
+        owner_gate().0,
+        GateState::Held,
+        "the task is the person at the machine's once its area is unmapped"
+    );
 }
 
 /// What a gates read costs is counted, never timed: the requests the board is sent, and each part

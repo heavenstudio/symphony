@@ -636,11 +636,10 @@ alone: it concerns people the board already knows, however they signed in.
 What follows for the rules that say "the owner":
 
 - **The `owner` stamp** on a task is the approve of any one member of the group the task belongs
-  to, naming the tip, under that member's name. Until ownership (step 4 below) gives a task its
-  group, it is the approve of the owner or of anyone holding decide on the board, on a card and
+  to who holds decide, naming the tip, under that member's name, or of the owner, on a card and
   on a thread at once ([TASKS](../../workflow/TASKS.md#people)): a named person's
-  `ana · approved` meets it while she holds decide there, and her later word that is no approve,
-  or anyone's, keeps an approve from standing.
+  `ana · approved` meets it while she holds decide and the task is her group's, and her later
+  word that is no approve, or anyone's, keeps an approve from standing.
 - **An approved card decides a later one** whoever of its group approved it. An agent checking
   earlier verdicts reads the verdict, not who gave it.
 - **A line no commit has yet** keeps its worktree from being removed, whoever's line it is.
@@ -1430,9 +1429,12 @@ Each step can ship alone, and a machine with one person sees none of them.
    the board's map of places to groups, kept by its admins, a card's `*For:*` and a task's
    `--group`, the read of whose a thing is and what gave it, drawn on a task's page and a card, and
    its hand-over by a member of its group
-   ([TASKS](../../workflow/TASKS.md#which-group-a-thing-belongs-to)); and the machine's one server
-   telling each member of a thing's group of a card waiting, an agent's question and a reviewer's
-   verdict, by the way each chose, through the programs the machine folder names
+   ([TASKS](../../workflow/TASKS.md#which-group-a-thing-belongs-to)); a card's verdict, a task's
+   moves, priority, fields, cancel and approve and the settings decided by the members of its
+   group who hold decide, the `owner` stamp read from them, and the controls drawn for them alone
+   ([TASKS](../../workflow/TASKS.md#people)); and the machine's one server telling each member of a
+   thing's group of a card waiting, an agent's question and a reviewer's verdict, by the way each
+   chose, through the programs the machine folder names
    ([NOTICES](../../engineering/NOTICES.md#the-servers-part)).
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.

@@ -362,11 +362,13 @@ fn a_hold_on_the_owners_approve_ends_on_his_approve_of_the_card_its_branch_poste
     );
 }
 
-/// A person the board gives decide ends the hold by her approve of the card its branch posted, as
-/// the owner's does, and the line names her: before the board gives her decide the same committed
-/// approve leaves it held, and the grant that follows counts it.
+/// A person the board gives decide, of the group the task's area maps to, ends the hold by her
+/// approve of the card its branch posted, as the owner's does, and the line names her: before the
+/// board gives her decide the same committed approve leaves it held, and the grant that follows
+/// counts it.
 #[test]
 fn a_hold_on_the_owners_approve_ends_on_a_deciders_approve_of_the_card_named_as_hers() {
+    use symphony_board::people::ownership::Place;
     use symphony_board::people::{Holder, Power};
     let tree = Tree::new();
     let root = project(&tree, "");
@@ -385,6 +387,9 @@ fn a_hold_on_the_owners_approve_ends_on_a_deciders_approve_of_the_card_named_as_
     f.store
         .add_person("ana", &[], &[Power::Speak], &orch)
         .unwrap();
+    f.store.add_group("app", &[], &orch).unwrap();
+    f.store.join_group("ana", "app", &orch).unwrap();
+    (f.store.map_place(&Place::Area("app".into()), "app", &orch)).unwrap();
     let hers = format!("{LAYOUT}  [2026-11-20 05:00] ana · approved — wider it is\n");
     std::fs::write(worktree.join(DOC), register(&hers)).unwrap();
     git(&worktree, &["commit", "-qam", "Ana's approve of layout"]);

@@ -62,13 +62,13 @@ pub struct OfBoard {
 }
 
 impl OfBoard {
-    /// The people who held decide on the board as its stamp was read
-    /// ([`TaskStamp::deciders`]), so a read with nothing new asks the board for no more; read now
-    /// where it has no stamp.
+    /// The people of the task's owner who held decide as its stamp was read
+    /// ([`TaskStamp::task_deciders`]), so a read with nothing new asks the board for no more; read
+    /// now where it has no stamp.
     pub fn deciders(&self, store: &Store) -> Vec<String> {
         match &self.stamp {
-            Some(stamp) => stamp.deciders(),
-            None => store.deciders(),
+            Some(stamp) => stamp.task_deciders(&self.record),
+            None => store.task_deciders(&self.record),
         }
     }
 
@@ -101,7 +101,7 @@ struct Cards {
     tip: String,
     /// The default branch's.
     default_tip: Option<String>,
-    /// The board's deciders it was read with.
+    /// The task's deciders it was read with.
     deciders: Vec<String>,
     posted: Approval,
 }

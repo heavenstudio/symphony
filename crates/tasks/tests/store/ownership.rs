@@ -83,6 +83,10 @@ fn a_board_with_nobody_named_gives_every_card_and_task_to_the_person_at_the_mach
     );
     let why = refused(f.store.hand_task("app/x", "design", "owner"));
     assert!(why.contains("names nobody"), "{why}");
+    assert!(f.store.task_deciders(&filed).is_empty());
+    assert_eq!(f.store.refused_task_decide("app/x", "ana").unwrap(), None);
+    let stamp = f.store.task_stamp("app/x").unwrap().unwrap();
+    assert!(stamp.task_deciders(&filed).is_empty());
 }
 
 #[test]
@@ -501,10 +505,21 @@ fn a_board_made_without_the_step_reads_no_map_and_takes_no_change() {
     };
     let writer = open(&before);
     assert_eq!(writer.additions().unwrap(), i64::try_from(step).unwrap());
-    writer
+    let worker = writer
         .register(&symphony_board::NewSession::new("worker"))
         .unwrap();
     writer.add_group("design", &[], "amber-heron").ok();
+    // A person holding decide decides no task there: with no map, each is the person at the
+    // machine's, its stamp reading no map at all.
+    writer
+        .add_person("ana", &["design".into()], &[Power::Decide], BY)
+        .unwrap();
+    let task = writer
+        .create(&NewTask::new("app/x", "X", &worker.row.handle))
+        .unwrap();
+    let stamp = writer.task_stamp("app/x").unwrap().unwrap();
+    assert!(stamp.task_deciders(&task).is_empty());
+    assert!(writer.task_deciders(&task).is_empty());
     for store in [&writer, &open(&Opening::read())] {
         assert_eq!(store.ownership_log().unwrap(), []);
         assert!(store.ownership_map().unwrap().is_empty());
@@ -520,4 +535,81 @@ fn a_board_made_without_the_step_reads_no_map_and_takes_no_change() {
             "{why}"
         );
     }
+}
+
+#[test]
+fn a_tasks_deciders_are_those_of_its_owner_who_hold_decide_and_its_stamp_follows_the_map() {
+    use symphony_board::workflow::{Host, local_owner, person as principal};
+    let f = board();
+    f.task("app/x");
+    f.task("docs/y");
+    let task = f.store.get("app/x").unwrap();
+    assert_eq!(f.store.task_deciders(&task), ["bo"]);
+    assert_eq!(f.store.task_deciders_of("app/x"), ["bo"]);
+    assert!(
+        f.store.task_deciders_of("docs/y").is_empty(),
+        "an area the map does not name, with no default: the person at the machine's"
+    );
+    assert!(f.store.task_deciders_of("app/missing").is_empty());
+    let stamp = f.store.task_stamp("app/x").unwrap().unwrap();
+    assert_eq!(stamp.task_deciders(&task), ["bo"]);
+    // Why one may not decide it, in the board's words: none for one who may.
+    assert_eq!(f.store.refused_task_decide("app/x", "bo").unwrap(), None);
+    assert_eq!(
+        f.store
+            .refused_task_decide("app/x", "ana")
+            .unwrap()
+            .as_deref(),
+        Some("ana is no member of the group engineering, whose it is, so may not decide it")
+    );
+    assert!(f.store.refused_task_decide("app/missing", "bo").is_err());
+
+    // A remap moves who decides it, and the stamp tells the task from the one read before.
+    f.store
+        .map_place(&Place::Area("app".into()), "design", BY)
+        .unwrap();
+    let remapped = f.store.task_stamp("app/x").unwrap().unwrap();
+    assert_ne!(remapped, stamp);
+    assert_eq!(remapped.task_deciders(&task), ["ana"]);
+    assert_eq!(f.store.task_deciders(&task), ["ana"]);
+
+    // The workflow's owner edges are granted to the task's deciders alone.
+    let ana = f.store.host_on(&principal("ana"), "app/x").unwrap();
+    assert!(ana.grants.holds(&principal("ana"), "owner"));
+    assert!(!ana.grants.holds(&principal("bo"), "owner"));
+    assert!(ana.grants.holds(&local_owner(), "owner"));
+    assert_eq!(
+        f.store.host_on(&local_owner(), "app/missing").unwrap(),
+        Host::local(),
+        "the person at the machine's host reads nothing"
+    );
+    let why = refused(f.store.host_on(&principal("ana"), "app/missing"));
+    assert!(why.contains("app/missing"), "{why}");
+
+    // A member who holds no decide is none, until it is given them.
+    f.store.add_group("staff", &[Power::Speak], BY).unwrap();
+    f.store
+        .add_person("cy", &["staff".into()], &[], BY)
+        .unwrap();
+    f.store
+        .map_place(&Place::Area("app".into()), "staff", BY)
+        .unwrap();
+    assert!(f.store.task_deciders(&task).is_empty());
+    f.store
+        .grant(
+            symphony_board::people::Holder::Person("cy"),
+            &[Power::Decide],
+            BY,
+        )
+        .unwrap();
+    assert_eq!(f.store.task_deciders(&task), ["cy"]);
+    let granted = f.store.task_stamp("app/x").unwrap().unwrap();
+    assert_eq!(granted.task_deciders(&task), ["cy"]);
+
+    // A task handed to a person is theirs to decide, read from its own row.
+    person(&f, "cy").hand_task("app/x", "ana", "cy").unwrap();
+    let handed = f.store.get("app/x").unwrap();
+    let after = f.store.task_stamp("app/x").unwrap().unwrap();
+    assert_eq!(after.task_deciders(&handed), ["ana"]);
+    assert_eq!(f.store.task_deciders(&handed), ["ana"]);
 }

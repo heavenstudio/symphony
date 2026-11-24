@@ -11,6 +11,7 @@ use axum::http::{Request, StatusCode, header};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use symphony_board::people::ownership::Place;
 use symphony_board::people::{Holder, Power};
 use symphony_plugin::execution::{Principal, PrincipalKind};
 use symphony_plugin::{Actor, Sender};
@@ -48,6 +49,20 @@ async fn asked_from(shared: &Arc<Shared>, client: &str) -> (StatusCode, String) 
     (status, String::from_utf8_lossy(&body).into_owned())
 }
 
+/// The board at `root`, each of `people` on it with their powers, in the group `staff` the board
+/// gives what no place of its own maps ([`Place::Default`]): so its cards are theirs to decide as
+/// their powers say.
+fn staffed(root: &Path, people: &[(&str, &[Power])]) -> Board {
+    let board = Board::holding(root, people);
+    let store = Board::store(root);
+    store.add_group("staff", &[], "owner").unwrap();
+    for (name, _) in people {
+        store.join_group(name, "staff", "owner").unwrap();
+    }
+    store.map_place(&Place::Default, "staff", "owner").unwrap();
+    board
+}
+
 /// A gate whose whois names a colleague's laptop at [`LAPTOP`], under a login other than this
 /// machine's, and whose roster adds that login to the board at `added` alone, as Ana.
 fn laptop_gate(added: &Path, ana: &Actor) -> crate::gate::Gate {
@@ -75,7 +90,7 @@ async fn a_visitor_a_board_added_saves_as_themselves_and_one_it_did_not_writes_n
     );
     let tree = Tree::new();
     let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
-    let _board = Board::holding(&root, &[("ana", &[Power::Decide])]);
+    let _board = staffed(&root, &[("ana", &[Power::Decide])]);
     let shared = Shared::new(1, 8123, &root, None, laptop_gate(&root, &ana));
     let (status, body) = asked_from(&shared, LAPTOP).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -116,7 +131,7 @@ async fn a_person_is_refused_each_write_whose_power_she_lacks_and_nothing_is_wri
     );
     let tree = Tree::new();
     let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
-    let _board = Board::holding(&root, &[("ana", &[Power::Speak])]);
+    let _board = staffed(&root, &[("ana", &[Power::Speak])]);
     let shared = Shared::new(1, 8123, &root, None, laptop_gate(&root, &ana));
     let (status, body) = asked_from(&shared, LAPTOP).await;
     assert_eq!(
@@ -181,7 +196,7 @@ async fn the_machines_roster_puts_a_profiles_login_on_a_board_that_gives_her_a_p
         Ok(())
     })
     .unwrap();
-    let _board = Board::holding(&root, &[("ana", &[Power::Decide])]);
+    let _board = staffed(&root, &[("ana", &[Power::Decide])]);
     let gate = laptop_with(crate::roster::of(machine));
     let visitor = crate::gate::Visitor::Login(crate::gate::Login {
         id: 12,

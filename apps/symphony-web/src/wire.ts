@@ -1061,6 +1061,11 @@ export type Owner = {
    * Whom the one reading may hand it to, groups then people: empty where they may not.
    */
   hand_to?: Array<string>;
+  /**
+   * Whether the one reading may decide it: a card's verdict, a task's move, priority, cancel
+   * and approve. A page draws those controls for them alone.
+   */
+  decides: boolean;
 };
 
 export type CardOwners = { cards: { [key in string]: Owner } };

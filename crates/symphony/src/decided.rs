@@ -219,8 +219,8 @@ fn fnv(text: &str) -> u64 {
 }
 
 /// Why the land's `owner` stamp stands on `tip`, read from the task's `thread` and the cards its
-/// branch posted in the main checkout `root` as the land reads it, on a board whose `deciders`
-/// hold decide, the person at the machine (`machine`) among them once named
+/// branch posted in the main checkout `root` as the land reads it, `deciders` the people of the
+/// task's owner who hold decide, the person at the machine (`machine`) among them once named
 /// ([`symphony_board::stamps::read::owner_at_by`]): [`approved_why`], the approve's giver named;
 /// none while it does not.
 pub fn approves(
@@ -371,7 +371,7 @@ fn approve(
         return;
     };
     match store.thread(slug).map(|thread| {
-        let deciders = symphony_board::people::with_machine(store.deciders(), machine);
+        let deciders = symphony_board::people::with_machine(store.task_deciders_of(slug), machine);
         approves(&thread, &tip, root, &deciders, machine)
     }) {
         Ok(Some(why)) => resume(store, slug, block, &why, looked),

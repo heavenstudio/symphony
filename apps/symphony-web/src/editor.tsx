@@ -1,5 +1,6 @@
 // A document section's editor, as the Dioxus client's docs_live.rs drew it: a card's verdict or
-// message, or a comment after a section. The draft lives outside the page's markup, saved on this
+// message, its verdicts drawn for whoever decides the card alone (`decides`), or a comment after a
+// section. The draft lives outside the page's markup, saved on this
 // device on every input, so a read that redraws the section never loses it; a closed draft holds
 // its section in place (`busy`, document-live.ts) only once the section is gone.
 //
@@ -300,8 +301,12 @@ export interface EditorProps {
   opener: string;
   /** The section is gone from the latest copy: a save to its old place is refused. */
   gone: boolean;
-  /** The card's Later, beside its verdicts. */
+  /** The card's Later: beside its verdicts, alone where none is drawn. */
   later?: ReactNode;
+  /** Whether the one reading decides the card (owner.tsx's `decides`): its verdicts, Dismiss
+   * and Reset are drawn for them alone; its message and Later, a move in the queue, for
+   * everyone. */
+  decides?: boolean;
 }
 
 export function Editor({
@@ -316,6 +321,7 @@ export function Editor({
   opener,
   gone,
   later = null,
+  decides = true,
 }: EditorProps) {
   const page = useContext(PageContext);
   const mount = useMount();
@@ -343,6 +349,8 @@ export function Editor({
   const stale = useStore(STALE);
   const fieldId = `draft-${encodeURIComponent(key)}`;
   const message = slug !== null;
+  // A card's verdicts, for whoever decides it.
+  const verdicts = message && decides;
 
   useEffect(() => {
     if (editing) focus(fieldId);
@@ -402,8 +410,12 @@ export function Editor({
           id={fieldId}
           value={text}
           disabled={pending}
-          aria-label="Message or verdict note"
-          placeholder="Write a message, or add a note to your verdict…"
+          aria-label={message && !decides ? "Message" : "Message or verdict note"}
+          placeholder={
+            message && !decides
+              ? "Write a message…"
+              : "Write a message, or add a note to your verdict…"
+          }
           onChange={(event) => control.type(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
@@ -413,7 +425,7 @@ export function Editor({
           }}
         />
         <AttachControls attach={attach} disabled={pending} />
-        {message && (
+        {verdicts && (
           // Approve is what the owner most often does, so it alone is filled; the card's own
           // verdict is marked as current, never promoted.
           <div className="verdict-choices">
@@ -432,6 +444,7 @@ export function Editor({
             {later}
           </div>
         )}
+        {!verdicts && later}
         <div className="row">
           {!message && (
             <SelectField label="Comment kind" value={kind} onChange={setKind} options={KINDS} />
@@ -439,7 +452,7 @@ export function Editor({
           <Button type="submit" className={message ? "" : "primary"} disabled={pending || stale}>
             {pending ? "Saving…" : stale ? CHECKING : message ? "Send message" : "Save comment"}
           </Button>
-          {message && (
+          {verdicts && (
             <Button
               type="button"
               className="v-dismissed"
@@ -451,7 +464,7 @@ export function Editor({
             </Button>
           )}
           {/* A pending card has no verdict to take back. */}
-          {message && state !== "pending" && (
+          {verdicts && state !== "pending" && (
             <Button
               type="button"
               variant="ghost"

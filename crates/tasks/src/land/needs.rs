@@ -218,11 +218,11 @@ pub struct Evidence<'a> {
     /// The main checkout, where the `owner` stamp reads the cards the task's branch posted
     /// ([`read::owner_at`]).
     pub main: PathBuf,
-    /// The people who hold decide on the board, and the person at the machine by the name they
-    /// gave themselves ([`crate::people::with_machine`]), whose approve meets the `owner` stamp as
-    /// the owner's does ([`read::owner_at_by`]): read only when `owner` is needed, and none of the
-    /// board's where its people cannot be read, so the owner's approve, under either name, alone
-    /// meets it then.
+    /// The people of the task's owner who hold decide, and the person at the machine by the name
+    /// they gave themselves ([`crate::people::with_machine`]), whose approve meets the `owner` stamp
+    /// as the owner's does ([`read::owner_at_by`], [`Store::task_deciders`]): read only when `owner`
+    /// is needed, and none of the board's where the task, the board's people or its map cannot be
+    /// read, so the owner's approve, under either name, alone meets it then.
     pub deciders: Vec<String>,
     /// The person at the machine, once they gave themselves a name, read from the machine folder
     /// the land's environment names ([`crate::people::machine_person_in`]): among the deciders,
@@ -234,7 +234,7 @@ impl<'a> Evidence<'a> {
     /// The evidence of the task `slug`, its `thread` read, for the stamps `needed`: the runs of the
     /// work folder the recorder keeps for `env`'s board ([`recorded::folder`]) and the tasks whose
     /// runs are the task's, both read only when `tests` is needed; the artifacts folder the main
-    /// checkout `main` names; the board's deciders, read only when `owner` is.
+    /// checkout `main` names; the task's deciders, read only when `owner` is.
     pub fn of(
         store: &Store,
         env: &Env,
@@ -259,7 +259,7 @@ impl<'a> Evidence<'a> {
                 env.var(name).map(std::ffi::OsString::from)
             });
             (
-                crate::people::with_machine(store.deciders(), machine.as_ref()),
+                crate::people::with_machine(store.task_deciders_of(slug), machine.as_ref()),
                 machine,
             )
         } else {

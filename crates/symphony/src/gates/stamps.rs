@@ -392,7 +392,7 @@ pub fn owner_offer(
     }
     let thread = store.thread(&record.slug).ok()?;
     // The person at the machine decides under the name they gave themselves as under `owner`.
-    let deciders = symphony_board::people::with_machine(store.deciders(), machine);
+    let deciders = symphony_board::people::with_machine(store.task_deciders(record), machine);
     awaits_owner(&record.status, &thread, &tip, root, &deciders).then(|| TaskOffer {
         action: OWNER_APPROVE.into(),
         label: format!("Approve {}", short(&tip)),
@@ -403,10 +403,10 @@ pub fn owner_offer(
 
 /// Whether a task of `status`, its `thread` this, waits on the owner's approve of `tip`: its
 /// `owner` stamp does not stand there (`read::owner_at_by`, the cards its branch posted read in the
-/// checkout `root`, on a board whose `deciders` hold decide), and the task is open, or done by an
-/// approve no landing has closed (`symphony_board::approved`), where the land leaves a task that
-/// lacks only the owner's stamp. A task cancelled, or done by a landing or a covered close, waits
-/// on nothing.
+/// checkout `root`, `deciders` the people of the task's owner who hold decide), and the task is
+/// open, or done by an approve no landing has closed (`symphony_board::approved`), where the land
+/// leaves a task that lacks only the owner's stamp. A task cancelled, or done by a landing or a
+/// covered close, waits on nothing.
 pub fn awaits_owner(
     status: &str,
     thread: &[Message],
