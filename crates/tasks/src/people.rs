@@ -285,11 +285,13 @@ impl People {
     }
 }
 
-/// Why `name` cannot name a new person or group on a board that holds `people`, where `handles`
-/// are the board's sessions' handles: none where it can. It takes a short name's form
-/// ([`symphony_docs::syntax::is_short_name`], which keeps out the board's own words), and is no
-/// person's or group's there already, nor a session's handle.
-pub fn refused_name(name: &str, people: &People, handles: &[String]) -> Option<String> {
+/// Why `name` cannot be a person's or a group's, on any board: none where it can. It takes a short
+/// name's form ([`symphony_docs::syntax::is_short_name`], which keeps out the board's own words),
+/// and is no handle a session registering can be given ([`crate::store::could_be_handle`]). A
+/// register and an add of one name at the same instant then never both take it, as each checks the
+/// other's names outside the transaction that writes its own: the handles a register gives and the
+/// names a person or a group takes never meet.
+pub fn refused_person_name(name: &str) -> Option<String> {
     if !symphony_docs::syntax::is_short_name(name) {
         return Some(format!(
             "{name:?} is no short name: lowercase letters and digits in parts joined by single \
@@ -298,6 +300,23 @@ pub fn refused_name(name: &str, people: &People, handles: &[String]) -> Option<S
             symphony_docs::syntax::SHORT_NAME_MAX,
             symphony_docs::syntax::RESERVED_NAMES.join(", ")
         ));
+    }
+    if crate::store::could_be_handle(name) {
+        return Some(format!(
+            "{name} is a name a session's handle can take, an adjective and a noun the board names \
+             sessions by, so a line of either could read as the other's: name a person or a \
+             group otherwise"
+        ));
+    }
+    None
+}
+
+/// Why `name` cannot name a new person or group on a board that holds `people`, where `handles`
+/// are the board's sessions' handles: none where it can. It is a person's name
+/// ([`refused_person_name`]), and no person's or group's there already, nor a session's handle.
+pub fn refused_name(name: &str, people: &People, handles: &[String]) -> Option<String> {
+    if let Some(why) = refused_person_name(name) {
+        return Some(why);
     }
     if people.member(name).is_some() {
         return Some(format!("{name} is a person on this board already"));

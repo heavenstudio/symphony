@@ -1,11 +1,12 @@
-# symphony-stamp: 9fdb729d2b2c9164
+# symphony-stamp: bb80076dc66d5973
 # The board and reply commands an agent runs, allowed so a session on the board is never stopped at a
 # prompt: recipes of symphony.just, which `symphony init` installs beside them. `just land` is allowed
 # too: the Symphony's default land lands only what its checks pass, every stamp the task needs
 # standing on the tip; a project's own `land` recipe, which replaces it, is allowed the
 # same, and the project's landing policy decides what it lands. Its server recipes, `just symphony`
 # (starts, replaces or stops the machine's shared server) and `just symphony-cli` (reaches serve
-# and init), ask first.
+# and init), ask first, and so does `just tasks-people`, a change to a board's people or a profile,
+# which `just tasks` refuses.
 # A command with an env prefix (`TASKS_SESSION=x just tasks ...`) matches no rule: an agent's handle is
 # already in its environment, so it runs every command as plain words.
 

@@ -1,16 +1,17 @@
-# symphony-stamp: 68591d7664649908
+# symphony-stamp: b6cc844b4a24183b
 # The Symphony's commands, which `symphony init` installs and keeps current: the task board
-# (`just tasks`), messages between agents (`just agent-send`), the server (`just symphony`), the
-# document CLI (`just symphony-cli`) and its review commands (`just symphony-status`,
-# `just symphony-reply`, `just symphony-ask`), and the default landing (`just land`). The project's
-# justfile imports this file. A recipe of the same name there is the project's own and replaces
-# the one here, by the setting below, wherever the import stands: the review commands then run the
-# project's `symphony-cli`, and `land` and the board run its `tasks`. Where the project's justfile
-# makes the setting itself, init writes this file without it, as `just` refuses it twice. A copy
-# without the stamp line is the project's own, and init never writes it. Each command says its own
-# errors, and a failing one ends with them, with no recipe-failed line after them
-# (`[no-exit-message]`). The comment line right above each recipe is the one line `just --list`
-# shows for it, so it says what the recipe does; anything longer goes in the lines before it.
+# (`just tasks`, and `just tasks-people` for a change to its people), messages between agents
+# (`just agent-send`), the server (`just symphony`), the document CLI (`just symphony-cli`) and its
+# review commands (`just symphony-status`, `just symphony-reply`, `just symphony-ask`), and the
+# default landing (`just land`). The project's justfile imports this file. A recipe of the same
+# name there is the project's own and replaces the one here, by the setting below, wherever the
+# import stands: the review commands then run the project's `symphony-cli`, and `land` and the
+# board run its `tasks`. Where the project's justfile makes the setting itself, init writes this
+# file without it, as `just` refuses it twice. A copy without the stamp line is the project's own,
+# and init never writes it. Each command says its own errors, and a failing one ends with them,
+# with no recipe-failed line after them (`[no-exit-message]`). The comment line right above each
+# recipe is the one line `just --list` shows for it, so it says what the recipe does; anything
+# longer goes in the lines before it.
 
 set allow-duplicate-recipes
 
@@ -34,11 +35,21 @@ _symphony_board := 'symphony_board() { while [ "$#" -ge 2 ] && [ "$1" = --databa
 # starting with `{{ _symphony_unasked }}` as these do.
 _symphony_unasked := 'export SYMPHONY_UNASKED=1; '
 
+# Under the marker `tasks` refuses a change to a board's people or to a profile too, which
+# `just tasks-people` makes.
 # The task board: `just tasks help`. Every command of the board's but its recorder.
 [positional-arguments]
 [no-exit-message]
 tasks *ARGS:
     @{{ _symphony_board }}{{ _symphony_unasked }}{{ _symphony_run }} tasks "$@"
+
+# No allow rule passes this recipe, so an agent's run of it asks first, as `just symphony` does; it
+# sets no marker. `just tasks people list` and `log` read them unasked.
+# A change to a board's people or a profile, which asks first: `just tasks help people`.
+[positional-arguments]
+[no-exit-message]
+tasks-people *ARGS:
+    @{{ _symphony_run }} tasks people "$@"
 
 # A message to an agent through its registered channel: `just agent-send HANDLE TEXT --as SENDER`.
 [positional-arguments]

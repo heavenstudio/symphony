@@ -646,8 +646,14 @@ theirs, and their profile stays. `join NAME GROUP` and `leave NAME GROUP`;
 `grant NAME POWER...` and `revoke NAME POWER...`, or with --group GROUP the
 group's powers; `group add GROUP [POWER...]` and `group remove GROUP`, which
 takes its members out of it. People and groups share one name space, a short
-name no session's handle is. A refusal says why and writes nothing. Nothing
+name no session's handle is, nor an adjective and a noun the board names
+sessions by (amber-heron). A refusal says why and writes nothing. Nothing
 printed or logged names a sign-in's subject.
+
+Every action but list and log is a change, which runs as `just tasks-people
+ACTION ...`: no allow rule passes that recipe, so an agent's run of it asks
+first. `just tasks`, which an agent runs unasked, refuses each change however
+the command line is written.
 
 positional arguments:
   ACTION             list, log, add, remove, join, leave, grant, revoke,

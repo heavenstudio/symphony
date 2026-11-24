@@ -299,8 +299,8 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
         "serves at /lamp-shop/docs/",
         "\n- link the project's builds at .target/bin/symphony, .target/bin/tasks, \
          .target/bin/agent-send and .target/bin/symphony-server, or put them on PATH: the \
-         heartbeat, the memory guard, `just symphony-cli`, `just tasks`, `just agent-send` and \
-         `just symphony` run them and build nothing",
+         heartbeat, the memory guard, `just symphony-cli`, `just tasks`, `just tasks-people`, \
+         `just agent-send` and `just symphony` run them and build nothing",
         // Its board is not made yet, and is made on PostgreSQL, which this machine's search path
         // for the fixture does not hold: the step says how to have it.
         "\n- have PostgreSQL 18 or later for the board, which runs on the machine's own: ",
@@ -535,6 +535,95 @@ fn the_board_recipe_refuses_the_recorder_which_the_board_binary_still_runs() {
     assert!(ran.is_file());
 }
 
+/// A change to a board's people or a profile runs by `just tasks-people`, which no allow rule
+/// passes, so an agent's run of it asks first: `just tasks`, which an agent runs unasked, refuses
+/// each change in every spelling `tasks` reads (`--as` before the command, in either form or
+/// abbreviated, an option or a `--` before the action), writing nothing on the board or in the
+/// machine folder, and reads the board's people unasked.
+#[test]
+fn a_people_change_runs_by_its_own_recipe_and_the_board_recipe_refuses_it_however_spelled() {
+    let project = Project::new();
+    let root = project.root.clone();
+    assert!(project.init(&["--root", "."]).status.success());
+    std::fs::create_dir_all(root.join(".target/bin")).unwrap();
+    let tasks = root.join(".target/bin/tasks");
+    std::os::unix::fs::symlink(crate::support::tasks_binary(), &tasks).unwrap();
+    let board = Fixture::empty();
+    let board = Some(&board);
+    let me = project.ok(
+        &root,
+        "just",
+        &["tasks", "register", "--kind", "worker"],
+        board,
+    );
+    let me = me.trim();
+    let as_me = format!("--as={me}");
+    let mut spellings: Vec<Vec<&str>> = vec![
+        vec!["people", "add", "ana", "--as", me],
+        vec!["--as", me, "people", "add", "ana"],
+        vec![&as_me, "people", "add", "ana"],
+        vec!["--a", me, "people", "add", "ana"],
+        vec!["people", "--display", "Ana", "add", "ana", "--as", me],
+        vec!["--as", me, "people", "--", "add", "ana"],
+        vec!["people", "profile", "ana", "--git", "ana-l", "--as", me],
+        vec!["people", "group", "add", "staff", "--as", me],
+        vec!["people", "group", "remove", "staff", "--as", me],
+    ];
+    for action in [
+        &["remove", "ana"][..],
+        &["join", "ana", "staff"],
+        &["leave", "ana", "staff"],
+        &["grant", "ana", "decide"],
+        &["revoke", "ana", "decide"],
+    ] {
+        spellings.push([&["people"][..], action, &["--as", me]].concat());
+    }
+    for spelling in &spellings {
+        let args = [&["tasks"][..], spelling].concat();
+        let refused = project.run(&root, "just", &args, board);
+        let said = String::from_utf8_lossy(&refused.stderr);
+        assert_eq!(refused.status.code(), Some(1), "{args:?}: {refused:?}");
+        assert!(
+            said.contains("just tasks refuses people ") && said.contains("`just tasks-people "),
+            "{args:?}: {said}"
+        );
+    }
+    let log = ["tasks", "people", "log", "--as", me];
+    assert_eq!(
+        project.ok(&root, "just", &log, board),
+        "no change was made to this board's people\n"
+    );
+    let machine = project.dir.path().join("machine");
+    assert!(!machine.join(symphony_board::people::FILE).exists());
+
+    // Its own recipe makes each, the board's reads following it unasked.
+    let added = project.ok(
+        &root,
+        "just",
+        &["tasks-people", "add", "ana", "--power", "speak", "--as", me],
+        board,
+    );
+    assert!(
+        added.starts_with("ana is on this board (change 1)"),
+        "{added}"
+    );
+    let granted = ["tasks-people", "grant", "ana", "decide", "--as", me];
+    assert!(
+        project
+            .ok(&root, "just", &granted, board)
+            .starts_with("ana is given decide")
+    );
+    let list = project.ok(
+        &root,
+        "just",
+        &["tasks", "people", "list", "--as", me],
+        board,
+    );
+    assert!(list.starts_with("ana  read, speak, decide"), "{list}");
+    assert_eq!(project.ok(&root, "just", &log, board).lines().count(), 2);
+    assert!(machine.join(symphony_board::people::FILE).is_file());
+}
+
 /// This repository's own `tasks` recipe, which replaces the Symphony's here and builds the board
 /// before it runs it, refuses the recorder the same way, before it builds anything; any other board
 /// command reaches its build, words and all.
@@ -585,9 +674,13 @@ fn this_repositorys_board_recipe_refuses_the_recorder_before_it_builds() {
         None,
     );
     project.ok(tree.path(), "just", &["tasks", "help", "run"], None);
+    // Its people recipe runs the same build with no marker: the change asks first by its rule.
+    let change = ["tasks-people", "add", "ana", "--as", "lamp-1"];
+    project.ok(tree.path(), "just", &change, None);
     assert_eq!(
         std::fs::read_to_string(&built).unwrap(),
-        "[1]<tasks><say><lamps/first><run it><--as><lamp-1>[1]<tasks><help><run>"
+        "[1]<tasks><say><lamps/first><run it><--as><lamp-1>[1]<tasks><help><run>\
+         [unset]<tasks><people><add><ana><--as><lamp-1>"
     );
 }
 

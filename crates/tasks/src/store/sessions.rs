@@ -41,6 +41,15 @@ const NOUNS: [&str; 30] = [
     "vole", "lark", "robin", "owl", "badger", "sparrow", "petrel", "curlew", "dunlin", "merlin",
 ];
 
+/// Whether `name` is a handle [`Store::register`] can give that a person's name could also be: an
+/// adjective and a noun of its lists, joined by a hyphen. A handle given past the fiftieth try ends
+/// in a number besides, which no short name does ([`symphony_docs::syntax::is_short_name`]), so no
+/// person's name is one of those either.
+pub(crate) fn could_be_handle(name: &str) -> bool {
+    name.split_once('-')
+        .is_some_and(|(adjective, noun)| ADJECTIVES.contains(&adjective) && NOUNS.contains(&noun))
+}
+
 /// A session as it registers (`Store.register`'s arguments).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -524,6 +533,32 @@ impl<'de> Deserialize<'de> for BoundAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every plain handle a register can give is a short name the name rule refuses to a person
+    /// (`crate::people::refused_person_name`), and every numbered one no short name at all, so no
+    /// person or group is ever named as a session a register makes meanwhile.
+    #[test]
+    fn every_handle_a_register_gives_is_a_name_no_person_takes() {
+        let mut pairs = 0;
+        for adjective in ADJECTIVES {
+            for noun in NOUNS {
+                let handle = format!("{adjective}-{noun}");
+                assert!(could_be_handle(&handle), "{handle}");
+                assert!(symphony_docs::syntax::is_short_name(&handle), "{handle}");
+                assert!(
+                    crate::people::refused_person_name(&handle).is_some(),
+                    "{handle}"
+                );
+                let numbered = format!("{handle}-999");
+                assert!(
+                    !symphony_docs::syntax::is_short_name(&numbered),
+                    "{numbered}"
+                );
+                pairs += 1;
+            }
+        }
+        assert_eq!(pairs, 960, "TASKS says how many names a person cannot take");
+    }
 
     /// A binding's times as a reader that keeps a number's text holds them, past their shortest
     /// form: they read beside the handle in every build.

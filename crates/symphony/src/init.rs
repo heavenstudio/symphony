@@ -12,11 +12,11 @@
 //! name: `project.md` there is the project's standing instructions for that skill's role, which
 //! the `work`, `review-task` and `assess-task` skills read first. It writes no permission rule but
 //! the allow rules: each names a recipe `symphony.just` holds, its board and reply recipes and
-//! `land`, never the server ones ([`ALLOW`]). A rule carries no stamp, so every rule a run finds is
-//! the project's own but one a landed init wrote and this one dropped, which a run removes: an
-//! allow rule ([`RETIRED`], the env-prefixed board rule, whose `*` passed any program) or an ask
-//! rule ([`RETIRED_ASK`], those that asked before a land), an ask list they leave empty going with
-//! them. What the Symphony's default land lands is decided by its checks, every stamp the task
+//! `land`, never the server ones nor `tasks-people`, a change to a board's people ([`ALLOW`]). A
+//! rule carries no stamp, so every rule a run finds is the project's own but one a landed init
+//! wrote and this one dropped, which a run removes: an allow rule ([`RETIRED`], the env-prefixed
+//! board rule, whose `*` passed any program) or an ask rule ([`RETIRED_ASK`], those that asked
+//! before a land), an ask list they leave empty going with them. What the Symphony's default land lands is decided by its checks, every stamp the task
 //! needs standing on the tip it lands, never by a prompt; a project whose own `land` recipe
 //! replaces it gets the same allow rule, and its own landing policy decides what lands.
 //!
@@ -81,8 +81,9 @@ import 'symphony.just'
 ";
 
 /// Each recipe `symphony.just` holds that runs a binary, and that binary.
-const RUNS: [(&str, &str); 4] = [
+const RUNS: [(&str, &str); 5] = [
     ("tasks", "tasks"),
+    ("tasks-people", "tasks"),
     ("agent-send", "agent-send"),
     ("symphony", "symphony-server"),
     ("symphony-cli", "symphony"),
@@ -152,10 +153,14 @@ const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 /// project's own `land` recipe, which replaces it, is allowed the same, and the project's landing
 /// policy decides what that one lands. Its server recipes, `symphony` (which starts, replaces or
 /// stops the machine's shared server) and `symphony-cli` (which reaches `serve` and `init`), ask
-/// first. `just tasks` passes every board command but the recorder
-/// (`tasks run`), which runs any command it is handed: the recipe refuses it, in each spelling
-/// `tasks` reads, so no rule here need ask for it. The board and reply recipes keep each place
-/// they write in the checkout, out of its git folders (`symphony_board::confine`). Every rule
+/// first, and so does `tasks-people`, which changes a board's people or a profile. `just tasks`
+/// passes every board command but the recorder (`tasks run`), which runs any command it is
+/// handed: the recipe refuses it, in each spelling `tasks` reads, so no rule here need ask for it.
+/// It passes no change to a board's people either: `tasks` refuses each under the recipe's marker,
+/// by its own reading of the command line, which no rule could match in every spelling (Codex's
+/// rules take no word but those they name, and `--as` and the options may stand before the
+/// action). The board and reply recipes keep each place they write in the checkout, out of its
+/// git folders (`symphony_board::confine`). Every rule
 /// starts with the recipe's words, never a `*`: Claude Code's `*` matches any text, spaces
 /// included, and only the words before the first one bound a rule. An agent names its handle with
 /// `--as HANDLE`, which binds its heartbeat as an env prefix did.

@@ -64,7 +64,8 @@ fn a_person_is_added_with_a_profile_of_their_own_and_listed_by_what_they_hold() 
     assert_eq!(
         c.ok(&me, &["people", "add", "bob"]),
         "bob is on this board (change 3), holding no power: listed, and sees nothing: no \
-         sign-in is theirs yet, so they reach no board until `people profile` gives one\n"
+         sign-in is theirs yet, so they reach no board until `just tasks-people profile` gives \
+         one\n"
     );
     let list = c.ok(&me, &["people", "list"]);
     assert_eq!(
@@ -237,6 +238,7 @@ fn a_sign_in_is_one_persons_and_a_refusal_writes_nothing_anywhere() {
             &me,
             &["people", "grant", "--group", "a", "--group", "b", "decide"],
         ),
+        fails(&c, &me, &["people", "profile", &me]),
     ];
     assert!(refusals.iter().all(|(code, _)| *code == 1), "{refusals:?}");
     let said = |at: usize| refusals[at].1.as_str();
@@ -258,7 +260,15 @@ fn a_sign_in_is_one_persons_and_a_refusal_writes_nothing_anywhere() {
         said(3)
     );
     assert!(said(4).contains("is no short name"), "{}", said(4));
-    assert!(said(5).contains("is a session's handle"), "{}", said(5));
+    // The session's handle is a pair the board names sessions by: no person's name, on a board or
+    // in a profile.
+    for at in [5, 15] {
+        assert!(
+            said(at).contains(&format!("{me} is a name a session's handle can take")),
+            "{}",
+            said(at)
+        );
+    }
     assert!(said(6).contains("name at least one power"), "{}", said(6));
     assert!(
         said(7).contains("this board keeps no group staff"),
@@ -362,20 +372,48 @@ fn a_persons_name_is_no_handle_the_command_line_writes_as() {
     );
 }
 
+/// Profiles that cannot be had (a folder where the lock would be) stop an add before the board is
+/// asked: nothing is written, on the board or in the machine folder.
+#[test]
+fn an_add_whose_profiles_cannot_be_locked_writes_nothing_anywhere() {
+    let (c, me, machine) = case("people-unlocked");
+    std::fs::create_dir_all(machine.join(symphony_board::people::LOCK)).unwrap();
+    let (code, said) = fails(&c, &me, &["people", "add", "ana", "--power", "decide"]);
+    assert_eq!(code, 2, "a failure, not a refusal: {said}");
+    assert!(
+        said.contains("the machine's profiles could not be read")
+            && said.contains("nothing was written"),
+        "{said}"
+    );
+    assert_eq!(
+        c.ok(&me, &["people", "log"]),
+        "no change was made to this board's people\n"
+    );
+    assert!(!machine.join(symphony_board::people::FILE).exists());
+}
+
 /// A profile that cannot be written once the board took the person takes the board's change back,
 /// so the board names no one whose sign-ins the machine does not hold.
 #[test]
 fn a_person_whose_profile_cannot_be_written_is_taken_off_the_board_again() {
     let (c, me, machine) = case("people-unwritten");
-    // A folder where the lock would be: the profiles read as none, and no change of them is made.
-    std::fs::create_dir_all(machine.join(symphony_board::people::LOCK)).unwrap();
-    let (code, said) = fails(&c, &me, &["people", "add", "ana", "--power", "decide"]);
-    assert_eq!(code, 2, "a failure, not a refusal: {said}");
+    // The lock is there and the folder takes no new file: the profiles are locked and read as
+    // none, and their write is refused once the board has the person.
+    std::fs::create_dir_all(&machine).unwrap();
+    std::fs::write(machine.join(symphony_board::people::LOCK), "").unwrap();
+    let writable = |mode| {
+        std::fs::set_permissions(&machine, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    writable(0o500);
+    let ran = c.run_as(&me, &["people", "add", "ana", "--power", "decide"], "");
+    writable(0o700);
+    assert_eq!(ran.code, 2, "a failure, not a refusal: {}", ran.err);
     assert!(
-        said.contains("ana's profile could not be written"),
-        "{said}"
+        ran.err.contains("ana's profile could not be written"),
+        "{}",
+        ran.err
     );
-    assert!(said.contains("is taken back"), "{said}");
+    assert!(ran.err.contains("is taken back"), "{}", ran.err);
     assert_eq!(
         c.ok(&me, &["people", "list"]),
         "nobody is on this board but the person at the machine, who holds every power\n"
@@ -383,4 +421,121 @@ fn a_person_whose_profile_cannot_be_written_is_taken_off_the_board_again() {
     let log = c.ok(&me, &["people", "log"]);
     assert_eq!(log.lines().count(), 2, "the add and its taking back: {log}");
     assert!(!machine.join(symphony_board::people::FILE).exists());
+}
+
+/// Two adds of one sign-in at once meet at the profiles' lock, which each holds from its check of
+/// the sign-ins through the board's change and the profile's write: the first is added with the
+/// sign-in, and the second is refused with nothing written, on the board or in the machine folder.
+#[test]
+fn two_adds_of_one_sign_in_at_once_give_it_one_person_and_write_nothing_for_the_other() {
+    let (c, me, machine) = case("people-at-once");
+    // Held while both start, so neither is decided before the other has begun.
+    std::fs::create_dir_all(&machine).unwrap();
+    let held = std::fs::File::create(machine.join(symphony_board::people::LOCK)).unwrap();
+    held.lock().unwrap();
+    let ran = std::thread::scope(|scope| {
+        let adds: Vec<_> = ["ana", "bob"]
+            .into_iter()
+            .map(|name| {
+                let (c, me) = (&c, &me);
+                scope.spawn(move || {
+                    let args = [
+                        "people",
+                        "add",
+                        name,
+                        "--signin",
+                        "tailscale:one@example.com",
+                    ];
+                    (name, c.run_as(me, &args, ""))
+                })
+            })
+            .collect();
+        held.unlock().unwrap();
+        adds.into_iter()
+            .map(|add| add.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let (added, refused): (Vec<_>, Vec<_>) = ran.iter().partition(|(_, ran)| ran.code == 0);
+    let ([(winner, _)], [(loser, lost)]) = (added.as_slice(), refused.as_slice()) else {
+        let said: Vec<_> = (ran.iter())
+            .map(|(name, ran)| (name, ran.code, ran.err.as_str()))
+            .collect();
+        panic!("one added and one refused: {said:?}");
+    };
+    assert_eq!(lost.code, 1, "a refusal: {}", lost.err);
+    assert!(
+        lost.err
+            .contains(&format!("that tailscale sign-in is {winner}'s")),
+        "{}",
+        lost.err
+    );
+    let log = c.ok(&me, &["people", "log"]);
+    assert_eq!(log.lines().count(), 1, "one add, and no taking back: {log}");
+    assert!(log.contains(&format!("add {winner}")), "{log}");
+    let profiles = symphony_board::people::Profiles::read(&machine).unwrap();
+    assert!(profiles.get(loser).is_none(), "no profile for {loser}");
+    assert_eq!(
+        profiles
+            .signed_in("tailscale", "one@example.com")
+            .map(|p| p.name.as_str()),
+        Some(*winner)
+    );
+}
+
+/// Under the marker `just tasks` sets, as an agent runs it unasked, every change is refused, its
+/// action read wherever the command line put it, with nothing written, and the reads still run:
+/// a change runs by `just tasks-people`, which sets no marker and asks first.
+#[test]
+fn under_the_unasked_recipes_marker_a_change_is_refused_and_the_reads_run() {
+    let (mut c, me, machine) = case("people-unasked");
+    c.ok(&me, &["people", "add", "ana", "--power", "speak"]);
+    let before = c.ok(&me, &["people", "log"]);
+    (c.env.vars).insert("SYMPHONY_UNASKED".into(), "1".into());
+    let as_me = format!("--as={me}");
+    for (action, args) in [
+        ("add", vec!["people", "add", "bob"]),
+        ("add", vec!["people", "--display", "Bob", "add", "bob"]),
+        ("add", vec!["people", "--", "add", "bob"]),
+        ("remove", vec!["people", "remove", "ana"]),
+        ("join", vec!["people", "join", "ana", "staff"]),
+        ("leave", vec!["people", "leave", "ana", "staff"]),
+        ("grant", vec!["people", "grant", "ana", "decide"]),
+        ("revoke", vec!["people", "revoke", "ana", "speak"]),
+        ("group", vec!["people", "group", "add", "staff"]),
+        ("group", vec!["people", "group", "remove", "staff"]),
+        (
+            "profile",
+            vec!["people", "profile", "bob", "--git", "bob-l"],
+        ),
+        (
+            "grant",
+            vec![as_me.as_str(), "people", "grant", "ana", "decide"],
+        ),
+    ] {
+        let (code, said) = fails(&c, &me, &args);
+        assert_eq!(code, 1, "{args:?}: {said}");
+        assert!(
+            said.contains(&format!(
+                "just tasks refuses people {action}: a change to a board's people"
+            )) && said.contains(&format!("`just tasks-people {action} …`, which asks")),
+            "{args:?}: {said}"
+        );
+    }
+    assert_eq!(
+        c.ok(&me, &["people", "log"]),
+        before,
+        "nothing on the board"
+    );
+    let profiles = symphony_board::people::Profiles::read(&machine).unwrap();
+    assert!(
+        profiles.get("bob").is_none(),
+        "nothing in the machine folder"
+    );
+    assert!(
+        c.ok(&me, &["people", "list"])
+            .starts_with("ana  read, speak")
+    );
+    // A word that is no action is the usage's to refuse, as with no marker.
+    let (_, said) = fails(&c, &me, &["people", "frobnicate"]);
+    assert!(said.contains("people takes list, log, add NAME"), "{said}");
 }
