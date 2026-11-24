@@ -75,8 +75,9 @@ export function voice(message: TaskEntry["message"]): "owner" | "system" | "agen
 export const TaskMessage = memo(function TaskMessage({ entry }: { entry: TaskEntry }) {
   const { message } = entry;
   const who = voice(message);
-  // A person's line names its writer by the one rule a card's thread draws them by too.
-  const writer = who === "owner" ? drawnWriter(message.sender) : { text: message.sender };
+  // Its writer drawn by the one rule a card's thread draws them by too: no agent's handle is a
+  // person's name, so an agent's line is drawn as written.
+  const writer = drawnWriter(message.sender);
   return (
     <div className={`entry ${who}`}>
       <time>{entry.stamp}</time>{" "}

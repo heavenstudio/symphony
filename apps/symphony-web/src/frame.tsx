@@ -281,23 +281,18 @@ function Brand({ view }: { view: ProjectView }) {
 }
 
 /**
- * Who reads the page, as the server named them in its view (`ProjectView.you`): their shown name,
- * `owner` for the person at the machine before they give themselves one, linking to where they
- * write their profile, their short name its title where the two differ. Nothing for a page served
- * for nobody.
+ * Who reads the page, as the server named them in its view (`ProjectView.you`), at the header
+ * row's end: their shown name, `owner` for the person at the machine before they give themselves
+ * one, linking to where they write their profile. Nothing for a page served for nobody.
  */
 export function You({ view }: { view: ProjectView }) {
   const you = view.you;
-  if (you == null) return null;
   return (
-    <a
-      className="app-you"
-      href={href(profilePath(view))}
-      title={you.shown !== you.name ? you.name : undefined}
-      aria-label={`${you.shown}, your profile`}
-    >
-      {you.shown}
-    </a>
+    you != null && (
+      <a className="app-you" href={href(profilePath(view))} aria-label={`${you.shown}, your profile`}>
+        {you.shown}
+      </a>
+    )
   );
 }
 
@@ -364,7 +359,6 @@ export function Frame({ route, children }: FrameProps) {
                 ))}
               </nav>
             )}
-            <You view={view} />
             {/* Appearance is a setting of this project on this device: its panel is the persistent
               module's, which this button loads, as the bell loads activity's. */}
             <Button
@@ -403,6 +397,7 @@ export function Frame({ route, children }: FrameProps) {
               {/* An image role names the dot: a plain span's label is no name a reader gives. */}
               {unread() && <span className="dot ok" role="img" aria-label="Unread activity" />}
             </Button>
+            <You view={view} />
           </header>
           <div className="frame-page">{children}</div>
           {/* The bar the floating controls sit in (frame.css): the page scrolls clear of it. */}
