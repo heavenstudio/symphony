@@ -1,27 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  type Going,
-  GoToSession,
-  pressed,
-  type SessionControl,
-  SessionView,
-  sessionControl,
-  UNPRESSED,
-  viaParent,
-  whiteSpace,
-} from "./session";
+import { type Going, GoToSession, pressed, SessionView, UNPRESSED, whiteSpace } from "./session";
+import type { SessionControl } from "./session-control";
 import { focus, press, readScreen, screen } from "./session-press";
 import { asking, CASES, reply, server } from "./testing";
 import type { AgentScreen } from "./wire";
 
 const SCREEN: AgentScreen = { handle: "amber", pane: "w1:p2", text: "$ just test-rs", read_at: 4 };
-
-/** A control as the cases write it: `{kind: target}`. */
-function written(control: SessionControl | null): Record<string, string> | null {
-  if (control === null) return null;
-  return control.kind === "link" ? { link: control.url } : { [control.kind]: control.pane };
-}
 
 describe("a space as Rust trims one", () => {
   it("is one `char::is_whitespace` names, and no other", () => {
@@ -31,16 +16,6 @@ describe("a space as Rust trims one", () => {
     }
     for (const code of [0x00, 0x08, 0x0e, 0x1c, 0x1f, 0x7f, 0x84, 0x9f, 0x180e, 0x200b, 0xfeff]) {
       expect([code, whiteSpace(code)]).toEqual([code, false]);
-    }
-  });
-});
-
-describe("the Go to session control", () => {
-  it("is the one the Rust gives each way in, here and on another machine", () => {
-    expect(CASES.sessionControl.length).toBeGreaterThan(10);
-    for (const [go, local, control, parent] of CASES.sessionControl) {
-      expect([go, local, written(sessionControl(go, local))]).toEqual([go, local, control]);
-      expect(viaParent(go, "amber")).toBe(parent);
     }
   });
 });
