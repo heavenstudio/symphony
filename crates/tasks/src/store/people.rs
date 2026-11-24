@@ -228,7 +228,7 @@ impl Store {
     }
 
     /// Makes the group `name`, with `powers`, as `by`'s change. Refused, with nothing written,
-    /// where [`refused_name`] refuses the name (people and groups share one name space), or a
+    /// where [`refused_name`] refuses the name (people and groups share one name space).
     pub fn add_group(&self, name: &str, powers: &[Power], by: &str) -> Result<Change, Error> {
         let changed = self.change_people(by, |people| {
             let handles = self.session_handles()?;

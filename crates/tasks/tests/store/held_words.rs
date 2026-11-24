@@ -4,17 +4,19 @@
 //! words by its inbox or a callback, and the line waits on the person at the machine until a
 //! person's line follows it. Passing it on puts the words on the thread under their author's name,
 //! the passer first, once: they reach the task's agents as a person's message does and open its
-//! ask. A board without the step holds nothing and refuses a hold.
+//! ask, and a passed line to an executor no executor reads tells the orchestrator as a post's does.
+//! A board without the step holds nothing and refuses a hold.
 
 use super::callbacks::Listener;
 use super::common::{Fixture, HOST, NOW, Seed, database, refused};
 use super::dispatch_later::{ids, listen};
+use symphony_board::health::LIVE_SECONDS;
 use symphony_board::held::{Held, MARKER, Said};
 use symphony_board::people::ownership::Place;
 use symphony_board::people::{Holder, Power};
 use symphony_board::schema::{ADDED, HELD};
 use symphony_board::stamps::read::reads_as_approve;
-use symphony_board::{Opening, Schema, Store};
+use symphony_board::{NewLaunch, Opening, Schema, Store};
 
 /// The words every case holds, which no agent's read may carry.
 const WORDS: &str = "please add a picture of the wide page";
@@ -59,10 +61,12 @@ impl Board {
 
     /// `ana`'s message on `tools/x`, held.
     fn held(&self, to: Option<&str>) -> Held {
-        match self
-            .person("ana")
-            .say_or_hold_as("tools/x", "ana", WORDS, to)
-        {
+        self.held_on("tools/x", to)
+    }
+
+    /// `ana`'s message on `slug`, held.
+    fn held_on(&self, slug: &str, to: Option<&str>) -> Held {
+        match self.person("ana").say_or_hold_as(slug, "ana", WORDS, to) {
             Ok(Said::Held(held)) => held,
             other => panic!("not held: {other:?}"),
         }
@@ -431,4 +435,165 @@ fn a_board_made_without_the_step_reads_no_held_message() {
         assert_eq!(store.held_on("sim/look").unwrap(), []);
         assert_eq!(store.held_count("sim/look").unwrap(), 0);
     }
+}
+
+// -- a passed line its executor cannot read -----------------------------------------------
+
+impl Board {
+    /// `ana`'s message on `slug` to `to`, held and passed on by the orchestrator: the number of
+    /// the line it became.
+    fn passed(&self, slug: &str, to: Option<&str>) -> i64 {
+        let held = self.held_on(slug, to);
+        let passed = self.f.store.pass(slug, held.id, &self.orchestrator);
+        passed.unwrap().passed.expect("marked passed").line
+    }
+
+    /// What the board told the orchestrator since it last read its inbox.
+    fn told(&self) -> Vec<String> {
+        let inbox = self.f.store.inbox(&self.orchestrator).unwrap();
+        (inbox.into_iter())
+            .filter(|m| m.sender == "board")
+            .map(|m| m.text)
+            .collect()
+    }
+
+    /// The worker ran in a pane the board recorded closed.
+    fn pane_closed(&self) {
+        self.f
+            .store
+            .record_launch(&NewLaunch {
+                claude_session: "sess-worker".into(),
+                pane: "t7".into(),
+                ..NewLaunch::new("tools/x", &self.worker, "executor")
+            })
+            .unwrap();
+        self.f
+            .store
+            .close_task_session("tools/x", &self.worker, CLOSED, &self.restore())
+            .unwrap();
+    }
+
+    /// The restore line of the worker's closed pane.
+    fn restore(&self) -> String {
+        format!("just tasks restore tools/x {}", self.worker)
+    }
+}
+
+/// Why the worker's pane was closed.
+const CLOSED: &str = "idle for two sweeps, its work finished";
+
+#[test]
+fn a_passed_line_its_live_executor_reads_tells_nobody_else() {
+    let b = board();
+    b.inbox(&b.worker);
+    b.passed("tools/x", Some("@executor"));
+    assert_eq!(b.told(), Vec::<String>::new());
+    let text = format!("[passed on by {}] {WORDS}", b.orchestrator);
+    assert_eq!(b.inbox(&b.worker), [text]);
+}
+
+#[test]
+fn a_passed_line_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_how_to_restore_it() {
+    let b = board();
+    b.pane_closed();
+    b.inbox(&b.worker);
+    let line = b.passed("tools/x", Some("@executor"));
+    assert_eq!(
+        b.told(),
+        [format!(
+            "#{line} from ana to @executor reaches no live executor: {}'s pane was closed \
+             ({CLOSED}); {}",
+            b.worker,
+            b.restore()
+        )],
+        "the line's author, as on the thread"
+    );
+    let notice = b.f.store.thread("tools/x").unwrap().pop().unwrap();
+    assert_eq!(
+        (
+            notice.sender.as_str(),
+            notice.kind.as_str(),
+            notice.recipient.as_deref()
+        ),
+        ("board", "msg", Some("@orchestrator"))
+    );
+    let text = format!("[passed on by {}] {WORDS}", b.orchestrator);
+    assert_eq!(
+        b.inbox(&b.worker),
+        [text],
+        "the line waits in its inbox for the restore"
+    );
+}
+
+#[test]
+fn a_passed_line_to_the_executor_by_handle_is_checked_and_one_to_another_handle_is_not() {
+    let b = board();
+    b.pane_closed();
+    let orchestrator = b.orchestrator.clone();
+    b.passed("tools/x", Some(&orchestrator));
+    assert_eq!(b.told(), Vec::<String>::new(), "it executes nothing");
+    let worker = b.worker.clone();
+    let line = b.passed("tools/x", Some(&worker));
+    assert_eq!(
+        b.told(),
+        [format!(
+            "#{line} from ana to {worker} reaches no live executor: {worker}'s pane was closed \
+             ({CLOSED}); {}",
+            b.restore()
+        )]
+    );
+}
+
+#[test]
+fn a_passed_line_to_a_quiet_executor_with_no_callback_names_it_by_its_health() {
+    let b = board();
+    b.f.advance(LIVE_SECONDS + 1.0);
+    for to in [None, Some("@reviewer"), Some("owner")] {
+        b.passed("tools/x", to);
+        assert_eq!(
+            b.told(),
+            Vec::<String>::new(),
+            "only a line to @executor: {to:?}"
+        );
+    }
+    let line = b.passed("tools/x", Some("@executor"));
+    assert_eq!(
+        b.told(),
+        [format!(
+            "#{line} from ana to @executor reaches no live executor: {} is stale with no callback",
+            b.worker
+        )]
+    );
+}
+
+#[test]
+fn a_passed_line_to_a_quiet_executor_with_a_native_callback_is_reached() {
+    let b = board();
+    b.f.advance(LIVE_SECONDS + 1.0);
+    // Registered on another host, so this board's dispatch never tries to deliver it.
+    (b.f.store.raw().row("callback_state", b.worker.as_str()))
+        .put(serde_json::json!({
+            "handle": b.worker,
+            "address": "codex:abcdef01",
+            "host": "another-host",
+        }))
+        .unwrap();
+    assert!(b.f.store.callbacks().unwrap().contains_key(&b.worker));
+    b.passed("tools/x", Some("@executor"));
+    assert_eq!(b.told(), Vec::<String>::new());
+}
+
+#[test]
+fn a_passed_line_to_the_executor_of_a_task_nobody_executes_tells_the_orchestrator() {
+    let b = board();
+    (b.f.store)
+        .take_role("tools/y", &b.orchestrator, "orchestrator")
+        .unwrap();
+    let line = b.passed("tools/y", Some("@executor"));
+    assert_eq!(
+        b.told(),
+        [format!(
+            "#{line} from ana to @executor reaches no live executor: no session holds the role"
+        )]
+    );
 }
