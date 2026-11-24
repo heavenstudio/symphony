@@ -195,14 +195,15 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .dot { --c:var(--border); display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--c); vertical-align:0; }
 .ok { --c:var(--like); }
 .wait { --c:var(--question); }
-.st-approved, .st-done, .st-live { --c:var(--like); }
-.st-review, .st-question, .st-stale { --c:var(--question); }
-.st-draft, .st-backlog { --c:var(--pending); }
-.st-rejected, .st-blocked, .st-lost { --c:var(--dislike); }
-.st-superseded, .st-cancelled, .st-resolved, .st-dismissed { --c:var(--resolved); }
-.st-auto, .st-auto-approved, .st-ready { --c:var(--auto); }
-.st-agent, .st-concept, .st-design { --c:var(--decision); }
-.st-in_progress, .st-pending { --c:var(--primary); }
+/* A task's status, each of the board's nine (symphony_board::STATUSES). */
+.st-done { --c:var(--like); }
+.st-review { --c:var(--question); }
+.st-backlog { --c:var(--pending); }
+.st-blocked { --c:var(--dislike); }
+.st-cancelled { --c:var(--resolved); }
+.st-ready { --c:var(--auto); }
+.st-concept, .st-design { --c:var(--decision); }
+.st-in_progress { --c:var(--primary); }
 code { font-family:var(--font-mono); font-size:.92em; }
 :not(pre) > code { background:var(--muted); padding:.08em .35em; border-radius:4px; font-size:.86em; }
 table { border-collapse:separate; border-spacing:0; display:block; overflow-x:auto; width:fit-content; max-width:100%; border:1px solid var(--border); border-radius:var(--r-md); background:var(--card); margin:12px 0; }

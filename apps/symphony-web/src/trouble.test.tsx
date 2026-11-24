@@ -81,8 +81,11 @@ describe("the trouble block", () => {
 
 describe("a button", () => {
   it("is drawn as the components draw theirs, an outline one at the default size unless named", () => {
-    expect(renderToStaticMarkup(<Button variant="ghost" size="icon-sm" disabled />)).toBe(
-      '<button class="dx-button" data-style="ghost" data-size="icon-sm" disabled=""></button>',
+    expect(renderToStaticMarkup(<Button variant="ghost" size="sm" disabled />)).toBe(
+      '<button class="dx-button" data-style="ghost" data-size="sm" disabled=""></button>',
+    );
+    expect(renderToStaticMarkup(<Button />)).toBe(
+      '<button class="dx-button" data-style="outline" data-size="default"></button>',
     );
   });
 });

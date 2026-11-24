@@ -68,57 +68,6 @@
   padding-inline: 0.75rem;
 }
 
-.dx-button[data-size="lg"] {
-  height: 2.5rem;
-  padding: 0 1.5rem;
-  border-radius: var(--radius);
-}
-
-.dx-button[data-size="lg"]:has(> svg) {
-  padding-inline: 1rem;
-}
-
-.dx-button[data-size="icon"] {
-  width: 2.25rem;
-  height: 2.25rem;
-}
-
-.dx-button[data-size="icon"] svg:not([class*="size-"]) {
-  width: 1rem;
-  height: 1rem;
-}
-
-.dx-button[data-size="icon-xs"] {
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--radius);
-}
-
-.dx-button[data-size="icon-xs"] svg:not([class*="size-"]) {
-  width: 0.75rem;
-  height: 0.75rem;
-}
-
-.dx-button[data-size="icon-sm"] {
-  width: 2rem;
-  height: 2rem;
-}
-
-.dx-button[data-size="icon-sm"] svg:not([class*="size-"]) {
-  width: 1rem;
-  height: 1rem;
-}
-
-.dx-button[data-size="icon-lg"] {
-  width: 2.5rem;
-  height: 2.5rem;
-}
-
-.dx-button[data-size="icon-lg"] svg:not([class*="size-"]) {
-  width: 1rem;
-  height: 1rem;
-}
-
 .dx-button:disabled {
   opacity: 0.5;
   pointer-events: none;
@@ -131,15 +80,6 @@
 
 .dx-button[data-style="primary"]:not(:disabled):hover {
   background-color: color-mix(in oklab, var(--secondary-color-2) 90%, transparent);
-}
-
-.dx-button[data-style="secondary"] {
-  background-color: var(--primary-color-5);
-  color: var(--secondary-color-1);
-}
-
-.dx-button[data-style="secondary"]:not(:disabled):hover {
-  background-color: color-mix(in oklab, var(--primary-color-5) 80%, transparent);
 }
 
 .dx-button[data-style="ghost"] {
@@ -177,19 +117,4 @@
   background-color: color-mix(in oklab, var(--primary-error-color) 90%, transparent);
 }
 
-.dx-button[data-style="link"] {
-  background-color: transparent;
-  color: var(--secondary-color-2);
-  text-decoration: none;
-  text-underline-offset: 0.25rem;
-}
-
-.dx-button[data-style="link"]:not(:disabled):hover {
-  text-decoration: underline;
-}
-
 /* Focus is the page's one ring (board.css's outline), never a second ring of shadow. */
-
-.dx-button[aria-invalid="true"] {
-  border-color: var(--primary-error-color);
-}
