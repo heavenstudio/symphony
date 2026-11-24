@@ -117,7 +117,7 @@ everything is read at once when it is in front again.
 | A read fails | in its own section: *What runs now could not be read*, *The schema updates could not be read* or *The runs could not be read*, and why; the rest of the page stays |
 | A run not found | **No such run**, that a run is kept 14 days on this page, and **Every run** |
 | A run's read fails | **The run could not be read**, why, and **Retry** |
-| No log kept | *No log was kept: its command wrote to a terminal, where its output stayed.* |
+| No log kept | *No log was kept.*, as its command wrote to a terminal |
 | A log gone | *This run's log is no longer kept.* on an ended run; *Its log is not written yet.* on one still going |
 | An empty log | *Nothing written to the log yet.* |
 

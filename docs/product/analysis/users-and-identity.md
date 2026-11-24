@@ -1412,9 +1412,13 @@ Each step can ship alone, and a machine with one person sees none of them.
    ([NOTICES](../../engineering/NOTICES.md)); the Slack plugin
    ([NOTICE_SLACK](../../operations/NOTICE_SLACK.md)), the WhatsApp plugin
    ([NOTICE_WHATSAPP](../../operations/NOTICE_WHATSAPP.md)) and the email plugin
-   ([NOTICE_EMAIL](../../operations/NOTICE_EMAIL.md)); the board's map of places to groups, kept by
-   its admins, a card's `*For:*` and a task's `--group`, the read of whose a thing is and what gave
-   it, drawn on a task's page and a card, and its hand-over by a member of its group
+   ([NOTICE_EMAIL](../../operations/NOTICE_EMAIL.md)); a person's addresses (an email, a Slack
+   member id, a WhatsApp number, each held to its plugin's rule) and the way each kind of notice
+   goes by, on their profile, written by them on the People page or by the person at the machine,
+   and the server's read of where a notice of theirs goes ([TASKS](../../workflow/TASKS.md#people));
+   the board's map of places to groups, kept by its admins, a card's `*For:*` and a task's
+   `--group`, the read of whose a thing is and what gave it, drawn on a task's page and a card, and
+   its hand-over by a member of its group
    ([TASKS](../../workflow/TASKS.md#which-group-a-thing-belongs-to)).
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.

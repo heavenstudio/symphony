@@ -5,10 +5,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
   addition,
+  addressesSaid,
   Choose,
   doneLine,
+  kindName,
   listed,
   logLine,
+  type NoticeFields,
+  NoticesForm,
+  noticeFields,
+  noticesWrite,
   openPeople,
   PeoplePage,
   PeopleView,
@@ -22,18 +28,26 @@ import {
   readPeople,
   type Said,
   type Told,
+  unreached,
   type Writes,
   withheldSaid,
   withheldWhy,
   writePeople,
 } from "./people";
 import { asking, CASES, elementOf, type Found, fire, reply, server } from "./testing";
-import type { PeoplePage as Page, PeopleChange, PeopleLogLine, ProfileWrite } from "./wire";
+import type {
+  PeoplePage as Page,
+  PeopleChange,
+  PeopleLogLine,
+  PersonRow,
+  ProfileWrite,
+} from "./wire";
 
 /**
  * React's `useState` while `on` is false; while it is true, a stand-in a component is drawn by as
  * a function: each call gives the next of `states` (its initial past them) and a spy setter, kept
- * in `setters`, as task-page-controls.test.tsx draws its controls.
+ * in `setters`, as task-page-controls.test.tsx draws its controls. Its `useEffect` runs nothing
+ * while `on` is true, as no render is there to run it after.
  */
 const hooks = vi.hoisted(() => ({ on: false, states: [] as unknown[], setters: [] as Mock[] }));
 
@@ -43,10 +57,14 @@ vi.mock("react", async (original) => {
     ...actual,
     useState: (initial: unknown) => {
       if (!hooks.on) return actual.useState(initial);
-      const value = hooks.states.length > 0 ? hooks.states.shift() : initial;
+      const first = typeof initial === "function" ? initial() : initial;
+      const value = hooks.states.length > 0 ? hooks.states.shift() : first;
       const set = vi.fn();
       hooks.setters.push(set);
       return [value, set];
+    },
+    useEffect: (...effect: Parameters<typeof actual.useEffect>) => {
+      if (!hooks.on) actual.useEffect(...effect);
     },
   };
 });
@@ -147,12 +165,23 @@ describe("the read", () => {
       [["machine"], undefined],
       [["you"], 3],
       [["problem"], []],
+      [["people", 0, "addresses"], "ana@example.com"],
+      [["people", 0, "addresses", "email"], 3],
+      [["people", 0, "addresses", "slack"], ["U024BE7LH"]],
+      [["people", 0, "addresses", "whatsapp"], 1],
+      [["people", 0, "notices"], { card: "slack" }],
+      [["people", 0, "notices", 0, "kind"], 1],
+      [["people", 0, "notices", 0, "way"], 2],
     ];
     for (const [path, value] of broken) {
       expect(readPeople(changed(path, value)), path.join(".")).toBeNull();
     }
     for (const value of [null, "people", [], 3]) expect(readPeople(value)).toBeNull();
     expect(readPeople(changed(["log", 0, "powers"]))).not.toBeNull();
+    // A reader who may not see a person's addresses or ways is sent neither field.
+    expect(readPeople(changed(["people", 0, "addresses"]))).not.toBeNull();
+    expect(readPeople(changed(["people", 0, "notices"]))).not.toBeNull();
+    expect(readPeople(changed(["people", 0, "notices", 1, "way"], null))).not.toBeNull();
   });
 
   it("asks once and tells the page what the server answered", async () => {
@@ -307,6 +336,167 @@ describe("the page's words", () => {
       git: [],
       signins: ["github:ana"],
     });
+  });
+});
+
+describe("a person's notices", () => {
+  const labelled = (label: string) => (element: Found) => element.props["aria-label"] === label;
+  const CY = SAMPLE.people[2];
+  if (!CY) throw new Error("no cy");
+  /** Ana's fields with `change` made. */
+  const anas = (change: (fields: NoticeFields) => void) => {
+    const fields = noticeFields(ana());
+    change(fields);
+    return fields;
+  };
+
+  it("says each kind as the form names it, and a person's addresses in a line", () => {
+    expect(["card", "question", "verdict", "poll"].map(kindName)).toEqual([
+      "Cards",
+      "Questions",
+      "Verdicts",
+      "poll",
+    ]);
+    expect(addressesSaid(ana().addresses ?? {})).toBe(
+      "Notices reach them by email ana@example.com · Slack U024BE7LH",
+    );
+    expect(addressesSaid({ whatsapp: "+15551234567", email: null })).toBe(
+      "Notices reach them by WhatsApp +15551234567",
+    );
+    expect(addressesSaid({})).toBe("No address for notices");
+  });
+
+  it("draws a form with what the person holds, and sends nothing where nothing changed", () => {
+    expect(noticeFields(ana())).toEqual({
+      addresses: { email: "ana@example.com", slack: "U024BE7LH", whatsapp: "" },
+      ways: { card: "slack", question: "", verdict: "email" },
+    });
+    expect(noticeFields(CY)).toEqual({
+      addresses: { email: "", slack: "", whatsapp: "" },
+      ways: { card: "", question: "", verdict: "" },
+    });
+    expect(noticeFields({ ...CY, addresses: null, notices: null })).toEqual({
+      addresses: { email: "", slack: "", whatsapp: "" },
+      ways: {},
+    });
+    expect(noticesWrite(ana(), noticeFields(ana()))).toBeNull();
+    // Spaces at either end are no change.
+    const spaced = anas((fields) => {
+      fields.addresses.email = " ana@example.com ";
+    });
+    expect(noticesWrite(ana(), spaced)).toBeNull();
+  });
+
+  it("sends each address and way that differs, an emptied one taking it away", () => {
+    const fields = anas((fields) => {
+      fields.addresses.slack = "";
+      fields.addresses.whatsapp = " +1 (555) 123-4567 ";
+      fields.ways.card = "";
+      fields.ways.question = "whatsapp";
+    });
+    expect(noticesWrite(ana(), fields)).toEqual({
+      name: "ana",
+      slack: "",
+      whatsapp: "+1 (555) 123-4567",
+      notices: [{ kind: "card" }, { kind: "question", way: "whatsapp" }],
+    } satisfies ProfileWrite);
+    expect(
+      noticesWrite(
+        CY,
+        anas(() => undefined),
+      ),
+    ).toEqual({
+      name: "cy",
+      email: "ana@example.com",
+      slack: "U024BE7LH",
+      notices: [
+        { kind: "card", way: "slack" },
+        { kind: "verdict", way: "email" },
+      ],
+    });
+  });
+
+  it("names the kinds sent by a way the form gives no address", () => {
+    expect(unreached(noticeFields(ana()))).toEqual([]);
+    const left = anas((fields) => {
+      fields.addresses.email = " ";
+      fields.ways.question = "whatsapp";
+    });
+    expect(unreached(left)).toEqual(["question", "verdict"]);
+  });
+
+  it("keeps what each field and choice is given, and sends the form's write by its own part", () => {
+    hooks.on = true;
+    const { sent, writes } = writing();
+    const notices = ana().notices ?? [];
+    const unchanged = NoticesForm({ person: ana(), notices, writes });
+    const keep = elementOf(unchanged, (element) => element.props.type === "submit");
+    expect(keep).toBeUndefined();
+    fire(unchanged, (element) => element.type === "form", "onSubmit", { preventDefault() {} });
+    expect(sent).toEqual([]);
+    const typed = (label: string, value: string) =>
+      fire(unchanged, labelled(label), "onChange", { currentTarget: { value } });
+    typed("Slack member id of ana", "W1");
+    const choose = elementOf(
+      unchanged,
+      (element) => element.props.label === "Questions for ana by",
+    );
+    expect(choose?.props.options).toEqual([
+      ["", "the page alone"],
+      ["email", "email"],
+      ["slack", "Slack"],
+      ["whatsapp", "WhatsApp"],
+    ]);
+    (choose?.props.onChange as ((way: string) => void) | undefined)?.("email");
+    const set = hooks.setters[0];
+    expect(set?.mock.calls).toEqual([
+      [
+        anas((fields) => {
+          fields.addresses.slack = "W1";
+        }),
+      ],
+      [
+        anas((fields) => {
+          fields.ways.question = "email";
+        }),
+      ],
+    ]);
+    hooks.states = [
+      anas((fields) => {
+        fields.addresses.whatsapp = "+15551234567";
+        fields.ways.verdict = "slack";
+        fields.ways.question = "whatsapp";
+        fields.addresses.slack = "";
+      }),
+    ];
+    const edited = NoticesForm({ person: ana(), notices, writes });
+    expect(elementOf(edited, (element) => element.props.type === "submit")?.props.disabled).toBe(
+      false,
+    );
+    fire(edited, (element) => element.type === "form", "onSubmit", { preventDefault() {} });
+    expect(sent).toEqual([
+      [
+        "notices-ana",
+        "/api/people-profile",
+        {
+          name: "ana",
+          slack: "",
+          whatsapp: "+15551234567",
+          notices: [
+            { kind: "question", way: "whatsapp" },
+            { kind: "verdict", way: "slack" },
+          ],
+        },
+      ],
+    ]);
+    hooks.states = [
+      anas((fields) => {
+        fields.addresses.slack = "";
+      }),
+    ];
+    const warned = renderToStaticMarkup(NoticesForm({ person: ana(), notices, writes }));
+    expect(warned).toContain('<p class="people-warning">Cards: no address for that way.</p>');
+    expect(warned).not.toContain("people-hint");
   });
 });
 
@@ -682,6 +872,15 @@ describe("the page", () => {
     expect(html).toContain('aria-label="Sign-in of bo"');
     expect(html).toContain('aria-label="Sign-in"');
     expect(html).toContain("<summary>Make a profile</summary>");
+    // The person at the machine sees every address and writes every person's notices it is sent.
+    expect(html).toContain(
+      '<p class="people-reach people-addresses">Notices reach them by email ana@example.com · Slack U024BE7LH</p>',
+    );
+    expect(html).toContain('<p class="people-reach people-addresses">No address for notices</p>');
+    expect(html.match(/<details class="people-profile people-notices">/g)).toHaveLength(2);
+    expect(html).toContain('aria-label="Notices of ana"');
+    expect(html).toContain('aria-label="Notices of cy"');
+    expect(html).not.toContain('aria-label="Notices of bo"');
     // Each add form says once why direct agents is given to no one, and the group's removal asks.
     expect(html.match(/Direct agents is given to no one yet/g)).toHaveLength(2);
     expect(html).toContain(">Remove the group</button>");
@@ -691,9 +890,14 @@ describe("the page", () => {
     const html = draw({ ...SAMPLE, machine: false, you: "bo" }, writing().writes);
     expect(html).toContain('aria-label="Add a person"');
     expect(html).not.toContain('aria-label="Sign-in"');
-    expect(html).toContain(
-      "A profile is made for them where the machine holds none, with no sign-in: the person at the machine gives that",
-    );
+    // The form explains nothing of itself: no hint of what Add makes.
+    expect(html).not.toContain("A profile is made");
+    // Sent others' addresses and not their ways, as the server sends an admin, it draws the
+    // addresses and no one's notices to write.
+    const people = SAMPLE.people.map(({ notices: _, ...person }) => person);
+    const admin = draw({ ...SAMPLE, machine: false, you: "bo", people }, writing().writes);
+    expect(admin).toContain("Notices reach them by email ana@example.com · Slack U024BE7LH");
+    expect(admin).not.toContain("people-notices");
   });
 
   it("says a change of today by its time, and one of another day with its day", () => {
@@ -722,8 +926,23 @@ describe("the page", () => {
   });
 
   it("draws a reader without administer no control but their own profile, and no sign-in to give", () => {
+    // As the server sends one who is neither an admin nor the person at the machine: their own
+    // addresses and ways, and no one else's.
+    const people = SAMPLE.people.map((person): PersonRow => {
+      if (person.name === "cy") return person;
+      const { addresses: _addresses, notices: _notices, ...theirs } = person;
+      return theirs;
+    });
+    const own = draw({ ...READER, people }, writing().writes);
+    expect(own.match(/people-addresses/g)).toHaveLength(1);
+    expect(own).not.toContain("ana@example.com");
+    expect(own).not.toContain("U024BE7LH");
+    expect(own.match(/<details class="people-profile people-notices">/g)).toHaveLength(1);
+    expect(own).toContain('aria-label="Notices of cy"');
     const html = draw(READER, writing().writes);
-    expect(html).toContain("Changing who is on the board needs administer, which you do not hold.");
+    expect(html).toContain(
+      '<header class="people-head"><h1>People</h1><p class="people-refused">Changing who is on the board needs administer.</p></header>',
+    );
     expect(html).not.toContain('aria-label="Add a person"');
     expect(html).not.toContain("Take off the board");
     expect(html).not.toContain("aria-pressed");
@@ -737,9 +956,10 @@ describe("the page", () => {
 
   it("says an empty board, a problem, a failed read, and a write's words on the part that sent it", () => {
     const empty = draw(EMPTY, writing().writes);
-    expect(empty).toContain(
-      "Nobody is on this board but the person at the machine, who holds every power.",
-    );
+    // The head is its title alone, and an empty part says so in a line.
+    expect(empty).toContain('<header class="people-head"><h1>People</h1></header>');
+    expect(empty).toContain('<p class="people-empty">Nobody yet.</p>');
+    expect(empty).not.toContain("people-sub");
     expect(empty).toContain("No group yet.");
     expect(empty).toContain("No change yet.");
     expect(empty).not.toContain("needs administer");

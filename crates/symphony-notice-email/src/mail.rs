@@ -9,34 +9,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_notice::{Kind, Notice};
 
-/// What [`address`] takes, as a refusal says it.
-pub(crate) const ADDRESS_RULE: &str = "ASCII `local@domain`, the local part letters, digits, dots \
-     and `!#$%&'*+-/=?^_`{|}~`, the domain's labels letters, digits and inner dashes";
-
-/// Whether `text` is a plain email address: `local@domain` in ASCII, the local part a dot-atom
-/// (RFC 5322: no quoted string, no comment) of at most 64 characters, the domain a host name of
-/// labels of letters, digits and inner dashes, at most 254 characters in all. What a header or an
-/// SMTP command could read as more than one address (`<`, `>`, `,`, `;`, a space, a quote) is in
-/// neither part.
-pub(crate) fn address(text: &str) -> bool {
-    let Some((local, domain)) = text.split_once('@') else {
-        return false;
-    };
-    let atext = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-/=?^_`{|}~".contains(c);
-    let label = |label: &str| {
-        (1..=63).contains(&label.len())
-            && !label.starts_with('-')
-            && !label.ends_with('-')
-            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-    };
-    text.len() <= 254
-        && (1..=64).contains(&local.len())
-        && local
-            .split('.')
-            .all(|atom| !atom.is_empty() && atom.chars().all(atext))
-        && domain.split('.').all(label)
-}
-
 /// A notice's mail: its headers, each one line, and its body.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Mail {

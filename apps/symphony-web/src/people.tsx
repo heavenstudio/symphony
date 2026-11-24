@@ -15,6 +15,12 @@
 // sign-in field is theirs alone too. Each write answers the page as it left it, which the page
 // draws: no read follows it, and what the write did is said on the part that sent it, in the log's
 // words.
+//
+// A person's addresses (the email, Slack member id and WhatsApp number their notices go to) and
+// the way each kind of notice goes by are in the read only for those who may see them: the
+// addresses for the person, the person at the machine and the board's admins, which the page says
+// in a line on the person's card; the ways for the person and the person at the machine, who get
+// the card's Notices form beside its Profile, which sends only what differs from what is held.
 
 import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "./button";
@@ -27,7 +33,9 @@ import { tryAgain } from "./state";
 import type { retryWait } from "./timing";
 import { failed, ready } from "./trouble";
 import {
+  type Addresses,
   type GroupRow,
+  type NoticeWay,
   type PeoplePage as Page,
   PEOPLE_CHANGE_PATH,
   PEOPLE_PATH,
@@ -47,15 +55,32 @@ const isNumber = (value: unknown): value is number => typeof value === "number";
 const absent = (value: unknown) => value === undefined || value === null;
 const maybeText = (value: unknown) => absent(value) || isText(value);
 
-const isPerson = (value: unknown): value is PersonRow =>
-  isText(field(value, "name")) &&
-  isText(field(value, "display")) &&
-  isTexts(field(value, "powers")) &&
-  isTexts(field(value, "own")) &&
-  isTexts(field(value, "groups")) &&
-  isTexts(field(value, "signins")) &&
-  isTexts(field(value, "git")) &&
-  typeof field(value, "profile") === "boolean";
+const isAddresses = (value: unknown): value is Addresses =>
+  typeof value === "object" &&
+  value !== null &&
+  maybeText(field(value, "email")) &&
+  maybeText(field(value, "slack")) &&
+  maybeText(field(value, "whatsapp"));
+
+const isNoticeWay = (value: unknown): value is NoticeWay =>
+  isText(field(value, "kind")) && maybeText(field(value, "way"));
+
+const isPerson = (value: unknown): value is PersonRow => {
+  const addresses = field(value, "addresses");
+  const notices = field(value, "notices");
+  return (
+    isText(field(value, "name")) &&
+    isText(field(value, "display")) &&
+    isTexts(field(value, "powers")) &&
+    isTexts(field(value, "own")) &&
+    isTexts(field(value, "groups")) &&
+    isTexts(field(value, "signins")) &&
+    isTexts(field(value, "git")) &&
+    typeof field(value, "profile") === "boolean" &&
+    (absent(addresses) || isAddresses(addresses)) &&
+    (absent(notices) || (Array.isArray(notices) && notices.every(isNoticeWay)))
+  );
+};
 
 const isGroup = (value: unknown): value is GroupRow =>
   isText(field(value, "name")) && isTexts(field(value, "powers"));
@@ -251,6 +276,86 @@ export function profileWrite(
   const body: ProfileWrite = { name, git: listed(fields.git), signins: listed(fields.signin) };
   if (fields.display.trim() !== "") body.display = fields.display.trim();
   return body;
+}
+
+/** The ways a notice goes by, each by its word and as a sentence says it. */
+export const WAYS: [string, string][] = [
+  ["email", "email"],
+  ["slack", "Slack"],
+  ["whatsapp", "WhatsApp"],
+];
+
+/** A kind of notice as the form names its choice: `Cards` for `card`; one it does not know as written. */
+export function kindName(kind: string): string {
+  const names: Record<string, string> = {
+    card: "Cards",
+    question: "Questions",
+    verdict: "Verdicts",
+  };
+  return names[kind] ?? kind;
+}
+
+/** The address `addresses` holds for `way`, empty where none. */
+function held(addresses: Addresses | null | undefined, way: string): string {
+  const address = addresses?.[way as keyof Addresses];
+  return typeof address === "string" ? address : "";
+}
+
+/** A person's addresses in one line, each after its way's name, or that they hold none. */
+export function addressesSaid(addresses: Addresses): string {
+  const said = WAYS.filter(([way]) => held(addresses, way) !== "").map(
+    ([way, name]) => `${name} ${held(addresses, way)}`,
+  );
+  return said.length === 0 ? "No address for notices" : `Notices reach them by ${said.join(" · ")}`;
+}
+
+/** What a person's Notices form holds: each way's address, and the way each kind goes by (empty for none). */
+export interface NoticeFields {
+  addresses: Record<string, string>;
+  ways: Record<string, string>;
+}
+
+/** The Notices form's fields as `person` holds them. */
+export function noticeFields(person: PersonRow): NoticeFields {
+  return {
+    addresses: Object.fromEntries(WAYS.map(([way]) => [way, held(person.addresses, way)])),
+    ways: Object.fromEntries((person.notices ?? []).map(({ kind, way }) => [kind, way ?? ""])),
+  };
+}
+
+/**
+ * The profile's write `person`'s Notices form sends from `fields`: each address that differs from
+ * what they hold, trimmed (an emptied one takes it away), and each kind whose way differs (an
+ * empty one sends it by none); none where nothing differs.
+ */
+export function noticesWrite(person: PersonRow, fields: NoticeFields): ProfileWrite | null {
+  const body: ProfileWrite = { name: person.name };
+  let changed = false;
+  for (const [way] of WAYS) {
+    const address = (fields.addresses[way] ?? "").trim();
+    if (address !== held(person.addresses, way)) {
+      body[way as "email" | "slack" | "whatsapp"] = address;
+      changed = true;
+    }
+  }
+  const notices = (person.notices ?? [])
+    .filter(({ kind, way }) => (fields.ways[kind] ?? "") !== (way ?? ""))
+    .map(({ kind }): NoticeWay => {
+      const way = fields.ways[kind] ?? "";
+      return way === "" ? { kind } : { kind, way };
+    });
+  if (notices.length > 0) {
+    body.notices = notices;
+    changed = true;
+  }
+  return changed ? body : null;
+}
+
+/** The kinds `fields` sends by a way whose address the form leaves empty, which then go by none. */
+export function unreached(fields: NoticeFields): string[] {
+  return Object.entries(fields.ways)
+    .filter(([, way]) => way !== "" && (fields.addresses[way] ?? "").trim() === "")
+    .map(([kind]) => kind);
 }
 
 /** What a write tells the part that sent it. */
@@ -515,6 +620,92 @@ function ProfileForm({
   );
 }
 
+/**
+ * Where a person's notices reach them and which way each kind goes by, as the person themself or
+ * the person at the machine writes it: drawn with what they hold, and its fields drawn again from
+ * what they hold once its write is said done.
+ */
+export function NoticesForm({
+  person,
+  notices,
+  writes,
+}: {
+  person: PersonRow;
+  notices: NoticeWay[];
+  writes: Writes;
+}) {
+  const part = `notices-${person.name}`;
+  const [fields, setFields] = useState(() => noticeFields(person));
+  const done = doneBy(part, writes);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: drawn again once its write is said done, from what that write left held
+  useEffect(() => {
+    if (done !== null) setFields(noticeFields(person));
+  }, [done]);
+  const body = noticesWrite(person, fields);
+  const address = (way: string) => (event: { currentTarget: { value: string } }) =>
+    setFields({ ...fields, addresses: { ...fields.addresses, [way]: event.currentTarget.value } });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (body !== null) writes.send(part, PROFILE_PATH, body);
+  };
+  const left = unreached(fields);
+  return (
+    <details className="people-profile people-notices">
+      <summary>Notices</summary>
+      <form onSubmit={submit} aria-label={`Notices of ${person.name}`}>
+        <div className="people-fields">
+          <Input
+            aria-label={`Email for notices of ${person.name}`}
+            placeholder="email"
+            autoComplete="off"
+            value={fields.addresses.email ?? ""}
+            onChange={address("email")}
+          />
+          <Input
+            aria-label={`Slack member id of ${person.name}`}
+            placeholder="Slack member id"
+            autoComplete="off"
+            value={fields.addresses.slack ?? ""}
+            onChange={address("slack")}
+          />
+          <Input
+            aria-label={`WhatsApp number of ${person.name}`}
+            placeholder="WhatsApp number"
+            autoComplete="off"
+            value={fields.addresses.whatsapp ?? ""}
+            onChange={address("whatsapp")}
+          />
+        </div>
+        <div className="people-ways">
+          {notices.map(({ kind }) => (
+            <div key={kind} className="people-way">
+              <span>{kindName(kind)}</span>
+              <SelectField
+                label={`${kindName(kind)} for ${person.name} by`}
+                value={fields.ways[kind] ?? ""}
+                options={[
+                  ["", "the page alone"],
+                  ...WAYS.map(([way, name]): [string, string] => [way, name]),
+                ]}
+                onChange={(way) => setFields({ ...fields, ways: { ...fields.ways, [kind]: way } })}
+              />
+            </div>
+          ))}
+        </div>
+        {left.length > 0 && (
+          <p className="people-warning">{`${left.map(kindName).join(", ")}: no address for that way.`}</p>
+        )}
+        {body !== null && (
+          <Button type="submit" size="sm" disabled={writes.busy}>
+            Keep
+          </Button>
+        )}
+        <Spoken part={part} writes={writes} />
+      </form>
+    </details>
+  );
+}
+
 /** One person on the board, with what the reader may change of them. */
 export function Person({
   person,
@@ -545,6 +736,9 @@ export function Person({
       <p className="people-reach">
         {person.git.length > 0 ? `${reach} · git ${person.git.join(", ")}` : reach}
       </p>
+      {person.addresses && (
+        <p className="people-reach people-addresses">{addressesSaid(person.addresses)}</p>
+      )}
       <PowerTags
         held={person.powers}
         own={person.own}
@@ -594,6 +788,9 @@ export function Person({
       {(admin || profiled) && (
         <div className="people-actions">
           {profiled && <ProfileForm person={person} machine={page.machine} writes={writes} />}
+          {profiled && person.notices && (
+            <NoticesForm person={person} notices={person.notices} writes={writes} />
+          )}
           {admin && (
             <Remove
               label="Take off the board"
@@ -779,11 +976,6 @@ function AddPerson({ page, writes }: { page: Page; writes: Writes }) {
         withheld={page.withheld}
         onChoose={setPowers}
       />
-      <p className="people-hint">
-        {page.machine
-          ? "A profile is made for them where the machine holds none, or given what you write."
-          : "A profile is made for them where the machine holds none, with no sign-in: the person at the machine gives that, as it says who they are on every board. One it holds is kept as it is."}
-      </p>
       <Button
         type="submit"
         size="sm"
@@ -861,13 +1053,9 @@ export function PeopleView({ page, error, missing, writes, now = new Date() }: P
     >
       <header className="people-head">
         <h1>People</h1>
-        <p className="people-sub">
-          Who is on this board besides the person at the machine, who holds every power: what each
-          may do, their own and by their groups, and every change of them.
-          {page !== null &&
-            !page.administers &&
-            " Changing who is on the board needs administer, which you do not hold."}
-        </p>
+        {page !== null && !page.administers && (
+          <p className="people-refused">Changing who is on the board needs administer.</p>
+        )}
       </header>
       {error !== null && (
         <p className="people-error" role="alert">
@@ -885,11 +1073,7 @@ export function PeopleView({ page, error, missing, writes, now = new Date() }: P
           <section className="people-section" aria-labelledby="people-people">
             <h2 id="people-people">People</h2>
             <div className="people-panel">
-              {page.people.length === 0 && (
-                <p className="people-empty">
-                  Nobody is on this board but the person at the machine, who holds every power.
-                </p>
-              )}
+              {page.people.length === 0 && <p className="people-empty">Nobody yet.</p>}
               {page.people.map((person) => (
                 <Person key={person.name} person={person} page={page} writes={writes} />
               ))}
@@ -903,9 +1087,6 @@ export function PeopleView({ page, error, missing, writes, now = new Date() }: P
           </section>
           <section className="people-section" aria-labelledby="people-groups">
             <h2 id="people-groups">Groups</h2>
-            <p className="people-sub">
-              Each member holds what their groups hold, beside their own.
-            </p>
             <div className="people-panel">
               {page.groups.length === 0 && <p className="people-empty">No group yet.</p>}
               {page.groups.map((group) => (

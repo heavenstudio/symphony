@@ -65,8 +65,8 @@ not have.
 `/settings`, under each project and in the header after Reports, shows what is in force for the
 project and where each value comes from: one read, `/api/settings`
 (`crates/symphony/src/settings.rs`, the wire types `crates/symphony-api/src/settings.rs`), which
-the client draws. Every thing it shows is an entry in one shape: its
-name, what it is for, its state and why, what it needs and whether this machine has it, and its
+the client draws, explaining nothing of itself (RULES.md `code/pages-explain-nothing`). Every
+thing it shows is an entry in one shape: its name, its state and why, what it needs and whether this machine has it, and its
 settings, each with its key, its value in force, its source (the default, the file with the
 table, the key and the line, or [the board's store](#the-boards-store), as `just tasks limits`
 names one, with the value it stands over: for the store's the committed value and its line, for a

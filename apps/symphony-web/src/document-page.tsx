@@ -182,7 +182,7 @@ export function Missing({ path, scope, moved, hash, retry }: MissingProps) {
   return (
     <Trouble
       title="Document not found"
-      text={`There is no document at ${path}: it may have been moved, renamed or removed.`}
+      text={`There is no document at ${path}.`}
       back={[scoped(scope, documentsHref(project())), "All documents"]}
       retry={retry}
     >
@@ -961,12 +961,7 @@ export function bothShown(
 /** What a folder with no document says in their place: what makes the first one, and a card. */
 export function FirstDocument({ folder }: { folder: Folder }) {
   if (folder.intro !== null || folder.entries.length > 0) return null;
-  return (
-    <FirstSteps>
-      No document is here yet. A Markdown file in this folder is a page of its own, and a card in
-      its register waits for your verdict in the queue:
-    </FirstSteps>
-  );
+  return <FirstSteps>No document here yet.</FirstSteps>;
 }
 
 /** A folder's page: its head, its intro (a document drawn in it) and its entries. */
@@ -1060,7 +1055,7 @@ export function FolderPage({ path, scope }: { path: string; scope: string }) {
     body = (
       <Trouble
         title="Folder not found"
-        text={`There is no folder at ${path}: it may have been moved, renamed or removed.`}
+        text={`There is no folder at ${path}.`}
         back={[scoped(scope, documentsHref(project())), "All documents"]}
         retry={retry}
       />

@@ -5,10 +5,10 @@
 //! ([`SettingAction`]); it answers a [`SettingWritten`], or a refusal that says why with nothing
 //! changed.
 //!
-//! The page is a list of entries in one shape ([`SettingsEntry`]): its name, what it is for, its
-//! state and why, what it needs and whether this machine has it, and its settings
-//! ([`Setting`]), each with its key, its kind, the value in force, where that value was written
-//! ([`SettingSource`]), the scopes it may be written in and its class. The client draws every
+//! The page is a list of entries in one shape ([`SettingsEntry`]): its name, its state and why,
+//! what it needs and whether this machine has it, and its settings ([`Setting`]), each with its
+//! key, its kind, the value in force, where that value was written ([`SettingSource`]), the
+//! scopes it may be written in and its class. The client draws every
 //! entry with one component and knows none by name, so an entry a later server describes draws
 //! with no change to the page. What the page writes is beside the entries, in
 //! [`SettingsPage::stored`]: one item for each setting it draws a control for, by its key.
@@ -28,14 +28,13 @@ pub const SETTINGS_PATH: &str = "/api/settings";
 /// The Settings page's write ([`SettingWrite`]).
 pub const SETTING_WRITE_PATH: &str = "/api/setting";
 
-/// A part of the page: a heading over entries.
+/// A part of the page: a heading over entries, and nothing under the heading that explains it
+/// (RULES.md `code/pages-explain-nothing`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct SettingsSection {
     pub id: String,
     pub title: String,
-    /// One line under the heading.
-    pub about: String,
     pub entries: Vec<SettingsEntry>,
 }
 

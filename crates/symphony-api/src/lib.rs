@@ -78,8 +78,8 @@ pub use links::{app_path, linkable};
 pub use listing::{ListedCard, ListedProject, PROJECTS_PATH, ProjectList, TaskAsks, TaskVerdict};
 pub use ownership::{CARD_HAND_ROUTE, CARD_OWNERS_PATH, CardOwners, Owner, TASK_HAND_ROUTE};
 pub use people::{
-    GroupRow, PEOPLE_CHANGE_PATH, PEOPLE_PATH, PROFILE_PATH, PeopleAction, PeopleChange,
-    PeopleLogLine, PeoplePage, PersonRow, ProfileWrite, WithheldPower,
+    Addresses, GroupRow, NoticeWay, PEOPLE_CHANGE_PATH, PEOPLE_PATH, PROFILE_PATH, PeopleAction,
+    PeopleChange, PeopleLogLine, PeoplePage, PersonRow, ProfileWrite, WithheldPower,
 };
 pub use report_page::{Grain, REPORTS_LANDED_PATH, REPORTS_PATH, ReportBucket, ReportsPage};
 pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};

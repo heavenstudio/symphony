@@ -54,7 +54,6 @@ panel under itself:
 
 | Part | Does |
 | --- | --- |
-| *This project's look, on this device.* | says what the panel changes |
 | **Import shadcn theme…** | shows **Choose a theme file…**, which takes a theme file from the device |
 | **Default theme** | removes the imported theme |
 | A status line | says what happened: **Theme applied.**, **Default theme restored.**, or why a file was refused |

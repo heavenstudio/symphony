@@ -141,16 +141,118 @@ fn a_page_lists_each_person_by_their_profile_and_names_no_sign_ins_subject() {
         "the board's own reason, which its refusal of a grant says"
     );
     let said = serde_json::to_string(&page).unwrap();
-    for private in [
-        "ana@example.com",
-        "ana@work.example",
-        "ana-lima\"",
-        "ana@mail.example",
-    ] {
+    for private in ["ana@example.com", "ana@work.example", "ana-lima\""] {
         let shown = said.matches(private).count();
         let allowed = usize::from(private == "ana-lima\"");
         assert_eq!(shown, allowed, "{private} in {said}");
     }
+}
+
+/// Ana reached by mail and Slack, her cards by Slack; Bo, the board's admin, by WhatsApp, his
+/// verdicts that way.
+fn reached() -> Profiles {
+    let map = |value: serde_json::Value| value.as_object().unwrap().clone();
+    Profiles {
+        people: vec![
+            Profile {
+                chat: map(serde_json::json!({"slack": "U024BE7LH"})),
+                preferences: map(serde_json::json!({"card": "slack"})),
+                ..anas()
+            },
+            Profile {
+                name: "bo".into(),
+                chat: map(serde_json::json!({"whatsapp": "+15551234567"})),
+                preferences: map(serde_json::json!({"verdict": "whatsapp"})),
+                ..Profile::default()
+            },
+        ],
+    }
+}
+
+#[test]
+fn addresses_go_to_the_person_the_machine_and_admins_and_ways_to_the_person_and_the_machine() {
+    let anas = Addresses {
+        email: Some("ana@mail.example".into()),
+        slack: Some("U024BE7LH".into()),
+        whatsapp: None,
+    };
+    let bos = Addresses {
+        whatsapp: Some("+15551234567".into()),
+        ..Addresses::default()
+    };
+    let ways = |card: Option<&str>, verdict: Option<&str>| {
+        let kind = |kind: &str, way: Option<&str>| NoticeWay {
+            kind: kind.into(),
+            way: way.map(Into::into),
+        };
+        Some(vec![
+            kind("card", card),
+            kind("question", None),
+            kind("verdict", verdict),
+        ])
+    };
+    let shown = |asker: Asker| {
+        let page = page(Ok((people(), vec![])), Ok(reached()), &asker);
+        let said = serde_json::to_string(&page).unwrap();
+        let rows = (page.people.into_iter())
+            .map(|row| (row.addresses, row.notices))
+            .collect::<Vec<_>>();
+        (rows, said)
+    };
+    let (machine, _) = shown(asker("owner", true));
+    assert_eq!(
+        machine,
+        [
+            (Some(anas.clone()), ways(Some("slack"), None)),
+            (Some(bos.clone()), ways(None, Some("whatsapp")))
+        ]
+    );
+    let (own, said) = shown(asker("ana", false));
+    assert_eq!(
+        own,
+        [
+            (Some(anas.clone()), ways(Some("slack"), None)),
+            (None, None)
+        ]
+    );
+    assert!(!said.contains("+15551234567"), "{said}");
+    // Bo administers: he sees Ana's addresses and not her ways, and his own whole.
+    let (admin, said) = shown(asker("bo", false));
+    assert_eq!(
+        admin,
+        [
+            (Some(anas), None),
+            (Some(bos), ways(None, Some("whatsapp")))
+        ]
+    );
+    assert_eq!(said.matches("\"notices\"").count(), 1, "{said}");
+    // Anyone else sees neither, and the answer carries neither field.
+    let (other, said) = shown(asker("cy", false));
+    assert_eq!(other, [(None, None), (None, None)]);
+    for private in [
+        "addresses",
+        "notices",
+        "ana@mail.example",
+        "U024BE7LH",
+        "slack",
+    ] {
+        assert!(!said.contains(private), "{private} in {said}");
+    }
+    // A person the machine holds no profile of is shown with none set, to whom may see them.
+    let (_, said) = shown(asker("owner", true));
+    assert!(said.contains("\"addresses\""), "{said}");
+    let page = page(
+        Ok((people(), vec![])),
+        Ok(Profiles::default()),
+        &asker("bo", false),
+    );
+    assert_eq!(
+        (
+            page.people[1].addresses.clone(),
+            page.people[1].notices.clone()
+        ),
+        (Some(Addresses::default()), ways(None, None))
+    );
 }
 
 #[test]
@@ -787,4 +889,79 @@ async fn the_page_waits_on_the_servers_start_and_a_change_on_a_board_it_reaches(
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert!(body.contains("the task board cannot be reached"), "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_writes_their_own_addresses_and_ways_and_no_one_elses() {
+    let served = Served::new(&[("ana", &[Power::Speak]), ("bo", &[Power::Speak])]);
+    let shared = Shared::new(
+        1,
+        8123,
+        &served.root,
+        None,
+        laptop_with(crate::roster::of(served.machine.clone())).with_machine(served.machine.clone()),
+    );
+    assert!(shared.api.set(served.shared.hub().ok().unwrap()).is_ok());
+    let served = Served { shared, ..served };
+    let body = serde_json::json!({
+        "name": "ana",
+        "email": "ana@example.com",
+        "slack": "U024BE7LH",
+        "whatsapp": "+1 555 123 4567",
+        "notices": [{"kind": "card", "way": "slack"}, {"kind": "verdict"}],
+    });
+    let (status, said) = served
+        .asked(LAPTOP, "POST", PROFILE_PATH, &body.to_string())
+        .await;
+    assert_eq!(status, StatusCode::OK, "{said}");
+    let page: PeoplePage = serde_json::from_str(&said).unwrap();
+    let row = |name: &str| page.people.iter().find(|row| row.name == name).unwrap();
+    assert_eq!(
+        row("ana").addresses,
+        Some(Addresses {
+            email: Some("ana@example.com".into()),
+            slack: Some("U024BE7LH".into()),
+            whatsapp: Some("+15551234567".into()),
+        })
+    );
+    assert_eq!(
+        row("ana").notices.as_ref().map(|ways| ways[0].way.clone()),
+        Some(Some("slack".into()))
+    );
+    assert_eq!(
+        (row("bo").addresses.clone(), row("bo").notices.clone()),
+        (None, None)
+    );
+    let profiles = served.profiles();
+    assert_eq!(
+        profiles.get("ana").unwrap().emails,
+        ["ana@example.com"],
+        "the email set replaces the one she held"
+    );
+    let reach = profiles.reach("ana", "card").unwrap();
+    assert_eq!((reach.way(), reach.address()), ("slack", "U024BE7LH"));
+    // An address its sender refuses is refused by its rule, its value unsaid; another's are not
+    // hers to write; and either writes nothing.
+    for (body, refused, value) in [
+        (
+            r#"{"name":"ana","slack":"C024BE7LH"}"#,
+            "the Slack member id is none",
+            "C024BE7LH",
+        ),
+        (
+            r#"{"name":"ana","notices":[{"kind":"card","way":"sms"}]}"#,
+            "a notice goes by one of email, slack, whatsapp",
+            "sms",
+        ),
+        (
+            r#"{"name":"bo","whatsapp":"+15551234567"}"#,
+            "only the person at the machine, or bo,",
+            "+15551234567",
+        ),
+    ] {
+        let (status, said) = served.asked(LAPTOP, "POST", PROFILE_PATH, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{said}");
+        assert!(said.contains(refused) && !said.contains(value), "{said}");
+    }
+    assert_eq!(served.profiles(), profiles);
 }

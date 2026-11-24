@@ -264,7 +264,7 @@ describe("the appearance panel", () => {
   it("offers a theme's import and the default theme, and says nothing yet", () => {
     page();
     expect(renderToStaticMarkup(<ThemeMenu />)).toBe(
-      '<div class="theme-menu"><p class="muted">This project&#x27;s look, on this device.</p><div class="theme-actions">' +
+      '<div class="theme-menu"><div class="theme-actions">' +
         '<button class="dx-button" data-style="outline" data-size="default" type="button" data-theme-action="import">Import shadcn theme…</button>' +
         '<button class="dx-button" data-style="outline" data-size="default" type="button" data-theme-action="default">Default theme</button>' +
         '</div><p role="status"></p></div>',

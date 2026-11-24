@@ -274,12 +274,13 @@ impl FileRead {
     }
 }
 
-/// An entry with a name and what it is for, and nothing else yet.
-fn entry(id: &str, name: &str, about: &str) -> SettingsEntry {
+/// An entry with a name, and nothing else yet: no page draws an entry's `about`, so the Symphony's
+/// own entries write none.
+fn entry(id: &str, name: &str) -> SettingsEntry {
     SettingsEntry {
         id: id.into(),
         name: name.into(),
-        about: about.into(),
+        about: String::new(),
         state: None,
         needs: Vec::new(),
         settings: Vec::new(),
@@ -364,8 +365,6 @@ pub fn page_with(root: &Path, machine: &Machine, board_held: &Board) -> Settings
         SettingsSection {
             id: "integrations".into(),
             title: "Integrations and tools".into(),
-            about: "Each one says whether it is on and whether this machine has what it needs."
-                .into(),
             entries: vec![
                 agent(
                     machine,
@@ -387,10 +386,6 @@ pub fn page_with(root: &Path, machine: &Machine, board_held: &Board) -> Settings
         SettingsSection {
             id: "models".into(),
             title: "Models and limits".into(),
-            about: "What a launch starts, the model each role runs on and the limits the board \
-                    holds work to: the project's, the board's where its store holds one, or this \
-                    machine's where its local file writes one."
-                .into(),
             entries: vec![
                 launch(&board, &defaults, held.as_ref(), &stored),
                 models(&board, &defaults, held.as_ref(), &stored),
@@ -401,7 +396,6 @@ pub fn page_with(root: &Path, machine: &Machine, board_held: &Board) -> Settings
         SettingsSection {
             id: "project".into(),
             title: "The project".into(),
-            about: "What the pages call it, what they serve and where its files are kept.".into(),
             entries: vec![
                 identity(&file, &project),
                 documents(&file, &project),
@@ -410,10 +404,7 @@ pub fn page_with(root: &Path, machine: &Machine, board_held: &Board) -> Settings
         },
         SettingsSection {
             id: "reviewed".into(),
-            title: "Shown here, changed by a reviewed task".into(),
-            about: "These run a command on this machine or decide what lands. The page shows \
-                    them and never writes them."
-                .into(),
+            title: "Reviewed settings".into(),
             entries: vec![
                 landing(&file, &project),
                 commands(&file),
@@ -425,7 +416,6 @@ pub fn page_with(root: &Path, machine: &Machine, board_held: &Board) -> Settings
         SettingsSection {
             id: "device".into(),
             title: "This device".into(),
-            about: "What this browser keeps, for this project alone.".into(),
             entries: vec![appearance()],
         },
     ];
@@ -469,19 +459,13 @@ fn agent(
         scopes: scopes(&ON_TABLES, agent),
         class: class("agents", "launch"),
     };
-    let mut why = if own {
-        "The launch default: a launch starts it unless its caller names the other. Its switch is \
-         not offered: pick another default first to turn it off."
-            .to_string()
+    // Its state's reasons, each a sentence: what an On alone already says is said by none.
+    let mut why = Vec::new();
+    if own {
+        why.push("The launch default: pick another default first to turn it off.".to_string());
     } else if let Some(off) = off {
-        format!(
-            "Turned off ({}): no launch, staffing pass or restore starts it, and no page offers it \
-             but this one. Its files stay installed, so on again is the switch alone.",
-            off.said()
-        )
-    } else {
-        "A launch starts it when its caller names it.".to_string()
-    };
+        why.push(format!("Turned off ({}).", off.said()));
+    }
     if own {
         // No control: the store refuses its switch turned off, and the files may write it on.
         switch.scopes.retain(|scope| *scope != SettingScope::Board);
@@ -493,22 +477,22 @@ fn agent(
             ..default("the launch default, which cannot be off")
         };
         if let Some(overruled) = defaults.overruled() {
-            why.push_str(&format!(" {overruled}."));
+            why.push(format!("{overruled}."));
         }
     }
     let running =
         (board_held.running.as_ref()).map(|counts| counts.as_ref().map(|counts| counts[at]));
     match running {
-        Some(Ok(running)) => why.push_str(&match (running, off.is_some()) {
-            (0, _) => " None of its sessions runs now.".to_string(),
-            (1, false) => " One of its sessions runs now.".to_string(),
-            (1, true) => " One of its sessions runs now, and keeps running.".to_string(),
-            (n, false) => format!(" {n} of its sessions run now."),
-            (n, true) => format!(" {n} of its sessions run now, and keep running."),
+        Some(Ok(running)) => why.push(match (running, off.is_some()) {
+            (0, _) => "None of its sessions runs now.".to_string(),
+            (1, false) => "One of its sessions runs now.".to_string(),
+            (1, true) => "One of its sessions runs now, and keeps running.".to_string(),
+            (n, false) => format!("{n} of its sessions run now."),
+            (n, true) => format!("{n} of its sessions run now, and keep running."),
         }),
         Some(Err(problem)) => {
-            why.push_str(&format!(
-                " How many of its sessions run cannot be read: {problem}."
+            why.push(format!(
+                "How many of its sessions run cannot be read: {problem}."
             ));
         }
         None => {}
@@ -517,15 +501,11 @@ fn agent(
         state: state(
             if off.is_some() { "Off" } else { "On" },
             Some(off.is_none()),
-            why,
+            why.join(" "),
         ),
         needs: vec![program(machine, agent, "a launch of it here is refused")],
         settings: vec![switch],
-        ..entry(
-            agent,
-            name,
-            &format!("Agents the board launches as {name}."),
-        )
+        ..entry(agent, name)
     }
 }
 
@@ -594,11 +574,8 @@ fn herdr(machine: &Machine, file: &FileRead, project: &Project, stored: &Stored)
         state: state(
             if on { "On" } else { "Off" },
             Some(on),
-            if on {
-                "Agents' terminals open in Herdr, and the pages can show them."
-            } else {
-                "Agents' terminals open in no panes the pages can show."
-            },
+            // On or Off says where agents' terminals open; what Off lacks is its need's.
+            "",
         ),
         needs: vec![program(
             machine,
@@ -606,11 +583,7 @@ fn herdr(machine: &Machine, file: &FileRead, project: &Project, stored: &Stored)
             "no terminal opens in Herdr here",
         )],
         settings: vec![panes],
-        ..entry(
-            "herdr",
-            "Herdr panes",
-            "Agents' terminals in Herdr, which the pages can show and go to.",
-        )
+        ..entry("herdr", "Herdr panes")
     }
 }
 
@@ -626,7 +599,7 @@ fn plugins(file: &FileRead, project: &Project) -> SettingsEntry {
             },
             None,
             match count {
-                0 => "No plugin answers for this project.".to_string(),
+                0 => String::new(),
                 _ => format!(
                     "{}; {processes} from a process of its own, the rest linked into the host.",
                     project.plugins.join(", ")
@@ -656,11 +629,7 @@ fn plugins(file: &FileRead, project: &Project) -> SettingsEntry {
                 "off",
             ),
         ],
-        ..entry(
-            "plugins",
-            "Plugins",
-            "The project's own components, routes and themes.",
-        )
+        ..entry("plugins", "Plugins")
     }
 }
 
@@ -793,14 +762,7 @@ fn launch(
                 ),
             ),
         ],
-        ..entry(
-            "launch",
-            "What a launch starts",
-            &format!(
-                "A launch whose caller names nothing starts {}.",
-                resolved.said()
-            ),
-        )
+        ..entry("launch", "What a launch starts")
     }
 }
 
@@ -846,11 +808,7 @@ fn models(
         .collect();
     SettingsEntry {
         settings,
-        ..entry(
-            "models",
-            "The model each role runs on",
-            "What a board launch passes for the role, and an agent starting a subagent.",
-        )
+        ..entry("models", "The model each role runs on")
     }
 }
 
@@ -938,11 +896,7 @@ fn limits_entry(board: &FileRead, read: &limits::Read, stored: &Stored) -> Setti
         .collect();
     SettingsEntry {
         settings,
-        ..entry(
-            "limits",
-            "Work-in-progress limits",
-            "What the board holds its starts and its launches to.",
-        )
+        ..entry("limits", "Work-in-progress limits")
     }
 }
 
@@ -971,11 +925,7 @@ fn alarm_entry(read: &limits::Read) -> SettingsEntry {
         .collect();
     SettingsEntry {
         settings,
-        ..entry(
-            "alarm",
-            "The pipeline alarm",
-            "When review piling up over the work in progress is said to every orchestrator.",
-        )
+        ..entry("alarm", "The pipeline alarm")
     }
 }
 
@@ -1083,11 +1033,7 @@ fn identity(file: &FileRead, project: &Project) -> SettingsEntry {
                 "none",
             ),
         ],
-        ..entry(
-            "identity",
-            "Name and folders",
-            "What the project is called and where its files are kept.",
-        )
+        ..entry("identity", "Name and folders")
     }
 }
 
@@ -1105,11 +1051,7 @@ fn documents(file: &FileRead, project: &Project) -> SettingsEntry {
             "The folders served",
             format!("Serves {served}."),
         )],
-        ..entry(
-            "documents",
-            "Documents",
-            "The folders the project's documents are served and read from.",
-        )
+        ..entry("documents", "Documents")
     }
 }
 
@@ -1161,11 +1103,7 @@ fn look(file: &FileRead) -> SettingsEntry {
                 "none",
             ),
         ],
-        ..entry(
-            "theme",
-            "Theme",
-            "How the project's pages look, on every device.",
-        )
+        ..entry("theme", "Theme")
     }
 }
 
@@ -1220,11 +1158,7 @@ fn landing(file: &FileRead, project: &Project) -> SettingsEntry {
                 ),
             ),
         ],
-        ..entry(
-            "landing",
-            "Landing",
-            "What a land runs and what it requires before it merges.",
-        )
+        ..entry("landing", "Landing")
     }
 }
 
@@ -1246,11 +1180,7 @@ fn commands(file: &FileRead) -> SettingsEntry {
             .into_iter()
             .map(|(key, name)| file.setting(&["board"], key, name, SettingKind::List, "none"))
             .collect(),
-        ..entry(
-            "commands",
-            "The board's commands",
-            "What the board starts on this machine, and where its store is.",
-        )
+        ..entry("commands", "The board's commands")
     }
 }
 
@@ -1270,11 +1200,7 @@ fn stamps(board: &FileRead) -> SettingsEntry {
     };
     SettingsEntry {
         settings: vec![board.sentence("stamps", "Stamps a land can require", said)],
-        ..entry(
-            "stamps",
-            "Stamps",
-            "What a task's land may need standing on its tip.",
-        )
+        ..entry("stamps", "Stamps")
     }
 }
 
@@ -1347,11 +1273,7 @@ fn releases(file: &FileRead) -> SettingsEntry {
                 &Releases::CANDIDATE_HOURS.to_string(),
             ),
         ],
-        ..entry(
-            "releases",
-            "Releases",
-            "When a release run starts and what a green one does.",
-        )
+        ..entry("releases", "Releases")
     }
 }
 
@@ -1370,20 +1292,13 @@ fn workflow(file: &FileRead) -> SettingsEntry {
         (false, false) => "",
     };
     let said = if written("workflow") {
-        format!(
-            "The project's own{also}, which the board activates once the default branch commits \
-             it."
-        )
+        format!("The project's own{also}.")
     } else {
         format!("The board's own, built-in v1{also}.")
     };
     SettingsEntry {
         settings: vec![file.sentence("workflow", "The workflow tasks move by", said)],
-        ..entry(
-            "workflow",
-            "Workflow",
-            "The stages a task moves through and what each move requires.",
-        )
+        ..entry("workflow", "Workflow")
     }
 }
 
@@ -1406,10 +1321,6 @@ fn appearance() -> SettingsEntry {
             scopes: vec![SettingScope::Device],
             class: SettingClass::Preference,
         }],
-        ..entry(
-            "appearance",
-            "Appearance",
-            "A theme of this device's own over the project's.",
-        )
+        ..entry("appearance", "Appearance")
     }
 }

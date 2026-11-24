@@ -544,7 +544,7 @@ describe("a long brief", () => {
     expect(brief("short", 0)).not.toContain("brief-more");
     const long = brief("long", 90_000);
     expect(long).toContain("brief-more");
-    expect(long).toContain("90000 bytes of it are not shown yet");
+    expect(long).toContain("90000 bytes of the brief are not shown yet");
   });
 
   const chunk = (revision: string, text: string, next: number, omitted: number): TaskBrief => ({

@@ -1,5 +1,6 @@
-//! Slack's side of a notice: the member id it goes to, the message posted there, and what Slack's
-//! answer means for the exit status.
+//! Slack's side of a notice: the message posted to the member id it goes to (its rule is
+//! `symphony_notice::ways::slack`, which a profile's member id is held to as well), and what
+//! Slack's answer means for the exit status.
 //!
 //! `chat.postMessage` with a member id as its `channel` posts in the app's direct messages with
 //! that member, which needs the bot token's `chat:write` scope alone. The text says what waits
@@ -24,16 +25,6 @@ const LATER: [&str; 6] = [
     "request_timeout",
     "team_added_to_org",
 ];
-
-/// Whether `address` is a Slack member id: `U`, or `W` in an Enterprise organization, then
-/// capital letters and digits. A channel's id (`C…`, `G…`, `D…`) is none, so a notice is never
-/// posted to a whole channel.
-pub(crate) fn member(address: &str) -> bool {
-    let mut chars = address.chars();
-    matches!(chars.next(), Some('U' | 'W'))
-        && address.len() > 1
-        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-}
 
 /// The message's text in Slack's markup: what waits, in which project, and the link to it.
 pub(crate) fn text(notice: &Notice) -> String {

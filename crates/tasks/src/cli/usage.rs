@@ -621,12 +621,16 @@ options:
     (
         "people",
         r#"usage: just tasks people [-h] [--as ACTOR] [--json] [--display DISPLAY]
-                         [--signin SIGNIN] [--git GIT] [--power POWER]
-                         [--group GROUP] ACTION [WORDS ...]
+                         [--signin SIGNIN] [--git GIT] [--email EMAIL]
+                         [--slack SLACK] [--whatsapp WHATSAPP]
+                         [--notice NOTICE] [--power POWER] [--group GROUP]
+                         ACTION [WORDS ...]
 "#,
         r#"usage: just tasks people [-h] [--as ACTOR] [--json] [--display DISPLAY]
-                         [--signin SIGNIN] [--git GIT] [--power POWER]
-                         [--group GROUP] ACTION [WORDS ...]
+                         [--signin SIGNIN] [--git GIT] [--email EMAIL]
+                         [--slack SLACK] [--whatsapp WHATSAPP]
+                         [--notice NOTICE] [--power POWER] [--group GROUP]
+                         ACTION [WORDS ...]
 
 Who is on this board and what each may do there, and the machine's profiles
 of them. With nobody added, the person at the machine is the only one on it,
@@ -642,8 +646,12 @@ places to groups, and every change of it and every hand-over. `add NAME` puts a
 person on the board, with --power and --group, and makes or fills their
 profile in the machine folder (people.json, mode 600) with --display,
 --signin SERVICE:SUBJECT (tailscale:LOGIN) and --git; `profile NAME` fills a
-profile alone. `remove NAME` takes a person off the board: their lines stay
-theirs, and their profile stays. `join NAME GROUP` and `leave NAME GROUP`;
+profile alone. --email, --slack and --whatsapp set where notices reach them,
+each held to its sender's rule, an empty one taking it away; --notice
+KIND=WAY sends a card, question or verdict notice by email, slack or
+whatsapp, and KIND= by none, as the page and the Mac app show every notice.
+`remove NAME` takes a person off the board: their lines stay theirs, and
+their profile stays. `join NAME GROUP` and `leave NAME GROUP`;
 `grant NAME POWER...` and `revoke NAME POWER...`, or with --group GROUP the
 group's powers; `group add GROUP [POWER...]` and `group remove GROUP`, which
 takes its members out of it. `map PLACE GROUP` gives a place a group and
@@ -653,7 +661,8 @@ default: a card or a task with no name written on it belongs to the group its
 place maps to, else the default's. People and groups share one name space, a short
 name no session's handle is, nor an adjective and a noun the board names
 sessions by (amber-heron). A refusal says why and writes nothing. Nothing
-printed or logged names a sign-in's subject.
+printed or logged names a sign-in's subject, an address or which way a
+notice goes.
 
 Every action but list, log and map alone is a change, which runs as `just tasks-people
 ACTION ...`: no allow rule passes that recipe, so an agent's run of it asks
@@ -672,6 +681,13 @@ options:
   --display DISPLAY  how the person is shown (add, profile)
   --signin SIGNIN    SERVICE:SUBJECT, a sign-in of theirs (add, profile)
   --git GIT          a git handle of theirs (add, profile)
+  --email EMAIL      the email a notice by mail goes to (add, profile)
+  --slack SLACK      their Slack member id, as U024BE7LH (add, profile)
+  --whatsapp WHATSAPP
+                     their WhatsApp number, +, country code, number (add,
+                     profile)
+  --notice NOTICE    KIND=WAY, the way a kind of notice goes by (add,
+                     profile)
   --power POWER      a power the person is added with (add)
   --group GROUP      a group the person is added in (add), or the group
                      whose powers change (grant, revoke)

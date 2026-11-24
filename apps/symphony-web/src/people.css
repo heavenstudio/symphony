@@ -11,7 +11,7 @@
   font-size: var(--fs-2xl);
   line-height: 1.2;
 }
-.people-sub {
+.people-refused {
   margin: 4px 0 0;
   color: var(--muted-foreground);
   font-size: var(--fs-sm);
@@ -204,6 +204,28 @@ li.people-power[data-held="group"],
   min-width: 0;
   max-width: 20rem;
 }
+/* A person's Notices: their addresses on one row, then each kind of notice and its way. */
+.people-notices form {
+  display: grid;
+  justify-items: start;
+}
+.people-notices .people-fields {
+  margin-top: 0;
+  justify-self: stretch;
+}
+.people-ways {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+}
+.people-way {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.people-way .dx-select {
+  min-width: 9.5rem;
+}
 .people-form {
   display: grid;
   gap: var(--sp-3);
@@ -218,6 +240,11 @@ li.people-power[data-held="group"],
   margin: 0;
   color: var(--muted-foreground);
   font-size: var(--fs-xs);
+}
+.people-warning {
+  margin: 0;
+  color: var(--dislike);
+  font-size: var(--fs-sm);
 }
 .people-said {
   margin: 0;

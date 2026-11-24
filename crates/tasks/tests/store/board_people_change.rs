@@ -71,6 +71,7 @@ fn given(display: &str, signins: &[&str], git: &[&str]) -> Given {
         display: Some(display.into()),
         signins: signins.iter().map(|text| signin(text)).collect(),
         git: git.iter().map(|git| (*git).to_string()).collect(),
+        ..Given::default()
     }
 }
 
@@ -279,6 +280,7 @@ fn a_display_name_of_spaces_or_a_blank_handle_gives_nothing() {
         display: Some("   ".into()),
         signins: vec![],
         git: vec![" ".into()],
+        ..Given::default()
     };
     assert!(blank.is_empty());
     assert!(Given::default().is_empty());
@@ -577,4 +579,261 @@ fn a_failure_is_told_with_or_without_its_cause_and_its_remedy() {
         failure.told(false, |_| unreachable!("no one left")),
         "bo's profile could not be written, and the board's change 3 still stands"
     );
+}
+
+/// What gives a profile `addresses` (way, address) and `notices` (kind, way), nothing else.
+fn reaching(addresses: &[(&str, &str)], notices: &[(&str, &str)]) -> Given {
+    let pairs = |pairs: &[(&str, &str)]| {
+        (pairs.iter())
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect()
+    };
+    Given {
+        addresses: pairs(addresses),
+        notices: pairs(notices),
+        ..Given::default()
+    }
+}
+
+/// Where `name`'s notice of each kind reaches, as the machine in `dir` holds it.
+fn reaches(dir: &Path, name: &str) -> Vec<Option<(&'static str, String)>> {
+    let profiles = Profiles::read(dir).unwrap();
+    ["card", "question", "verdict"]
+        .map(|kind| {
+            (profiles.reach(name, kind)).map(|reach| (reach.way(), reach.address().to_string()))
+        })
+        .to_vec()
+}
+
+#[test]
+fn a_person_sets_their_own_addresses_and_ways_each_as_its_sender_takes_it() {
+    let machine = Machine::new("reach-own").holding(&[anas()]);
+    let given = reaching(
+        &[
+            ("email", " ana@example.com "),
+            ("slack", "U024BE7LH"),
+            ("whatsapp", "+1 (555) 123-4567"),
+        ],
+        &[("card", "slack"), ("verdict", "whatsapp")],
+    );
+    assert_eq!(
+        change::profile(&machine.0, "ana", &given, Writer::Own),
+        Ok(true)
+    );
+    let ana = machine.profiles().get("ana").cloned().unwrap();
+    assert_eq!(ana.emails, ["ana@example.com"]);
+    assert_eq!(
+        serde_json::Value::Object(ana.chat.clone()),
+        serde_json::json!({"slack": "U024BE7LH", "whatsapp": "+15551234567"})
+    );
+    assert_eq!(
+        reaches(&machine.0, "ana"),
+        [
+            Some(("slack", "U024BE7LH".into())),
+            None,
+            Some(("whatsapp", "+15551234567".into()))
+        ]
+    );
+    assert_eq!(
+        change::profile(&machine.0, "ana", &given, Writer::Own),
+        Ok(false),
+        "a profile holding those already is not written"
+    );
+    // An empty address takes it away, an empty way sends the kind by none, and what is not named
+    // stays.
+    let taken = reaching(&[("slack", " ")], &[("card", ""), ("question", "email")]);
+    assert_eq!(
+        change::profile(&machine.0, "ana", &taken, Writer::Own),
+        Ok(true)
+    );
+    let ana = machine.profiles().get("ana").cloned().unwrap();
+    assert_eq!(ana.emails, ["ana@example.com"]);
+    assert_eq!(
+        serde_json::Value::Object(ana.chat),
+        serde_json::json!({"whatsapp": "+15551234567"})
+    );
+    assert_eq!(
+        serde_json::Value::Object(ana.preferences),
+        serde_json::json!({"verdict": "whatsapp", "question": "email"})
+    );
+    assert_eq!(
+        reaches(&machine.0, "ana"),
+        [
+            None,
+            Some(("email", "ana@example.com".into())),
+            Some(("whatsapp", "+15551234567".into()))
+        ]
+    );
+    // Taking away what is not held changes nothing.
+    let none = reaching(&[("slack", "")], &[("card", "")]);
+    assert_eq!(
+        change::profile(&machine.0, "ana", &none, Writer::Own),
+        Ok(false)
+    );
+}
+
+#[test]
+fn an_email_set_replaces_the_first_and_a_clear_takes_it_leaving_those_after_it() {
+    let machine = Machine::new("reach-email").holding(&[anas()]);
+    let email = |text: &str| reaching(&[("email", text)], &[]);
+    let set = |text: &str| change::profile(&machine.0, "ana", &email(text), Writer::Own);
+    let emails = || machine.profiles().get("ana").unwrap().emails.clone();
+    // As the page's one field sets it: A then B holds B alone, and a clear holds none.
+    assert_eq!(set("ana@example.com"), Ok(true));
+    assert_eq!(set("ana@work.example"), Ok(true));
+    assert_eq!(emails(), ["ana@work.example"]);
+    assert_eq!(set("ana@work.example"), Ok(false), "set again it is held");
+    assert_eq!(set(""), Ok(true));
+    assert!(emails().is_empty());
+    assert_eq!(set(""), Ok(false), "a clear of none changes nothing");
+    // Emails after the first, as a file written by hand holds them, stay as the first is
+    // replaced: a copy of the new one among them is dropped, never held twice.
+    let three = Profile {
+        emails: ["ana@example.com", "ana@home.example", "ana@work.example"]
+            .map(String::from)
+            .to_vec(),
+        ..anas()
+    };
+    let machine = Machine::new("reach-emails").holding(&[three]);
+    let set = |text: &str| change::profile(&machine.0, "ana", &email(text), Writer::Own);
+    let emails = || machine.profiles().get("ana").unwrap().emails.clone();
+    assert_eq!(set("ana@new.example"), Ok(true));
+    assert_eq!(
+        emails(),
+        ["ana@new.example", "ana@home.example", "ana@work.example"]
+    );
+    assert_eq!(set("ana@work.example"), Ok(true));
+    assert_eq!(emails(), ["ana@work.example", "ana@home.example"]);
+    assert_eq!(set("ana@work.example"), Ok(false));
+    // A clear takes the first alone: the one after it is the one a notice goes to then.
+    assert_eq!(set(" "), Ok(true));
+    assert_eq!(emails(), ["ana@home.example"]);
+}
+
+#[test]
+fn an_address_its_sender_refuses_is_refused_by_its_rule_and_nothing_is_written() {
+    let machine = Machine::new("reach-refused").holding(&[anas()]);
+    for (way, address, rule) in [
+        (
+            "email",
+            "Ana <ana@example.com>",
+            "the email address is no plain one: ASCII `local@domain`",
+        ),
+        (
+            "slack",
+            "C024BE7LH",
+            "the Slack member id is none: `U`, or `W`",
+        ),
+        (
+            "slack",
+            "u024be7lh",
+            "the Slack member id is none: `U`, or `W`",
+        ),
+        (
+            "whatsapp",
+            "15551234567",
+            "the WhatsApp number is none: it does not start with `+`",
+        ),
+        (
+            "whatsapp",
+            "+1555",
+            "the WhatsApp number is none: it has fewer than 7 digits",
+        ),
+        (
+            "sms",
+            "+15551234567",
+            "an address is by one of email, slack, whatsapp, and that way is none of them",
+        ),
+    ] {
+        // Beside an address that is fine, so a refusal is seen to write that one neither.
+        let fine = if way == "slack" {
+            ("email", "ana@example.com")
+        } else {
+            ("slack", "U024BE7LH")
+        };
+        let given = reaching(&[fine, (way, address)], &[]);
+        let why = refused(change::profile(&machine.0, "ana", &given, Writer::Own));
+        assert!(
+            why.starts_with(rule) && why.ends_with(": nothing was written"),
+            "{way}: {why}"
+        );
+        assert!(!why.contains(address), "{why}");
+        assert_eq!(machine.profiles().people, [anas()], "{way}");
+    }
+    for (kind, way, said) in [
+        (
+            "poll",
+            "slack",
+            "a notice is of one of card, question, verdict, and that kind is none of them",
+        ),
+        (
+            "card",
+            "sms",
+            "a notice goes by one of email, slack, whatsapp, or by none, and that way is none of them",
+        ),
+        (
+            "card",
+            "Slack",
+            "a notice goes by one of email, slack, whatsapp, or by none, and that way is none of them",
+        ),
+    ] {
+        let given = reaching(&[], &[("verdict", "email"), (kind, way)]);
+        let why = refused(change::profile(&machine.0, "ana", &given, Writer::Machine));
+        assert_eq!(why, format!("{said}: nothing was written"));
+        assert_eq!(machine.profiles().people, [anas()]);
+    }
+}
+
+#[test]
+fn only_the_person_and_the_person_at_the_machine_write_addresses_and_ways() {
+    let f = board();
+    let machine = Machine::new("reach-who").holding(&[anas()]);
+    let given = reaching(&[("slack", "U024BE7LH")], &[("card", "slack")]);
+    // Another person, an admin among them, writes no one's: on no board, nor in an add.
+    let why = refused(change::profile(&machine.0, "ana", &given, Writer::Other));
+    assert!(
+        why.starts_with("only the person at the machine, or ana,"),
+        "{why}"
+    );
+    let why = refused(change::add(
+        &f.store,
+        &machine.0,
+        "cy",
+        &[],
+        &[Power::Read],
+        &given,
+        Writer::Other,
+        BY,
+    ));
+    assert_eq!(
+        why,
+        "a person's addresses and the ways their notices go by are theirs and the person at the \
+         machine's to write: nothing was written"
+    );
+    assert!(named(&f.store).is_empty(), "nor is anyone on the board");
+    assert_eq!(machine.profiles().people, [anas()]);
+    // The person at the machine writes anyone's, in an add as on no board.
+    add(&f.store, &machine.0, "cy", &given, Writer::Machine);
+    assert_eq!(
+        reaches(&machine.0, "cy")[0],
+        Some(("slack", "U024BE7LH".into()))
+    );
+    assert_eq!(
+        change::profile(&machine.0, "ana", &given, Writer::Machine),
+        Ok(true)
+    );
+    assert_eq!(
+        reaches(&machine.0, "ana")[0],
+        Some(("slack", "U024BE7LH".into()))
+    );
+}
+
+#[test]
+fn what_is_given_prints_no_address() {
+    let given = reaching(&[("slack", "U024BE7LH")], &[("card", "slack")]);
+    let printed = format!("{given:?}");
+    assert!(!printed.contains("U024BE7LH"), "{printed}");
+    assert!(printed.contains("\"slack\""), "{printed}");
+    assert!(!reaching(&[], &[("card", "")]).is_empty());
+    assert!(!reaching(&[("email", "")], &[]).is_empty());
 }

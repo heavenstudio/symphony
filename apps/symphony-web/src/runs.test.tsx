@@ -1235,10 +1235,6 @@ describe("the schema updates", () => {
       ["no updates", { unread: null }],
       ["a state it does not know", answer([aServed({ state: "gone" as SchemaUpdate["state"] })])],
       [
-        "a time with no source",
-        answer([aServed({ reached: { at: 1, words: "x" } as SchemaUpdate["reached"] })]),
-      ],
-      [
         "a time with no record's words",
         answer([aServed({ reached: { at: 1, source: "x" } as SchemaUpdate["reached"] })]),
       ],
@@ -1305,21 +1301,19 @@ describe("the schema updates", () => {
     ]);
   });
 
-  it("say each time in UTC, one on the day of the one before by its hour, with its source", () => {
+  it("say each time in UTC, one on the day of the one before by its hour, with its words", () => {
     expect(updateTimes(aServed())).toEqual([
       {
         name: "reached",
         said: "reached Thu 19 Nov, 08:05 UTC",
-        source: "schema-seen.log",
         words: SEEN,
       },
       {
         name: "release installed",
         said: "release installed 09:34 UTC",
-        source: MANIFEST,
         words: MANIFEST,
       },
-      { name: "served", said: "served 12:51 UTC", source: "the server's hand-off", words: HANDED },
+      { name: "served", said: "served 12:51 UTC", words: HANDED },
     ]);
     const nextDay = aServed({
       served: stamp(DAY + 86_400 + 60, "this refresh found the server writing it"),
@@ -1329,13 +1323,12 @@ describe("the schema updates", () => {
       {
         name: "release installed",
         said: "release installed Thu 19 Nov, 09:34 UTC",
-        source: MANIFEST,
         words: MANIFEST,
       },
     ]);
   });
 
-  it("draw a served one with its wait, the part after its release and each time's source", () => {
+  it("draw a served one with its wait, the part after its release and each time's record on hover", () => {
     const html = renderToStaticMarkup(<UpdatesView updates={answer([aServed()])} error={null} />);
     expect(html).toContain('<h2 id="runs-updates-title">Schema updates</h2>');
     expect(html).toContain('data-update="alpha@23" data-state="served"');
@@ -1351,28 +1344,9 @@ describe("the schema updates", () => {
     expect(html).toContain(
       '<span title="the server&#x27;s hand-off: its reload&#x27;s line in server.log"> · served 12:51 UTC</span>',
     );
-    expect(html).toContain(
-      '<span class="update-sources">Times from schema-seen.log; release-2026-11-19&#x27;s manifest, written by its install; the server&#x27;s hand-off</span>',
-    );
+    // Where the times come from is not said under them: each time's record is its title.
+    expect(html).not.toContain("Times from");
     expect(html).not.toContain("run-note");
-    const once = renderToStaticMarkup(
-      <UpdatesView
-        updates={answer([
-          aServed({ reached: stamp(DAY, MANIFEST), served: null, available: null }),
-        ])}
-        error={null}
-      />,
-    );
-    expect(once, "a source named once").toContain(
-      '<span class="update-sources">Times from release-2026-11-19&#x27;s manifest, written by its install</span>',
-    );
-    const none = renderToStaticMarkup(
-      <UpdatesView
-        updates={answer([aServed({ reached: null, available: null, served: null })])}
-        error={null}
-      />,
-    );
-    expect(none, "no time, no source").not.toContain("update-sources");
   });
 
   it("draw the failures of one no longer open, and a task with no failure said, each as it is", () => {

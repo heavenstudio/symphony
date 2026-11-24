@@ -242,9 +242,11 @@ describe("an entry", () => {
     const html = draw(entryOf("herdr"));
     expect(html).toMatch(/^<article class="setting-entry" id="setting-herdr">/);
     expect(html).toContain('<span class="setting-state" data-on="true">On</span>');
+    // Its state's why alone: what it is for, its `about`, is drawn nowhere.
     expect(html).toContain(
-      '<p class="setting-about">Agents&#x27; terminals in Herdr. Agents&#x27; terminals open in Herdr.</p>',
+      '</header><p class="setting-why">Agents&#x27; terminals open in Herdr.</p><ul class="setting-needs">',
     );
+    expect(html).not.toContain("Agents&#x27; terminals in Herdr.");
     expect(html).toContain(
       '<li data-met="true"><span class="setting-mark" aria-hidden="true">✓</span>the hc program: Found on this machine: /bin/hc.</li>',
     );
@@ -287,9 +289,16 @@ describe("an entry", () => {
     expect(html).not.toContain("setting-state");
   });
 
-  it("draws one a server sent with nothing but its name", () => {
+  it("draws one a server sent with nothing but its name, and none of what it is for", () => {
+    const head =
+      '<article class="setting-entry" id="setting-later"><header class="setting-entry-head"><h3>A later thing</h3></header>';
     expect(draw({ id: "later", name: "A later thing", about: "What a plugin describes." })).toBe(
-      '<article class="setting-entry" id="setting-later"><header class="setting-entry-head"><h3>A later thing</h3></header><p class="setting-about">What a plugin describes.</p></article>',
+      `${head}</article>`,
+    );
+    expect(draw({ id: "later", name: "A later thing", about: "" })).toBe(`${head}</article>`);
+    const quiet = { word: "Read", why: "" };
+    expect(draw({ id: "later", name: "A later thing", about: "", state: quiet }), "no why").toBe(
+      `${head.replace("</h3>", '</h3><span class="setting-state">Read</span>')}</article>`,
     );
   });
 
@@ -341,8 +350,8 @@ describe("a write", () => {
     for (const [kind, text, value] of cases) {
       expect(writtenValue(kind, text), `${kind} ${JSON.stringify(text)}`).toBe(value);
     }
-    expect(unwritable("number")).toBe("Write a whole number; Remove takes the board's entry out.");
-    expect(unwritable("text")).toBe("Write a value; Remove takes the board's entry out.");
+    expect(unwritable("number")).toBe("Write a whole number.");
+    expect(unwritable("text")).toBe("Write a value.");
   });
 
   it("opens a field on the value a file or the store writes, and on none for a default", () => {
@@ -576,7 +585,10 @@ describe("a control", () => {
     expect(html).toContain(
       '<span class="setting-stored">The board&#x27;s store holds opus; the local settings file writes over it.</span>',
     );
-    expect(html).toMatch(/data-size="sm" type="button">Make it the project&#x27;s<\/button>/);
+    // What it does, which its words leave out, is its title.
+    expect(html).toMatch(
+      /data-size="sm" type="button" title="Commits it to symphony.toml, delivered by a pull request">Make it the project&#x27;s<\/button>/,
+    );
     expect(html).toMatch(/data-style="ghost" data-size="sm" type="button">Remove<\/button>/);
     const control = Control(executor.props);
     fire(control, named("Make it the project's"), "onClick");
@@ -609,9 +621,11 @@ describe("a control", () => {
   it("says a commit waiting for its delivery, and offers it no second time", () => {
     const html = draw(lowVolume().props);
     expect(html).toContain(
-      '<p class="setting-waiting">Waiting for its delivery by pull request (docs/owner-save-4: waiting for its pull request); the board&#x27;s entry stays in force until it is proved.</p>',
+      '<p class="setting-waiting">Waiting for its delivery by pull request (docs/owner-save-4: waiting for its pull request).</p>',
     );
-    expect(html).toMatch(/type="button" disabled="">Make it the project&#x27;s<\/button>/);
+    expect(html).toMatch(
+      /type="button" disabled="" title="[^"]+">Make it the project&#x27;s<\/button>/,
+    );
     expect(html).toMatch(/type="button">Remove<\/button>/);
   });
 
@@ -624,7 +638,9 @@ describe("a control", () => {
     expect(html).toContain(
       '<p class="setting-refused">The board&#x27;s store does not read its entry: the board&#x27;s store [agents.models] executor is not a model</p>',
     );
-    expect(html).toMatch(/type="button" disabled="">Make it the project&#x27;s<\/button>/);
+    expect(html).toMatch(
+      /type="button" disabled="" title="[^"]+">Make it the project&#x27;s<\/button>/,
+    );
   });
 
   it("keeps its record closed until it is opened", () => {
@@ -670,7 +686,7 @@ describe("the page", () => {
     expect(titles).toEqual([
       "integrations Integrations and tools",
       "models Models and limits",
-      "reviewed Shown here, changed by a reviewed task",
+      "reviewed Reviewed settings",
       "device This device",
     ]);
     expect([...html.matchAll(/id="setting-([a-z-]+)"/g)].map((found) => found[1])).toEqual([
@@ -689,9 +705,10 @@ describe("the page", () => {
       <SettingsView page={SAMPLE} error={null} missing={false} reread={() => undefined} />,
     );
     expect(html.match(/class="setting-control"/g)).toHaveLength(3);
-    expect(html).toContain(
-      '<li><span class="setting-tag" data-scope="board">this board</span>kept in the board&#x27;s store, in force at once</li>',
-    );
+    // The head is its title alone, and no legend tells what a tag says.
+    expect(html).toContain('<header class="settings-head"><h1>Settings</h1></header>');
+    expect(html).not.toContain("settings-legend");
+    expect(html).not.toContain("settings-sub");
     for (const id of ["herdr", "landing", "workflow", "appearance"]) {
       const entry = html.slice(html.indexOf(`id="setting-${id}"`)).split("</article>")[0] ?? "";
       expect(entry, id).not.toContain("setting-control");

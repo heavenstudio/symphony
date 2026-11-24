@@ -44,7 +44,7 @@ export function PatchText({ patch, truncated }: { patch: string; truncated: bool
       <section className="task-diff-patch" tabIndex={0} aria-label="File patch">
         <pre>{patch}</pre>
       </section>
-      {truncated && <p role="status">Patch stops at 256 KiB. View the full comparison in Git.</p>}
+      {truncated && <p role="status">Patch stops at 256 KiB.</p>}
     </>
   );
 }

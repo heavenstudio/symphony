@@ -368,6 +368,16 @@ or pattern (`pkill`, `killall`, `kill` fed by `pgrep`, `ps | grep` or `lsof`, a 
 Every script, stylesheet and font a Symphony page loads is in this repository and committed;
 nothing loads from a CDN or any outside URL.
 
+### `code/pages-explain-nothing`
+
+A page draws no sentence that explains it, a section, how it works or where its values come from,
+and no control that cannot act. What it says is a label, a unit, an error or a refusal, an empty
+state in one short line, a state, or a consequence on the control it follows from (its label, its
+title or its confirmation). A heading is a label of a few words, never a sentence. It holds for
+what the server and a plugin draw too: the product docs explain a page, never the page itself.
+The client's `src/explain-nothing.test.ts` refuses the classes such text was drawn in; review
+holds the rest.
+
 ## Keeping these rules
 
 ### `only-codify-what-was-infringed`

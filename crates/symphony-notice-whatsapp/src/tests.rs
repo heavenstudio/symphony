@@ -27,15 +27,11 @@ fn settings() -> Settings {
     .unwrap()
 }
 
+/// The number's rule is `symphony_notice::ways::whatsapp`, whose own tests hold each case: these
+/// hold that the program sends by it and says its refusal as its own.
 #[test]
 fn a_number_is_its_plus_and_its_digits() {
-    for (address, written) in [
-        (NUMBER, NUMBER),
-        ("+1 (555) 123-4567", NUMBER),
-        ("+44 20 7946 0958", "+442079460958"),
-        ("+6834002", "+6834002"),
-        ("+123456789012345", "+123456789012345"),
-    ] {
+    for (address, written) in [(NUMBER, NUMBER), ("+1 (555) 123-4567", NUMBER)] {
         assert_eq!(number(&to(address)), Ok(written.to_string()), "{address}");
     }
 }
@@ -48,36 +44,10 @@ fn a_number_without_its_plus_or_of_another_shape_is_never_sent_and_never_said() 
             "it does not start with `+` and its country code",
         ),
         (
-            "0015551234567",
-            "it does not start with `+` and its country code",
-        ),
-        (
-            "(555) 123-4567",
-            "it does not start with `+` and its country code",
-        ),
-        (
             "+1.555.123.4567",
             "it holds more than digits, spaces, dashes and parentheses",
         ),
-        (
-            "+1555123456x7",
-            "it holds more than digits, spaces, dashes and parentheses",
-        ),
-        (
-            "++15551234567",
-            "it holds more than digits, spaces, dashes and parentheses",
-        ),
-        (
-            "+1555/1234567",
-            "it holds more than digits, spaces, dashes and parentheses",
-        ),
-        ("+", "it has fewer than 7 digits or more than 15"),
-        ("+ - ()", "it has fewer than 7 digits or more than 15"),
         ("+683400", "it has fewer than 7 digits or more than 15"),
-        (
-            "+1234567890123456",
-            "it has fewer than 7 digits or more than 15",
-        ),
     ] {
         let refused = number(&to(address));
         assert_eq!(

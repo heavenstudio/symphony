@@ -365,8 +365,6 @@ type Source = "rollup" | "agents" | "health" | "spend" | "landed";
 interface Spec {
   id: string;
   title: string;
-  /** What it shows; `{per}` is the period's word. */
-  note: string;
   unit: Unit;
   source: Source;
   series: Series[];
@@ -419,11 +417,6 @@ function linesNone(bucket: Bucket): string {
     : "no line changed";
 }
 
-/** How the roll-up tells an hour's tokens, said under each chart of them. */
-const TOLD =
-  "An hour's tokens are what the board's usage gained between two hourly roll-ups, shared among " +
-  "the hours between them by time: an hour no two roll-ups span is a gap, never a zero.";
-
 /** The page's sections, each a heading and its charts. */
 export const SECTIONS: [string, Spec[]][] = [
   [
@@ -432,10 +425,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "done",
         title: "Tasks done",
-        note:
-          "Top-level tasks done, per {per}, each once at its last close: one approved again after " +
-          "its landing sent it back counts once. Hours and days are UTC; just tasks stats counts " +
-          "the same tasks by this machine's days.",
         unit: "count",
         source: "rollup",
         series: [{ name: "Done", mark: "bar", pick: { written: "flow.done" } }],
@@ -443,7 +432,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "open",
         title: "Open work",
-        note: "Top-level tasks in each open status at the end of each {per}.",
         unit: "count",
         source: "rollup",
         series: [
@@ -456,7 +444,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "task-hours",
         title: "Task-hours",
-        note: "Hours top-level tasks spent in each open status, per {per}.",
         unit: "hours",
         source: "rollup",
         series: [
@@ -469,7 +456,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "lead",
         title: "Lead time",
-        note: "Creation to last close of the top-level tasks done in each {per}.",
         unit: "seconds",
         source: "rollup",
         series: [line("Median", "lead.median"), line("p90", "lead.p90")],
@@ -477,7 +463,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "waits",
         title: "Waits between hands",
-        note: "The median wait that ended in each {per}, by kind.",
         unit: "seconds",
         source: "rollup",
         series: [
@@ -495,9 +480,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "agents",
         title: "Agents at work",
-        note:
-          "Sessions running a role on a task in progress or in review, the mean over each {per}; " +
-          "a session with two roles counts in both.",
         unit: "mean",
         source: "agents",
         series: [
@@ -511,7 +493,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "sessions",
         title: "Sessions",
-        note: "Sessions that connected, and changes to stale and to lost, per {per}.",
         unit: "count",
         source: "agents",
         series: [
@@ -523,7 +504,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "load",
         title: "Machine load",
-        note: "The machine's load average over a minute, its peak and mean in each {per}.",
         unit: "load",
         source: "agents",
         series: [line("Peak", "agents.load_1m.peak"), line("Mean", "agents.load_1m.mean")],
@@ -536,10 +516,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "cost",
         title: "Estimated cost",
-        note:
-          "What the model calls the board recorded cost in each {per}, by role, estimated at API " +
-          "list prices read {prices}: never money spent, as a subscription is not billed by the " +
-          `token. Tokens of a model with no price are in no bar. ${TOLD}`,
         unit: "dollars",
         source: "spend",
         series: spent("dollars"),
@@ -547,9 +523,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "tokens",
         title: "Tokens",
-        note:
-          "The tokens the board recorded in each {per}, by role: input, cache writes, cache reads " +
-          `and output together, every model's. ${TOLD}`,
         unit: "tokens",
         source: "spend",
         series: spent("tokens"),
@@ -557,10 +530,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "landed-cost",
         title: "Cost per landed task",
-        note:
-          "The top-level tasks landed in each {per}, each with its subtasks: the median and the p90 " +
-          "of what one cost. All in is the {per}'s whole estimated cost over the tasks it landed, " +
-          "orchestrators and work not landed included. A {per} that landed none has no point.",
         unit: "dollars",
         source: "landed",
         series: [
@@ -574,10 +543,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "line-cost",
         title: "Cost per 100 lines changed",
-        note:
-          "What the tasks landed in each {per} cost for each 100 lines their landings changed, " +
-          "added and removed; all in, the {per}'s whole cost over the lines that reached the " +
-          "default branch in it. Generated files and lock files left out, as in Lines changed.",
         unit: "dollars",
         source: "landed",
         series: [
@@ -595,7 +560,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "decisions",
         title: "Decisions",
-        note: "Cards answered and auto-approved in each {per}, and those open at its end.",
         unit: "count",
         source: "rollup",
         series: [
@@ -607,7 +571,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "commits",
         title: "Commits",
-        note: "Commits that reached the default branch, and its merges, per {per}.",
         unit: "count",
         source: "rollup",
         series: [bar("Commits", "git.commits"), bar("Merges", "git.merges")],
@@ -615,9 +578,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "lines",
         title: "Lines changed",
-        note:
-          "Lines added and removed on the default branch, per {per}; generated files and lock " +
-          "files left out.",
         unit: "count",
         source: "rollup",
         series: [bar("Added", "git.added"), at("Removed", "below", "git.removed")],
@@ -630,9 +590,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "defects",
         title: "Bounces, reds and reverts",
-        note:
-          "Moves from review back to work, reds filed, reverts, and changes asked by review, per " +
-          "{per}.",
         unit: "count",
         source: "rollup",
         series: [
@@ -645,7 +602,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "fix",
         title: "Time to fix a red",
-        note: "Filing to close of the reds closed done in each {per}.",
         unit: "seconds",
         source: "rollup",
         series: [line("Median", "red_fix.median"), line("p90", "red_fix.p90")],
@@ -658,9 +614,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "health",
         title: "Board requests",
-        note:
-          "Requests to the board that took a second or more, that got no answer, and failed " +
-          "dispatch and sweep passes, per {per}.",
         unit: "count",
         source: "health",
         series: [
@@ -715,22 +668,9 @@ function cover(bucket: Bucket, source: Source): number {
 export const PLACES_NAMED = 4;
 
 /** The workflow's charts: by phase and by state, of the same hours, never added together. */
-const WORKFLOW: [string, string, string, string][] = [
-  [
-    "phases",
-    "Time by phase",
-    "phases",
-    "Task-hours top-level tasks spent in each phase of the project's workflow, per {per}, a phase " +
-      "renamed since under the name its hours were spent under. Time on builds and tests is the " +
-      "runs', never counted here.",
-  ],
-  [
-    "states",
-    "Time by state",
-    "states",
-    "Task-hours top-level tasks spent in each coordination state, per {per}: the same hours as by " +
-      "phase, counted again by state.",
-  ],
+const WORKFLOW: [string, string, string][] = [
+  ["phases", "Time by phase", "phases"],
+  ["states", "Time by state", "states"],
 ];
 
 /** One phase's or state's hours in a period as the server writes them: `[id, label, hours]`. */
@@ -795,10 +735,9 @@ export function workflowSection(page: Page, hidden: string[]): [string, ChartDat
   if (!page.buckets.some((bucket) => bucket.has("workflow"))) return null;
   return [
     "Workflow",
-    WORKFLOW.map(([id, title, list, note]) => ({
+    WORKFLOW.map(([id, title, list]) => ({
       id,
       title,
-      note: note.replaceAll("{per}", page.grain),
       unit: "hours" as const,
       series: placeSeries(page.buckets, list).map(([name, values]) => ({
         name,
@@ -831,9 +770,6 @@ function fixedCharts(page: Page, hidden: string[]): [string, ChartData[]][] {
     specs.map((spec) => ({
       id: spec.id,
       title: spec.title,
-      note: spec.note
-        .replaceAll("{per}", page.grain)
-        .replaceAll("{prices}", page.prices === "" ? "on a day not named" : page.prices),
       unit: spec.unit,
       series: spec.series.map((series) => ({
         name: series.name,
@@ -1096,7 +1032,7 @@ export function spendSaid(page: Page): string {
   const told = windowSpend(page);
   const periods = page.buckets.length;
   if (told === null) {
-    return `No ${page.grain} of the window told its tokens: an hour's are told once two roll-ups span it.`;
+    return `No ${page.grain} of the window told its tokens.`;
   }
   const where =
     told.told === periods
@@ -1106,8 +1042,8 @@ export function spendSaid(page: Page): string {
 }
 
 /**
- * Under the charts of tokens: that every dollar is an estimate at API list prices, with the day
- * they were read, never money spent, and the models the window's tokens had no price for.
+ * Under the charts of tokens, the dollars' unit: an estimate at API list prices, with the day they
+ * were read, never money spent, and the models the window's tokens had no price for.
  */
 export function DollarNote({ page }: { page: Page }) {
   const costs = page.buckets.flatMap((bucket) => {
@@ -1122,9 +1058,8 @@ export function DollarNote({ page }: { page: Page }) {
   const unpriced = costs.length === 0 ? "" : unpricedSaid(unpricedOf(costs));
   return (
     <p className="reports-note">
-      {`Every dollar here is ${estimate(page.prices === "" ? "on a day not named" : page.prices)}; ` +
-        "a figure marked + unpriced leaves out the tokens of a model the price table does not name" +
-        (unpriced === "" ? "." : `: ${unpriced}.`)}
+      {`Every dollar here is ${estimate(page.prices === "" ? "on a day not named" : page.prices)}` +
+        (unpriced === "" ? "." : `; unpriced: ${unpriced}.`)}
     </p>
   );
 }
@@ -1162,11 +1097,7 @@ export function fromFirstRecord(page: Page): Page {
 /** What the page says while the roll-up has written no file: when the next one is due. */
 export function firstRollUp(page: Page): string {
   const [, , , hour] = date(page.to);
-  return (
-    "No roll-up yet. The machine's shared server writes this project's first day file at its " +
-    `first board tick after it starts, then once an hour: the next is due by ${twoDigits(hour)}:00 ` +
-    "UTC. A server of a project's own writes none."
-  );
+  return `No roll-up yet: the next is due by ${twoDigits(hour)}:00 UTC.`;
 }
 
 /** A style that sets custom properties. */
@@ -1251,9 +1182,7 @@ export function ReportsView({
       <header className="reports-head">
         <div>
           <h1>Reports</h1>
-          <p className="reports-sub">
-            {`${grainName(grain)} · the last ${rangeName(grain, days)} · times in UTC`}
-          </p>
+          <p className="reports-unit">Times in UTC</p>
         </div>
         <Controls grain={grain} days={days} onAsk={onAsk} />
       </header>
@@ -1403,7 +1332,7 @@ function Report({ page: whole, hidden, onToggle, lands }: ReportProps) {
         charts(page, hidden).map(([heading, section]) => (
           <section key={heading} className="reports-section" aria-label={heading}>
             <h2>{heading}</h2>
-            {heading === SPEND && <p className="reports-sub">{spendSaid(page)}</p>}
+            {heading === SPEND && <p className="reports-spend">{spendSaid(page)}</p>}
             <div className="reports-charts">
               {section.map((chart) => (
                 <NearViewport
