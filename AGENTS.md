@@ -6,11 +6,13 @@ The app's workspace owns its server, its web client and its Mac app under `apps/
 and release commands (`crates/symphony-build`), the wire types, the task board (`crates/tasks`),
 the plugin kit, the headless Chrome driver, the optional GitHub issue exchange
 (`crates/symphony-github`, [GITHUB](docs/operations/GITHUB.md)), the notice message a notice plugin
-takes (`crates/symphony-notice`, [NOTICES](docs/engineering/NOTICES.md)), the plugin that sends a
-notice by WhatsApp (`crates/symphony-notice-whatsapp`,
-[NOTICE_WHATSAPP](docs/operations/NOTICE_WHATSAPP.md)) and the tests' CPU meters and waits
-(`crates/test-time`). The app's formats and operating contract live in
-[docs/](docs/README.md). A consuming project owns its landing policy and shared-service safeguards.
+takes (`crates/symphony-notice`, [NOTICES](docs/engineering/NOTICES.md)), the plugins that send it
+by Slack (`crates/symphony-notice-slack`, [NOTICE_SLACK](docs/operations/NOTICE_SLACK.md)), by
+email (`crates/symphony-notice-email`, [NOTICE_EMAIL](docs/operations/NOTICE_EMAIL.md)) and by
+WhatsApp (`crates/symphony-notice-whatsapp`, [NOTICE_WHATSAPP](docs/operations/NOTICE_WHATSAPP.md))
+and the tests' CPU meters and waits (`crates/test-time`). The app's formats and operating
+contract live in [docs/](docs/README.md). A consuming project owns its landing policy and
+shared-service safeguards.
 
 This guide holds what every session here needs, each rule in one place: the standing rules are
 [RULES.md](RULES.md), which every agent follows, and how a part works is the document or module

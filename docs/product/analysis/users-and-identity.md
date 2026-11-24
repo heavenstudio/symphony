@@ -1409,7 +1409,9 @@ Each step can ship alone, and a machine with one person sees none of them.
    the places, and its group's members change its settings. The core makes notice messages, and
    the server's plugins for Slack, WhatsApp and email send them, each shipping on its own.
    Built: the notice message's format and its hand-off, which a plugin builds on
-   ([NOTICES](../../engineering/NOTICES.md)).
+   ([NOTICES](../../engineering/NOTICES.md)); the Slack plugin
+   ([NOTICE_SLACK](../../operations/NOTICE_SLACK.md)) and the email plugin
+   ([NOTICE_EMAIL](../../operations/NOTICE_EMAIL.md)).
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
    The note beside a verdict is written with it. A personal agent, tied to its person on the

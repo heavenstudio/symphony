@@ -1,6 +1,6 @@
 # Operations
 
-Setting the Symphony up and running it: a first project, the commands, the project file, the board's database, GitHub and the repositories around this one. The other areas are in the [index](../README.md).
+Setting the Symphony up and running it: a first project, the commands, the project file, the board's database, GitHub, notices by Slack and by email and the repositories around this one. The other areas are in the [index](../README.md).
 
 - [Getting started](GETTING_STARTED.md) — a project of your own, in order: install, `symphony
   init`, a first document and decision card, a first task to its landing, agents on the work.
@@ -21,6 +21,12 @@ Setting the Symphony up and running it: a first project, the commands, the proje
   turned off unless the default branch commits its settings: its settings and token files, its
   commands, what a reconcile writes, what it keeps, what pauses it, and how a land is delivered
   and the protection that delivery reads.
+- [Sending notices by Slack](NOTICE_SLACK.md) — the optional `symphony-notice-slack`, a notice
+  plugin apart from the core: the Slack app and its token, where the token is kept, building it,
+  what it sends, its exit statuses and what each Slack refusal asks of you.
+- [Notices by email](NOTICE_EMAIL.md) — the email notice plugin, apart from the core: building
+  it, its settings and password in the machine folder, the mail it sends by SMTP and what each
+  exit says.
 - [WhatsApp notices](NOTICE_WHATSAPP.md) — `symphony-notice-whatsapp`, the notice plugin that
   sends a person's notice by WhatsApp: what Meta must give and approve first, the person's
   agreement and the cost, its folder, settings and token, and what its exit says.
