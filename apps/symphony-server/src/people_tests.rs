@@ -725,7 +725,9 @@ async fn profiles_that_do_not_parse_are_said_by_where_and_never_by_a_value_in_th
     let problem = page.problem.unwrap_or_default();
     assert!(
         problem.starts_with("the machine's profiles could not be read: ")
-            && problem.contains("people.json: line 1, column 56: people[0].signins: a value of a type or form"),
+            && problem.contains(
+                "people.json: line 1, column 56: people[0].signins: a value of a type or form"
+            ),
         "{problem}"
     );
     assert!(!problem.contains("ana@example.com"), "{problem}");
