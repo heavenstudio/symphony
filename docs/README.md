@@ -102,6 +102,9 @@ none of the repositories around this one: its board runs on the machine's Postgr
   adapter, turned off unless the default branch commits its settings: its settings and token
   files, its commands, what a reconcile writes, what it keeps, what pauses it, and how a land is
   delivered and the protection that delivery reads.
+- [Notices by email](operations/NOTICE_EMAIL.md) — the email notice plugin, apart from the core:
+  building it, its settings and password in the machine folder, the mail it sends by SMTP and
+  what each exit says.
 - [Operating the board](operations/BOARD_OPERATIONS.md) — the board's store and the schema
   contract between its builds, which build moves a live board, who writes it, its server,
   snapshots and holds, what the command may write, stuck servers, a board that went back or was

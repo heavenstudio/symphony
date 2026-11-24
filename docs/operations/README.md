@@ -1,6 +1,6 @@
 # Operations
 
-Setting the Symphony up and running it: a first project, the commands, the project file, the board's database, GitHub and the repositories around this one. The other areas are in the [index](../README.md).
+Setting the Symphony up and running it: a first project, the commands, the project file, the board's database, GitHub, notices by email and the repositories around this one. The other areas are in the [index](../README.md).
 
 - [Getting started](GETTING_STARTED.md) — a project of your own, in order: install, `symphony
   init`, a first document and decision card, a first task to its landing, agents on the work.
@@ -21,6 +21,9 @@ Setting the Symphony up and running it: a first project, the commands, the proje
   turned off unless the default branch commits its settings: its settings and token files, its
   commands, what a reconcile writes, what it keeps, what pauses it, and how a land is delivered
   and the protection that delivery reads.
+- [Notices by email](NOTICE_EMAIL.md) — the email notice plugin, apart from the core: building
+  it, its settings and password in the machine folder, the mail it sends by SMTP and what each
+  exit says.
 - [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
   public repository into a private copy with its ancestry kept, the export of selected reusable
   changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.
