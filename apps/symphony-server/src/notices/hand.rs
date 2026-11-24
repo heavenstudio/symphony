@@ -1,14 +1,15 @@
 //! One hand of a notice to its way's program (docs/engineering/NOTICES.md, "The hand-off"): the
 //! program started with no argument in a process group of its own, the message written on its
-//! stdin and its stdin closed, its end waited for as the kernel's event, at most [`MOST`]. A program
-//! that has not ended by then is ended, and so is whatever of its group still runs once it ends,
-//! before it is reaped: the leader not yet reaped holds the group's id, so no other process's group
-//! is signalled for it. The server's stop ends a hand under way the same way ([`Running::stop`]).
+//! stdin and its stdin closed, its end waited for as the kernel's event, at most its bound
+//! ([`MOST`] in the server). A program that has not ended by then is ended, and so is whatever of
+//! its group still runs once it ends, before it is reaped: the leader not yet reaped holds the
+//! group's id, so no other process's group is signalled for it. The server's stop ends a hand under
+//! way the same way ([`Running::stop`]).
 //!
 //! What the program says on stderr is kept, with every hidden word (the address, the link)
 //! replaced, so nothing a log line repeats of it holds either. It is heard until the pipe closes,
-//! and at most [`HEARD_AFTER`] once the program and its group have ended: a process that left the
-//! group and holds the pipe never holds the hand.
+//! and at most its bound ([`HEARD_AFTER`] in the server) once the program and its group have ended:
+//! a process that left the group and holds the pipe never holds the hand.
 
 use std::io::{self, Read, Write as _};
 use std::path::Path;
@@ -42,6 +43,7 @@ impl Bounds {
         heard: HEARD_AFTER,
     };
 }
+
 /// The most of a program's stderr kept: a program that says more is still read to its end.
 const KEPT: usize = 64 * 1024;
 /// The most of what it said that a line repeats.
@@ -86,16 +88,17 @@ impl Running {
 }
 
 /// Hands `line` to `program`, the words `hidden` never repeated of what it says: [`Handed`].
-/// `ends_within` waits for the process of the pid it is given to end, answering whether it ended
-/// within its bound (in the server, [`symphony_board::sys::gone`] for [`MOST`]), and what it said
-/// is heard at most `heard_after` once it and its group ended (in the server, [`HEARD_AFTER`]).
+/// `ends_within` waits for the process of the pid it is given to end within the bound it is given,
+/// `bounds.ends`, answering whether it did (in the server, [`symphony_board::sys::gone`]), and what
+/// it said is heard at most `bounds.heard` once it and its group ended ([`Bounds::SERVER`] in the
+/// server).
 pub(crate) fn hand(
     program: &Path,
     line: &str,
     hidden: &[&str],
     running: &Running,
-    ends_within: &dyn Fn(u32) -> io::Result<bool>,
-    heard_after: Duration,
+    ends_within: &dyn Fn(u32, Duration) -> io::Result<bool>,
+    bounds: Bounds,
 ) -> Handed {
     let mut command = symphony::children::command(program);
     command
@@ -131,7 +134,7 @@ pub(crate) fn hand(
             .and_then(|()| stdin.write_all(b"\n"));
     }
     let heard = child.stderr.take().map(Heard::listen);
-    let ended = ends_within(pid);
+    let ended = ends_within(pid, bounds.ends);
     {
         // Ended, not ended within its bound, or its end not watched: the leader is not reaped yet,
         // so what of its group still runs ends now, and the wait below is never unbounded.
@@ -141,7 +144,7 @@ pub(crate) fn hand(
     }
     let status = child.wait();
     let said = heard
-        .map(|heard| heard.within(heard_after))
+        .map(|heard| heard.within(bounds.heard))
         .unwrap_or_default();
     let said = hidden_in(&said, hidden);
     if running.stopping() {
@@ -150,7 +153,7 @@ pub(crate) fn hand(
     match (ended, status) {
         (Ok(false), _) => Handed::Later(format!(
             "it did not end within {} s, so it and its group were ended{}",
-            MOST.as_secs(),
+            bounds.ends.as_secs(),
             colon(&said)
         )),
         (Err(error), _) => Handed::Later(format!(

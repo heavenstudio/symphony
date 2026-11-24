@@ -5,8 +5,8 @@
 //! a wake finds and ends at the stop.
 
 use super::super::Hub;
-use super::{Read, Said};
-use crate::notices::hand::{Bounds, Running};
+use super::{Said, Turns};
+use crate::notices::hand::Bounds;
 use crate::notices::runner::Runner;
 use crate::testing::board::{Fixture, Seed};
 use crate::testing::{Tree, repository_holding, store_on};
@@ -165,27 +165,19 @@ fn profiles() -> Profiles {
     }
 }
 
-/// One turn at a time, as the worker takes them.
-#[derive(Default)]
-struct Passes {
-    runner: Option<Runner>,
-    last: Option<Read>,
-    said: Said,
-    running: Running,
+/// The worker's turns of the project `symphony`, taken one at a time by the test.
+fn turns() -> Turns {
+    Turns::new(
+        "symphony",
+        bounds(),
+        Box::new(|| ORIGIN.to_string()),
+        Arc::default(),
+    )
 }
 
-impl Passes {
+impl Turns {
     fn pass(&mut self, hub: &Hub) {
-        let mut origin = || ORIGIN.to_string();
-        hub.notice_turn(
-            &mut self.runner,
-            &mut self.last,
-            &self.running,
-            bounds(),
-            &mut origin,
-            &mut self.said,
-            "symphony",
-        );
+        hub.notice_turn(self);
     }
 
     /// The runner's cursor: none before a runner opened its record and looked.
@@ -210,7 +202,7 @@ fn ask_everything(telling: &Telling) {
 #[test]
 fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_by_their_way() {
     let telling = Telling::new(false);
-    let mut passes = Passes::default();
+    let mut passes = turns();
     passes.pass(&telling.hub);
     assert!(passes.cursor().is_some(), "the first look");
     assert!(telling.told().is_empty(), "nothing of what stood");
@@ -267,7 +259,7 @@ fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_b
 #[test]
 fn a_board_that_names_nobody_tells_no_one() {
     let telling = Telling::new(true);
-    let mut passes = Passes::default();
+    let mut passes = turns();
     passes.pass(&telling.hub);
     ask_everything(&telling);
     passes.pass(&telling.hub);
@@ -296,6 +288,31 @@ fn the_worker_hands_what_a_wake_finds_and_ends_at_the_stop() {
     assert!(worker.thread.lock().unwrap().is_none(), "joined");
     assert!(worker.running.stopping());
     telling.hub.wake_notices();
+}
+
+#[test]
+fn a_second_start_starts_no_second_worker() {
+    let telling = Telling::new(false);
+    let hub = &telling.hub;
+    hub.start_notices_with("symphony", bounds(), Box::new(|| ORIGIN.to_string()));
+    let second = Arc::new(());
+    let held = Arc::clone(&second);
+    hub.start_notices_with(
+        "symphony",
+        bounds(),
+        Box::new(move || {
+            let _ = &held;
+            ORIGIN.to_string()
+        }),
+    );
+    assert_eq!(
+        Arc::strong_count(&second),
+        1,
+        "its origin is let go as it returns: no worker took it"
+    );
+    hub.stop_notices();
+    let worker = hub.notice_worker.get().unwrap();
+    assert!(worker.thread.lock().unwrap().is_none(), "the first, joined");
 }
 
 /// A wall-clock backstop a stall alone reaches: six fake programs' runs on a loaded machine.
@@ -332,7 +349,7 @@ fn what_the_machine_folder_does_not_let_it_trust_tells_no_one_said_once() {
         said.0
     );
     chmod(&key, 0o600);
-    let mut passes = Passes::default();
+    let mut passes = turns();
     // Profiles that do not read: no look, said.
     let profiles = machine.join("people.json");
     let kept = std::fs::read(&profiles).unwrap();
@@ -381,7 +398,7 @@ fn a_fault_is_said_once_until_it_changes_or_clears() {
 fn a_replacement_tells_nothing_until_its_gate_opens_then_tells_from_the_record_as_it_stands() {
     let telling = Telling::new(false);
     // The generation being replaced: its runner holds the record and tells.
-    let mut old = Passes::default();
+    let mut old = turns();
     old.pass(&telling.hub);
     assert!(old.cursor().is_some());
     // The replacement's hub on the same project, its gate held until its hand-off commits.
@@ -393,7 +410,7 @@ fn a_replacement_tells_nothing_until_its_gate_opens_then_tells_from_the_record_a
     replacement.connect_reader = Box::new(move |_| Ok(store_on(&board)));
     replacement.refresh_page("", &telling.root).unwrap();
     replacement.gate_recorders(Arc::clone(&gate));
-    let mut new = Passes::default();
+    let mut new = turns();
     let record = telling.root.join("artifacts/notices.json");
     let before = std::fs::read(&record).unwrap();
     ask_everything(&telling);
