@@ -228,9 +228,17 @@ impl Client {
 
     /// The database this client names, made on its server if it is not there: through a
     /// connection to [`MAINTENANCE`]. Another's making it first is its being there.
+    ///
+    /// It is a copy of `template0`, which takes no connection, never of `template1`, which does:
+    /// PostgreSQL refuses to copy a database another session is in (`55006`) once it has waited
+    /// 5 s for it to leave, and an autovacuum worker visits `template1` as it does every
+    /// database, slow to leave on a loaded machine. A board's server is one its board made
+    /// (`initdb`, [`crate::server::postgres`]), and nothing adds to its `template1`, so the two
+    /// copies hold the same.
     pub fn make_database(&self) -> Result<(), DbError> {
         let maker = self.of(MAINTENANCE);
-        match maker.simple(&format!("CREATE DATABASE {}", self.database)) {
+        let make = format!("CREATE DATABASE {} TEMPLATE template0", self.database);
+        match maker.simple(&make) {
             Ok(_) => Ok(()),
             Err(DbError::Failed(said)) if database_there(&said) => Ok(()),
             Err(other) => Err(other),
