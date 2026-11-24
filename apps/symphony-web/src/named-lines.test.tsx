@@ -196,6 +196,7 @@ describe("every other writer a page draws from a stored line or row", () => {
       by: "default",
       said: "the board's default",
       hand_to: ["design", "owner"],
+      decides: true,
     };
     const line = () =>
       renderToStaticMarkup(<OwnerLine owner={theirs} id="hand" hand={async () => ({})} />);

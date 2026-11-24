@@ -780,9 +780,7 @@ export function Person({
   const joinable = page.groups.filter((group) => !person.groups.includes(group.name));
   const profiled = writes !== undefined && (page.machine || page.you === person.name);
   const reach =
-    person.signins.length === 0
-      ? "No sign-in yet"
-      : `Signs in by ${person.signins.join(", ")}`;
+    person.signins.length === 0 ? "No sign-in yet" : `Signs in by ${person.signins.join(", ")}`;
   return (
     <article className="people-person" id={part}>
       <header className="people-person-head">
