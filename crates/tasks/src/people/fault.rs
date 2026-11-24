@@ -6,10 +6,11 @@
 //! second reader of every profile into each binary that reads them.
 //!
 //! A member the file's object, a profile or a sign-in does not take is read into like any other.
-//! serde_json skips its value without visiting it, its strings' surrogates unchecked, so that reader
-//! stopped at its key; where the key is one of a profile's field names, the field said now goes on
-//! into it: a fault in a top-level `"signins": [{"service" 1}]` is at `signins[0]`, where that
-//! reader said `signins`.
+//! serde_json skips its value without visiting it, so that reader stopped at its key; where the key
+//! is one of a profile's field names, the field said now goes on into it: a fault in a top-level
+//! `"signins": [{"service" 1}]` is at `signins[0]`, where that reader said `signins`. A string
+//! serde_json skips closes at its quote whatever escape stands before it, as it checks a surrogate
+//! only in a string it reads as text.
 
 use serde_json::Value;
 use serde_json::error::Category;
@@ -87,14 +88,19 @@ impl Frame {
 /// first: none for a fault in the text's one value itself, or after it.
 pub(super) fn steps(text: &str, error: &serde_json::Error) -> Vec<Step> {
     let data = error.classify() == Category::Data;
-    // serde_json's column counts the bytes it read on its line, and the byte it looked at where
-    // it found more than a value: after the text's one value, or a list read as a struct with
-    // more items than its fields, whose next item it never read.
+    // serde_json's column counts the bytes it read on its line, and one the scan drops: the byte
+    // it looked at where it found more than a value (after the text's one value, or a list read
+    // as a struct with more items than its fields, whose next item it never read), or the byte it
+    // took after a leading surrogate's `\u` escape (D800 to DBFF) where the trailing one's `\` or
+    // `u` goes, a closing quote too, which leaves the string cut short as serde_json left it.
     let lines: usize = (text.split_inclusive('\n'))
         .take(error.line().saturating_sub(1))
         .map(str::len)
         .sum();
-    let unread = usize::from(error.to_string().starts_with("trailing characters"));
+    let said = error.to_string();
+    let unread = usize::from(
+        said.starts_with("trailing characters") || said.starts_with("unexpected end of hex escape"),
+    );
     let bytes = text.as_bytes();
     let bytes = (bytes.get(..(lines + error.column()).saturating_sub(unread))).unwrap_or(bytes);
     let mut outer = Vec::new();
@@ -178,25 +184,15 @@ fn scalar(bytes: &[u8], at: usize) -> Option<usize> {
 }
 
 /// Where the string whose opening quote is at `at` ends, after its closing quote: none where it is
-/// cut short, or where a leading surrogate's `\u` escape (D800 to DBFF) stands directly before a
-/// quote that is the last byte serde_json read. Reading a string as text, it takes that quote where
-/// the trailing surrogate's `\` goes and faults at it, the string still open; a string it skips
-/// closes there, its surrogates unchecked, and any fault is later. Any other escape is read whole,
-/// `\u`'s four bytes with it whatever they are.
+/// cut short. An escape is read whole, `\u`'s four bytes with it whatever they are; the byte
+/// serde_json takes after a leading surrogate's where it faults, a closing quote too, is cut off
+/// before this reads ([`steps`]).
 fn string(bytes: &[u8], at: usize) -> Option<usize> {
     let mut i = at + 1;
     loop {
         match bytes.get(i)? {
             b'"' => return Some(i + 1),
-            b'\\' if bytes.get(i + 1) == Some(&b'u') => {
-                let leading = (bytes.get(i + 2..i + 6))
-                    .and_then(|hex| u16::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok())
-                    .is_some_and(|n| (0xD800..=0xDBFF).contains(&n));
-                if leading && bytes.get(i + 6) == Some(&b'"') && bytes.len() == i + 7 {
-                    return None;
-                }
-                i += 6;
-            }
+            b'\\' if bytes.get(i + 1) == Some(&b'u') => i += 6,
             b'\\' => i += 2,
             _ => i += 1,
         }

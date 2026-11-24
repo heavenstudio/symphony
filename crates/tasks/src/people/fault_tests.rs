@@ -206,6 +206,17 @@ fn a_member_no_profile_takes_is_read_into() {
         (r#"{"x": "\ud800", "people": 4}"#, vec![key("people")]),
         (r#"{"signins": "\ud800", "people": 4}"#, vec![key("people")]),
         (r#"{"signins": "\ud800"} x"#, vec![]),
+        // The text ending at such a string's quote is a fault at the same byte, its container's.
+        (r#"{"signins": "\ud800""#, vec![]),
+        (r#"{"signins": ["\ud800""#, vec![key("signins")]),
+        (
+            r#"{"people": [{"name": "ana", "service": "\ud800""#,
+            vec![key("people"), Step::Item(0)],
+        ),
+        (
+            r#"{"people": [{"name": "ana", "signins": [{"service": "s", "name": "\ud800""#,
+            vec![key("people"), Step::Item(0), key("signins"), Step::Item(0)],
+        ),
     ] {
         assert_eq!(profiles(text), at, "{text}");
     }
