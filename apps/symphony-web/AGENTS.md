@@ -69,7 +69,8 @@ What the kinds share:
   draws as the blocks do, are `media-picture.tsx`.
 - **The shared controls** (`button.tsx`, `input.tsx`, `textarea.tsx`, `select.tsx`, `tabs.tsx`,
   `tooltip.tsx`), the attach control (`attach.tsx`, its sending `attach-upload.ts`), the task card
-  (`taskcard.tsx`) and a task's work phases (`work-phases.tsx`).
+  (`taskcard.tsx`), a task's work phases (`work-phases.tsx`) and whose a card or a task is, with
+  its hand-over (`owner.tsx`).
 - **Styles** (`styles/`, [their README](src/styles/README.md)): the shared sheet
   `styles/shared.css`, which states the cascade's order, the media layer's `styles/media.css`,
   and a kind's own sheet, imported by its module.

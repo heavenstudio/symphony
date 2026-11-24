@@ -341,7 +341,7 @@ fn version_answers_this_builds_api_and_schema_without_the_board() {
         .insert("TASKS_SERVER".into(), crate::UNREACHED_SERVER.into());
     assert_eq!(
         answer(&env, json!({"method": "version"})),
-        json!({"ok": {"api": {"major": 2, "minor": 7},
+        json!({"ok": {"api": {"major": 2, "minor": 8},
             "schema": symphony_board::schema::VERSION}})
     );
     let said = answer(&env, json!({"method": "version", "args": {"major": 2}}));

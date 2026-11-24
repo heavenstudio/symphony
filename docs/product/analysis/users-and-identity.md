@@ -1411,7 +1411,10 @@ Each step can ship alone, and a machine with one person sees none of them.
    Built: the notice message's format and its hand-off, which a plugin builds on
    ([NOTICES](../../engineering/NOTICES.md)); the Slack plugin
    ([NOTICE_SLACK](../../operations/NOTICE_SLACK.md)) and the email plugin
-   ([NOTICE_EMAIL](../../operations/NOTICE_EMAIL.md)).
+   ([NOTICE_EMAIL](../../operations/NOTICE_EMAIL.md)); the board's map of places to groups, kept by
+   its admins, a card's `*For:*` and a task's `--group`, the read of whose a thing is and what gave
+   it, drawn on a task's page and a card, and its hand-over by a member of its group
+   ([TASKS](../../workflow/TASKS.md#which-group-a-thing-belongs-to)).
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
    The note beside a verdict is written with it. A personal agent, tied to its person on the

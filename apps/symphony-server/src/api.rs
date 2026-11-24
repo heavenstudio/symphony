@@ -77,6 +77,7 @@ pub(crate) const READS: &[&str] = &[
     symphony_api::SCHEMA_UPDATES_PATH,
     symphony_api::SETTINGS_PATH,
     symphony_api::PEOPLE_PATH,
+    symphony_api::CARD_OWNERS_PATH,
     symphony_api::workflow::WORKFLOW_PATH,
     symphony_api::workflow::WORKFLOW_ACTIONS_PATH,
     symphony_api::workflow::WORKFLOW_GUARDS_PATH,
@@ -375,6 +376,7 @@ fn arguments(asked: &Asked, request: &Request) -> Result<(), Box<Response>> {
             | "/api/versions"
             | "/api/diff"
             | "/api/asks"
+            | symphony_api::CARD_OWNERS_PATH
     ) {
         document_argument(request).map_err(bad)?;
     }
@@ -620,6 +622,7 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
         | symphony_api::TASK_TIMELINE_PATH
         | symphony_api::TASK_TOKENS_PATH
         | symphony_api::TASK_COSTS_PATH
+        | symphony_api::CARD_OWNERS_PATH
         | "/api/task-history" => board_read(shared, hub, &asked, &request).await,
         _ => page_read(&hub, scope, path),
     }
@@ -770,6 +773,16 @@ async fn board_read(
     // Whether a pane is focused or its screen shown depends on where the page was asked.
     let local = matches!(path.as_str(), "/api/agent-page" | "/api/task-page")
         && crate::session_go::local(shared, request).await;
+    // Whose a thing is is said to who asks, and whom they may hand it to; a hosted visitor, who
+    // saves nothing here, is told whose it is alone.
+    let asker = if hosted {
+        (String::new(), false)
+    } else {
+        let actor = crate::front::Admitted::actor(shared, request.extensions());
+        let name = actor.name().to_string();
+        (name, crate::front::Admitted::machine(request.extensions()))
+    };
+    let document = query(request, "path").unwrap_or_default();
     let read = crate::spawn::blocking(move || {
         let path = path.as_str();
         if matches!(path, "/api/agents" | "/api/agent-page") {
@@ -833,7 +846,14 @@ async fn board_read(
                     &root,
                 )))
             }),
+            symphony_api::CARD_OWNERS_PATH => {
+                symphony::owners::document(&store, &root, &document, &asker.0, asker.1)
+                    .map(|owners| no_store(Json(owners)))
+                    .map_err(|why| owners_failure(&why))
+            }
             "/api/task-page" => store.get(&slug).map_err(task_failure).and_then(|record| {
+                let owner = symphony::owners::task(&store, &record, &asker.0, asker.1)
+                    .map_err(|e| unavailable(&e.to_string(), ""))?;
                 symphony::taskview::page(&store, &record, &root)
                     .map(|page| {
                         let mut page = if hosted {
@@ -842,6 +862,7 @@ async fn board_read(
                             hub.observed_page(page)
                         };
                         page.local = local;
+                        page.owner = owner;
                         // The room its gates held last time, from what is kept: the page never
                         // waits on them.
                         page.gates = hub.gates.seen(&root, &record.slug);
@@ -858,6 +879,16 @@ async fn board_read(
         hub.read_on(&store, read)
     });
     answered(read.await, "")
+}
+
+/// A document's cards' owners refused: a route no page is, 404, as a document's read answers it,
+/// else the board's failure.
+fn owners_failure(why: &str) -> Failed {
+    if why.starts_with("not found") {
+        (StatusCode::NOT_FOUND, why.to_string())
+    } else {
+        unavailable(why, "")
+    }
 }
 
 /// The page of agents `/api/agent-page` was asked for.

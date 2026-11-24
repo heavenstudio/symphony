@@ -1,0 +1,370 @@
+//! Which group a thing belongs to (`symphony_board::people::ownership`, `Store::map_place`,
+//! `Store::hand_task`, `Store::hand_card`): the map an admin keeps, each change a numbered line of
+//! the board's ownership log, read back as the map; a task filed for a group, the group its place
+//! maps to else; a hand-over by a member of its group, recorded with who made it, and one refused
+//! to a non-member with nothing written. A board with nobody named gives every thing to the person
+//! at the machine, and a board made without the step reads no map and takes no change.
+
+use crate::common::{Fixture, HOST, NOW, Seed, database, refused};
+use symphony_board::people::Power;
+use symphony_board::people::ownership::{By, Did, Kind, MACHINE, Place, Thing};
+use symphony_board::schema::{ADDED, OWNERSHIP};
+use symphony_board::{NewTask, Opening, Schema, Store};
+
+/// The session every change of the map is recorded as made by.
+const BY: &str = "amber-heron";
+
+/// A board naming ana (in design) and bo (in engineering), with both groups, and the area `app`
+/// mapped to engineering.
+fn board() -> Fixture {
+    let f = Fixture::new(Seed::default().session(BY));
+    for group in ["design", "engineering"] {
+        f.store.add_group(group, &[Power::Decide], BY).unwrap();
+    }
+    f.store
+        .add_person("ana", &["design".into()], &[], BY)
+        .unwrap();
+    f.store
+        .add_person("bo", &["engineering".into()], &[], BY)
+        .unwrap();
+    f.store
+        .map_place(&Place::Area("app".into()), "engineering", BY)
+        .unwrap();
+    f
+}
+
+/// A store on `f`'s board writing for the person `name`.
+fn person(f: &Fixture, name: &str) -> Store {
+    f.other().for_person(name)
+}
+
+/// Whose the task `slug` is, as `(name, kind, by)`.
+fn whose(f: &Fixture, slug: &str) -> (String, Kind, By) {
+    let task = f.store.get(slug).unwrap();
+    let owning = f.store.task_owning(&task).unwrap();
+    (owning.name, owning.kind, owning.by)
+}
+
+/// The board's line on `slug`'s thread, newest.
+fn newest_line(f: &Fixture, slug: &str) -> String {
+    let thread = f.store.thread(slug).unwrap();
+    thread.last().expect("a line").text.clone()
+}
+
+#[test]
+fn a_board_with_nobody_named_gives_every_card_and_task_to_the_person_at_the_machine() {
+    let f = Fixture::new(Seed::default().session(BY));
+    f.store.add_group("design", &[], BY).unwrap();
+    f.store
+        .map_place(&Place::Area("app".into()), "design", BY)
+        .unwrap();
+    let filed = f.task_with(NewTask {
+        group: Some("design".into()),
+        ..NewTask::new("app/x", "X", BY)
+    });
+    assert_eq!(
+        filed.group(),
+        Some("design"),
+        "the name is written all the same"
+    );
+    assert_eq!(
+        whose(&f, "app/x"),
+        (MACHINE.into(), Kind::Machine, By::Default)
+    );
+    let card = Thing::Card {
+        slug: "new-palette".into(),
+        route: "docs/design/palette.md".into(),
+    };
+    let owning = f.store.owning(&card, Some("design")).unwrap();
+    assert_eq!(
+        (owning.name.as_str(), owning.kind),
+        (MACHINE, Kind::Machine)
+    );
+    let why = refused(f.store.hand_task("app/x", "design", "owner"));
+    assert!(why.contains("names nobody"), "{why}");
+}
+
+#[test]
+fn the_map_is_kept_a_line_at_a_time_and_read_back() {
+    let f = board();
+    let design = Place::Folder("docs/design".into());
+    let line = f.store.map_place(&design, "design", BY).unwrap().unwrap();
+    assert_eq!((line.n, line.did, line.by.as_str()), (2, Did::Map, BY));
+    assert_eq!(line.place.as_deref(), Some("folder:docs/design"));
+    assert_eq!(line.at, NOW);
+    assert_eq!(
+        f.store.map_place(&design, "design", BY).unwrap(),
+        None,
+        "mapped so already: nothing written"
+    );
+    let map = f.store.ownership_map().unwrap();
+    assert_eq!(map.group(&design), Some("design"));
+    assert_eq!(map.group(&Place::Area("app".into())), Some("engineering"));
+    assert_eq!(map.revision, 2);
+    let unmapped = f.store.unmap_place(&design, BY).unwrap();
+    assert_eq!((unmapped.n, unmapped.did), (3, Did::Unmap));
+    assert_eq!(f.store.ownership_map().unwrap().group(&design), None);
+    let why = refused(f.store.unmap_place(&design, BY));
+    assert!(
+        why.contains("names no group for the folder docs/design"),
+        "{why}"
+    );
+    assert!(why.ends_with("nothing was written"), "{why}");
+    let why = refused(f.store.map_place(&Place::Settings, "marketing", BY));
+    assert!(why.contains("keeps no group marketing"), "{why}");
+    let why = refused(f.store.map_place(&Place::Settings, "design", " "));
+    assert!(why.contains("says who made it"), "{why}");
+    assert_eq!(
+        f.store.ownership_log().unwrap().len(),
+        3,
+        "no refusal wrote a line"
+    );
+}
+
+#[test]
+fn a_task_belongs_to_its_areas_group_else_the_default_else_the_machine() {
+    let f = board();
+    f.task("app/mapped");
+    f.task("tools/unmapped");
+    assert_eq!(
+        whose(&f, "app/mapped"),
+        ("engineering".into(), Kind::Group, By::Map)
+    );
+    assert_eq!(
+        whose(&f, "tools/unmapped"),
+        (MACHINE.into(), Kind::Machine, By::Default)
+    );
+    f.store.map_place(&Place::Default, "design", BY).unwrap();
+    assert_eq!(
+        whose(&f, "tools/unmapped"),
+        ("design".into(), Kind::Group, By::Default)
+    );
+}
+
+#[test]
+fn a_name_written_on_a_task_overrides_the_map_and_one_the_board_lacks_falls_back() {
+    let f = board();
+    for (slug, group) in [
+        ("app/to-design", "design"),
+        ("app/to-ana", "ana"),
+        ("app/to-nobody", "marketing"),
+    ] {
+        f.task_with(NewTask {
+            group: Some(group.into()),
+            ..NewTask::new(slug, "X", BY)
+        });
+    }
+    assert_eq!(
+        whose(&f, "app/to-design"),
+        ("design".into(), Kind::Group, By::Named)
+    );
+    assert_eq!(
+        whose(&f, "app/to-ana"),
+        ("ana".into(), Kind::Person, By::Named)
+    );
+    let task = f.store.get("app/to-nobody").unwrap();
+    let owning = f.store.task_owning(&task).unwrap();
+    assert_eq!((owning.name.as_str(), owning.by), ("engineering", By::Map));
+    assert_eq!(owning.unheld.as_deref(), Some("marketing"));
+    let why = refused(f.store.create(&NewTask {
+        group: Some("Not A Name".into()),
+        ..NewTask::new("app/bad", "X", BY)
+    }));
+    assert!(why.contains("short name, or owner"), "{why}");
+}
+
+#[test]
+fn a_member_hands_a_task_on_and_the_board_says_who_did() {
+    let f = board();
+    f.task("app/x");
+    let bo = person(&f, "bo");
+    let handed = bo.hand_task("app/x", "design", "bo").unwrap().unwrap();
+    assert_eq!(handed.group(), Some("design"));
+    assert_eq!(
+        whose(&f, "app/x"),
+        ("design".into(), Kind::Group, By::Named)
+    );
+    assert_eq!(
+        newest_line(&f, "app/x"),
+        "bo handed it to design (it was engineering, from the area app)"
+    );
+    let line = f.store.ownership_log().unwrap().pop().unwrap();
+    assert_eq!(
+        (
+            line.did,
+            line.by.as_str(),
+            line.thing.as_deref(),
+            line.name.as_deref(),
+            line.from.as_deref()
+        ),
+        (
+            Did::Hand,
+            "bo",
+            Some("task app/x"),
+            Some("design"),
+            Some("engineering")
+        )
+    );
+    // Hers now: ana hands it to a person, and handing it where it is already writes nothing.
+    let ana = person(&f, "ana");
+    assert_eq!(ana.hand_task("app/x", "design", "ana").unwrap(), None);
+    ana.hand_task("app/x", "bo", "ana").unwrap().unwrap();
+    assert_eq!(whose(&f, "app/x"), ("bo".into(), Kind::Person, By::Named));
+}
+
+#[test]
+fn a_hand_over_by_a_non_member_is_refused_with_nothing_written() {
+    let f = board();
+    f.task("app/x");
+    let before = f.store.thread("app/x").unwrap().len();
+    let ana = person(&f, "ana");
+    let why = refused(ana.hand_task("app/x", "design", "ana"));
+    assert_eq!(
+        why,
+        "ana is no member of the group engineering, whose it is, so may not hand it on: nothing \
+         was written"
+    );
+    let why = refused(person(&f, "bo").hand_task("app/x", "marketing", "bo"));
+    assert!(why.contains("holds no group or person marketing"), "{why}");
+    let why = refused(f.store.hand_task("app/x", "design", BY));
+    assert!(
+        why.contains("is no person"),
+        "a session hands nothing on: {why}"
+    );
+    assert_eq!(f.store.get("app/x").unwrap().group(), None);
+    assert_eq!(f.store.thread("app/x").unwrap().len(), before);
+    assert_eq!(
+        f.store.ownership_log().unwrap().len(),
+        1,
+        "the map's own line alone"
+    );
+}
+
+#[test]
+fn the_person_at_the_machine_hands_any_open_task_and_none_closed() {
+    let f = board();
+    f.task("app/x");
+    f.store
+        .hand_task("app/x", "design", "owner")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        newest_line(&f, "app/x"),
+        "owner handed it to design (it was engineering, from the area app)"
+    );
+    let why = refused(f.store.hand_task("app/missing", "design", "owner"));
+    assert!(why.contains("app/missing"), "{why}");
+    f.store.move_to("app/x", "cancelled", "owner").unwrap();
+    let why = refused(f.store.hand_task("app/x", "engineering", "owner"));
+    assert!(why.contains("only an open task is handed on"), "{why}");
+}
+
+#[test]
+fn a_card_is_handed_by_a_member_and_the_board_keeps_who_did() {
+    let f = board();
+    f.store
+        .map_place(&Place::Folder("docs/design".into()), "design", BY)
+        .unwrap();
+    let card = Thing::Card {
+        slug: "new-palette".into(),
+        route: "docs/design/palette.md".into(),
+    };
+    let owning = f.store.owning(&card, None).unwrap();
+    assert_eq!((owning.name.as_str(), owning.by), ("design", By::Map));
+    let why = refused(person(&f, "bo").hand_card(&card, None, "engineering", "bo"));
+    assert!(why.contains("bo is no member of the group design"), "{why}");
+    let line = person(&f, "ana")
+        .hand_card(&card, None, "engineering", "ana")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            line.did,
+            line.by.as_str(),
+            line.thing.as_deref(),
+            line.name.as_deref(),
+            line.from.as_deref()
+        ),
+        (
+            Did::Hand,
+            "ana",
+            Some("card new-palette"),
+            Some("engineering"),
+            Some("design")
+        )
+    );
+    // Written to engineering now, which its file says: bo's to hand, and ana's no more.
+    let now = Some("engineering");
+    assert_eq!(
+        person(&f, "bo")
+            .hand_card(&card, now, "engineering", "bo")
+            .unwrap(),
+        None
+    );
+    assert!(
+        person(&f, "ana")
+            .hand_card(&card, now, "design", "ana")
+            .is_err()
+    );
+    let back = person(&f, "bo")
+        .hand_card(&card, now, "design", "bo")
+        .unwrap();
+    assert!(back.is_some());
+}
+
+#[test]
+fn a_member_who_left_the_group_hands_none_of_its_things() {
+    let f = board();
+    f.task("app/x");
+    f.store.leave_group("bo", "engineering", BY).unwrap();
+    let why = refused(person(&f, "bo").hand_task("app/x", "design", "bo"));
+    assert!(why.contains("no member of the group engineering"), "{why}");
+}
+
+#[test]
+fn the_ownership_log_is_carried_by_a_copy() {
+    let f = board();
+    let carried = f.store.carried().unwrap();
+    let ids: Vec<String> = (carried["ownership"].as_array().unwrap().iter())
+        .map(|row| row["id"].to_string())
+        .collect();
+    assert_eq!(ids, ["1"]);
+}
+
+#[test]
+fn a_board_made_without_the_step_reads_no_map_and_takes_no_change() {
+    let db = database();
+    let step = ADDED.iter().position(|step| *step == OWNERSHIP).unwrap();
+    let before = Opening::write().at(Schema::of_this_contract(i64::try_from(step).unwrap()));
+    let open = |how: &Opening| {
+        Store::opening_on(
+            db.another(),
+            Box::new(|| NOW),
+            Box::new(|_| false),
+            HOST,
+            how,
+        )
+        .unwrap()
+    };
+    let writer = open(&before);
+    assert_eq!(writer.additions().unwrap(), i64::try_from(step).unwrap());
+    writer
+        .register(&symphony_board::NewSession::new("worker"))
+        .unwrap();
+    writer.add_group("design", &[], "amber-heron").ok();
+    for store in [&writer, &open(&Opening::read())] {
+        assert_eq!(store.ownership_log().unwrap(), []);
+        assert!(store.ownership_map().unwrap().is_empty());
+        let why = refused(store.map_place(&Place::Settings, "design", BY));
+        assert!(
+            why.starts_with("the map of places is not on this board yet"),
+            "{why}"
+        );
+        assert!(why.ends_with("nothing was written"), "{why}");
+        let why = refused(store.hand_task("app/x", "design", "owner"));
+        assert!(
+            why.starts_with("the map of places is not on this board yet"),
+            "{why}"
+        );
+    }
+}

@@ -20,6 +20,8 @@ pub(in crate::store) struct Creating {
     pub(in crate::store) arm: bool,
     /// It is filed as a kind (`crate::kind`).
     pub(in crate::store) kind: bool,
+    /// It is filed for a group or a person (`crate::people::ownership`).
+    pub(in crate::store) group: bool,
     /// A custom workflow is active, and it starts at the initial pair (`super::workflow::PLACED`).
     pub(in crate::store) placed: bool,
 }
@@ -116,6 +118,10 @@ pub(in crate::store) fn create(new: &Creating) -> String {
     }
     if new.kind {
         block.push_str(&field_set("_board,kind", "v -> 'kind'"));
+        block.push('\n');
+    }
+    if new.group {
+        block.push_str(&field_set("_board,group", "v -> 'group'"));
         block.push('\n');
     }
     block.push_str(&said("v ->> 'said'"));
@@ -581,6 +587,7 @@ mod tests {
             red,
             arm,
             kind: false,
+            group: false,
             placed: false,
         };
         let placed = |acts| Creating {
@@ -592,6 +599,7 @@ mod tests {
             field_set("_board,red", "v -> 'red'"),
             field_set("_board,arm", "v -> 'arm'"),
             field_set("_board,kind", "v -> 'kind'"),
+            field_set("_board,group", "v -> 'group'"),
         ];
         // Filed as the board's own, refused in the write while a custom workflow is active.
         let bare = create(&new(false, false, false, false));
@@ -612,6 +620,7 @@ mod tests {
         assert!(!bare.contains(FILED));
         let all = create(&Creating {
             kind: true,
+            group: true,
             ..new(true, true, true, true)
         });
         let act = act();
@@ -620,8 +629,8 @@ mod tests {
         in_order(
             &all,
             &[
-                &act, UNPLACED, CREATE, &marks[0], FILED, &marks[1], &marks[2], &marks[3], &said,
-                &blocks,
+                &act, UNPLACED, CREATE, &marks[0], FILED, &marks[1], &marks[2], &marks[3],
+                &marks[4], &said, &blocks,
             ],
         );
         let red = create(&new(true, false, true, false));
@@ -632,6 +641,12 @@ mod tests {
             ..new(false, false, false, false)
         });
         assert!(kind.contains(marks[3].as_str()) && !kind.contains(FILED));
+        assert!(!kind.contains(marks[4].as_str()), "a kind is no group");
+        let group = create(&Creating {
+            group: true,
+            ..new(false, false, false, false)
+        });
+        assert!(group.contains(marks[4].as_str()) && !group.contains(marks[3].as_str()));
     }
 
     #[test]

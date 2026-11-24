@@ -34,9 +34,11 @@ mod actor_tests;
 #[cfg(test)]
 mod close_tests;
 #[cfg(test)]
+mod hand_tests;
+#[cfg(test)]
 mod lock_tests;
 
-pub const ROUTES: [&str; 15] = [
+pub const ROUTES: [&str; 17] = [
     "/api/postpone",
     "/api/decision",
     "/api/comment",
@@ -52,6 +54,8 @@ pub const ROUTES: [&str; 15] = [
     symphony_api::TASK_ACTION_ROUTE,
     WORKFLOW_APPLY,
     symphony_api::SETTING_WRITE_PATH,
+    symphony_api::TASK_HAND_ROUTE,
+    symphony_api::CARD_HAND_ROUTE,
 ];
 
 /// The owner's operation on a task a custom workflow holds, through the board's one admission
@@ -63,13 +67,14 @@ pub const ROUTES: [&str; 15] = [
 pub const WORKFLOW_APPLY: &str = symphony_api::workflow::WORKFLOW_APPLY_ROUTE;
 
 /// The routes that write to one task, named by the payload's `slug`.
-const TASK_ROUTES: [&str; 6] = [
+const TASK_ROUTES: [&str; 7] = [
     "/api/task-message",
     "/api/task-priority",
     "/api/task-field",
     "/api/task-cancel",
     symphony_api::TASK_ACTION_ROUTE,
     WORKFLOW_APPLY,
+    symphony_api::TASK_HAND_ROUTE,
 ];
 
 fn string<'a>(payload: &'a Value, key: &str) -> &'a str {
@@ -430,9 +435,12 @@ impl Saves {
         }
         drop(unpublished);
         // The owner's line on a card main holds is main's, whichever branch's page it was given on.
-        let moved = matches!(route, "/api/decision" | "/api/message")
-            .then(|| self.mains(scope, payload))
-            .flatten();
+        let moved = matches!(
+            route,
+            "/api/decision" | "/api/message" | symphony_api::CARD_HAND_ROUTE
+        )
+        .then(|| self.mains(scope, payload))
+        .flatten();
         let (scope, payload) = match &moved {
             Some(moved) => ("", moved),
             None => (scope, payload),
@@ -441,16 +449,18 @@ impl Saves {
         let mut asking: Option<NewAsk> = None;
         let result = match route {
             "/api/postpone" => self.postpone(scope, payload, order),
-            "/api/decision" | "/api/comment" | "/api/message" => self
-                .document(actor, scope, route, payload)
-                .map(|(value, ask)| {
-                    asking = ask;
-                    value
-                }),
+            "/api/decision" | "/api/comment" | "/api/message" | symphony_api::CARD_HAND_ROUTE => {
+                self.document(actor, scope, route, payload)
+                    .map(|(value, ask)| {
+                        asking = ask;
+                        value
+                    })
+            }
             "/api/task-message"
             | "/api/task-priority"
             | "/api/task-field"
             | "/api/task-cancel"
+            | symphony_api::TASK_HAND_ROUTE
             | symphony_api::TASK_ACTION_ROUTE => on_task(
                 &self.store_by(actor.name())?,
                 || crate::plugins::Plugins::of(&self.root),
@@ -735,7 +745,15 @@ impl Saves {
         } else {
             None
         };
+        // A card handed on: the board records who did once the file's edit is known to be whole,
+        // just before it is written.
+        let mut handing: Option<Handing> = None;
         let text = match route {
+            symphony_api::CARD_HAND_ROUTE => {
+                let (text, hand) = handed(&rel, &original, slug, payload)?;
+                handing = Some(hand);
+                text
+            }
             "/api/message" => edit::add_message_by(
                 &original,
                 slug,
@@ -778,8 +796,11 @@ impl Saves {
                 )?
             }
         };
-        let (text, _) = register::supersede(&text, &now);
-        edit::check_nothing_lost(&original, &text, slug)?;
+        let (superseded, _) = register::supersede(&text, &now);
+        // A hand-over rewrites its card's first line, and that alone.
+        let whole = if handing.is_some() { &text } else { &original };
+        edit::check_nothing_lost(whole, &superseded, slug)?;
+        let text = superseded;
         let text = match &conflict {
             Some(conflict) => conflict.with_card(&text, slug).ok_or_else(|| Failure {
                 status: 409,
@@ -789,11 +810,19 @@ impl Saves {
             })?,
             None => text,
         };
+        if let Some(hand) = &handing {
+            let store = self.store_by(actor.name())?;
+            let to = hand.to.as_str();
+            let line = store.hand_card(&hand.thing, hand.written.as_deref(), to, actor.name())?;
+            if line.is_none() {
+                return Ok((json!({"ok":true,"repeat":true}), None));
+            }
+        }
         if !pending {
             std::fs::write(&target, &text).map_err(|e| e.to_string())?;
         }
         let ask = self.document_ask(route, payload, &root, &rel, &text, comment.as_ref());
-        if route != "/api/comment" {
+        if !matches!(route, "/api/comment" | symphony_api::CARD_HAND_ROUTE) {
             let cleared = self
                 .page(&root, &rel, "")
                 .map_err(|e| e.error)
@@ -881,6 +910,50 @@ impl Saves {
     }
 }
 
+/// A card a save hands on: the card as the board's log names it, the name written on it before,
+/// and the name it is handed to.
+struct Handing {
+    thing: symphony_board::people::ownership::Thing,
+    written: Option<String>,
+    to: String,
+}
+
+/// The document `original` (of route `rel`) with its card `slug` written for `payload`'s `to`
+/// ([`symphony_docs::syntax::card_line_for`]), and the hand-over the board is then to record and
+/// may refuse ([`symphony_board::Store::hand_card`]). Refused for a card missing, one that waits on
+/// no answer, and a `to` that is no short name's form.
+fn handed(
+    rel: &str,
+    original: &str,
+    slug: &str,
+    payload: &Value,
+) -> Result<(String, Handing), Failure> {
+    let to = string(payload, "to").trim();
+    let lines = crate::text::splitlines(original);
+    let cards = register::parse_decisions(&lines);
+    let card = (cards.iter().find(|card| card.slug == slug))
+        .ok_or_else(|| format!("no decision with slug {}", crate::text::repr(slug)))?;
+    if !crate::owners::waits(card.state) {
+        return Err(format!(
+            "the card {slug} is {}: only a card that waits on an answer is handed on",
+            card.state.as_str()
+        )
+        .into());
+    }
+    let at = card.line - 1;
+    let line = symphony_docs::syntax::card_line_for(lines[at], to).ok_or_else(|| {
+        format!("a card is handed to a group's or a person's short name, or owner, not {to:?}")
+    })?;
+    let mut out: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+    out[at] = line;
+    let hand = Handing {
+        thing: crate::owners::thing(rel, card),
+        written: symphony_docs::syntax::card_for(&card.text).map(str::to_string),
+        to: to.to_string(),
+    };
+    Ok((out.join("\n") + "\n", hand))
+}
+
 /// A write to one task on the board `store` (a message, its priority, a field, its cancel, a board
 /// action), asked by `actor`, `plugins` the project's at `root`, read only by a field or an action:
 /// the actor's short name is the sender and the mover the board records, as it always was `owner`
@@ -905,6 +978,10 @@ fn on_task(
                 (!to.is_empty()).then_some(to),
             )?;
             Ok(json!({"ok":true}))
+        }
+        symphony_api::TASK_HAND_ROUTE => {
+            let handed = store.hand_task(slug, string(payload, "to").trim(), actor.name())?;
+            Ok(json!({"ok": true, "repeat": handed.is_none()}))
         }
         "/api/task-priority" => {
             let priority = payload["priority"]
