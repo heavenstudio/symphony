@@ -40,6 +40,8 @@ impl Hub {
     /// board.
     pub fn stop(&self) {
         self.draining.send_replace(true);
+        // A notice's program under way ends now; the record keeps it to hand again.
+        self.stop_notices();
         self.disarm_initial_board();
         // The ticks' wait between two reads ends at once.
         self.ticks.lock().recover().take();

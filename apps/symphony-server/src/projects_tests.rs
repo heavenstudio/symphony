@@ -1204,7 +1204,10 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
                 Some("tools/card"),
             )),
     );
-    hub.health.reading(board.store.database().queries());
+    // The hub's health reads the test's own requests, none yet. The board's real ones, its seed's
+    // writes among them, take as long as the machine's load makes them, and no row here means that.
+    let log = Arc::new(QueryLog::default());
+    hub.health.reading(Arc::clone(&log));
     // The hub's reader, the way it reads the board for a page, opens this board, counted: a read
     // through it is a request this board's count holds.
     let connects = Arc::new(AtomicUsize::new(0));
@@ -1228,8 +1231,10 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
     let list = || async { text(machine.get("/", &[]).await).await };
 
     // Drawn and listed from the hub's memory: the board's request count does not move, and no
-    // reader of it is opened.
-    let requests = || hub.health.report(clock.now()).queries.count;
+    // reader of it is opened. The count is the board's own log's, which every client of it in
+    // this process counts in.
+    let queries = board.store.database().queries();
+    let requests = || queries.report(clock.now()).0.count;
     let read = requests();
     assert!(read > 0, "the board's read is counted");
     let live = list().await;
@@ -1239,9 +1244,6 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
         (read, 0),
         "the list and the listing sent the board no request and opened no reader of it"
     );
-    // From here the hour's requests are the test's own.
-    let log = Arc::new(QueryLog::default());
-    hub.health.reading(Arc::clone(&log));
 
     let alpha = row(&live, "alpha");
     assert!(
