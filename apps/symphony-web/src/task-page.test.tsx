@@ -849,7 +849,7 @@ describe("a task's role chips", () => {
       <fresh.RoleChips roles={roles} sessions={sessions} local scope="" />,
     );
     // A control's box, no real class of it, for each holder whose session the page names.
-    const box = '<span class="ghost-field" style="width:7rem"></span>';
+    const box = '<span class="ghost-field" style="width:5.75rem;box-sizing:border-box"></span>';
     expect(chip(held, "executor amber")).toContain(box);
     expect(chip(held, "reviewer sub")).toContain(box);
     expect(chip(held, "orchestrator bare")).not.toContain("ghost-field");

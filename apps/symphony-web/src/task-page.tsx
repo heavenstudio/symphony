@@ -717,16 +717,18 @@ export function SessionPart(props: GoToSessionProps) {
   return props.go === null ? null : <SessionChunk {...props} />;
 }
 
+/** A held Go to session button's box: as tall as the button, its border within, and about as wide. */
+const SESSION_BOX: CSSProperties = { width: "5.75rem", boxSizing: "border-box" };
+
 /**
- * The control of a holder whose session the page names, its place held until its chunk comes: a
- * control's box, as tall as its button, which a link in its place, where the session has an
- * address, is not.
+ * The control of a holder whose session the page names, its place held until its chunk comes: the
+ * button's box, which a link in its place, where the session has an address, is not as tall as.
  */
 function SessionChunk(props: GoToSessionProps) {
   const [Go, failed, retry] = useChunk(loadGoToSession, () => goToSession);
   if (Go) return <Go {...props} />;
   if (failed) return chunkFailed("The session's control", retry);
-  return <span className="ghost-field" style={{ width: "7rem" }} />;
+  return <span className="ghost-field" style={SESSION_BOX} />;
 }
 
 /** A workflow's next actions, imported for a task a custom workflow holds alone. */
