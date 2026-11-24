@@ -13,14 +13,17 @@
 //! older plugin unread, and a kind it does not know is read as [`Kind::Other`]. A refusal names the
 //! field and its rule, never the value found, so a plugin that says why on stderr repeats no
 //! address and no link. A plugin's `main` is [`take`]: the one notice on stdin, handed to its send,
-//! and the exit status saying what came of it.
+//! and the exit status saying what came of it. A plugin keeps what it needs in the machine folder,
+//! which [`machine_folder`] finds by the server's rule.
 
 #![forbid(unsafe_code)]
 
 use serde::Serialize;
 use serde_json::{Map, Value};
+use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 /// The format's major, written as the message's `notice`: a message of another is refused by name.
@@ -330,6 +333,51 @@ fn take_from(
     // Nothing is left to say it on when stderr is gone: the status still says it.
     let _ = writeln!(errors, "{why}");
     status
+}
+
+/// The variable that names the machine folder, as the server reads it.
+pub const MACHINE_DIR: &str = "SYMPHONY_MACHINE_DIR";
+
+/// The machine folder, where a plugin keeps what it needs, by the server's rule
+/// (`symphony_board::project::machine_folder`, repeated here so a plugin links no board crate;
+/// the tests hold the two the same): [`MACHINE_DIR`] when `var` names it, else on macOS (when
+/// `macos`) `~/Library/Application Support/Symphony`, elsewhere `$XDG_DATA_HOME/symphony` or
+/// `~/.local/share/symphony`. An empty variable is unset, and a relative `HOME` or
+/// `XDG_DATA_HOME` is passed over.
+///
+/// # Errors
+///
+/// [`MACHINE_DIR`] names a relative path, or the platform's folder needs a `HOME` the process does
+/// not have.
+pub fn machine_folder(
+    var: impl Fn(&str) -> Option<OsString>,
+    macos: bool,
+) -> Result<PathBuf, String> {
+    let set = |name: &str| {
+        var(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    if let Some(named) = set(MACHINE_DIR) {
+        return if named.is_absolute() {
+            Ok(named)
+        } else {
+            Err(format!(
+                "{MACHINE_DIR} names {}, not an absolute folder",
+                named.display()
+            ))
+        };
+    }
+    let absolute = |name: &str| set(name).filter(|path| path.is_absolute());
+    let home = absolute("HOME");
+    let found = if macos {
+        home.map(|home| home.join("Library/Application Support/Symphony"))
+    } else {
+        absolute("XDG_DATA_HOME")
+            .map(|data| data.join("symphony"))
+            .or_else(|| home.map(|home| home.join(".local/share/symphony")))
+    };
+    found.ok_or_else(|| "the machine folder needs HOME, an absolute folder".into())
 }
 
 /// What a printed notice shows in the place of its link and its address.

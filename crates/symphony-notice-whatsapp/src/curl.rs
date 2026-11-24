@@ -1,8 +1,9 @@
 //! The one request the plugin makes, by `curl`. `curl` reads the whole request on its standard
 //! input (`--config -`): the URL, the headers with the token among them, and the body. So the token
 //! is in no argument and no environment variable of any process, and `-q` keeps a `~/.curlrc` from
-//! adding to the request. No redirect is followed, so the token goes to the API's host alone. What
-//! `curl` says when it fails has the token taken out before anything else sees it.
+//! adding to the request. No redirect is followed and no proxy is used, whatever proxy variable the
+//! server's environment sets, so the token goes to the API's host alone. What `curl` says when it
+//! fails has the token taken out before anything else sees it.
 
 use crate::settings::Secret;
 use std::io::Write as _;
@@ -12,6 +13,13 @@ use symphony_notice::Unsent;
 /// The longest the request may take, connecting included, before it is a notice not sent this
 /// time.
 const SECONDS: &str = "30";
+
+/// curl's exits that say a fault a second hand meets again, so the notice is never sent: 1 a
+/// protocol this curl lacks or `--proto` refuses, 2 curl failed to initialise, 3 a URL that does
+/// not parse, 4 a feature this build lacks, 26 a config line this curl does not take, 48 an option
+/// libcurl does not know, 60 a certificate that does not verify, 64 TLS required and not offered,
+/// 77 CA certificates that cannot be read. Any other exit is worth handing again.
+const LASTING: [i32; 9] = [1, 2, 3, 4, 26, 48, 60, 64, 77];
 
 /// What the API answered: its HTTP status and its body.
 #[derive(Debug, PartialEq, Eq)]
@@ -24,7 +32,8 @@ pub(crate) struct Answer {
 /// status.
 ///
 /// No answer is [`Unsent::Later`], saying whether the request may have reached the API; a `curl`
-/// that is not there is [`Unsent::Never`], as handing the notice again finds it absent again.
+/// that is not there, or that fails by one of [`LASTING`], is [`Unsent::Never`], as handing the
+/// notice again finds the same again.
 pub(crate) fn post(program: &str, url: &str, token: &Secret, body: &str) -> Result<Answer, Unsent> {
     let started = Command::new(program)
         .args([
@@ -75,6 +84,19 @@ pub(crate) fn post(program: &str, url: &str, token: &Secret, body: &str) -> Resu
         )));
     }
     if !done.status.success() {
+        let (status, stderr) = (done.status, said(&done.stderr));
+        // Each of `LASTING` stops curl before the request is written: a request it cannot make, or
+        // a TLS session it will not open.
+        if done
+            .status
+            .code()
+            .is_some_and(|code| LASTING.contains(&code))
+        {
+            return Err(Unsent::Never(format!(
+                "curl could not make the request ({status}), and will not on a second hand: \
+                 {stderr}; nothing was sent"
+            )));
+        }
         // 5 to 7 are a proxy or a host curl could not resolve or connect to: the request was never
         // written. After any other failure it may have reached the API.
         let reached = match done.status.code() {
@@ -82,9 +104,7 @@ pub(crate) fn post(program: &str, url: &str, token: &Secret, body: &str) -> Resu
             _ => "it may have taken the notice",
         };
         return Err(Unsent::Later(format!(
-            "WhatsApp did not answer: curl failed ({}): {}; {reached}",
-            done.status,
-            said(&done.stderr)
+            "WhatsApp did not answer: curl failed ({status}): {stderr}; {reached}"
         )));
     }
     let out = String::from_utf8_lossy(&done.stdout);
@@ -114,6 +134,7 @@ fn config(url: &str, token: &Secret, body: &str) -> String {
     };
     [
         line("url", url),
+        line("noproxy", "*"),
         line("request", "POST"),
         line(
             "header",

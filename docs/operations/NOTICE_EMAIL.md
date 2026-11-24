@@ -52,12 +52,14 @@ there, each named for its way.
   `chmod 600`. It is there exactly when the settings name a `user`.
 
 A folder or a file that is a link, or that others can read, is refused before anything in it is
-read, and nothing is sent. A key the settings do not know is refused by name; a password in
-`email.toml` is such a key.
+read, and nothing is sent: keep the folder and the files themselves there. Settings that do not
+read are refused by their line, never by what it holds: a key the settings do not know (a
+password in `email.toml` is such a key) is said only to be one, and a value of another type than
+its key takes is named by its key.
 
 | Key | What it sets |
 | --- | --- |
-| `server` | the mail server: `smtps://HOST[:PORT]` for TLS from the start (port 465 unless named), or `smtp://HOST[:PORT]`, where STARTTLS is required or nothing is sent (port 25 unless named; a submission port is usually 587). To this machine's loopback (`localhost`, `127.0.0.1`, `[::1]`), `smtp://` goes as the relay answers, TLS or not. No path, query or login in it |
+| `server` | the mail server: `smtps://HOST[:PORT]` for TLS from the start (port 465 unless named), or `smtp://HOST[:PORT]`, where STARTTLS is required or nothing is sent (port 25 unless named; a submission port is usually 587). To this machine's loopback (`localhost`, `127.0.0.1`, `[::1]`), `smtp://` goes in the clear, as `curl` asks no STARTTLS there. No path, query or login in it |
 | `from` | the address the mail is from, plain `local@domain`, shown as `Symphony <from>` |
 | `user` | the user that logs in, with `email.token`'s password; none for a relay that takes mail without a login |
 
@@ -90,7 +92,8 @@ shell's history keeps it.
 
 ## What it sends
 
-One plain-text mail for each notice, all ASCII, to the notice's address alone:
+One mail for each notice, all ASCII, to the notice's address alone: `multipart/mixed` with one
+part, its text plain.
 
 - **From** `Symphony <from>`, **To** the person's address.
 - **Subject** what waits on the person and the project: `A card waits on you in symphony`,
@@ -103,10 +106,11 @@ One plain-text mail for each notice, all ASCII, to the notice's address alone:
 
 The password, the address and the link are in no argument and no environment of any process:
 `curl` reads the whole request on its stdin, and `-q` keeps a `~/.curlrc` from adding to it.
-`curl` checks the mail server's certificate against the system's. The plugin keeps nothing of a
-notice and logs nothing: what it says on stderr names neither the address, the link nor the
-password, and of the mail server's answer only its code and the command it answered, as an
-answer often repeats the address.
+No proxy is used, whatever proxy variable the server's environment sets (`noproxy = "*"`), so
+the login goes to the mail server alone. `curl` checks the mail server's certificate against the
+system's. The plugin keeps nothing of a notice and logs nothing: what it says on stderr names
+neither the address, the link nor the password, and of the mail server's answer only its code and
+the command it answered, as an answer often repeats the address.
 
 **A notice may arrive twice.** SMTP takes no key that makes a second hand of one mail the same
 mail. Where the connection breaks after the mail server took the mail, before it said so, the
@@ -118,8 +122,8 @@ both, so a mailbox that drops a repeated Message-ID shows it once; many do not.
 | Exit | When |
 | --- | --- |
 | `0` | the mail server took the mail |
-| `75` | not sent this time: the mail server answered a `4xx` (busy, a limit, a login it cannot check now), or it was not reached, a TLS handshake did not finish, it stopped answering or a minute passed |
-| `1` | not sent, and handing it again will not send it: the mail server answered a `5xx` (the login, `from`, the address or the message refused); the notice is by another way than `email`, or its address is no plain `local@domain`; the settings are missing or refused; the certificate was refused or STARTTLS is not offered; `curl` is not on `PATH`; or the message is not one it reads ([NOTICES](../engineering/NOTICES.md#the-hand-off)) |
+| `75` | not sent this time: the mail server answered a `4xx` (busy, a limit, a login it cannot check now), or it was not reached, a TLS handshake did not finish, it stopped answering, a minute passed, or `curl` failed in any other way that may clear |
+| `1` | not sent, and handing it again will not send it: the mail server answered a `5xx` (the login, `from`, the address or the message refused); the notice is by another way than `email`, or its address is no plain `local@domain`; the settings are missing or refused; `curl` failed in a way a second hand meets again (the certificate refused, STARTTLS not offered, CA certificates it cannot read, a protocol, feature or option this `curl` lacks: its exits 1, 2, 3, 4, 26, 48, 60, 64 and 77); `curl` is not on `PATH`; or the message is not one it reads ([NOTICES](../engineering/NOTICES.md#the-hand-off)) |
 
 Stderr says which, in one line, with `curl`'s own line where it has one:
 

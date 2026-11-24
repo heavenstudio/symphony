@@ -2,7 +2,8 @@
 //! of it (`docs/operations/NOTICE_SLACK.md`).
 
 use std::process::ExitCode;
-use symphony_notice_slack::{API, machine_folder, send};
+use symphony_notice::machine_folder;
+use symphony_notice_slack::{API, send};
 
 fn main() -> ExitCode {
     let folder = machine_folder(|name| std::env::var_os(name), cfg!(target_os = "macos"));

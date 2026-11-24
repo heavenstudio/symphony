@@ -46,7 +46,8 @@ machine.
    (umask 077; pbpaste > "$folder/slack.token")
    ```
 
-   The program refuses a folder or a file anyone else may read, and reads nothing from it.
+   The program refuses a folder or a file anyone else may read, or a link in the place of either,
+   and reads nothing from it: keep the folder and the file themselves there.
    Every notice plugin keeps what it needs in `notices/`, named for its way.
 4. **Build it** in a clone of this repository. It is not on crates.io and no release installs it:
 
@@ -89,11 +90,15 @@ Its exit status, with why on stderr when it did not send:
 - **`75`**, worth handing again: Slack limits the rate (HTTP 429, `ratelimited`), is down or slow
   (HTTP 5xx, `service_unavailable`, `internal_error`, `fatal_error`, `request_timeout`), or is
   moving the workspace into an Enterprise organization (`team_added_to_org`); `curl` reached no
-  answer; or Slack's answer said neither that it sent nor that it did not.
+  answer (not reached, out of time, cut off); or Slack's answer said neither that it sent nor that
+  it did not.
 - **`1`**, never sent, and handing it again will not send it: the message is not one it takes
   (by the contract), the notice goes by another way than `slack`, the address is no member id, no
-  token was read (stderr names the path and what to do), `curl` is not on `PATH`, Slack answered
-  another HTTP status, or Slack refused it with any other error. The ones met most:
+  token was read (stderr names the path and what to do), `curl` is not on `PATH`, `curl` failed
+  in a way a second hand meets again (a certificate that does not verify, CA certificates it
+  cannot read, a protocol, feature or option this `curl` lacks: its exits 1, 2, 3, 4, 26, 48, 60,
+  64 and 77), Slack answered another HTTP status, or Slack refused it with any other error. The
+  ones met most:
 
 | Slack's word | What to do |
 |---|---|
@@ -110,6 +115,7 @@ Its exit status, with why on stderr when it did not send:
   replaced.
 - **Put the token where another process reads it.** `curl` reads the whole request on its stdin
   (`--config -`), so the token is in no argument and no environment, and `-q` keeps a `~/.curlrc`
-  from adding to it. No redirect is followed: the token goes to `slack.com` alone.
+  from adding to it. No redirect is followed and no proxy is used, whatever proxy variable the
+  server's environment sets (`noproxy = "*"`): the token goes to `slack.com` alone.
 - **Keep or pass on the message**, or decide who is told: it sends the one notice it was handed
   to the one address in it.

@@ -4486,6 +4486,7 @@ version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "symphony-board",
 ]
 
 [[package]]
@@ -4513,7 +4514,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "symphony-board",
  "symphony-notice",
  "toml 1.1.7+spec-1.1.0",
 ]

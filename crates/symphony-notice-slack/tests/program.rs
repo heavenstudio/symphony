@@ -15,15 +15,26 @@ use std::process::{Command, Stdio};
 const ADDRESS: &str = "U024BE7LH";
 const LINK: &str = "https://mac.example.ts.net/symphony/cards#notice-sender";
 
-/// An empty machine folder of the test's own, named for `name`.
-fn machine(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "symphony-notice-slack-program-{name}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// An empty machine folder of the test's own, removed when it is dropped.
+struct Machine(PathBuf);
+
+impl Machine {
+    /// The folder named for `name`.
+    fn new(name: &str) -> Machine {
+        let dir = std::env::temp_dir().join(format!(
+            "symphony-notice-slack-program-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Machine(dir)
+    }
+}
+
+impl Drop for Machine {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// The message of a card going `to` the address `address` by the way `way`.
@@ -35,8 +46,9 @@ fn message(way: &str, address: &str) -> String {
 
 /// The program's exit status and stderr once handed `stdin`, its machine folder `name`'s.
 fn run(name: &str, stdin: &str) -> (i32, String) {
+    let machine = Machine::new(name);
     let mut child = Command::new(env!("CARGO_BIN_EXE_symphony-notice-slack"))
-        .env("SYMPHONY_MACHINE_DIR", machine(name))
+        .env("SYMPHONY_MACHINE_DIR", &machine.0)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

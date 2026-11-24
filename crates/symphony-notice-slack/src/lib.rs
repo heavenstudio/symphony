@@ -20,13 +20,14 @@ mod stand_in;
 use std::path::PathBuf;
 use symphony_notice::{Notice, SLACK, Unsent};
 
-pub use token::{NOTICES, TOKEN_FILE, machine_folder};
+pub use token::{NOTICES, TOKEN_FILE};
 
 /// Slack's Web API, the one host the program reaches.
 pub const API: &str = "https://slack.com/api";
 
 /// Sends `notice` to its person's Slack member id, as the app whose bot token is
-/// `NOTICES/TOKEN_FILE` in the machine `folder`, through the Web API at `api`.
+/// `NOTICES/TOKEN_FILE` in the machine `folder` ([`symphony_notice::machine_folder`]), through
+/// the Web API at `api`.
 ///
 /// # Errors
 ///

@@ -2,59 +2,24 @@
 //! `notices/email.token` beside it where the settings name a `user`
 //! (`docs/operations/NOTICE_EMAIL.md`, "Its settings").
 //!
-//! The folder is the server's own, found by the server's rule ([`machine_folder`]), never a
-//! project's: nothing of the plugin is in a `symphony.toml`. `notices/` is a folder its owner alone
-//! reaches, and each file in it a plain file its owner alone reads, as they hold what sends mail in
-//! the server's name; anything else is refused before a file is read. A refusal names the file and
-//! its rule, never what it holds, and the password is printed nowhere ([`Secret`]).
+//! The folder is the server's own, found by the server's rule
+//! ([`symphony_notice::machine_folder`]), never a project's: nothing of the plugin is in a
+//! `symphony.toml`. `notices/` is a folder its owner alone reaches, and each file in it a plain
+//! file its owner alone reads, as they hold what sends mail in the server's name; anything else, a
+//! link in the place of either among it, is refused before a file is read. So the mode checked is
+//! the mode of what is read: a link could lead to a file in a folder others write, swapped there
+//! for a link to another of the owner's secrets. A refusal names the file and its rule, never
+//! what it holds, nor a key but the plugin's own ([`unread`]), and the password is printed nowhere
+//! ([`Secret`]).
 
 use serde::Deserialize;
-use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::mail;
-
-/// The variable that names the machine folder, as the server reads it.
-pub(crate) const MACHINE_DIR: &str = "SYMPHONY_MACHINE_DIR";
-
-/// The machine folder, by the server's rule (`symphony_board::project::machine_folder`, repeated
-/// here so the plugin links no board crate): [`MACHINE_DIR`] when set, else the platform's data
-/// folder for the Symphony, read from `var`, on macOS when `macos`.
-pub(crate) fn machine_folder(
-    var: impl Fn(&str) -> Option<OsString>,
-    macos: bool,
-) -> Result<PathBuf, String> {
-    let absolute = |name: &str| {
-        var(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-    };
-    if let Some(named) = var(MACHINE_DIR).filter(|value| !value.is_empty()) {
-        let path = PathBuf::from(&named);
-        return if path.is_absolute() {
-            Ok(path)
-        } else {
-            Err(format!(
-                "{MACHINE_DIR} names {}, not an absolute folder",
-                path.display()
-            ))
-        };
-    }
-    let home = absolute("HOME");
-    let found = if macos {
-        home.map(|home| home.join("Library/Application Support/Symphony"))
-    } else {
-        absolute("XDG_DATA_HOME")
-            .map(|data| data.join("symphony"))
-            .or_else(|| home.map(|home| home.join(".local/share/symphony")))
-    };
-    found.ok_or_else(|| "the machine folder needs HOME, an absolute folder".into())
-}
 
 /// How the connection to the mail server is kept private.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,6 +128,12 @@ pub(crate) fn read(folder: &Path) -> Result<Settings, String> {
             ));
         }
         Err(error) => return Err(format!("{}: {error}", notices.display())),
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(format!(
+                "{} is a link: keep the folder itself there",
+                notices.display()
+            ));
+        }
         Ok(meta) if !meta.is_dir() => {
             return Err(format!("{} is not a folder", notices.display()));
         }
@@ -181,14 +152,8 @@ pub(crate) fn read(folder: &Path) -> Result<Settings, String> {
             settings.display()
         ));
     };
-    let file: File = toml::from_str(&text).map_err(|error| {
-        // toml's own rendering quotes the line, which may hold what was written by mistake;
-        // its message and line number alone name the fault.
-        let line = (error.span())
-            .and_then(|span| text.get(..span.start))
-            .map_or(1, |before| before.matches('\n').count() + 1);
-        format!("{} line {line}: {}", settings.display(), error.message())
-    })?;
+    let file: File = toml::from_str(&text)
+        .map_err(|error| format!("{}: {}", settings.display(), unread(&text, &error)))?;
     let (server, tls) =
         server(&file.server).map_err(|why| format!("{}: {why}", settings.display()))?;
     if !mail::address(&file.from) {
@@ -254,6 +219,9 @@ fn private(path: &Path) -> Result<Option<String>, String> {
         Err(error) => return Err(format!("{named}: {error}")),
         Ok(meta) => meta,
     };
+    if meta.file_type().is_symlink() {
+        return Err(format!("{named} is a link: keep the file itself there"));
+    }
     if !meta.is_file() {
         return Err(format!("{named} is not a plain file"));
     }
@@ -263,6 +231,47 @@ fn private(path: &Path) -> Result<Option<String>, String> {
     fs::read_to_string(path)
         .map(Some)
         .map_err(|error| format!("{named}: {}", error.kind()))
+}
+
+/// Every key the settings file has.
+const KEYS: [&str; 3] = ["server", "from", "user"];
+
+/// What a settings `text` that does not read is refused with: its line, and what is wrong there,
+/// naming no key but one of [`KEYS`] and never a value.
+///
+/// toml's own rendering of an error quotes the line it is on, which may hold anything written
+/// there by mistake, so its message alone is said, and only where it holds nothing of the file's:
+/// toml's syntax errors are fixed words, and a missing key is named by the program's own. serde's
+/// messages for a value of another type than its key takes (`invalid type: integer `1``) and for
+/// a key the program does not know (`unknown field `TOKEN``) quote what the file holds, so they
+/// are said in the program's own words, naming a key only where it is one of [`KEYS`].
+fn unread(text: &str, error: &toml::de::Error) -> String {
+    let line = (error.span())
+        .and_then(|at| text.get(..at.start))
+        .map(|before| before.matches('\n').count() + 1);
+    let message = error.message();
+    let quotes_a_value = ["invalid type", "invalid value", "unknown variant"]
+        .iter()
+        .any(|serde_says| message.starts_with(serde_says));
+    // The settings have no table, so a key serde does not know is never one of [`KEYS`].
+    let said = if message.starts_with("unknown field `") {
+        "a key this program does not know".into()
+    } else if quotes_a_value {
+        let key = (line.and_then(|line| text.lines().nth(line - 1)))
+            .and_then(|written| written.split_once('='))
+            .map(|(key, _)| key.trim())
+            .filter(|key| key.split('.').all(|part| KEYS.contains(&part.trim())));
+        match key {
+            Some(key) => format!("`{key}` holds a value of another type than it takes"),
+            None => "a value is of another type than its key takes".into(),
+        }
+    } else {
+        message.to_string()
+    };
+    match line {
+        Some(line) => format!("line {line}: {said}"),
+        None => said,
+    }
 }
 
 /// The mail server `url` names, and how its connection is kept private: `smtps://HOST[:PORT]`,

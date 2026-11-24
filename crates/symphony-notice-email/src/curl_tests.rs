@@ -1,4 +1,5 @@
 use super::*;
+use crate::scratch::Scratch;
 use std::fs;
 use std::io::{BufRead as _, BufReader};
 use std::net::TcpListener;
@@ -7,13 +8,10 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use symphony_notice::To;
 
-/// The settings a machine folder of its own holds: `server`, and a login where `user` is some.
+/// The settings a machine folder of its own holds, removed once they are read: `server`, and a
+/// login where `user` is some.
 fn settings(name: &str, server: &str, user: Option<&str>) -> Settings {
-    let dir = std::env::temp_dir().join(format!(
-        "symphony-notice-email-curl-{name}-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = Scratch::new(name);
     let notices: PathBuf = dir.join(FOLDER);
     fs::create_dir_all(&notices).unwrap();
     fs::set_permissions(&notices, fs::Permissions::from_mode(0o700)).unwrap();
@@ -45,6 +43,7 @@ fn the_whole_request_is_one_config_curl_reads_on_stdin() {
     assert_eq!(
         config,
         "url = \"smtp://smtp.example.com:587\"\n\
+         noproxy = \"*\"\n\
          mail-from = \"symphony@example.com\"\n\
          mail-rcpt = \"ana@example.com\"\n\
          user = \"apikey:pa\\\"ss\\\\word\"\n\
@@ -213,8 +212,8 @@ fn an_answer_to_quit_and_a_refusal_curl_moved_past_decide_nothing() {
 }
 
 #[test]
-fn with_no_answer_the_exit_decides() {
-    for code in [6, 7, 28, 35, 52, 55, 56] {
+fn with_no_answer_the_exit_decides_a_fault_curl_meets_again_never_and_any_other_later() {
+    for code in [5, 6, 7, 8, 16, 18, 28, 35, 52, 55, 56, 67, 92] {
         let why = later(Some(code), &format!("curl: ({code}) something\n"));
         assert!(
             why.contains(&format!("(curl: ({code}) something)")),
@@ -223,9 +222,32 @@ fn with_no_answer_the_exit_decides() {
     }
     let why = later(None, "");
     assert!(why.contains("curl ended: None"), "{why}");
-    for code in [1, 2, 3, 8, 60, 64, 67] {
+    for code in [1, 2, 3, 4, 26, 48, 60, 64, 77] {
         let why = never(Some(code), &format!("curl: ({code}) refused\n"));
-        assert!(why.contains("curl could not send it"), "{why}");
+        assert!(
+            why.contains("curl could not send it, and will not on a second hand"),
+            "{why}"
+        );
+    }
+    // A mail server's refusal decides before the exit does, whichever exit it is.
+    let refusal = "< 220 hi\n> MAIL FROM:<s@e>\n< 451 later\n";
+    let why = later(Some(60), &format!("{refusal}curl: (60) x\n"));
+    assert!(why.contains("answered 451 to MAIL"), "{why}");
+}
+
+#[test]
+fn a_proxy_the_environment_names_is_never_used() {
+    // curl takes a proxy from `smtp_proxy`, `ALL_PROXY` and their kin; `*` turns it off for every
+    // host, so the login goes to the mail server alone.
+    for server in ["smtps://smtp.example.com", "smtp://127.0.0.1:2525"] {
+        let config = config(&settings("proxy", server, None), "a@b", &mail());
+        let lines: Vec<&str> = config.lines().collect();
+        assert_eq!(lines.get(1), Some(&"noproxy = \"*\""), "{config}");
+        assert_eq!(
+            lines.iter().filter(|line| line.contains("proxy")).count(),
+            1,
+            "{config}"
+        );
     }
 }
 
@@ -279,7 +301,10 @@ fn a_mail_server_that_offers_no_starttls_where_it_is_needed_is_told_nothing() {
     let Err(Unsent::Never(why)) = sent else {
         panic!("{sent:?}");
     };
-    assert!(why.contains("curl could not send it (curl: (64)"), "{why}");
+    assert!(
+        why.contains("curl could not send it, and will not on a second hand (curl: (64)"),
+        "{why}"
+    );
     let (ehlo, rest) = heard.recv_timeout(test_time::FLOOR).unwrap();
     assert!(ehlo.starts_with("EHLO "), "{ehlo}");
     let told = rest.join("\n");

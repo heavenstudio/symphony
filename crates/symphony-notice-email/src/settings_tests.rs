@@ -1,15 +1,9 @@
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::scratch::Scratch;
 
 /// A machine folder of its own, with a `notices/` its owner alone reaches.
-fn machine(name: &str) -> PathBuf {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "symphony-notice-email-{name}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&dir);
+fn machine(name: &str) -> Scratch {
+    let dir = Scratch::new(name);
     fs::create_dir_all(dir.join(FOLDER)).unwrap();
     fs::set_permissions(dir.join(FOLDER), fs::Permissions::from_mode(0o700)).unwrap();
     dir
@@ -29,43 +23,6 @@ fn refused(dir: &Path) -> String {
     let why = read(dir).unwrap_err();
     assert!(!why.contains("se\"cr"), "{why}");
     why
-}
-
-#[test]
-fn the_machine_folder_is_the_servers() {
-    let var = |pairs: &'static [(&'static str, &'static str)]| {
-        move |name: &str| {
-            (pairs.iter())
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| OsString::from(value))
-        }
-    };
-    assert_eq!(
-        machine_folder(var(&[(MACHINE_DIR, "/m"), ("HOME", "/h")]), true).unwrap(),
-        PathBuf::from("/m")
-    );
-    assert!(
-        machine_folder(var(&[(MACHINE_DIR, "m")]), true)
-            .unwrap_err()
-            .contains("not an absolute folder")
-    );
-    assert_eq!(
-        machine_folder(var(&[(MACHINE_DIR, ""), ("HOME", "/h")]), true).unwrap(),
-        PathBuf::from("/h/Library/Application Support/Symphony")
-    );
-    assert_eq!(
-        machine_folder(var(&[("HOME", "/h"), ("XDG_DATA_HOME", "/x")]), false).unwrap(),
-        PathBuf::from("/x/symphony")
-    );
-    assert_eq!(
-        machine_folder(var(&[("HOME", "/h"), ("XDG_DATA_HOME", "x")]), false).unwrap(),
-        PathBuf::from("/h/.local/share/symphony")
-    );
-    assert!(
-        machine_folder(var(&[("HOME", "h")]), true)
-            .unwrap_err()
-            .contains("needs HOME")
-    );
 }
 
 #[test]
@@ -190,48 +147,178 @@ fn a_folder_or_a_file_others_reach_is_refused_unread() {
 
 #[test]
 fn a_link_in_the_place_of_the_folder_or_a_file_is_refused() {
-    let dir = machine("link");
+    // What each link leads to is kept as it should be: the link alone is refused.
     let elsewhere = machine("link-target");
     write(&elsewhere, SETTINGS, SETTINGS_TEXT, 0o600);
-    std::os::unix::fs::symlink(
-        elsewhere.join(FOLDER).join(SETTINGS),
-        dir.join(FOLDER).join(SETTINGS),
-    )
-    .unwrap();
-    assert!(refused(&dir).contains("email.toml is not a plain file"));
-    fs::remove_dir_all(dir.join(FOLDER)).unwrap();
-    std::os::unix::fs::symlink(elsewhere.join(FOLDER), dir.join(FOLDER)).unwrap();
-    assert!(refused(&dir).contains("notices is not a folder"));
+    write(&elsewhere, TOKEN, PASSWORD, 0o600);
+    assert!(read(&elsewhere).is_ok());
+    let kept = elsewhere.join(FOLDER);
+
+    for name in [SETTINGS, TOKEN] {
+        let dir = machine("linked-file");
+        write(&dir, SETTINGS, SETTINGS_TEXT, 0o600);
+        write(&dir, TOKEN, PASSWORD, 0o600);
+        let file = dir.join(FOLDER).join(name);
+        fs::remove_file(&file).unwrap();
+        std::os::unix::fs::symlink(kept.join(name), &file).unwrap();
+        assert_eq!(
+            refused(&dir),
+            format!("{} is a link: keep the file itself there", file.display())
+        );
+    }
+
+    let dir = machine("linked-folder");
+    fs::remove_dir(dir.join(FOLDER)).unwrap();
+    std::os::unix::fs::symlink(&kept, dir.join(FOLDER)).unwrap();
+    assert_eq!(
+        refused(&dir),
+        format!(
+            "{} is a link: keep the folder itself there",
+            dir.join(FOLDER).display()
+        )
+    );
     fs::remove_file(dir.join(FOLDER)).unwrap();
     fs::write(dir.join(FOLDER), "").unwrap();
-    assert!(refused(&dir).contains("notices is not a folder"));
+    assert!(refused(&dir).ends_with("notices is not a folder"));
+}
+
+/// Settings of every key, each on a line of its own: the server on line 1, `from` on 2 and `user`
+/// on 3.
+const LINES: [&str; 3] = [
+    "server = \"smtps://smtp.example.com\"",
+    "from = \"symphony@example.com\"",
+    "user = \"apikey\"",
+];
+
+/// A token as one written by mistake into the settings would be: no real token is in the tree.
+const MISTAKE: &str = "SG-test-key-not-a-real-one";
+
+/// What the settings `text` are refused with, past the file's path, which never holds the
+/// mistake.
+fn unread_by(text: &str) -> String {
+    let dir = machine("unread");
+    write(&dir, SETTINGS, text, 0o600);
+    write(&dir, TOKEN, PASSWORD, 0o600);
+    let why = refused(&dir);
+    assert!(!why.contains(MISTAKE), "{text:?}: {why}");
+    let prefix = format!("{}: ", dir.join(FOLDER).join(SETTINGS).display());
+    why.strip_prefix(&prefix)
+        .unwrap_or_else(|| panic!("{why}"))
+        .to_string()
+}
+
+/// [`LINES`] with `line` added after the first `at`.
+fn with_line(at: usize, line: &str) -> String {
+    let mut lines = LINES.to_vec();
+    lines.insert(at, line);
+    lines.join("\n") + "\n"
+}
+
+#[test]
+fn a_key_the_settings_do_not_have_is_refused_by_its_line_never_its_text() {
+    let other = "a key this program does not know";
+    for (text, line) in [
+        (with_line(3, &format!("{MISTAKE} = 1")), 4),
+        (with_line(1, &format!("{MISTAKE} = \"x\"")), 2),
+        (with_line(3, &format!("password = \"{MISTAKE}\"")), 4),
+        (with_line(3, &format!("\"{MISTAKE}\" = 1")), 4),
+        (with_line(3, &format!("[{MISTAKE}]")), 4),
+        (with_line(3, &format!("login.{MISTAKE} = 1")), 4),
+    ] {
+        assert_eq!(unread_by(&text), format!("line {line}: {other}"), "{text}");
+    }
+    // The settings have no table: one of their keys under a table is refused by the table's line,
+    // and in an inline table by its own key's.
+    assert_eq!(
+        unread_by(&with_line(3, "[login]\nuser = \"apikey\"")),
+        "line 4: a key this program does not know"
+    );
+    assert_eq!(
+        unread_by(
+            &LINES
+                .join("\n")
+                .replace(LINES[2], "user = { user = \"apikey\" }")
+        ),
+        "line 3: `user` holds a value of another type than it takes",
+    );
+}
+
+#[test]
+fn a_value_of_another_type_is_refused_by_its_key_and_never_said() {
+    let token = format!("\"{MISTAKE}\"");
+    for (text, line, key) in [
+        (
+            LINES
+                .join("\n")
+                .replace(&token_of(LINES[0]), "106540352242922"),
+            1,
+            "server",
+        ),
+        (
+            LINES
+                .join("\n")
+                .replace(&token_of(LINES[1]), &format!("[{token}]")),
+            2,
+            "from",
+        ),
+        (
+            LINES
+                .join("\n")
+                .replace(&token_of(LINES[2]), &format!("{{ k = {token} }}")),
+            3,
+            "user",
+        ),
+        (
+            LINES
+                .join("\n")
+                .replace(&token_of(LINES[2]), "1979-05-27T07:32:00Z"),
+            3,
+            "user",
+        ),
+        (
+            LINES.join("\n").replace(&token_of(LINES[2]), "true"),
+            3,
+            "user",
+        ),
+    ] {
+        assert_eq!(
+            unread_by(&text),
+            format!("line {line}: `{key}` holds a value of another type than it takes"),
+            "{text}"
+        );
+    }
+    // A key of its own made a table names a key that is not its own (`host`), so none is said.
+    assert_eq!(
+        unread_by(
+            &LINES
+                .join("\n")
+                .replace(LINES[0], "server.host = \"smtp.example.com\"")
+        ),
+        "line 1: a value is of another type than its key takes"
+    );
+}
+
+/// The value `line` gives its key.
+fn token_of(line: &str) -> String {
+    line.split_once(" = ").unwrap().1.to_string()
 }
 
 #[test]
 fn settings_that_do_not_read_name_the_line_and_never_its_text() {
-    let dir = machine("unread");
-    write(
-        &dir,
-        SETTINGS,
-        "server = \"smtps://smtp.example.com\"\nfrom = \"symphony@example.com\"\npassword = \"se\\\"cr\"\n",
-        0o600,
-    );
-    let why = refused(&dir);
-    assert!(
-        why.contains("line 3") && why.contains("unknown field `password`"),
-        "{why}"
-    );
-    write(
-        &dir,
-        SETTINGS,
-        "server = \"smtps://smtp.example.com\"\n",
-        0o600,
-    );
-    let why = refused(&dir);
-    assert!(why.contains("missing field `from`"), "{why}");
-    write(&dir, SETTINGS, "server = \"smtps://x\nfrom = 1\n", 0o600);
-    let why = refused(&dir);
-    assert!(why.contains("email.toml line 1:"), "{why}");
+    assert_eq!(unread_by(LINES[0]), "line 1: missing field `from`");
+    for (text, line) in [
+        (format!("server = \"{MISTAKE}\nfrom = 1\n"), 1),
+        (format!("{MISTAKE}\n"), 1),
+        (with_line(1, &format!("server = \"x\" \"{MISTAKE}\"")), 2),
+        (format!("server = '''{MISTAKE}"), 1),
+        (with_line(3, &format!("server = \"{MISTAKE}\"")), 4),
+    ] {
+        let why = unread_by(&text);
+        assert!(
+            why.starts_with(&format!("line {line}: ")),
+            "{text:?}: {why}"
+        );
+    }
 }
 
 #[test]
