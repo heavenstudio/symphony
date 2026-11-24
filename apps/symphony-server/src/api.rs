@@ -886,11 +886,7 @@ async fn board_read(
 /// machine, or a person holding what the route needs. A board whose people cannot be read gives
 /// no one but the machine's person the control, whose press the route would refuse.
 fn passes(store: &symphony_board::Store, machine: bool, name: &str) -> bool {
-    let needs = crate::powers::needs(symphony_api::TASK_PASS_ROUTE);
-    machine
-        || store.people().is_ok_and(|people| {
-            crate::powers::refused(name, &people.powers_of(name), needs).is_none()
-        })
+    machine || (store.people()).is_ok_and(|people| crate::powers::may_pass(&people, name))
 }
 
 /// A document's cards' owners refused: a route no page is, 404, as a document's read answers it,

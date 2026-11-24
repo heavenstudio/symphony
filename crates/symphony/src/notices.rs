@@ -37,7 +37,8 @@ pub const SENT: i32 = 0;
 /// `EX_TEMPFAIL`.
 pub const LATER: i32 = 75;
 
-/// What a notice tells of: the three a profile chooses a way for.
+/// What a notice tells of: the three a profile chooses a way for, and a held message, which goes
+/// by the way chosen for questions ([`Kind::chosen_as`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     /// A card waits on the person.
@@ -46,23 +47,35 @@ pub enum Kind {
     Question,
     /// A reviewer gave a verdict on a task.
     Verdict,
+    /// A person's words held on a task wait on them to pass on (`symphony_board::held`).
+    Held,
 }
 
 impl Kind {
-    /// The kind's word, as the message and a profile's `preferences` write it.
+    /// The kind's word, as the message writes it.
     pub fn word(self) -> &'static str {
         match self {
             Kind::Card => "card",
             Kind::Question => "question",
             Kind::Verdict => "verdict",
+            Kind::Held => "held",
         }
     }
 
     /// The kind `word` names.
     pub fn of(word: &str) -> Option<Kind> {
-        [Kind::Card, Kind::Question, Kind::Verdict]
+        [Kind::Card, Kind::Question, Kind::Verdict, Kind::Held]
             .into_iter()
             .find(|kind| kind.word() == word)
+    }
+
+    /// The kind whose way a profile's `preferences` choose for it, by its word: its own, and a
+    /// question's for a held message, which a profile chooses no way of its own for.
+    pub fn chosen_as(self) -> &'static str {
+        match self {
+            Kind::Held => Kind::Question.word(),
+            other => other.word(),
+        }
     }
 }
 

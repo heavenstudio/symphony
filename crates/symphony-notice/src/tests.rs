@@ -107,6 +107,7 @@ fn each_kind_is_written_and_read_by_its_word() {
         (Kind::Card, "card"),
         (Kind::Question, "question"),
         (Kind::Verdict, "verdict"),
+        (Kind::Held, "held"),
     ] {
         assert_eq!(kind.word(), word);
         let n = notice();
@@ -415,6 +416,20 @@ fn take_hands_the_notice_on_stdin_to_send_and_a_sent_one_exits_0_saying_nothing(
     let line = notice().line();
     let (status, said, called) = take_message(line.as_bytes(), |n| {
         assert_eq!(n, &notice());
+        Ok(())
+    });
+    assert_eq!((status, said.as_str(), called), (SENT, "", true));
+}
+
+/// A plugin built before a kind reads it as other and sends it all the same: as one built before
+/// `held` took a held message's notice, its link and its address read as any other's.
+#[test]
+fn take_sends_a_kind_it_does_not_know_as_other_with_the_rest_as_written() {
+    let mut message = wire();
+    message["kind"] = json!("release");
+    let (status, said, called) = take_message(message.to_string().as_bytes(), |n| {
+        assert_eq!(n.kind(), Kind::Other);
+        assert_eq!((n.id(), n.link(), n.to()), (ID, LINK, notice().to()));
         Ok(())
     });
     assert_eq!((status, said.as_str(), called), (SENT, "", true));

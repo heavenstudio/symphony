@@ -13,7 +13,7 @@
 //! may write is `symphony_board::people::change`'s to say. A route this table does not place is
 //! the person at the machine's alone, as the agent focus is.
 
-use symphony_board::people::{Power, Powers};
+use symphony_board::people::{People, Power, Powers};
 
 /// What a write route needs of a person a board named.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +64,13 @@ pub(crate) fn refused(name: &str, held: &Powers, needs: Needs) -> Option<String>
     };
     (held.lacking(powers))
         .map(|power| format!("Forbidden: {name} may not {} on this board", power.said()))
+}
+
+/// Whether `name`, a person of the board `people`, may pass a held message on: they hold what
+/// `symphony_api::TASK_PASS_ROUTE` needs. The person at the machine always may, and is no row here.
+pub(crate) fn may_pass(people: &People, name: &str) -> bool {
+    let needs = needs(symphony_api::TASK_PASS_ROUTE);
+    refused(name, &people.powers_of(name), needs).is_none()
 }
 
 #[cfg(test)]

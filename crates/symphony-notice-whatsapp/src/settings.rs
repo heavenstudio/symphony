@@ -181,7 +181,8 @@ impl Settings {
         &self.api
     }
 
-    /// The template a notice of `kind` is sent by: its own, else `other`'s.
+    /// The template a notice of `kind` is sent by: its own, else `other`'s. A held message has
+    /// none of its own, as a kind this build does not know has none: it goes by `other`'s.
     pub(crate) fn template(&self, kind: Kind) -> &str {
         let own = match kind {
             Kind::Card => self.templates.card.as_deref(),
