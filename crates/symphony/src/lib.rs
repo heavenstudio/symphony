@@ -46,6 +46,7 @@ pub mod lint;
 pub mod machine;
 pub mod markup;
 pub mod merging;
+pub mod notices;
 pub mod owner_asks;
 pub mod owners;
 pub mod page;

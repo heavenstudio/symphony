@@ -409,6 +409,23 @@ pub fn owning(people: &People, map: &Map, written: Option<&str>, places: &[Place
     owning
 }
 
+/// Who is told of a thing `owning` says whose it is on a board of `people`, by short name, as a
+/// notice reaches each by their profile's way (docs/engineering/NOTICES.md): each member of its
+/// group, in the board's order; the person it is written to, while the board holds them; nobody for
+/// the person at the machine, whom no profile names, so a board that names nobody tells no one.
+pub fn told(people: &People, owning: &Owning) -> Vec<String> {
+    match owning.kind {
+        Kind::Group => (people.members.iter())
+            .filter(|member| member.groups.contains(&owning.name))
+            .map(|member| member.name.clone())
+            .collect(),
+        Kind::Person => (people.member(&owning.name))
+            .map(|member| vec![member.name.clone()])
+            .unwrap_or_default(),
+        Kind::Machine => Vec::new(),
+    }
+}
+
 /// Whether `actor` is of the owner `owning` says a thing has on a board of `people`: the person at
 /// the machine always (`machine`), the person it is written to, and a member of its group. Who may
 /// hand it on ([`refused_hand`]) and, holding decide, decide it ([`may_decide`]).

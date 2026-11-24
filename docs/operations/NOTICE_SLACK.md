@@ -12,10 +12,9 @@ machine.
 
 ## What works today, and what waits
 
-- **Nothing hands it a notice yet.** Who is told, of what and by which way, and the server's part
-  of the hand-off, its settings naming each way's program, are step 4 of
-  [the way from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner).
-  Until then it runs only when you run it ([below](#trying-it-by-hand)).
+- **The machine's one server hands it each notice by Slack** once it is named for the way `slack`
+  ([below](#setting-it-up)): who is told, of what, and when a notice is handed again are
+  [the server's part](../engineering/NOTICES.md#the-servers-part).
 - **A notice handed again may arrive twice.** Slack's `chat.postMessage` takes no idempotency key,
   and the program keeps no record of the notices it sent. A notice it answered `75` for because
   Slack did not answer in time may have reached the person, and handed again it is sent again.
@@ -62,6 +61,13 @@ machine.
    channel's id (`C…`) among them, so a notice is never posted to a whole channel. A person writes
    theirs on their card of the People page, held to the same rule
    ([TASKS](../workflow/TASKS.md#the-people-page)).
+6. **Name it for the server** in the machine folder's `notices/programs.toml`, by the absolute path
+   `cargo install` put it at, the file the owner's alone and written by nobody else
+   ([the server's part](../engineering/NOTICES.md#the-servers-part)):
+
+   ```toml
+   slack = "/Users/ana/.cargo/bin/symphony-notice-slack"
+   ```
 
 ## Trying it by hand
 

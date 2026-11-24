@@ -4,50 +4,18 @@
 // with a read of their own (`CARD_OWNERS_PATH`), read again as the document moves. A board that
 // names nobody says none, and nothing is drawn. The select is drawn only where the server named
 // someone to hand it to, and a thing's deciding controls (a card's verdict, a task's priority,
-// cancel and approve) only where it says the reader decides it (`decides`, [`decides`]): a control
-// that could not act is left out.
+// cancel and approve) only where it says the reader decides it (`decides`, owner-read.ts's
+// [`decides`]): a control that could not act is left out. A document's page imports this module; a
+// task's page imports its line as a chunk (`owner-part.tsx`) for a task with an owner alone, and
+// reads the owner with owner-read.ts.
 
 import { createContext, useState } from "react";
 import { useMount } from "./mount";
+import { readOwner } from "./owner-read";
 import { said } from "./request";
 import { SelectField } from "./select";
 import { field, STALE, useStore } from "./shared";
 import type { Owner } from "./wire";
-
-const isText = (value: unknown): value is string => typeof value === "string";
-
-/**
- * Whose a thing is, or none: as serde reads an `Owner`, its `hand_to` empty and `decides` false
- * when absent.
- */
-export function readOwner(value: unknown): Owner | null {
-  const names = field(value, "hand_to") ?? [];
-  const decides = field(value, "decides") ?? false;
-  if (
-    !["name", "kind", "by", "said"].every((key) => isText(field(value, key))) ||
-    !Array.isArray(names) ||
-    !names.every(isText) ||
-    typeof decides !== "boolean"
-  ) {
-    return null;
-  }
-  return {
-    name: field(value, "name") as string,
-    kind: field(value, "kind") as string,
-    by: field(value, "by") as string,
-    said: field(value, "said") as string,
-    hand_to: names as string[],
-    decides,
-  };
-}
-
-/**
- * Whether the one reading decides a thing whose owner the server said is `owner`: always where it
- * said none, on a board that names nobody, as before there were groups.
- */
-export function decides(owner: Owner | null | undefined): boolean {
-  return owner === null || owner === undefined || owner.decides;
-}
 
 /** A document's cards' owners by slug, or none: as serde reads a `CardOwners`. */
 export function readCardOwners(value: unknown): Record<string, Owner> | null {

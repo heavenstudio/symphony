@@ -190,6 +190,57 @@ pub fn document(
     cards(store, rel, &decisions, actor, machine).map_err(|e| e.to_string())
 }
 
+/// Whose each of the waiting cards `cards` is, in their order, on `people` and `map`: each the
+/// review queue's document (`docs/…/X.md`, or `@scope/docs/…/X.md` for a branch's proposal) and its
+/// slug, owned as main's file of that document holds the card ([`card_owning`]), with the saves
+/// still waiting on their delivery merged onto it; a card main's file does not hold (a new
+/// proposal, a document gone) by its places alone, a name written on it unread. Each document is
+/// read once. What a notice of the card tells ([`ownership::told`]).
+pub fn waiting(
+    people: &People,
+    map: &Map,
+    root: &std::path::Path,
+    cards: &[(String, String)],
+) -> Vec<Owning> {
+    let mut read: BTreeMap<String, Vec<Decision>> = BTreeMap::new();
+    let mut owners = Vec::new();
+    for (doc, slug) in cards {
+        let route = main_route(doc);
+        let decisions = read.entry(route.to_string()).or_insert_with(|| {
+            let Ok(path) = crate::docview::target(root, route, true) else {
+                return Vec::new();
+            };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                return Vec::new();
+            };
+            let file = crate::project::Project::of(root).file(route);
+            let text = crate::commit::pending::shown(root, &file, text);
+            crate::register::parse_decisions(&crate::text::splitlines(&text))
+        });
+        let owning = match decisions.iter().find(|card| card.slug == *slug) {
+            Some(card) => card_owning(people, map, route, card),
+            None => {
+                let thing = Thing::Card {
+                    slug: slug.clone(),
+                    route: route.to_string(),
+                };
+                ownership::owning(people, map, None, &thing.places())
+            }
+        };
+        owners.push(owning);
+    }
+    owners
+}
+
+/// The route of main's copy of the queue's document `doc`: a branch proposal's `@scope/` taken off.
+fn main_route(doc: &str) -> &str {
+    let doc = doc.trim_start_matches('/');
+    match doc.split_once('/') {
+        Some((scope, rest)) if scope.starts_with('@') => rest,
+        _ => doc,
+    }
+}
+
 /// [`cards`] on `people` and `map` as read.
 fn owners_of(
     people: &People,

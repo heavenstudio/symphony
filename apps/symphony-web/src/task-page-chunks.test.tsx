@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttemptsProps } from "./attempts";
 import type { NextActionsProps } from "./nextactions";
+import type { OwnerLineProps } from "./owner";
+import type { GoToSessionProps } from "./session";
 import { AttemptsPart, WorkflowPart } from "./task-page";
 import { fire, reading, turn, until } from "./testing";
 
@@ -31,7 +33,7 @@ vi.mock("react", async (original) => ({
   },
 }));
 
-// The page's two chunks stood in for: each comes as a part that says what it was given, or does
+// The page's chunks stood in for: each comes as a part that says what it was given, or does
 // not come, as its test says; `asked` counts each import.
 const chunks = vi.hoisted(() => ({ come: true, asked: 0 }));
 
@@ -48,6 +50,8 @@ function chunksCome(come: boolean) {
   chunks.come = come;
   vi.doMock("./nextactions", () => chunk("NextActions"));
   vi.doMock("./attempts", () => chunk("Attempts"));
+  vi.doMock("./owner-part", () => chunk("OwnerLine"));
+  vi.doMock("./session-part", () => chunk("GoToSession"));
   vi.resetModules();
 }
 
@@ -186,5 +190,102 @@ describe("a part of a task's page that is a chunk of its own", () => {
       expect([come, draw(part).html]).toEqual([come, ""]);
     }
     expect(gone).not.toHaveBeenCalled();
+  });
+});
+
+/** A page module of its own, as a chunk once come is kept by the module that asked for it. */
+type Page = typeof import("./task-page");
+
+const OWNER: OwnerLineProps = {
+  owner: {
+    name: "design",
+    kind: "group",
+    by: "map",
+    said: "from the area app",
+    hand_to: ["bo"],
+    decides: true,
+  },
+  id: "task-hand",
+  hand: async () => ({}),
+};
+const SESSION: GoToSessionProps = {
+  handle: "amber",
+  go: { handle: "amber", url: null, pane: "t7" },
+  local: true,
+  scope: "",
+};
+
+/** What `element`, a part whose control is a component of its own, draws: that component's tree. */
+function inner(element: ReactElement): ReactElement {
+  return (element.type as (props: unknown) => ReactElement)(element.props);
+}
+
+/** The parts of a task's head imported for a task that has them, each held in its place until its
+ * chunk has come: the chunk's export, the part, what it says when it does not come, the element it
+ * says it in (inline in a role's chip), and the tree that draws its Retry. */
+const HEAD_PARTS = [
+  [
+    "OwnerLine",
+    (page: Page) => <page.OwnerPart {...OWNER} />,
+    "The task&#x27;s ownership",
+    "p",
+    (page: Page) => page.OwnerPart(OWNER),
+  ],
+  [
+    "GoToSession",
+    (page: Page) => <page.SessionPart {...SESSION} />,
+    "The session&#x27;s control",
+    "span",
+    (page: Page) => inner(page.SessionPart(SESSION) as ReactElement),
+  ],
+] as const;
+
+describe("a part of a task's head that is a chunk of its own", () => {
+  it("holds its place while out, says one that did not come with its retry, and is kept once come", async () => {
+    for (const [name, element, said, tag, tree] of HEAD_PARTS) {
+      react.states.length = 0;
+      chunksCome(false);
+      aShell(false);
+      const page = await import("./task-page");
+      const part = element(page);
+      const first = draw(part);
+      expect([name, first.html]).toEqual([name, expect.stringContaining('class="ghost-field"')]);
+      first.effect();
+      await until(() =>
+        expect(draw(part).html).toMatch(
+          new RegExp(
+            `^<${tag} role="alert">${said} could not be loaded\\. <button[^>]*>Retry</button></${tag}>$`,
+          ),
+        ),
+      );
+      chunksCome(true);
+      react.at = 0;
+      fire(tree(page), reading("Retry"), "onClick");
+      const again = draw(part);
+      expect(again.html).toContain("ghost-field");
+      again.effect();
+      await until(() => expect(draw(part).html).toContain(`data-part="${name}"`));
+      // Another task's head, drawn after, draws it at once, and asks for it no more.
+      react.states.length = 0;
+      const asked = chunks.asked;
+      expect(draw(part).html).toContain(`data-part="${name}"`);
+      expect(chunks.asked).toBe(asked);
+    }
+  });
+
+  it("draws and imports nothing for a holder with no way into its session", async () => {
+    const { SessionPart } = await import("./task-page");
+    // The page names none of its session; it names one with no pane and no address; or one whose
+    // address is no web address and no pane.
+    for (const go of [
+      null,
+      { handle: "amber", url: null, pane: null },
+      { handle: "amber", url: "javascript:alert(1)", pane: null },
+    ]) {
+      react.at = 0;
+      react.effects.length = 0;
+      expect([go, renderToStaticMarkup(<SessionPart {...SESSION} go={go} />)]).toEqual([go, ""]);
+      expect(react.effects).toEqual([]);
+    }
   });
 });

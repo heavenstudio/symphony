@@ -36,13 +36,8 @@ import { useFrame, useRefreshed } from "./frame";
 import { appPath } from "./links";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
-import {
-  CardOwnersContext,
-  type CardOwnersValue,
-  decides,
-  OwnerLine,
-  readCardOwners,
-} from "./owner";
+import { CardOwnersContext, type CardOwnersValue, OwnerLine, readCardOwners } from "./owner";
+import { decides } from "./owner-read";
 import { PostponeControls } from "./postpone";
 import { documentsHref, entrypoints, fileAddress, href, project, scoped } from "./project";
 import { ComparisonNote, DocumentWithTasks, SectionDifference } from "./related";

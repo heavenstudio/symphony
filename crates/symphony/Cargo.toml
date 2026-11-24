@@ -69,6 +69,9 @@ symphony-chrome = { path = "../chrome-devtools", version = "=0.2.0" }
 gix = { version = "0.87", default-features = false, features = ["basic", "blob-diff", "revision", "sha1"] }
 
 [dev-dependencies]
+# The notice format the server writes (`notices`), read back by the crate a plugin takes it with:
+# that crate is not published, so this one writes the format and its tests hold the two the same.
+symphony-notice = { path = "../symphony-notice" }
 # The board the verdicts' and asks' tests run on is the store's own test server (PostgreSQL, one
 # per test binary), a database of its own per test: tests/picks/main.rs and the other fixtures take
 # the store's tests' common file, which waits for its server through the tests' wait (RULES.md

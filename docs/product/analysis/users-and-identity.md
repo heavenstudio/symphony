@@ -1421,7 +1421,10 @@ Each step can ship alone, and a machine with one person sees none of them.
    ([TASKS](../../workflow/TASKS.md#which-group-a-thing-belongs-to)); a card's verdict, a task's
    moves, priority, fields, cancel and approve and the settings decided by the members of its
    group who hold decide, the `owner` stamp read from them, and the controls drawn for them alone
-   ([TASKS](../../workflow/TASKS.md#people)).
+   ([TASKS](../../workflow/TASKS.md#people)); and the machine's one server telling each member of a
+   thing's group of a card waiting, an agent's question and a reviewer's verdict, by the way each
+   chose, through the programs the machine folder names
+   ([NOTICES](../../engineering/NOTICES.md#the-servers-part)).
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
    The note beside a verdict is written with it. A personal agent, tied to its person on the

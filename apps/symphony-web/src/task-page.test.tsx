@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { drawn, FRESH } from "./cache";
 import { Parts, PartsContext, type Shown } from "./parts";
 import { STALE } from "./shared";
@@ -17,6 +17,8 @@ import {
   GhostHead,
   GhostThread,
   LiveTaskPage,
+  loadGoToSession,
+  loadOwnerLine,
   NOTHING_READ,
   OwnerControls,
   RoleChips,
@@ -358,7 +360,9 @@ describe("a task's page", () => {
     expect(kinded("chore")).not.toContain("kind:");
   });
 
-  it("says whose it is among its facts where the server says it, and nothing on a board naming nobody", () => {
+  it("says whose it is among its facts where the server says it, and nothing on a board naming nobody", async () => {
+    // Its line's chunk, come as it comes once a page drew a task with an owner.
+    await loadOwnerLine();
     const owner = {
       name: "design",
       kind: "group",
@@ -390,6 +394,42 @@ describe("a task's page", () => {
     const nobody = detail({ page: aPage() });
     expect(nobody).toContain('id="task-priority"');
     expect(nobody).toContain(">Cancel task</button>");
+  });
+
+  it("holds the place of whose it is until its line's chunk has come, then draws it at once", async () => {
+    vi.resetModules();
+    const fresh = await import("./task-page");
+    const owner = {
+      name: "design",
+      kind: "group",
+      by: "map",
+      said: "from the area app",
+      decides: true,
+    };
+    const head = (hand_to: string[]) =>
+      html(
+        <fresh.TaskHead
+          page={aPage(undefined, { owner: { ...owner, hand_to } })}
+          scope=""
+          connected
+        />,
+      );
+    const bar = '<span class="bone" style="--w:24ch"></span>';
+    const box =
+      '<span class="ghost-field" style="width:6.95rem;height:calc(1lh + 16px);box-sizing:border-box"></span>';
+    // A bar for its words in a line of their text and, for one who may hand it on, the select's
+    // box, as tall as the select: none of its words, nor its select.
+    const held = head(["bo"]);
+    expect(held).toContain(`<li><span class="owner"><span>${bar}</span>${box}</span></li>`);
+    expect(held).not.toContain("owner-name");
+    expect(held).not.toContain("group: design");
+    expect(held).not.toContain('id="task-hand"');
+    expect(head([])).toContain(`<li><span class="owner"><span>${bar}</span></span></li>`);
+    await fresh.loadOwnerLine();
+    const come = head(["bo"]);
+    expect(come).toContain('<span class="owner-name">group: design</span>');
+    expect(come).toContain('id="task-hand"');
+    expect(come).not.toContain(bar);
   });
 
   it("offers its subtasks while it has some, to load or load more", () => {
@@ -813,6 +853,11 @@ describe("a task's role chips", () => {
     return html.slice(at, end < 0 ? html.length : end);
   };
 
+  // The controls' chunk, come as it comes once a page drew a holder whose session it names.
+  beforeAll(async () => {
+    await loadGoToSession();
+  });
+
   it("each carry their holder's control", () => {
     const html = renderToStaticMarkup(
       <RoleChips roles={roles} sessions={sessions} local scope="" />,
@@ -831,5 +876,49 @@ describe("a task's role chips", () => {
     );
     expect(phone).toContain('data-go="screen"');
     expect(phone).not.toContain('data-go="focus"');
+  });
+
+  it("hold the place of a holder's control as the control it will be until its chunk has come", async () => {
+    vi.resetModules();
+    const fresh = await import("./task-page");
+    // Beside the three: a session with a pane and an address, a button here and a link elsewhere;
+    // one with neither; and one whose address is no web address, which is never linked.
+    const more = {
+      ...sessions,
+      both: go("both", "https://claude.ai/code/s2", "t9"),
+      lost: go("lost", null, null),
+      odd: go("odd", "javascript:alert(1)", null),
+    };
+    const all = [
+      ...roles,
+      aRole("reviewer", "both"),
+      aRole("executor", "lost"),
+      aRole("executor", "odd"),
+    ];
+    const chips = (local: boolean) =>
+      renderToStaticMarkup(<fresh.RoleChips roles={all} sessions={more} local={local} scope="" />);
+    const box = '<span class="ghost-field" style="width:5.7rem;box-sizing:border-box"></span>';
+    const bar = '<span class="bone" style="--w:11ch"></span>';
+    const held = chips(true);
+    // A button's box, or a bar in the chip's line for a link, then whose session a subagent's goes
+    // to, as the control says it: none of the control itself.
+    expect(chip(held, "executor amber")).toBe(`>executor amber${box}`);
+    expect(chip(held, "reviewer sub")).toBe(
+      `>reviewer sub${bar}<span class="go-session-via">in orch&#x27;s session</span>`,
+    );
+    expect(chip(held, "reviewer both")).toBe(`>reviewer both${box}`);
+    expect(chip(chips(false), "reviewer both")).toBe(`>reviewer both${bar}`);
+    expect(chip(held, "orchestrator bare")).toBe(">orchestrator bare");
+    expect(chip(held, "executor lost")).toBe(">executor lost");
+    // The last chip, to the end of the chips.
+    expect(chip(held, "executor odd")).toBe(">executor odd</span></span>");
+    expect(held).not.toContain('class="go-session"');
+    await fresh.loadGoToSession();
+    const come = chips(true);
+    expect(chip(come, "executor amber")).toContain('data-go="focus"');
+    expect(chip(come, "reviewer sub")).toContain('data-go="link"');
+    expect(chip(come, "reviewer sub")).toContain("in orch&#x27;s session");
+    expect(come).not.toContain("ghost-field");
+    expect(come).not.toContain('class="bone"');
   });
 });
