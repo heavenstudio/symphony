@@ -2352,12 +2352,14 @@ as it did before. That person stays `owner`, with every power, once others are n
   group's, until a board holds the words of someone who may not direct agents (step 5 of [the way
   from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner)), so every
   route that reaches the agents stays the person at the machine's. `administer` guards nothing
-  yet: the command is the terminal's.
+  yet: the command is the terminal's, and an agent is asked before it (below).
 - **One name space.** A person's name and a group's are short names, as a line writes them
   ([REVIEW](REVIEW.md#card-history)), never `owner`, `agent`, `board` or
-  `unknown`, never another person's or group's, and never a handle any session on the board was
-  given. A session registering is given no handle a person or group holds, and the command line
-  writes as sessions alone, so a thread line under a person's name is theirs, written through the
+  `unknown`, never another person's or group's, never a handle any session on the board was
+  given, and never an adjective and a noun the board names sessions by (`amber-heron`, 960 names
+  in all), so a register and an add of one name at once never both take it. A session
+  registering is given no handle a person or group holds, and the command line writes as
+  sessions alone, so a thread line under a person's name is theirs, written through the
   Symphony. A name stays theirs across a removal, as their profile keeps it: nothing removes a
   profile, and `people add` of a name that has one adds that same person, so a removed person's
   lines are never read as another's.
@@ -2365,7 +2367,9 @@ as it did before. That person stays `owner`, with every power, once others are n
   lock `people.lock`, both mode 600, holding each person's display name, sign-ins
   (`SERVICE:SUBJECT`, each one person's alone, matched ignoring case), git handles, emails, chat
   and preferences. A board and its copies hold none of it. The board's log and the server's log
-  lines name the short name, never a sign-in's subject or an email.
+  lines name the short name, never a sign-in's subject or an email. An add holds the lock from
+  its check of the sign-ins through the board's change and the profile's write, so of two adds
+  of one sign-in at once the second is refused, with nothing written.
 - **Who reaches a board.** A visitor under another Tailscale login is the profile holding that
   `tailscale` sign-in, on each board that gives its short name a power, as that name
   ([the server guide](../../apps/symphony-server/README.md#who-a-request-is-from)).
@@ -2387,9 +2391,13 @@ as it did before. That person stays `owner`, with every power, once others are n
   could not decide. A line committed into a document by hand is its committer's, as an owner's
   line written so already is.
 
-`just tasks people … --as HANDLE` changes them, each change a line of the log naming `--as`; a
+`just tasks-people … --as HANDLE` changes them, each change a line of the log naming `--as`; a
 change of nothing writes nothing, and a refusal says why and writes nothing, on the board or in
-the machine folder:
+the machine folder. No allow rule passes that recipe, so an agent's run of it asks first, as
+`just symphony` does. `just tasks people list` and `log` read them unasked, and `just tasks`,
+which an agent runs unasked, refuses every change by its own reading of the command line, however
+it is written (`--as` before the command, an option or a `--` before the action): no prefix rule
+could match each spelling, and Codex's rules take no word but those they name.
 
 - `list [--json]`: each person, their powers, groups and the services they sign in by, never a
   subject; `log [--json]`: the changes in order.

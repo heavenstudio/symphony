@@ -635,6 +635,74 @@ fn a_fresh_project_allows_just_land_and_is_asked_before_nothing_init_wrote() {
     }
 }
 
+/// Whether Claude's allow rule `rule` passes `command`, as its permissions read a rule of the one
+/// form init writes, `Bash(WORDS:*)`: the words alone, or the words and a space and anything.
+fn claude_allows(rule: &str, command: &str) -> bool {
+    let words = (rule.strip_prefix("Bash("))
+        .and_then(|rest| rest.strip_suffix(":*)"))
+        .unwrap_or_else(|| panic!("{rule} is not of the form init writes"));
+    command == words || command.starts_with(&format!("{words} "))
+}
+
+/// The words of each Codex rule in `rules` that decides `allow`, as the shipped rules write one:
+/// `prefix_rule(pattern=["WORD", …], decision="allow")`, its words literal.
+fn codex_allowed(rules: &str) -> Vec<Vec<String>> {
+    (rules.lines())
+        .filter_map(|line| line.strip_prefix("prefix_rule(pattern=["))
+        .filter_map(|rest| rest.strip_suffix("], decision=\"allow\")"))
+        .map(|words| {
+            (words.split(", "))
+                .map(|word| word.trim_matches('"').to_string())
+                .collect()
+        })
+        .collect()
+}
+
+/// A change to a board's people or a profile asks first, for Claude and for Codex: no rule init
+/// writes passes `just tasks-people`, which the shipped recipes hold, and `just tasks`, which a
+/// rule passes, takes the reads `people list` and `people log` unasked (`tasks` refuses the
+/// changes under the recipe's marker, which `just tasks-people` does not set).
+#[test]
+fn a_people_change_asks_first_for_either_agent_and_its_reads_do_not() {
+    let shipped = Shipped::builtin();
+    let codex = codex_allowed(&shipped.codex_rules);
+    assert_eq!(
+        codex.len(),
+        ALLOW.len(),
+        "one Codex rule for each of Claude's"
+    );
+    let allowed = |command: &str| {
+        let words: Vec<&str> = command.split(' ').collect();
+        let claude = ALLOW.iter().any(|rule| claude_allows(rule, command));
+        let codex = (codex.iter())
+            .any(|rule| words.starts_with(&rule.iter().map(String::as_str).collect::<Vec<_>>()));
+        assert_eq!(claude, codex, "Claude and Codex pass {command} alike");
+        claude
+    };
+    for read in [
+        "just tasks people list",
+        "just tasks people log --json --as amber-heron",
+    ] {
+        assert!(allowed(read), "{read}");
+    }
+    for change in [
+        "just tasks-people add ana --as amber-heron",
+        "just tasks-people grant ana decide",
+        "just tasks-people",
+        "just symphony --port 0",
+        "just symphony-cli init --root .",
+    ] {
+        assert!(!allowed(change), "{change} is passed unasked");
+    }
+    let recipes = shipped.recipes.as_deref().unwrap();
+    let recipe = (recipes.lines())
+        .skip_while(|line| !line.starts_with("tasks-people "))
+        .nth(1)
+        .unwrap();
+    assert_eq!(recipe, "    @{{ _symphony_run }} tasks people \"$@\"");
+    assert!(!recipe.contains("_symphony_unasked"), "it sets no marker");
+}
+
 /// The allow rules a landed init wrote while it asked before a land: no `just land`, and the
 /// env-prefixed board rule, retired since.
 const ALLOWED_BEFORE_A_LAND: [&str; 6] = [
@@ -1403,8 +1471,8 @@ fn left_beside(tree: &Tree, path: &str, beside: Option<&Path>) -> Vec<String> {
 const NO_BUILDS: [&str; 2] = [
     "link the project's builds at .target/bin/symphony, .target/bin/tasks, \
      .target/bin/agent-send and .target/bin/symphony-server, or put them on PATH: the heartbeat, \
-     the memory guard, `just symphony-cli`, `just tasks`, `just agent-send` and `just symphony` \
-     run them and build nothing",
+     the memory guard, `just symphony-cli`, `just tasks`, `just tasks-people`, `just agent-send` \
+     and `just symphony` run them and build nothing",
     "build `symphony`, `tasks`, `agent-send` and `symphony-server` to link in a checkout of the \
      Symphony: `cargo build --locked --release --bin symphony --bin tasks --bin agent-send --bin \
      symphony-server` there leaves them in its .target/release/",
@@ -1637,12 +1705,18 @@ fn each_build_is_told_with_what_runs_it_and_every_one_the_recipes_run_is_there()
         runners("symphony", &[]),
         ["the heartbeat", "the memory guard", "`just symphony-cli`"]
     );
-    assert_eq!(runners("tasks", &[]), ["the heartbeat", "`just tasks`"]);
+    assert_eq!(
+        runners("tasks", &[]),
+        ["the heartbeat", "`just tasks`", "`just tasks-people`"]
+    );
     assert_eq!(runners("symphony-server", &[]), ["`just symphony`"]);
     assert_eq!(runners("elsewhere", &[]), Vec::<String>::new());
     // A recipe of the project's own replaces the Symphony's, which runs the build no more.
     let own = ["tasks", "symphony", "symphony-cli"];
-    assert_eq!(runners("tasks", &own), ["the heartbeat"]);
+    assert_eq!(
+        runners("tasks", &own),
+        ["the heartbeat", "`just tasks-people`"]
+    );
     assert_eq!(
         runners("symphony", &own),
         ["the heartbeat", "the memory guard"]
@@ -1651,7 +1725,12 @@ fn each_build_is_told_with_what_runs_it_and_every_one_the_recipes_run_is_there()
     for (recipe, binary) in RUNS {
         assert!(BUILDS.contains(&binary), "{recipe} runs {binary}");
     }
-    assert_eq!(BUILDS.len(), RUNS.len());
+    for build in BUILDS {
+        assert!(
+            RUNS.iter().any(|(_, binary)| *binary == build),
+            "a recipe runs {build}"
+        );
+    }
     for name in HEARTBEAT_BUILDS {
         assert!(BUILDS.contains(&name), "{name}");
     }
@@ -1861,12 +1940,14 @@ fn a_build_only_recipes_the_project_replaced_would_run_is_not_asked_for() {
     let tree = Tree::new();
     tree.write("Lamp Shop/symphony.toml", "[project]\nid = \"lamps\"\n");
     tree.write("Lamp Shop/docs/README.md", "# Lamps\n");
-    // The project runs its own server and board by recipes of its own: `just symphony` and
-    // `just tasks` never run the Symphony's builds, though the heartbeat still runs `tasks`.
+    // The project runs its own server and board by recipes of its own: `just symphony`,
+    // `just tasks` and `just tasks-people` never run the Symphony's builds, though the heartbeat
+    // still runs `tasks`.
     tree.write(
         "Lamp Shop/justfile",
         "import 'symphony.just'\n\nsymphony *ARGS:\n    cargo run --bin symphony-server\n\n\
-         tasks *ARGS:\n    cargo run --bin tasks\n",
+         tasks *ARGS:\n    cargo run --bin tasks\n\n\
+         tasks-people *ARGS:\n    cargo run --bin tasks -- people\n",
     );
     init(&tree.path("Lamp Shop"), &kit(vec![])).unwrap();
     program(&tree, "Lamp Shop/.target/bin/symphony");
