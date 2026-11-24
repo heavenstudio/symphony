@@ -9,9 +9,8 @@ built on it keeps working. A program in any language that reads this page takes 
 Rust form is `crates/symphony-notice`.
 
 A person's profile holds their address for each way and the way each kind of notice goes by
-([TASKS](../workflow/TASKS.md#people)). Nothing makes notices yet: who is told, of what, is step 4
-of [the way from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner), and
-so is the server's part of the hand-off, its settings naming each way's program among it.
+([TASKS](../workflow/TASKS.md#people)). Who is told, of what, and when a notice is handed again is
+[the server's part](#the-servers-part), its programs named by the machine, not a project.
 
 ## The message
 
@@ -106,7 +105,61 @@ takes an idempotency key can pass the id as that key.
   a rule above. It exits `1`, saying why.
 
 When the server hands a notice again after a `75`, how often, and what it does with stderr are its
-own, built with it.
+own: [the server's part](#the-servers-part).
+
+## The server's part
+
+The machine's one server makes the notices of every project it serves; a server of a linked
+worktree or a preview makes none, so nothing is told twice. Through a reload's hand-off one
+generation tells at a time: the replacement reads no record and tells nothing until its hand-off
+commits, the generation it replaces lets the record go as it commits, and the lock it holds while
+it has the record open (`notices.lock` beside it) keeps a hand still under way apart from the
+replacement's first read. Its module doc is `apps/symphony-server/src/notices.rs`.
+
+- **What tells.** A card starting to wait on the main page's queue, an agent's question on a task
+  to the person at the machine (a thread line to `owner` that no person wrote), and a reviewer's
+  verdict. What stood when the server first looked at a project is taken as told.
+- **Who is told.** Whose the thing is, by the board's map of places and the name written on it
+  ([TASKS](../workflow/TASKS.md#which-group-a-thing-belongs-to)): each member of its group, or the
+  person it is written to. The person at the machine has no profile, so a board that names nobody
+  tells no one.
+- **By which way.** The way the person's profile chose for that kind, at their address for it. A
+  person who chose none is not told, nor one whose way the machine names no program for.
+- **Once.** A card waiting tells each person once while it waits, and again only after it stopped
+  waiting, or when it moves to someone not told yet; a line tells once.
+- **The programs are the machine's**: `notices/programs.toml` in the machine folder, each way named
+  to its program's absolute path. No `symphony.toml` key names one, so nothing a project or its
+  board holds starts a program. The server refuses the folder or the file when another account
+  owns it, when another may write it, or when a link stands in its place: it runs no program from
+  it then, says so once, and sends nothing until it is mended.
+
+  ```toml
+  slack = "/Users/ana/.cargo/bin/symphony-notice-slack"
+  email = "/Users/ana/.cargo/bin/symphony-notice-email"
+  whatsapp = "/Users/ana/.cargo/bin/symphony-notice-whatsapp"
+  ```
+
+- **Handed again** after a `75`: a minute after, then twice as long each time, at most an hour,
+  eight hands in all; after the eighth it is dropped, said. Any other status is said once and the
+  notice dropped. A program that does not end within 60 s, or whose end the server cannot watch,
+  is ended with its whole process group, as a `75`; what it said is heard at most 5 s after
+  that, so a process that left the group and holds its stderr never holds the hand. A notice
+  whose person's way or address for it changed since it was made, or whose way has no program now,
+  is dropped unhanded. A hand is counted only once the record says so: a record that cannot be
+  written starts no program and uses up none of a notice's eight hands.
+- **Through a restart.** The project's record is `notices.json` in its artifacts folder: the newest
+  board line looked at, who was told of each card while it waits, and each notice still to hand
+  with its id, its person, its way and a digest of their address, never the address. The digest
+  is keyed by the machine's own secret, `notices/record.key` in the machine folder, made once and
+  its owner's alone, so the record says nothing of an address, a phone number's among them, to
+  whoever reads it without the key. A hand is written there before its program starts and settled
+  after, so a notice handed when the server stopped is handed again, with the same id, and a
+  restart in a notice's wait hands it once, when it is due.
+- **Its link** is the page under the project, `http://NAME:PORT/<id>/…`, by the machine's tailnet
+  name (`127.0.0.1` without one).
+- **What it says.** Each outcome is a `NOTICE` line in the server's log, by the notice's id, kind,
+  person and way; what a program said on stderr is repeated there with the address and the link
+  hidden. No address is in the log, the record or a refusal.
 
 ## What a plugin must not do
 
