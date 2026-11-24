@@ -41,9 +41,62 @@ impl Drop for OwnSlots {
 
 /// The id of the segment the server running on `board` made, as its record's seventh line says.
 fn segment_of(board: &Board) -> String {
+    recorded_segment(board).1
+}
+
+/// The key and the id of the segment the server running on `board` made, as its record's seventh
+/// line says them: the key a 32-bit `key_t` the record writes sign-extended, as its low 32 bits.
+fn recorded_segment(board: &Board) -> (u32, String) {
     let record = std::fs::read_to_string(board.pg.data().join("postmaster.pid")).unwrap();
     let line = record.lines().nth(6).unwrap_or_else(|| panic!("{record}"));
-    line.split_whitespace().nth(1).unwrap().to_string()
+    match line.split_whitespace().collect::<Vec<_>>()[..] {
+        [key, id] => {
+            let key: u64 = key.parse().unwrap_or_else(|_| panic!("{line}"));
+            (key as u32, id.to_string())
+        }
+        _ => panic!("{record}"),
+    }
+}
+
+/// The key the segment `id` carries, as `ipcs -m` lists it on this machine: 0 once it was removed
+/// while a process is still attached to it (which leaves its id and creator listed until the last
+/// detaches), and none once it is gone.
+fn key_of(id: &str) -> Option<u32> {
+    let said = sys::output(command("ipcs").arg("-m")).unwrap();
+    assert!(said.status.success(), "{said:?}");
+    key_in(&String::from_utf8_lossy(&said.stdout), id)
+}
+
+/// The key of the segment `id` in `ipcs -m`'s listing, in macOS's layout (`m ID KEY …`) or
+/// Linux's (`KEY SHMID …`).
+fn key_in(listing: &str, id: &str) -> Option<u32> {
+    listing.lines().find_map(|line| {
+        let key = match line.split_whitespace().collect::<Vec<_>>()[..] {
+            ["m", shmid, key, ..] if shmid == id => key,
+            [key, shmid, ..] if shmid == id && key.starts_with("0x") => key,
+            _ => return None,
+        };
+        u32::from_str_radix(key.trim_start_matches("0x"), 16).ok()
+    })
+}
+
+#[test]
+fn a_segments_key_is_read_from_ipcs_on_macos_and_on_linux_and_is_0_once_removed() {
+    let macos = "IPC status from <running system> as of Tue Nov 24 17:00:00 -03 2026\n\
+                 T     ID     KEY        MODE       OWNER    GROUP\n\
+                 Shared Memory:\n\
+                 m 287178755 0x8aa149cf --rw-------  stefano    staff\n\
+                 m 588447752 0x00000000 --rw-------  stefano    staff\n";
+    assert_eq!(key_in(macos, "287178755"), Some(0x8aa1_49cf));
+    assert_eq!(key_in(macos, "588447752"), Some(0));
+    assert_eq!(key_in(macos, "28717875"), None);
+    let linux = "\n------ Shared Memory Segments --------\n\
+                 key        shmid      owner      perms      bytes      nattch     status\n\
+                 0x0052e2c1 32768      postgres   600        56         6\n\
+                 0x00000000 32769      postgres   600        56         2          dest\n";
+    assert_eq!(key_in(linux, "32768"), Some(0x0052_e2c1));
+    assert_eq!(key_in(linux, "32769"), Some(0));
+    assert_eq!(key_in(linux, "600"), None);
 }
 
 /// The creator of the segment `id`, as `ipcs -m -p` lists it on macOS or Linux: none once it is
@@ -254,8 +307,9 @@ fn a_killed_servers_supervisor_leaves_a_segment_another_server_made() {
     let killed = first.pg.ensure().unwrap();
     let serving = second.pg.ensure().unwrap();
     let own = Left::by(&first, killed.pid);
-    let other = segment_of(&second);
+    let (key, other) = recorded_segment(&second);
     assert_eq!(creator(&other), Some(serving.pid));
+    assert_eq!(key_of(&other), Some(key));
     killed_with_its_record_rewritten(&first, killed.pid, 6, &format!("0 {other}"));
     drop(first_slots.0.take(|_| {}).unwrap());
     first.none_left();
@@ -263,6 +317,13 @@ fn a_killed_servers_supervisor_leaves_a_segment_another_server_made() {
         creator(&other),
         Some(serving.pid),
         "segment {other} is left"
+    );
+    // Removed while the second server is attached, the segment would still be listed by its id
+    // and creator, but its key would read 0.
+    assert_eq!(
+        key_of(&other),
+        Some(key),
+        "segment {other} still carries its key, so it was not removed"
     );
     assert_eq!(second.psql(&serving, "SELECT 1"), "1");
     assert_eq!(
