@@ -238,35 +238,6 @@ fn a_refused_change_says_why_and_writes_nothing() {
     assert_eq!((f.store.people().unwrap(), logged(&f.store)), before);
 }
 
-/// A removed person's name and a removed group's are retired: listed as the board's, and refused
-/// to any new person or group, with nothing written, so no one is read as the writer of the lines
-/// the one removed wrote.
-#[test]
-fn a_removed_name_is_retired_and_given_to_no_person_or_group_again() {
-    let f = board();
-    f.store.add_group("crew", &[Power::Speak], BY).unwrap();
-    f.store
-        .add_person("ana", &["crew".into()], &[Power::Decide], BY)
-        .unwrap();
-    f.store.add_person("bob", &[], &[Power::Speak], BY).unwrap();
-    f.store.remove_person("ana", BY).unwrap();
-    f.store.remove_group("crew", BY).unwrap();
-    let people = f.store.people().unwrap();
-    assert_eq!(people.retired, ["ana", "crew"]);
-    assert!(f.store.deciders().is_empty());
-    let before = (people, logged(&f.store));
-    for why in [
-        refused(f.store.add_person("ana", &[], &[Power::Decide], BY)),
-        refused(f.store.add_group("ana", &[], BY)),
-        refused(f.store.add_person("crew", &[], &[], BY)),
-        refused(f.store.add_group("crew", &[Power::Speak], BY)),
-    ] {
-        assert!(why.contains("is a name removed before, retired"), "{why}");
-        assert!(why.ends_with("nothing was written"), "{why}");
-    }
-    assert_eq!((f.store.people().unwrap(), logged(&f.store)), before);
-}
-
 #[test]
 fn a_change_another_passed_reads_the_board_again_and_loses_nothing() {
     let f = board();
@@ -319,24 +290,21 @@ impl Pick for First {
 }
 
 #[test]
-fn no_session_is_given_a_persons_a_groups_or_a_retired_name_as_its_handle() {
+fn no_session_is_given_a_persons_or_a_groups_name_as_its_handle() {
     let first = Fixture::empty();
     let plain = (first.other().picking(Box::new(First)))
         .register(&NewSession::new("worker"))
         .unwrap()
         .row
         .handle;
-    for kind in ["person", "group", "retired"] {
+    for kind in ["person", "group"] {
         let f = Fixture::empty();
         match kind {
             "person" => f
                 .store
                 .add_person(&plain, &[], &[Power::Read], BY)
                 .map(|_| ()),
-            "group" => f.store.add_group(&plain, &[], BY).map(|_| ()),
-            _ => (f.store.add_person(&plain, &[], &[Power::Read], BY))
-                .and_then(|_| f.store.remove_person(&plain, BY))
-                .map(|_| ()),
+            _ => f.store.add_group(&plain, &[], BY).map(|_| ()),
         }
         .unwrap();
         let handle = (f.other().picking(Box::new(First)))
@@ -404,10 +372,7 @@ fn a_board_made_without_the_step_reads_nobody_and_takes_no_change() {
     assert_eq!(additions, i64::try_from(step).unwrap());
     for store in [&writer, &open(&Opening::read())] {
         let people = store.people().unwrap();
-        assert_eq!(
-            (people.members.len(), people.retired.len(), people.revision),
-            (0, 0, 0)
-        );
+        assert_eq!((people.members.len(), people.revision), (0, 0));
         assert_eq!(store.people_log().unwrap(), []);
         assert!(store.deciders().is_empty());
         let why = refused(store.add_person("ana", &[], &[Power::Decide], BY));

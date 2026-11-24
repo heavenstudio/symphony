@@ -8,7 +8,7 @@ pub(in crate::store) const HANDLES: Pg<'static> = Pg::Read(std::borrow::Cow::Bor
 ));
 
 /// Every name a new session's handle may not be: each session's handle, and on a board with the
-/// step that keeps them each person's and each group's name and each name retired. One request, a block that names the
+/// step that keeps them each person's and each group's name. One request, a block that names the
 /// people's tables only where the board has them.
 pub(in crate::store) const TAKEN: Pg<'static> = Pg::Script(
     std::borrow::Cow::Borrowed(concat!(
@@ -18,10 +18,7 @@ IF ",
         " THEN
     board_answer := board_answer
         || coalesce((SELECT jsonb_agg(doc -> 'name') FROM people), '[]'::jsonb)
-        || coalesce((SELECT jsonb_agg(doc -> 'name') FROM people_group), '[]'::jsonb)
-        || ",
-        super::people::people_retired!(),
-        ";
+        || coalesce((SELECT jsonb_agg(doc -> 'name') FROM people_group), '[]'::jsonb);
 END IF;"
     )),
     None,

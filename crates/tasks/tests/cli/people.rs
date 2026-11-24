@@ -161,13 +161,12 @@ fn powers_and_groups_change_by_name_and_a_change_of_nothing_writes_nothing() {
         ),
         (
             vec!["group", "remove", "staff"],
-            "the group staff is removed (change 9), its members are out of it, and staff is \
-             retired, never given to anyone again",
+            "the group staff is removed (change 9), and its members are out of it",
         ),
         (
             vec!["remove", "ana"],
-            "ana is on this board no more (change 10): their lines stay theirs, their profile \
-             stays the machine's, and ana is retired, never given to anyone again",
+            "ana is on this board no more (change 10): their lines stay theirs, and their \
+             profile stays the machine's",
         ),
     ] {
         let mut full = vec!["people"];
@@ -363,10 +362,10 @@ fn a_persons_name_is_no_handle_the_command_line_writes_as() {
     );
 }
 
-/// A profile that cannot be written puts no one on the board: the profile is written first, so a
-/// board never names one the machine holds no profile of, and is never taken off it to undo an add.
+/// A profile that cannot be written once the board took the person takes the board's change back,
+/// so the board names no one whose sign-ins the machine does not hold.
 #[test]
-fn a_person_whose_profile_cannot_be_written_is_not_put_on_the_board() {
+fn a_person_whose_profile_cannot_be_written_is_taken_off_the_board_again() {
     let (c, me, machine) = case("people-unwritten");
     // A folder where the lock would be: the profiles read as none, and no change of them is made.
     std::fs::create_dir_all(machine.join(symphony_board::people::LOCK)).unwrap();
@@ -376,110 +375,12 @@ fn a_person_whose_profile_cannot_be_written_is_not_put_on_the_board() {
         said.contains("ana's profile could not be written"),
         "{said}"
     );
-    assert!(said.contains("nothing was written"), "{said}");
-    assert_eq!(
-        c.ok(&me, &["people", "log"]),
-        "no change was made to this board's people\n"
-    );
-    assert!(!machine.join(symphony_board::people::FILE).exists());
-}
-
-/// A removed name is retired on the board that removed it and in the machine's profiles: refused
-/// to any new person or group there and on every board of the machine, and to a new profile, with
-/// nothing written; the profile of the one removed stays theirs. A refusal by the board writes
-/// nothing in the machine folder either.
-#[test]
-fn a_removed_name_is_retired_on_the_board_and_in_the_machines_profiles() {
-    let (c, me, machine) = case("people-retired");
-    let (code, said) = fails(&c, &me, &["people", "add", "owner"]);
-    assert_eq!(code, 1, "{said}");
-    assert!(
-        !machine.exists(),
-        "a refusal writes nothing in the machine folder"
-    );
-    c.ok(
-        &me,
-        &[
-            "people",
-            "add",
-            "ana",
-            "--signin",
-            "tailscale:ana@example.com",
-        ],
-    );
-    c.ok(&me, &["people", "group", "add", "crew", "speak"]);
-    let (code, said) = fails(&c, &me, &["people", "remove", "zed"]);
-    assert_eq!(code, 1, "{said}");
-    let profiles = || symphony_board::people::Profiles::read(&machine).unwrap();
-    assert!(
-        profiles().retired.is_empty(),
-        "a refused removal retires nothing"
-    );
-    c.ok(&me, &["people", "remove", "ana"]);
-    c.ok(&me, &["people", "group", "remove", "crew"]);
-    assert_eq!(profiles().retired, ["ana", "crew"]);
-    assert!(profiles().get("ana").is_some(), "her profile stays hers");
+    assert!(said.contains("is taken back"), "{said}");
     assert_eq!(
         c.ok(&me, &["people", "list"]),
-        "nobody is on this board but the person at the machine, who holds every power\n\
-         retired, never given again: ana, crew\n"
+        "nobody is on this board but the person at the machine, who holds every power\n"
     );
-    let before = (
-        c.ok(&me, &["people", "log"]),
-        std::fs::read_to_string(machine.join(symphony_board::people::FILE)).unwrap(),
-    );
-    // Another board of the same machine, which never held either.
-    let mut other = crate::Case::new();
-    (other.env.vars).insert("SYMPHONY_MACHINE_DIR".into(), machine.display().to_string());
-    let theirs = other.register("orchestrator");
-    for (case, who, args) in [
-        (&c, &me, vec!["people", "add", "ana", "--power", "decide"]),
-        (&c, &me, vec!["people", "group", "add", "ana"]),
-        (&c, &me, vec!["people", "add", "crew"]),
-        (&other, &theirs, vec!["people", "add", "ana"]),
-        (
-            &c,
-            &me,
-            vec!["people", "profile", "crew", "--display", "Crew"],
-        ),
-    ] {
-        let (code, said) = fails(case, who, &args);
-        assert_eq!(code, 1, "{args:?}: {said}");
-        assert!(
-            said.contains("is a name removed before, retired"),
-            "{args:?}: {said}"
-        );
-    }
-    assert_eq!(
-        (
-            c.ok(&me, &["people", "log"]),
-            std::fs::read_to_string(machine.join(symphony_board::people::FILE)).unwrap(),
-        ),
-        before
-    );
-    assert_eq!(
-        c.ok(&me, &["people", "profile", "ana", "--display", "Ana Lima"]),
-        "ana's profile is written in the machine folder\n",
-        "a kept profile stays its person's to change"
-    );
-}
-
-/// A removal whose name the machine's profiles cannot retire takes no one off the board: the board
-/// never frees a name the machine has not retired.
-#[test]
-fn a_removal_the_machine_cannot_retire_leaves_the_person_on_the_board() {
-    let (c, me, machine) = case("people-unretired");
-    c.ok(&me, &["people", "add", "ana", "--power", "speak"]);
-    std::fs::remove_file(machine.join(symphony_board::people::LOCK)).unwrap();
-    std::fs::create_dir_all(machine.join(symphony_board::people::LOCK)).unwrap();
-    let (code, said) = fails(&c, &me, &["people", "remove", "ana"]);
-    assert_eq!(code, 2, "a failure, not a refusal: {said}");
-    assert!(
-        said.contains("ana could not be retired in the machine's profiles"),
-        "{said}"
-    );
-    assert!(said.contains("nothing was written"), "{said}");
-    let listed = c.ok(&me, &["people", "list"]);
-    assert!(listed.starts_with("ana  read, speak"), "{listed}");
-    assert_eq!(c.ok(&me, &["people", "log"]).lines().count(), 1);
+    let log = c.ok(&me, &["people", "log"]);
+    assert_eq!(log.lines().count(), 2, "the add and its taking back: {log}");
+    assert!(!machine.join(symphony_board::people::FILE).exists());
 }

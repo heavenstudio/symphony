@@ -110,7 +110,6 @@ fn a_persons_powers_are_their_own_and_their_kept_groups_and_none_off_the_board()
             member("cleo", &[], &[]),
         ],
         groups: vec![group("staff", &[Power::Speak])],
-        retired: Vec::new(),
         revision: 4,
     };
     assert_eq!(
@@ -135,7 +134,6 @@ fn a_name_takes_a_short_names_form_and_one_name_space_with_no_session_in_it() {
     let people = People {
         members: vec![member("ana", &[], &[Power::Read])],
         groups: vec![group("staff", &[])],
-        retired: vec!["cleo".into()],
         revision: 2,
     };
     let handles = vec!["amber-heron".to_string()];
@@ -157,8 +155,6 @@ fn a_name_takes_a_short_names_form_and_one_name_space_with_no_session_in_it() {
         refused_name("staff", &people, &handles).as_deref(),
         Some("staff is a group of this board")
     );
-    let retired = refused_name("cleo", &people, &handles).unwrap();
-    assert_eq!(retired, format!("cleo is {RETIRED_WHY}"));
     let handle = refused_name("amber-heron", &people, &handles).unwrap();
     assert!(
         handle.starts_with("amber-heron is a session's handle"),
@@ -266,29 +262,6 @@ fn profiles_that_cannot_be_read_or_written_say_where_and_leave_no_temporary_file
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(left, [FILE], "no temporary file is left");
-}
-
-/// The names a board retired are kept once each, in order, and a file written before there were
-/// any reads as none retired; with none, the file names no list.
-#[test]
-fn a_retired_name_is_kept_once_in_order_and_an_older_file_retires_nothing() {
-    let machine = Machine::new("retired");
-    fs::create_dir_all(&machine.0).unwrap();
-    fs::write(machine.0.join(FILE), r#"{"people": []}"#).unwrap();
-    let read = Profiles::read(&machine.0).unwrap();
-    assert!(read.retired.is_empty() && !read.is_retired("ana"));
-    Profiles::change(&machine.0, |profiles| {
-        for name in ["cleo", "ana", "cleo", "bob"] {
-            profiles.retire(name);
-        }
-        Ok(())
-    })
-    .unwrap();
-    let read = Profiles::read(&machine.0).unwrap();
-    assert_eq!(read.retired, ["ana", "bob", "cleo"]);
-    assert!(read.is_retired("bob") && !read.is_retired("dan"));
-    let none = serde_json::to_value(Profiles::default()).unwrap();
-    assert_eq!(none, serde_json::json!({"people": []}));
 }
 
 #[test]

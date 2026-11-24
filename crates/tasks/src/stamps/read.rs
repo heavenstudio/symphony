@@ -374,10 +374,9 @@ pub fn owner_approves(post: &Message) -> bool {
 /// Whether `post` is an approve the `owner` stamp takes on a board where `deciders` hold the
 /// decide power ([`crate::people::People::holding`]): a line of the owner's or of one of them,
 /// whose first word is `approve`. A line under a decider's name is theirs: a person's or a group's
-/// name is never a session's handle, nor a handle a person's name, and a removed name is retired,
-/// never given to anyone again ([`crate::people::refused_name`], [`crate::Store::register`]), so
-/// the name alone says who wrote it, as the person mark ([`crate::rows::MessageRow::person`]) says
-/// only that a person did; the board's own lines are `system`.
+/// name is never a session's handle, nor a handle a person's name
+/// ([`crate::people::refused_name`], [`crate::Store::register`]), and the board's own lines are
+/// `system`.
 pub fn approves_by(post: &Message, deciders: &[String]) -> bool {
     let first = (post.text.trim_start())
         .split(|c: char| c.is_whitespace() || c == ':')

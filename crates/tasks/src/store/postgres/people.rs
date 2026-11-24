@@ -4,29 +4,14 @@
 use super::Pg;
 use std::borrow::Cow;
 
-/// Every name the board's log says was removed, a person's or a group's, once each in order, as
-/// an expression: retired, so never given again ([`crate::people::People::retired`]).
-macro_rules! people_retired {
-    () => {
-        "coalesce((SELECT jsonb_agg(DISTINCT doc ->> 'name' ORDER BY doc ->> 'name') FROM people_log
-            WHERE doc ->> 'did' IN ('remove', 'group-remove')), '[]'::jsonb)"
-    };
-}
-pub(in crate::store) use people_retired;
-
-/// Who is on the board, `{members, groups, retired, revision}`, as an expression: only on a board
-/// with the step that defines the tables (`people_held!` guards it).
+/// Who is on the board, `{members, groups, revision}`, as an expression: only on a board with the
+/// step that defines the tables (`people_held!` guards it).
 macro_rules! people_object {
     () => {
-        concat!(
-            "jsonb_build_object(
+        "jsonb_build_object(
         'members', coalesce((SELECT jsonb_agg(doc ORDER BY doc ->> 'name') FROM people), '[]'::jsonb),
         'groups', coalesce((SELECT jsonb_agg(doc ORDER BY doc ->> 'name') FROM people_group), '[]'::jsonb),
-        'retired', ",
-            $crate::store::postgres::people::people_retired!(),
-            ",
         'revision', coalesce((SELECT (id #>> '{}')::bigint FROM people_log ORDER BY id DESC LIMIT 1), 0))"
-        )
     };
 }
 pub(in crate::store) use people_object;
@@ -40,11 +25,11 @@ macro_rules! people_held {
 }
 pub(in crate::store) use people_held;
 
-/// Who is on the board, `{members, groups, retired, revision}`: none, at revision 0, where the
-/// board lacks the step that defines the tables.
+/// Who is on the board, `{members, groups, revision}`: none, at revision 0, where the board lacks
+/// the step that defines the tables.
 pub(in crate::store) const PEOPLE: Pg<'static> = Pg::Script(
     Cow::Borrowed(concat!(
-        "board_answer := jsonb_build_object('members', '[]'::jsonb, 'groups', '[]'::jsonb, 'retired', '[]'::jsonb, 'revision', 0);
+        "board_answer := jsonb_build_object('members', '[]'::jsonb, 'groups', '[]'::jsonb, 'revision', 0);
 IF ",
         people_held!(),
         " THEN

@@ -44,8 +44,6 @@ struct Decided {
 struct Read {
     members: Vec<Member>,
     groups: Vec<Group>,
-    #[serde(default)]
-    retired: Vec<String>,
     revision: i64,
 }
 
@@ -55,7 +53,6 @@ pub(super) fn answered(answer: &Value) -> Result<People, String> {
     Ok(People {
         members: read.members,
         groups: read.groups,
-        retired: read.retired,
         revision: read.revision,
     })
 }
@@ -91,8 +88,8 @@ impl Store {
 
     /// Puts the person `name` on the board, in `groups` and with `powers`, as `by`'s change.
     /// Refused, with nothing written: a name [`refused_name`] refuses (no short name, a person's
-    /// or a group's here already, a name retired, a session's handle), a group the board does not
-    /// keep, and a power no one is given yet ([`given`]).
+    /// or a group's here already, a session's handle), a group the board does not keep, and a
+    /// power no one is given yet ([`given`]).
     pub fn add_person(
         &self,
         name: &str,
@@ -102,61 +99,33 @@ impl Store {
     ) -> Result<Change, Error> {
         given(powers)?;
         let changed = self.change_people(by, |people| {
-            self.added_person(people, name, groups, powers).map(Some)
+            let handles = self.session_handles()?;
+            if let Some(why) = refused_name(name, people, &handles) {
+                return Err(nothing(why));
+            }
+            for group in groups {
+                kept_group(people, group)?;
+            }
+            let member = Member {
+                name: name.into(),
+                groups: in_order(groups.iter().cloned()),
+                powers: said_order(powers.iter().copied()),
+                revision: 0,
+            };
+            Ok(Some(Decided {
+                did: Some(Did::Add),
+                name: name.into(),
+                group: None,
+                powers: member.powers.clone(),
+                members: vec![member],
+                ..Decided::default()
+            }))
         })?;
         Ok(changed.expect("an add always changes the board"))
     }
 
-    /// Whether [`Store::add_person`] would put `name` on the board as it is now: its refusal,
-    /// with nothing written, where it would not. A command that writes elsewhere before the board
-    /// asks this first, so a refusal writes nothing anywhere.
-    pub fn may_add_person(
-        &self,
-        name: &str,
-        groups: &[String],
-        powers: &[Power],
-    ) -> Result<(), Error> {
-        given(powers)?;
-        self.keeping_people()?;
-        let people = self.people()?;
-        self.added_person(&people, name, groups, powers).map(|_| ())
-    }
-
-    /// The add of `name` to `people`, or why the board refuses it.
-    fn added_person(
-        &self,
-        people: &People,
-        name: &str,
-        groups: &[String],
-        powers: &[Power],
-    ) -> Result<Decided, Error> {
-        let handles = self.session_handles()?;
-        if let Some(why) = refused_name(name, people, &handles) {
-            return Err(nothing(why));
-        }
-        for group in groups {
-            kept_group(people, group)?;
-        }
-        let member = Member {
-            name: name.into(),
-            groups: in_order(groups.iter().cloned()),
-            powers: said_order(powers.iter().copied()),
-            revision: 0,
-        };
-        Ok(Decided {
-            did: Some(Did::Add),
-            name: name.into(),
-            group: None,
-            powers: member.powers.clone(),
-            members: vec![member],
-            ..Decided::default()
-        })
-    }
-
-    /// Takes the person `name` off the board as `by`'s change: their row goes, the lines they
-    /// wrote stay theirs, and their name is retired, never given again on this board
-    /// ([`People::retired`]), so no one given it later is read as the writer of those lines.
-    /// Refused where the board holds no person by that name.
+    /// Takes the person `name` off the board as `by`'s change: their row goes, and the lines they
+    /// wrote stay theirs. Refused where the board holds no person by that name.
     pub fn remove_person(&self, name: &str, by: &str) -> Result<Change, Error> {
         let changed = self.change_people(by, |people| {
             kept_member(people, name)?;
@@ -287,7 +256,7 @@ impl Store {
     }
 
     /// Removes the group `name` as `by`'s change, taking each of its members out of it in the same
-    /// write, its name retired as a person's is. Refused where the board keeps no such group.
+    /// write. Refused where the board keeps no such group.
     pub fn remove_group(&self, name: &str, by: &str) -> Result<Change, Error> {
         let changed = self.change_people(by, |people| {
             kept_group(people, name)?;
