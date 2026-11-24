@@ -375,7 +375,8 @@ pub fn owner_approves(post: &Message) -> bool {
 /// decide power ([`crate::people::People::holding`]): a line of the owner's or of one of them,
 /// whose first word is `approve`. A line under a decider's name is theirs: a person's or a group's
 /// name is never a session's handle, nor a handle a person's name
-/// ([`crate::people::refused_name`], [`crate::Store::register`]), and the board's own lines are
+/// ([`crate::people::refused_name`], [`crate::Store::register`]), a person's name stays their
+/// profile's across a removal ([`crate::people::Profiles`]), and the board's own lines are
 /// `system`.
 pub fn approves_by(post: &Message, deciders: &[String]) -> bool {
     let first = (post.text.trim_start())

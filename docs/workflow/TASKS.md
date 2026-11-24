@@ -2358,7 +2358,9 @@ as it did before. That person stays `owner`, with every power, once others are n
   `unknown`, never another person's or group's, and never a handle any session on the board was
   given. A session registering is given no handle a person or group holds, and the command line
   writes as sessions alone, so a thread line under a person's name is theirs, written through the
-  Symphony.
+  Symphony. A name stays theirs across a removal, as their profile keeps it: nothing removes a
+  profile, and `people add` of a name that has one adds that same person, so a removed person's
+  lines are never read as another's.
 - **A profile is the machine's**, not the board's: `people.json` in the machine folder, with its
   lock `people.lock`, both mode 600, holding each person's display name, sign-ins
   (`SERVICE:SUBJECT`, each one person's alone, matched ignoring case), git handles, emails, chat
