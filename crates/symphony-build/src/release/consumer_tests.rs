@@ -14,7 +14,7 @@ struct Scratch {
 
 impl Scratch {
     /// On `main`, one commit: the board at schema 20, pin 1, a guard of two calls, a shipped
-    /// recipe file and the three tools pinned.
+    /// recipe file and the two tools pinned in files of their own.
     fn new(tree: &Tree) -> Scratch {
         let root = tree.path("repo");
         std::fs::create_dir_all(&root).unwrap();
@@ -28,7 +28,6 @@ impl Scratch {
         );
         scratch.write("crates/symphony/shipped/symphony.just", "tasks:\n");
         scratch.write("rust-toolchain.toml", "[toolchain]\nchannel = \"1.98.0\"\n");
-        scratch.write("tools/surreal.sh", "#!/bin/sh\nVERSION=3.3.0\n");
         scratch.write("apps/symphony-web/.node-version", "24.1.0\n");
         scratch.write(LOCK, &lock("0.1.0"));
         scratch.write(
@@ -226,11 +225,6 @@ fn each_pinned_tool_is_read_from_its_file() {
     );
     assert_eq!(toolchain("[toolchain]\nchannels = \"1.99.0\"\n"), None);
     assert_eq!(toolchain("[toolchain]\nchannel = stable\n"), None);
-    assert_eq!(
-        surreal("# version VERSION\nVERSION=3.3.0\nurl $VERSION\n"),
-        Some("3.3.0".into())
-    );
-    assert_eq!(surreal("  VERSION=3\nVERSION=\n"), None);
     assert_eq!(node("24.1.0\n"), Some("24.1.0".into()));
     assert_eq!(node("\n"), None);
     assert_eq!(

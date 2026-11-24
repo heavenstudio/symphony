@@ -31,7 +31,6 @@ data-encoding = "2"
 symphony-blocks = { path = "../symphony-blocks" }
 # The scratch board its exchange tests run on, reached as the program reaches it: `tasks api`.
 symphony-board = { path = "../tasks" }
-symphony-env = { path = "../symphony-env" }
 
 [lints]
 workspace = true

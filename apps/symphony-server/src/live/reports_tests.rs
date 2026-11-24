@@ -14,7 +14,6 @@ use crate::testing::{Tree, repository};
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
 use symphony_api::{ReportDay, ReportHour};
-use symphony_board::board_health::queries_of;
 use symphony_board::recording::Gate;
 use symphony_board::reports::{DAY, HOUR, day_start};
 use symphony_board::sweep::trigger::now;
@@ -131,8 +130,7 @@ fn the_roll_up_writes_today_each_hour_makes_yesterday_final_once_and_survives_a_
     let ten = today + 10.0 * HOUR;
     let clock = Clock(Arc::new(Mutex::new(ten)));
     let hub = shared(&root, &folder, &clock);
-    let client = fixture.store.client();
-    let log = queries_of(client.addr(), "sf", client.database());
+    let log = fixture.store.database().queries();
     let (requests, writes) = log.report(now());
 
     tick(&hub, Some(&fixture.store));
@@ -326,8 +324,7 @@ fn an_hour_that_comes_while_a_roll_up_runs_waits_for_it_and_then_rolls_up() {
     let fixture = report_board();
     let clock = Clock(Arc::new(Mutex::new(midnight() + 10.0 * HOUR)));
     let hub = shared(&root, &folder, &clock);
-    let client = fixture.store.client();
-    let log = queries_of(client.addr(), "sf", client.database());
+    let log = fixture.store.database().queries();
     let (requests, _) = log.report(now());
     let (release, held) = mpsc::channel::<()>();
     let running = std::thread::spawn(move || {

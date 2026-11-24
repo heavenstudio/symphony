@@ -1,16 +1,14 @@
 //! The suite's board as [`board`] makes it: the generated rows copied whole, in the copy's one
-//! transaction, onto a server the store's fixture starts as every test target starts it
-//! (`store::launch_on`), which keeps them in `surrealkv://` in the run's folder, the live board's
-//! engine. Every other test of the target times or plans what runs on that board; this one says
-//! the board is there, on the condition of its rows and its store, never a time.
+//! transaction, onto a PostgreSQL of the test binary's own whose data is in the run's folder. Every
+//! other test of the target times or plans what runs on that board; this one says the board is
+//! there, on the condition of its rows and its server, never a time.
 
 use crate::board::board;
 use crate::generated::dump;
-use crate::store;
 use serde_json::json;
 
 #[test]
-fn the_generated_board_is_copied_whole_onto_a_store_in_the_runs_folder() {
+fn the_generated_board_is_copied_whole_onto_a_server_in_the_runs_folder() {
     let board = board();
     let dump = dump();
     assert_eq!(
@@ -26,14 +24,21 @@ fn the_generated_board_is_copied_whole_onto_a_store_in_the_runs_folder() {
             "task_session": dump.task_sessions.len(),
             "delivery_key": dump.delivery_keys.len(),
             "ask": dump.asks.len(),
-            "staging": [],
         }),
-        "each table holds the generated rows, and the copy left no staging"
+        "each table holds the generated rows"
+    );
+    let serving = (board.server.current())
+        .unwrap_or_else(|why| panic!("the board's server: {why}"))
+        .expect("the board's server serves");
+    assert_eq!(
+        (serving.pid, &serving.socket),
+        (board.pid, &board.socket),
+        "the board's server is the one the suite started"
     );
     assert!(
-        board.engine.starts_with("surrealkv://"),
-        "the board's engine is {}",
-        board.engine
+        board.server.data().starts_with(&board.dir),
+        "the board's data {} is in the run's folder {}",
+        board.server.data().display(),
+        board.dir.display()
     );
-    store::store_held_in(&board.engine).unwrap_or_else(|why| panic!("the board's server: {why}"));
 }

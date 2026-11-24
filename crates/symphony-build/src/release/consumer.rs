@@ -48,9 +48,8 @@ const WHERE: &str = "docs/workflow/RELEASES.md, \"Its notes\"";
 type Tool = (&'static str, &'static str, fn(&str) -> Option<String>);
 
 /// The tools a release pins, each read at a release's commit.
-const TOOLS: [Tool; 4] = [
+const TOOLS: [Tool; 3] = [
     ("Rust toolchain", "rust-toolchain.toml", toolchain),
-    ("SurrealDB", "tools/surreal.sh", surreal),
     ("Node", "apps/symphony-web/.node-version", node),
     (
         "PostgreSQL, the oldest major the board's server runs on,",
@@ -66,14 +65,6 @@ fn toolchain(text: &str) -> Option<String> {
         let value = value.strip_prefix('=')?.trim();
         Some(value.strip_prefix('"')?.strip_suffix('"')?.to_string())
     })
-}
-
-/// `VERSION=3.3.0` on a line of its own in `tools/surreal.sh`.
-fn surreal(text: &str) -> Option<String> {
-    text.lines()
-        .find_map(|line| line.strip_prefix("VERSION="))
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 /// The whole of `.node-version`.

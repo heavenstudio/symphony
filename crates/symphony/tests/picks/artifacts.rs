@@ -1,6 +1,6 @@
-//! Full core/board adapter round trips on each scratch database, with a local private byte store.
+//! A full core/board adapter round trip on a scratch board, with a local private byte store.
 
-use super::board::{Backend, Fixture, Seed};
+use super::board::{Fixture, Seed};
 use super::common::Tree;
 use std::collections::BTreeSet;
 use symphony::artifacts::{
@@ -8,8 +8,9 @@ use symphony::artifacts::{
     Status,
 };
 
-fn round_trip(backend: Backend) {
-    let fixture = Fixture::on(backend, Seed::default());
+#[test]
+fn durable_artifact_metadata_round_trip() {
+    let fixture = Fixture::new(Seed::default());
     let tree = Tree::new();
     let provider = Local::for_project(&tree.root);
     let scope = Scope::new("tenant", "project").unwrap();
@@ -82,14 +83,4 @@ fn round_trip(backend: Backend) {
     row.set(serde_json::json!({"body": {"encoded": "not JSON"}}))
         .unwrap();
     assert!(matches!(metadata.load(&scope), Err(Error::Metadata)));
-}
-
-#[test]
-fn durable_artifact_metadata_round_trip_surrealdb() {
-    round_trip(Backend::SurrealDb);
-}
-
-#[test]
-fn durable_artifact_metadata_round_trip_postgresql() {
-    round_trip(Backend::PostgreSql);
 }

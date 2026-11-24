@@ -18,9 +18,9 @@ fn task_diff_routes_read_only_the_requested_task_and_open_file() {
     git(&root, &["add", "."]);
     git(&root, &["commit", "-qm", "change"]);
     let fixture = Fixture::new(Seed::default().task("tools/change", "in_progress"));
-    let store = store_on(fixture.store.client());
+    let store = store_on(fixture.store.database());
     let mut hub = Hub::new(&root, &root.join("build/client"));
-    let board = fixture.other_client();
+    let board = fixture.other_database();
     hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
     hub.refresh_page("", &root).unwrap();
     observe(&hub, &store, &[]);

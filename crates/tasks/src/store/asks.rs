@@ -9,8 +9,7 @@
 //! is answered.
 
 use super::postgres::asks as pg;
-use super::statement::both;
-use super::surreal::asks as sql;
+use super::statement::Statement;
 use super::{Error, REFUSED, Store, refused, repr, unknown_actor};
 use crate::rows::AskRow;
 use serde::{Deserialize, Serialize};
@@ -119,8 +118,9 @@ pub fn short(words: &str) -> String {
     cut
 }
 
-/// The variables [`sql::ON_THREAD`] reads beside a post's own: what the ask about task `slug` is about,
-/// and the post's words as an ask keeps them.
+/// The variables a post's write reads beside its own when it opens an ask on its thread
+/// (`postgres::messages`): what the ask about task `slug` is about, and the post's words as an ask
+/// keeps them.
 pub(super) fn on_thread_vars(slug: &str, text: &str) -> (String, String) {
     let about = NewAsk {
         kind: "task".into(),
@@ -158,7 +158,7 @@ impl Store {
     /// board.
     pub fn open_ask(&self, new: &NewAsk) -> Result<Ask, Error> {
         let vars = self.ask_vars(new)?;
-        self.retrying(|| self.transact(both(sql::OPEN.as_str(), pg::open()), vars.clone()))
+        self.retrying(|| self.transact(Statement::from(pg::open()), vars.clone()))
     }
 
     /// `JOIN_OR_OPEN`'s variables for the owner's line `new`, checked as [`Store::open_ask`] checks
@@ -183,7 +183,7 @@ impl Store {
     /// Ask `sid`, open or answered.
     pub fn ask(&self, sid: i64) -> Result<Ask, Error> {
         let found: Option<Ask> =
-            self.retrying(|| self.read(both(sql::ASK, pg::ask()), json!({"sid": sid})))?;
+            self.retrying(|| self.read(Statement::from(pg::ask()), json!({"sid": sid})))?;
         found.ok_or_else(|| refused(format!("no ask {sid}")))
     }
 
@@ -192,7 +192,7 @@ impl Store {
     pub fn asks(&self, answered_since: Option<f64>) -> Result<Vec<Ask>, Error> {
         let listed: Listed = self.retrying(|| {
             self.read(
-                both(sql::ASKS, pg::asks()),
+                Statement::from(pg::asks()),
                 json!({"since": answered_since}),
             )
         })?;
@@ -208,7 +208,7 @@ impl Store {
             "no_ask": no_ask(sid), "answered": answered(sid),
             "unknown": thrown(unknown_actor(&self.board_command(), holder.unwrap_or(""))),
         });
-        self.retrying(|| self.transact(both(sql::HOLD, pg::hold()), vars.clone()))
+        self.retrying(|| self.transact(Statement::from(pg::hold()), vars.clone()))
     }
 
     /// Ask `sid` answered now, by `by` when the answer names its session, the answer being where it
@@ -217,7 +217,7 @@ impl Store {
         let vars = json!({
             "sid": sid, "by": by, "answer": answer, "now": self.now(), "no_ask": no_ask(sid),
         });
-        self.retrying(|| self.transact(both(sql::ANSWER, pg::answer()), vars.clone()))
+        self.retrying(|| self.transact(Statement::from(pg::answer()), vars.clone()))
     }
 
     /// The open ask about what `about` names ([`NewAsk::about`]) answered now, as [`Store::answer_ask`]
@@ -231,7 +231,7 @@ impl Store {
         let vars = json!({
             "about": about.about()?, "by": by, "answer": answer, "now": self.now(),
         });
-        self.retrying(|| self.transact(both(sql::ANSWER_ABOUT, pg::answer_about()), vars.clone()))
+        self.retrying(|| self.transact(Statement::from(pg::answer_about()), vars.clone()))
     }
 
     /// Ask `sid`, while open, marked as what it is about read gone (`why`), or no longer (none): the
@@ -240,7 +240,7 @@ impl Store {
     /// answered ask.
     pub fn mark_gone(&self, sid: i64, why: Option<&str>) -> Result<Ask, Error> {
         let vars = json!({"sid": sid, "why": why, "now": self.now(), "no_ask": no_ask(sid)});
-        self.retrying(|| self.transact(both(sql::GONE, pg::gone()), vars.clone()))
+        self.retrying(|| self.transact(Statement::from(pg::gone()), vars.clone()))
     }
 
     /// Ask `sid` closed by hand by the session `by`, as needing no answer, saying `why`. Refused for an
@@ -256,7 +256,7 @@ impl Store {
             "no_ask": no_ask(sid), "answered": answered(sid),
             "unknown": thrown(unknown_actor(&self.board_command(), by)),
         });
-        self.retrying(|| self.transact(both(sql::CLOSE, pg::close()), vars.clone()))
+        self.retrying(|| self.transact(Statement::from(pg::close()), vars.clone()))
     }
 }
 

@@ -9,9 +9,8 @@
 use super::{Held, Live, before, refused, this};
 use crate::common::NOW;
 use serde_json::json;
-use symphony_board::rpc::Client;
 use symphony_board::sweep::trigger::now;
-use symphony_board::{Opening, Program, Raw, Schema, Store, Writer};
+use symphony_board::{Database, Opening, Program, Raw, Schema, Store, Writer};
 
 const HOUR: f64 = 3600.0;
 
@@ -20,36 +19,39 @@ fn gate() -> Program {
     Program::named("gate-review", "/work/live/.target/debug/gate-review")
 }
 
-/// `program`'s line, written on `client`'s board as a build at `schema` that carries the record
+/// `program`'s line, written on the board in `db` as a build at `schema` that carries the record
 /// writes it, last seen at `seen`.
-fn write_line(client: &Client, program: &Program, host: &str, schema: i64, seen: f64) {
-    client
-        .query(
-            "UPSERT type::record('writer', [$host, $path]) CONTENT { program: $program, path: \
-             $path, host: $host, schema: $schema, seen: $seen } RETURN NONE;",
-            json!({
-                "host": host,
-                "path": program.path,
-                "program": program.name,
-                "schema": schema,
-                "seen": seen,
-            }),
-        )
+fn write_line(db: &Database, program: &Program, host: &str, schema: i64, seen: f64) {
+    Raw::of(db)
+        .row("writer", json!([host, program.path]))
+        .put(json!({
+            "host": host,
+            "path": program.path,
+            "program": program.name,
+            "schema": schema,
+            "seen": seen,
+        }))
         .unwrap();
 }
 
-/// Every writer's line on `client`'s board.
-fn lines(client: Client) -> Vec<Writer> {
-    Store::unchecked(client, Box::new(|| NOW), Box::new(|_| true), "")
-        .writers()
-        .unwrap()
+/// Every writer's line on the board in `db`.
+fn lines(db: Database) -> Vec<Writer> {
+    Store::unchecked_on(
+        db,
+        Box::new(|| NOW),
+        Box::new(|_| true),
+        "",
+        &Opening::write(),
+    )
+    .writers()
+    .unwrap()
 }
 
 #[test]
 fn a_migrate_waits_for_a_writer_it_would_leave_behind_to_be_rebuilt_and_run_then_moves_the_board() {
     let live = Live::older("main-only-writers", Held::Nothing);
     write_line(
-        &live.client("tasks"),
+        &live.database("tasks"),
         &gate(),
         "studio",
         before(),
@@ -71,8 +73,8 @@ fn a_migrate_waits_for_a_writer_it_would_leave_behind_to_be_rebuilt_and_run_then
     // The gate, rebuilt at this build's schema, runs once: the board is behind it, and only the
     // migrate moves it, so it is refused, but its line now says where it is.
     let start = now();
-    let rebuilt = Store::opening(
-        live.client("tasks"),
+    let rebuilt = Store::opening_on(
+        live.database("tasks"),
         Box::new(|| NOW),
         Box::new(|_| false),
         "studio",
@@ -92,7 +94,7 @@ fn a_migrate_waits_for_a_writer_it_would_leave_behind_to_be_rebuilt_and_run_then
         "{why}"
     );
     let gate_line = |live: &Live| {
-        lines(live.client("tasks"))
+        lines(live.database("tasks"))
             .into_iter()
             .find(|w| w.program == "gate-review")
             .unwrap()
@@ -115,7 +117,7 @@ fn a_migrate_waits_for_a_writer_it_would_leave_behind_to_be_rebuilt_and_run_then
             String::new()
         )
     );
-    let tasks = lines(live.client("tasks"))
+    let tasks = lines(live.database("tasks"))
         .into_iter()
         .find(|w| w.program == "tasks")
         .expect("the migrate's own line");
@@ -123,8 +125,8 @@ fn a_migrate_waits_for_a_writer_it_would_leave_behind_to_be_rebuilt_and_run_then
 
     // A writer built before the move is refused it, named as what to rebuild.
     let older = Program::named("old-gate", "/work/live/old/gate-review");
-    let refused_older = Store::opening(
-        live.client("tasks"),
+    let refused_older = Store::opening_on(
+        live.database("tasks"),
         Box::new(|| NOW),
         Box::new(|_| false),
         "studio",
@@ -155,13 +157,13 @@ fn migrate_leave_behind_moves_a_board_whose_writers_are_behind_and_says_so_in_it
     let env = crate::env();
     let made = crate::run(&env, &["migrate"], "");
     assert_eq!(made.code, 0, "{}", made.err);
-    let client = Client::new(&env.vars["TASKS_SERVER"], "sf", &env.vars["TASKS_DATABASE"]);
+    let db = super::on_server(&env.vars["TASKS_SERVER"], &env.vars["TASKS_DATABASE"]);
     // A board one schema behind this build that carries the record, its gate's line two days old.
-    Raw::on(&client)
+    Raw::of(&db)
         .row("meta", "schema")
         .set(json!({"version": before()}))
         .unwrap();
-    write_line(&client, &gate(), "studio", before(), now() - 48.0 * HOUR);
+    write_line(&db, &gate(), "studio", before(), now() - 48.0 * HOUR);
     let board = format!(
         "the board in database {} at {}",
         env.vars["TASKS_DATABASE"], env.vars["TASKS_SERVER"]

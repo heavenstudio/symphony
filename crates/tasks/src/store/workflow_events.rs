@@ -4,8 +4,7 @@
 //! ([`super::workflow::Transition`]), over the range of its slug's keys: no other task's are read.
 
 use super::postgres::workflow_events as pg;
-use super::statement::both;
-use super::surreal::workflow_events as sql;
+use super::statement::Statement;
 use super::workflow::Transition;
 use super::{Error, Store};
 use serde_json::{Value, json};
@@ -15,12 +14,8 @@ impl Store {
     /// writers have always kept. A record not in this build's shape (a newer board's) refuses the
     /// read whole, so a reader never draws part of a task's history as all of it.
     pub fn workflow_transitions(&self, slug: &str) -> Result<Vec<Transition>, Error> {
-        let body: Value = self.retrying(|| {
-            self.read(
-                both(sql::TRANSITIONS, pg::transitions()),
-                json!({"slug": slug}),
-            )
-        })?;
+        let body: Value =
+            self.retrying(|| self.read(Statement::from(pg::transitions()), json!({"slug": slug})))?;
         crate::objects::read(&body).map_err(|e| {
             Error::Db(format!(
                 "a workflow transition not in the board's shape: {e}"

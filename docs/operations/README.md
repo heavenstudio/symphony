@@ -11,9 +11,9 @@ Setting the Symphony up and running it: a first project, the commands, the proje
 - [Operating the board](BOARD_OPERATIONS.md) — the board's store and the schema contract between
   its builds, which build moves a live board, who writes it, its server, snapshots and holds, what
   the command may write, stuck servers, a board that went back or was copied, and board health.
-- [PostgreSQL board lifecycle](POSTGRESQL.md) — a board on PostgreSQL: scratch engine identity,
-  server selection, holds, snapshots, recovery and space reclamation; the hosted board, which no
-  command reaches yet.
+- [PostgreSQL board lifecycle](POSTGRESQL.md) — the board's PostgreSQL: its engine identity, a
+  board still on SurrealDB and how it moves, server selection, holds, snapshots, recovery and
+  space reclamation; the hosted board, which no command reaches yet.
 - [Setting up GitHub](GITHUB_SETUP.md) — the optional `symphony-github` from nothing to a check
   that passes: building it, the token for the issue exchange, the GitHub Apps and rulesets a
   delivery by pull request needs, in order, and what each failure a newcomer meets says.

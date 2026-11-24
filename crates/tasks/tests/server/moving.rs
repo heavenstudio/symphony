@@ -1,17 +1,17 @@
-//! A board's store moved between SurrealDB and PostgreSQL ([`Home::move_to`]), and a PostgreSQL
-//! snapshot put back over its board (`Postgres::restore_over`), each on a scratch board of its
-//! own: the board and the tables no copy holds read alike after as before, in both directions;
-//! each refusal and failure leaves the board on the engine it was on, nothing deleted; and a
-//! switch cut after each of its durable steps is refused to every start and reach until its
-//! holder settles it, undone before its commit point and finished after.
+//! A PostgreSQL snapshot put back over its board (`Postgres::restore_over`) and the switch's
+//! journal ([`Home::move_to`]), each on a scratch board of its own: a switch cut after each of its
+//! durable steps is refused to every start and reach until its holder settles it, undone before
+//! its commit point and finished after; a move an earlier release left standing is settled the
+//! same way, and no board is moved between the engines; and a board not made yet is made on
+//! PostgreSQL, its identity first.
 
 use crate::common::Scratch;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use symphony_board::rows::Dump;
-use symphony_board::server::{EXPORT, Engine, Home, Kind, STEPS, ServerError, postgres};
-use symphony_board::{Database, NewTask, Opening, Schema, Store, pg, rpc};
+use symphony_board::server::{Engine, GONE, Home, Kind, STEPS, ServerError, postgres};
+use symphony_board::{NewTask, Opening, Store, pg};
 
 const HANDLE: &str = "russet-lynx";
 const OTHER: &str = "amber-heron";
@@ -22,8 +22,8 @@ fn programs() -> PathBuf {
     postgres::discover_programs(&root).unwrap()
 }
 
-/// A scratch board, whichever engine it is on when the test ends: its PostgreSQL stopped and
-/// its hold released before the folder goes.
+/// A scratch board on PostgreSQL: its server stopped and its hold released before the folder
+/// goes.
 struct Board {
     scratch: Scratch,
 }
@@ -36,52 +36,27 @@ impl Board {
     }
 
     fn home(&self) -> Home {
-        (self.scratch.home().telling(|_| {}))
-            .supervised(true)
-            .snapshotting(false)
+        (self.scratch.home().telling(|_| {})).supervised(true)
     }
 
     fn dir(&self) -> &Path {
         &self.scratch.dir
     }
 
-    /// The board's database on the engine its home names, its server started: SurrealDB's own
-    /// start for a board not made yet, as a board made before PostgreSQL was a new board's, which
-    /// the moves here begin from.
-    fn database(&self) -> Database {
-        let home = self.home();
-        let engine = if home.unmade().unwrap() {
-            Engine::SurrealDb
-        } else {
-            home.backend().unwrap()
-        };
-        match engine {
-            Engine::SurrealDb => {
-                rpc::Client::new(&home.ensure().unwrap().addr, "sf", "tasks").into()
-            }
-            Engine::PostgreSql => {
-                let serving = home.postgresql(&programs()).ensure().unwrap();
-                pg::Client::new(&serving.socket, "tasks").into()
-            }
-        }
-    }
-
+    /// The board's database, its server started: made on PostgreSQL where it is not made yet.
     fn store(&self) -> Store {
-        self.store_as(&Opening::write())
-    }
-
-    fn store_as(&self, how: &Opening) -> Store {
+        let serving = self.home().postgresql(&programs()).ensure().unwrap();
         Store::opening_on(
-            self.database(),
+            pg::Client::new(&serving.socket, "tasks").into(),
             Box::new(|| NOW),
             Box::new(|_| true),
             "this-host",
-            how,
+            &Opening::write(),
         )
         .unwrap()
     }
 
-    /// A board with two tasks and a row of the tables a move carries.
+    /// A board with two tasks and a row of the tables a switch carries.
     fn seeded(&self) -> Store {
         let store = self.store();
         for slug in ["sim/jump", "sim/land"] {
@@ -100,23 +75,6 @@ impl Board {
             .unwrap();
         store
     }
-
-    fn move_to(
-        &self,
-        home: &Home,
-        to: Engine,
-    ) -> Result<symphony_board::server::Moved, ServerError> {
-        home.move_to(to, &programs(), HANDLE, NOW)
-    }
-
-    /// The folders under `moved/`, in name order.
-    fn moved(&self) -> Vec<PathBuf> {
-        let mut found: Vec<PathBuf> = std::fs::read_dir(self.dir().join("moved"))
-            .map(|entries| entries.filter_map(Result::ok).map(|e| e.path()).collect())
-            .unwrap_or_default();
-        found.sort();
-        found
-    }
 }
 
 impl Drop for Board {
@@ -126,19 +84,14 @@ impl Drop for Board {
         if let Some(hold) = home.held() {
             let _ = home.release(&hold.by, None);
         }
-        for dir in [self.dir().to_path_buf(), self.dir().join("moving")] {
-            let pg = Home::new(&dir, Path::new("/no/surreal")).postgresql(&programs());
-            if pg.data().exists() {
-                let _ = pg.stop();
-            }
-        }
-        if let Ok(Engine::SurrealDb) = home.backend() {
-            let _ = home.stop();
+        let pg = Home::at(self.dir()).postgresql(&programs());
+        if pg.data().exists() {
+            let _ = pg.stop();
         }
     }
 }
 
-/// What a move must keep of the carried tables: all but the writers' lines, which each store
+/// What a switch must keep of the carried tables: all but the writers' lines, which each store
 /// that opens the board writes again.
 fn carried(store: &Store) -> Value {
     let mut carried = store.carried().unwrap();
@@ -147,8 +100,7 @@ fn carried(store: &Store) -> Value {
     carried
 }
 
-/// Every number of `value` as what it counts: one engine writes a whole number of seconds
-/// `3.0` where the other writes `3`.
+/// Every number of `value` as what it counts, a whole number of seconds `3.0` as `3`.
 fn counted(value: &mut Value) {
     match value {
         Value::Number(number) => *value = json!(number.as_f64()),
@@ -189,17 +141,6 @@ fn leases(store: &Store) -> [(f64, u64); 3] {
     })
 }
 
-/// `carried`, a board's before a move ([`carried`], every number as what it counts), as the
-/// move writes it: each lease ended and its revision moved on by one.
-fn ended(carried: &Value) -> Value {
-    let mut ended = carried.clone();
-    for lease in ended["callback_lease"].as_array_mut().unwrap() {
-        lease["until"] = json!(0.0);
-        lease["revision"] = json!(lease["revision"].as_f64().unwrap() + 1.0);
-    }
-    ended
-}
-
 fn board(store: &Store) -> (Dump, Value) {
     (store.dump().unwrap(), carried(store))
 }
@@ -208,286 +149,12 @@ fn refusal<T: std::fmt::Debug>(result: Result<T, ServerError>) -> String {
     result.unwrap_err().to_string()
 }
 
-#[test]
-fn a_board_goes_to_postgresql_and_back_whole_and_a_reader_that_kept_it_reads_it_anew() {
-    let b = Board::new("move-round");
-    let home = b.home();
-    let store = b.seeded();
-    // The home is bound to the board's generation, and a token is read under it.
-    let authority = || Arc::new(home.recovery("tasks"));
-    let bound = b.store().recovering(authority());
-    bound.rebind().unwrap();
-    let token = bound.bound("sim/jump").unwrap().bound;
-    // A lease of each kind is held when the board is moved: a recipient's, a session's close
-    // and a host's dispatch.
-    let closing = leased(&store);
-    let (before, marker) = (board(&store), store.marker().unwrap());
-    drop((store, bound));
-
-    let moved = b.move_to(&home, Engine::PostgreSql).unwrap();
-    assert_eq!(
-        (moved.from, moved.to),
-        (Engine::SurrealDb, Engine::PostgreSql)
-    );
-    assert!(!moved.finished && !moved.held, "{moved:?}");
-    assert!(moved.rows >= 4, "{moved:?}");
-    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
-    assert_eq!(home.held(), None, "the move's own hold is released");
-    assert_eq!(home.switching().unwrap(), None);
-    // Nothing is deleted: the old store, its export and its snapshot are kept; the work is gone.
-    assert!(moved.aside.join("data").is_dir(), "{moved:?}");
-    let mut export: Value =
-        serde_json::from_slice(&std::fs::read(moved.aside.join(EXPORT)).unwrap()).unwrap();
-    counted(&mut export["carried"]);
-    assert_eq!(export["board"], json!(before.0));
-    assert_eq!(export["carried"]["counter"], before.1["counter"]);
-    // No lease stands in what the move wrote, and each revision is past its holder's.
-    let written = ended(&before.1);
-    assert_ne!(written, before.1);
-    assert_eq!(
-        export["carried"]["callback_lease"],
-        written["callback_lease"]
-    );
-    let before = (before.0, written);
-    assert!(moved.snapshot.as_ref().is_some_and(|kept| kept.is_dir()));
-    assert!(!b.dir().join("data").exists() && !b.dir().join("moving").exists());
-
-    let there = b.store();
-    assert!(there.database().is_postgresql());
-    assert_eq!(
-        board(&there),
-        before,
-        "PostgreSQL holds what SurrealDB held"
-    );
-    let past = there.marker().unwrap();
-    assert!(past > marker, "{past} against {marker}");
-    assert_eq!(leases(&there), [(0.0, 8), (0.0, 4), (0.0, closing + 1)]);
-    assert!(
-        !there.renew_session(HANDLE, closing).unwrap(),
-        "the close that held the session before the move no longer holds it"
-    );
-    // The home is bound to none, so the token is refused; and after a rebind it is another's.
-    let rebound = b.store().recovering(authority());
-    assert!(rebound.bound("sim/jump").is_err());
-    rebound.rebind().unwrap();
-    let old = rebound.amend_bound("sim/jump", &token, "Changed", &[], "owner");
-    assert!(old.is_err(), "{old:?}");
-    assert_eq!(there.get("sim/jump").unwrap().title, "A task");
-
-    // A reader keeps the board's rows under its marker, on PostgreSQL's socket.
-    let reader = b.store_as(&Opening::read());
-    assert_eq!(reader.clock_board().unwrap().tasks.len(), 2);
-    drop((there, rebound));
-
-    let back = b.move_to(&home, Engine::SurrealDb).unwrap();
-    assert_eq!(
-        (back.from, back.to),
-        (Engine::PostgreSql, Engine::SurrealDb)
-    );
-    assert!(back.aside.join("postgresql").join("PG_VERSION").is_file());
-    assert!(back.snapshot.as_ref().is_some_and(|kept| kept.is_dir()));
-    assert_eq!(home.backend().unwrap(), Engine::SurrealDb);
-    assert!(!b.dir().join("postgresql").exists());
-    let again = b.store();
-    assert!(!again.database().is_postgresql());
-    let before = (before.0, ended(&before.1));
-    assert_eq!(board(&again), before, "and SurrealDB holds it again");
-    assert_eq!(leases(&again), [(0.0, 9), (0.0, 5), (0.0, closing + 2)]);
-    assert!(!again.renew_session(HANDLE, closing).unwrap());
-    assert!(again.marker().unwrap() > past);
-    again
-        .create(&NewTask::new("sim/more", "Made on SurrealDB", "owner"))
-        .unwrap();
-    drop(again);
-
-    // On PostgreSQL once more, where the reader kept it: the same socket, and other rows.
-    b.move_to(&home, Engine::PostgreSql).unwrap();
-    let last = b.store();
-    assert!(last.marker().unwrap() > past);
-    // Its connection ended with the server it reached, which is what drops a kept reader
-    // (`reader_failed` in the Symphony's server); and one that reaches the board again where
-    // it was finds a marker past the one it kept its rows under, so it reads them anew.
-    let read = reader.clock_board().or_else(|_| reader.clock_board());
-    assert_eq!(read.unwrap().tasks.len(), 3, "the reader read it anew");
-    assert_eq!(b.moved().len(), 3, "each move keeps the store it replaced");
-}
-
-#[test]
-fn a_move_is_refused_with_the_board_left_as_it_was() {
-    let b = Board::new("move-refused");
-    let home = b.home();
-    let store = b.seeded();
-    let before = board(&store);
-
-    let same = refusal(b.move_to(&home, Engine::SurrealDb));
-    assert!(
-        same.contains("is on SurrealDB already: nothing was moved"),
-        "{same}"
-    );
-
-    // Another's hold refuses it, and that hold stands.
-    home.hold(OTHER, "a snapshot").unwrap();
-    assert!(matches!(
-        b.move_to(&home, Engine::PostgreSql),
-        Err(ServerError::Held(hold)) if hold.by == OTHER
-    ));
-    home.release(OTHER, None).unwrap();
-
-    assert_eq!(home.held(), None);
-    assert_eq!(home.backend().unwrap(), Engine::SurrealDb);
-    assert_eq!(board(&b.store()), before);
-}
-
-/// The names of the databases of the cluster `socket` serves, its own and templates left out.
-fn databases(socket: &Path) -> Vec<String> {
-    let answers = pg::Client::new(socket, "postgres")
-        .simple(
-            "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' \
-             ORDER BY 1",
-        )
-        .unwrap();
-    (answers.iter().flat_map(|answer| &answer.rows))
-        .filter_map(|row| row.first().cloned().flatten())
-        .collect()
-}
-
-/// The databases of the SurrealDB namespace `sf` the server at `addr` holds.
-fn namespace(addr: &str) -> Vec<String> {
-    let info = rpc::Client::new(addr, "sf", "tasks")
-        .query("INFO FOR NS;", json!({}))
-        .unwrap();
-    let mut names: Vec<String> = (info[0]["databases"].as_object())
-        .map(|databases| databases.keys().cloned().collect())
-        .unwrap_or_default();
-    names.sort();
-    names
-}
-
-#[test]
-fn a_move_leaves_every_other_database_in_the_store_it_keeps_and_names_them() {
-    let b = Board::new("move-beside");
-    let home = b.home();
-    let before = board(&b.seeded());
-    // Two scratch boards in the board's SurrealDB store, as `just tasks --database NAME` makes
-    // them, each with a row of its own.
-    let addr = home.ensure().unwrap().addr;
-    for (db, n) in [("beside", 1), ("second", 2)] {
-        rpc::Client::new(&addr, "sf", db)
-            .define_then(&format!("CREATE row SET n = {n};"), json!({}))
-            .unwrap();
-    }
-
-    let moved = b.move_to(&home, Engine::PostgreSql).unwrap();
-    assert_eq!(moved.left, ["sf/beside", "sf/second"], "{moved:?}");
-    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
-    assert_eq!(board(&b.store()), before, "the board moved as it was");
-    let serving = home.postgresql(&programs()).ensure().unwrap();
-    assert_eq!(
-        databases(&serving.socket),
-        ["tasks"],
-        "only the board moved"
-    );
-    // The store it replaced is kept whole, the two beside the board's with their rows.
-    let kept = Home::new(&moved.aside, b.scratch.surreal())
-        .supervised(true)
-        .snapshotting(false);
-    let running = kept.ensure().unwrap();
-    assert_eq!(namespace(&running.addr), ["beside", "second", "tasks"]);
-    for (db, n) in [("beside", 1), ("second", 2)] {
-        let rows = rpc::Client::new(&running.addr, "sf", db)
-            .query("SELECT VALUE n FROM row;", json!({}))
-            .unwrap();
-        assert_eq!(rows, [json!([n])], "{db}");
-    }
-    kept.stop().unwrap();
-
-    // The way back: a database beside the board's in its cluster stays in the cluster kept.
-    pg::Client::new(&serving.socket, "postgres")
-        .simple("CREATE DATABASE beside")
-        .unwrap();
-    let back = b.move_to(&home, Engine::SurrealDb).unwrap();
-    assert_eq!(back.left, ["beside"], "{back:?}");
-    assert_eq!(home.backend().unwrap(), Engine::SurrealDb);
-    assert_eq!(board(&b.store()), before, "the board came back as it was");
-    assert_eq!(
-        namespace(&home.ensure().unwrap().addr),
-        ["tasks"],
-        "nothing beside the board came back"
-    );
-    // Marked as PostgreSQL's, as putting a kept store back by hand marks it, to be served.
-    std::fs::write(
-        back.aside.join("backend.json"),
-        r#"{"format":1,"engine":"postgresql"}"#,
-    )
-    .unwrap();
-    let cluster = Home::new(&back.aside, Path::new("/no/surreal")).postgresql(&programs());
-    let socket = cluster.ensure().unwrap().socket;
-    assert_eq!(
-        databases(&socket),
-        ["beside", "tasks"],
-        "the cluster is kept whole"
-    );
-    cluster.stop().unwrap();
-    assert!(!b.dir().join("moving").exists() && !b.dir().join("postgresql").exists());
-}
-
-#[test]
-fn a_board_at_another_schema_is_not_moved() {
-    let b = Board::new("move-schema");
-    let home = b.home();
-    let newer = Schema::this_build().then_each("DEFINE TABLE fixture_next;", "");
-    b.store_as(&Opening::write().at(newer).migrating().leave_behind());
-    let refused = refusal(b.move_to(&home, Engine::PostgreSql));
-    assert!(refused.contains("a move migrates nothing"), "{refused}");
-    assert!(refused.contains("and its hold is released"), "{refused}");
-    assert_eq!(home.backend().unwrap(), Engine::SurrealDb);
-    assert!(b.dir().join("data").is_dir() && !b.dir().join("moving").exists());
-    assert_eq!(home.held(), None);
-
-    // The caller's own hold is left standing by a move that is refused.
-    home.hold(HANDLE, "a move").unwrap();
-    let held = refusal(b.move_to(&home, Engine::PostgreSql));
-    assert!(held.contains("as it was, and still held"), "{held}");
-    assert_eq!(home.held().map(|hold| hold.by), Some(HANDLE.into()));
-    home.release(HANDLE, None).unwrap();
-}
-
-#[test]
-fn a_board_at_another_schema_on_postgresql_is_not_moved_back() {
-    let b = Board::new("move-schema-pg");
-    let home = b.home();
-    b.seeded();
-    b.move_to(&home, Engine::PostgreSql).unwrap();
-    let newer = Schema::this_build().then_each("DEFINE TABLE fixture_next;", "");
-    b.store_as(&Opening::write().at(newer).migrating().leave_behind());
-    let refused = refusal(b.move_to(&home, Engine::SurrealDb));
-    assert!(refused.contains("a move migrates nothing"), "{refused}");
-    assert!(
-        refused.contains("It is on PostgreSQL as it was, and its hold is released"),
-        "{refused}"
-    );
-    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
-    assert!(b.dir().join("postgresql").is_dir());
-    assert!(!b.dir().join("moving").exists() && !b.dir().join("data").exists());
-    assert_eq!(home.held(), None);
-    assert_eq!(b.moved().len(), 1, "only the first move kept a store");
-
-    // The caller's own hold is left standing by a move that is refused.
-    home.postgresql(&programs()).hold(HANDLE, "a move").unwrap();
-    let held = refusal(b.move_to(&home, Engine::SurrealDb));
-    assert!(held.contains("as it was, and still held"), "{held}");
-    assert_eq!(home.held().map(|hold| hold.by), Some(HANDLE.into()));
-    home.release(HANDLE, None).unwrap();
-    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
-    assert!(!b.dir().join("moving").exists() && !b.dir().join("data").exists());
-}
-
-/// A switch that a test cut is refused to everything but its holder's next move.
+/// A switch that a test cut, or one an earlier release left, is refused to everything but its
+/// holder's next move or restore.
 fn stands(b: &Board, home: &Home) {
     let unsettled = "until its holder settles it";
     for refused in [
         refusal(home.backend()),
-        refusal(home.ensure()),
         refusal(home.postgresql(&programs()).ensure()),
         refusal(home.release(HANDLE, None)),
     ] {
@@ -499,136 +166,100 @@ fn stands(b: &Board, home: &Home) {
     assert!(refusal(home.backend()).contains(unsettled));
     assert!(refusal(home.release(HANDLE, None)).contains(unsettled));
     assert!(matches!(
-        home.move_to(Engine::PostgreSql, &programs(), OTHER, NOW),
+        home.move_to(Engine::PostgreSql, OTHER),
         Err(ServerError::Held(hold)) if hold.by == HANDLE
     ));
     assert_eq!(home.held().map(|hold| hold.by), Some(HANDLE.into()));
     assert!(b.dir().join("move.json").is_file());
 }
 
-fn cut_at_each_step(name: &str, from: Engine, to: Engine) {
-    let commit = STEPS.iter().position(|step| *step == "committed").unwrap();
-    let b = Board::new(name);
+/// The journal of a move an earlier release left standing in `b`'s home, holding it as
+/// [`HANDLE`]: from SurrealDB to PostgreSQL, its old store kept in `aside`, its new data staged in
+/// `staged`, its work folder `moving/`.
+fn left_by_an_earlier_release(b: &Board, aside: &Path, staged: &Path, committed: bool) {
+    let journal = json!({
+        "format": 1, "kind": "move", "from": "surrealdb", "to": "postgresql",
+        "aside": aside, "staged": staged, "work": b.dir().join("moving"),
+        "by": HANDLE, "took": true, "committed": committed,
+    });
+    std::fs::write(b.dir().join("move.json"), journal.to_string()).unwrap();
+    let hold = json!({"by": HANDLE, "why": "moving the board", "at": 1_800_000_000, "pid": 1});
+    std::fs::write(b.dir().join("hold"), hold.to_string()).unwrap();
+}
+
+/// This build moves no board between the engines: a board on PostgreSQL already, one not made
+/// yet and one still on SurrealDB each say so, and nothing is moved. A move an earlier release
+/// left standing is settled by its holder's `move_to`, as the switch it is: one that committed is
+/// finished, its old store kept aside; one that had not is undone, the board back on SurrealDB,
+/// which is then refused, naming how it moves.
+#[test]
+fn a_move_an_earlier_release_left_is_settled_by_its_holder_and_no_board_is_moved_between_engines() {
+    let b = Board::new("move-left");
     let home = b.home();
-    let store = b.seeded();
-    drop(store);
-    if from == Engine::PostgreSql {
-        b.move_to(&home, from).unwrap();
-    }
-    let before = board(&b.store());
-    for (at, step) in STEPS.iter().enumerate() {
-        let cut = refusal(b.move_to(&home.clone().stopping_after(step), to));
-        assert!(
-            cut.contains(&format!("ended the switch after {step:?}")),
-            "{cut}"
-        );
-        stands(&b, &home);
-        let journal = home.switching().unwrap().unwrap();
-        assert_eq!(
-            (journal.kind, journal.committed),
-            (Kind::Move, at >= commit),
-            "{step}"
-        );
-        // Cut again while it is settled, it is settled by the call after.
-        let settled = b.move_to(&home, to);
-        if at < commit {
-            let undone = refusal(settled);
-            assert!(undone.contains("is now undone"), "{step}: {undone}");
-            assert!(
-                undone.contains(&format!("is on {from} as it was")),
-                "{undone}"
-            );
-            assert_eq!(home.backend().unwrap(), from, "{step}");
-            assert!(!b.dir().join(to.data_folder()).exists(), "{step}");
-        } else {
-            let finished = settled.unwrap();
-            assert!(finished.finished && !finished.held, "{step}: {finished:?}");
-            assert_eq!(home.backend().unwrap(), to, "{step}");
-            assert!(finished.aside.join(from.data_folder()).exists(), "{step}");
-        }
-        assert_eq!(home.switching().unwrap(), None, "{step}");
-        assert_eq!(home.held(), None, "{step}: the move's own hold is released");
-        assert!(!b.dir().join("moving").exists(), "{step}");
-        assert_eq!(
-            board(&b.store()),
-            before,
-            "{step}: the board reads as it did"
-        );
-        if at >= commit {
-            // Settled again, there is nothing to settle; then back for the next step.
-            let already = refusal(b.move_to(&home, to));
-            assert!(already.contains("already: nothing was moved"), "{already}");
-            b.move_to(&home, from).unwrap();
-        }
-    }
-}
-
-#[test]
-fn a_move_to_postgresql_cut_after_each_step_is_undone_before_its_commit_and_finished_after() {
-    cut_at_each_step("move-cut-pg", Engine::SurrealDb, Engine::PostgreSql);
-}
-
-#[test]
-fn a_move_to_surrealdb_cut_after_each_step_is_undone_before_its_commit_and_finished_after() {
-    cut_at_each_step("move-cut-surreal", Engine::PostgreSql, Engine::SurrealDb);
-}
-
-#[test]
-fn a_step_that_fails_is_undone_at_once_or_leaves_the_hold_and_is_finished_after_the_commit() {
-    let b = Board::new("move-fails");
-    let home = b.home();
-    let before = board(&b.seeded());
-    let to = Engine::PostgreSql;
-    for step in ["journal", "aside", "placed", "identity"] {
-        let failed = refusal(b.move_to(&home.clone().failing_after(step), to));
-        assert!(
-            failed.contains("the board was not moved"),
-            "{step}: {failed}"
-        );
-        assert!(
-            failed.contains("on SurrealDB as it was, and its hold is released"),
-            "{failed}"
-        );
-        assert_eq!(home.switching().unwrap(), None, "{step}");
-        assert_eq!(home.held(), None, "{step}");
-        assert_eq!(home.backend().unwrap(), Engine::SurrealDb, "{step}");
-        assert!(!b.dir().join("moving").exists() && !b.dir().join("postgresql").exists());
-        assert_eq!(board(&b.store()), before, "{step}");
-    }
-    // An undo that fails too never releases: the journal and the hold stand, and nothing is lost.
-    let stuck = refusal(b.move_to(&home.clone().stuck_after("placed"), to));
-    assert!(stuck.contains("could not be undone"), "{stuck}");
+    let unmade = refusal(home.move_to(Engine::PostgreSql, HANDLE));
     assert!(
-        stuck.contains("the board stays held and its journal stands"),
-        "{stuck}"
+        unmade.contains("not made yet: it has nothing to move"),
+        "{unmade}"
     );
-    stands(&b, &home);
-    assert!(refusal(b.move_to(&home, to)).contains("is now undone"));
-    assert_eq!(board(&b.store()), before);
+    let before = board(&b.seeded());
+    let already = refusal(home.move_to(Engine::PostgreSql, HANDLE));
+    assert!(
+        already.contains("on PostgreSQL already: nothing was moved"),
+        "{already}"
+    );
+    let gone = refusal(home.move_to(Engine::SurrealDb, HANDLE));
+    assert!(gone.contains(GONE), "{gone}");
+    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
+    assert_eq!(home.held(), None);
 
-    // Past the commit a failure is said as a move that committed, and the next call finishes it.
-    for step in ["committed", "revoked"] {
-        let pending = refusal(b.move_to(&home.clone().failing_after(step), to));
-        assert!(
-            pending.contains("the move committed: the board is on PostgreSQL"),
-            "{pending}"
-        );
-        assert!(
-            pending.contains("the board stays held and its journal stands"),
-            "{pending}"
-        );
-        stands(&b, &home);
-        assert!(b.move_to(&home, to).unwrap().finished);
-        assert_eq!(board(&b.store()), before, "{step}");
-        b.move_to(&home, Engine::SurrealDb).unwrap();
+    // Committed: the board is on PostgreSQL, its SurrealDB store aside; what is left is finished.
+    home.postgresql(&programs()).stop().unwrap();
+    let aside = b.dir().join("moved/2026-11-12T07-45-00Z-surrealdb");
+    std::fs::create_dir_all(aside.join("data")).unwrap();
+    std::fs::create_dir_all(b.dir().join("moving")).unwrap();
+    let staged = b.dir().join("moving/postgresql");
+    left_by_an_earlier_release(&b, &aside, &staged, true);
+    stands(&b, &home);
+    let moved = home.move_to(Engine::PostgreSql, HANDLE).unwrap();
+    assert_eq!(
+        (moved.from, moved.to, &moved.aside, moved.held),
+        (Engine::SurrealDb, Engine::PostgreSql, &aside, false)
+    );
+    assert_eq!(home.switching().unwrap(), None);
+    assert_eq!(home.held(), None, "the move's own hold is released");
+    assert!(!b.dir().join("moving").exists(), "its work folder is gone");
+    assert!(aside.join("data").is_dir(), "the old store is kept");
+    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
+    assert_eq!(board(&b.store()), before, "the board reads as it did");
+
+    // Not committed: undone, the PostgreSQL data back where it was staged and the SurrealDB store
+    // back in place; the board is on SurrealDB as it was, and nothing starts it.
+    home.postgresql(&programs()).stop().unwrap();
+    std::fs::create_dir_all(b.dir().join("moving")).unwrap();
+    std::fs::write(
+        b.dir().join("backend.json"),
+        r#"{"format":1,"engine":"postgresql"}"#,
+    )
+    .unwrap();
+    left_by_an_earlier_release(&b, &aside, &staged, false);
+    stands(&b, &home);
+    let undone = refusal(home.move_to(Engine::PostgreSql, HANDLE));
+    assert!(
+        undone.contains("is now undone: the board is on SurrealDB as it was"),
+        "{undone}"
+    );
+    assert_eq!(home.held(), None);
+    assert_eq!(home.switching().unwrap(), None);
+    assert!(b.dir().join("data").is_dir() && !aside.join("data").exists());
+    assert_eq!(home.backend().unwrap(), Engine::SurrealDb);
+    assert!(!b.dir().join("postgresql").exists() && !staged.exists());
+    for refused in [
+        refusal(home.move_to(Engine::PostgreSql, HANDLE)),
+        refusal(home.postgresql(&programs()).ensure()),
+        refusal(home.board_server(b.dir(), true)),
+    ] {
+        assert!(refused.contains(GONE), "{refused}");
     }
-    // The caller's own hold outlives a move that it settles and one that it makes.
-    home.hold(HANDLE, "a move").unwrap();
-    let moved = b.move_to(&home, to).unwrap();
-    assert!(moved.held, "{moved:?}");
-    assert_eq!(home.held().map(|hold| hold.by), Some(HANDLE.into()));
-    home.release(HANDLE, None).unwrap();
-    assert_eq!(board(&b.store()), before);
 }
 
 #[test]
@@ -636,7 +267,6 @@ fn a_snapshot_is_put_back_over_its_board_and_the_cluster_it_replaced_is_kept() {
     let b = Board::new("restore-over");
     let home = b.home();
     drop(b.seeded());
-    b.move_to(&home, Engine::PostgreSql).unwrap();
     let pg = home.postgresql(&programs());
     let before = board(&b.store());
     pg.hold(HANDLE, "a snapshot").unwrap();
@@ -733,6 +363,86 @@ fn a_snapshot_is_put_back_over_its_board_and_the_cluster_it_replaced_is_kept() {
     );
     assert_eq!(home.held(), None);
     assert_eq!(board(&b.store()).0.tasks.len(), 3);
+
+    // An undo that fails too never releases: the journal and the hold stand, nothing is lost, and
+    // its holder's next restore or move settles it.
+    let stuck = home.clone().stuck_after("placed").postgresql(&programs());
+    let refused = refusal(stuck.restore_over(&snapshot, HANDLE, NOW));
+    assert!(refused.contains("could not be undone"), "{refused}");
+    assert!(
+        refused.contains("the board stays held and its journal stands"),
+        "{refused}"
+    );
+    stands(&b, &home);
+    let undone = refusal(home.move_to(Engine::PostgreSql, HANDLE));
+    assert!(undone.contains("is now undone"), "{undone}");
+    assert!(undone.contains("its hold released"), "{undone}");
+    assert_eq!(home.held(), None);
+    assert_eq!(board(&b.store()).0.tasks.len(), 3);
+}
+
+/// A restore whose step fails is undone at once before its commit, whichever step it is: the
+/// cluster it had, no journal and its hold released. Past the commit a failure is said as a
+/// restore that committed, its hold and journal stand, and its holder's next restore finishes it.
+#[test]
+fn a_step_that_fails_is_undone_at_once_or_leaves_the_hold_and_is_finished_after_the_commit() {
+    let b = Board::new("restore-fails");
+    let home = b.home();
+    drop(b.seeded());
+    let pg = home.postgresql(&programs());
+    let before = board(&b.store());
+    pg.hold(HANDLE, "a snapshot").unwrap();
+    let snapshot = pg.snapshot(NOW).unwrap();
+    pg.release(HANDLE, None).unwrap();
+    let later = || {
+        b.store()
+            .create(&NewTask::new("sim/later", "Made after", "owner"))
+            .unwrap();
+    };
+    later();
+    let after = board(&b.store());
+    assert_ne!(after, before);
+
+    for step in ["journal", "aside", "placed", "identity"] {
+        let failing = home.clone().failing_after(step).postgresql(&programs());
+        let failed = refusal(failing.restore_over(&snapshot, HANDLE, NOW));
+        assert!(
+            failed.contains("the snapshot was not restored"),
+            "{step}: {failed}"
+        );
+        assert!(
+            failed.contains("on the cluster it had, and its hold is released"),
+            "{step}: {failed}"
+        );
+        assert_eq!(home.switching().unwrap(), None, "{step}");
+        assert_eq!(home.held(), None, "{step}");
+        assert!(!b.dir().join("postgresql.restoring").exists(), "{step}");
+        assert_eq!(board(&b.store()), after, "{step}: the cluster it had");
+    }
+
+    for step in ["committed", "revoked"] {
+        let failing = home.clone().failing_after(step).postgresql(&programs());
+        let pending = refusal(failing.restore_over(&snapshot, HANDLE, NOW));
+        assert!(
+            pending.contains("the restore committed: the board is on PostgreSQL"),
+            "{step}: {pending}"
+        );
+        assert!(
+            pending.contains("the board stays held and its journal stands")
+                && pending.contains("Run the command again to finish it"),
+            "{step}: {pending}"
+        );
+        stands(&b, &home);
+        let aside = pg.restore_over(&snapshot, HANDLE, NOW).unwrap();
+        assert!(
+            aside.join("postgresql").join("PG_VERSION").is_file(),
+            "{step}"
+        );
+        assert_eq!(home.switching().unwrap(), None, "{step}");
+        assert_eq!(home.held(), None, "{step}");
+        assert_eq!(board(&b.store()), before, "{step}: the snapshot's board");
+        later();
+    }
 }
 
 /// A snapshot put back brings no lease revision back with it: a holder that took its lease
@@ -742,7 +452,6 @@ fn a_restored_snapshots_leases_are_ended_past_the_ones_the_board_held_since() {
     let b = Board::new("restore-leases");
     let home = b.home();
     drop(b.seeded());
-    b.move_to(&home, Engine::PostgreSql).unwrap();
     let pg = home.postgresql(&programs());
     let closing = leased(&b.store());
     let held_then = leases(&b.store());
@@ -825,16 +534,9 @@ fn a_restored_snapshots_leases_are_ended_past_the_ones_the_board_held_since() {
 #[test]
 fn a_board_that_is_not_supervised_keeps_its_postgresql_between_its_commands() {
     let b = Board::new("pg-apart");
-    let home = b.home();
     drop(b.seeded());
-    b.move_to(&home, Engine::PostgreSql).unwrap();
     // As a board outside a scratch place: no lifeline to the process that starts it.
-    let apart = b
-        .scratch
-        .home()
-        .telling(|_| {})
-        .supervised(false)
-        .snapshotting(false);
+    let apart = b.scratch.home().telling(|_| {}).supervised(false);
     let pg = apart.postgresql(&programs());
     let serving = pg.ensure().unwrap();
     assert_eq!(
@@ -883,8 +585,6 @@ fn a_board_outside_a_scratch_place_not_made_yet_is_made_on_postgresql_named_firs
     assert!(pg.data().join("PG_VERSION").is_file());
     assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
     assert!(!home.unmade().unwrap());
-    // SurrealDB's own start is refused it now.
-    assert!(refusal(home.ensure()).contains("owns PostgreSQL data"));
     assert_eq!(pg.stop().unwrap().map(|s| s.pid), Some(serving.pid));
     assert!(pg.current().unwrap().is_none());
 }

@@ -2,9 +2,8 @@
 //! transaction to the handle bound to its key, on the task and role that handle works then and the
 //! task's round, and read back by task and by session; and a board of schema 18 gaining the table
 //! with its rows kept.
-use crate::common::Backend;
 
-use crate::common::{Fixture, NOW, RawWrite, Seed};
+use crate::common::{Fixture, NOW, Seed};
 use serde_json::json;
 use symphony_board::rows::UsageRow;
 use symphony_board::usage::{Cost, Prices, Spent, Tally, Tokens};
@@ -44,9 +43,8 @@ fn beat(f: &Fixture, agent: &str, spent: &[Spent]) -> Option<String> {
 
 /// `sim/jump` in progress: `ochre-owl` orchestrates, `amber-heron` executes it through key `exec`,
 /// `brisk-finch` is the reviewer to be, beating through key `rev`.
-fn working(backend: Backend) -> Fixture {
-    let f = Fixture::on(
-        backend,
+fn working() -> Fixture {
+    let f = Fixture::new(
         Seed::default()
             .session("ochre-owl")
             .session("amber-heron")
@@ -80,9 +78,9 @@ fn sum(parts: &[u64]) -> Tokens {
     all
 }
 
-on_both! {
-fn a_task_worked_over_two_rounds_reads_each_rounds_cost_back(backend: Backend) {
-    let f = working(backend);
+#[test]
+fn a_task_worked_over_two_rounds_reads_each_rounds_cost_back() {
+    let f = working();
     assert_eq!(beat(&f, "exec", &[opus(1)]).as_deref(), Some("amber-heron"));
     f.store
         .move_to("sim/jump", "review", "amber-heron")
@@ -138,11 +136,10 @@ fn a_task_worked_over_two_rounds_reads_each_rounds_cost_back(backend: Backend) {
         }
     );
 }
-}
 
-on_both! {
-fn beats_of_one_round_add_up_on_one_row_per_model_and_speed(backend: Backend) {
-    let f = working(backend);
+#[test]
+fn beats_of_one_round_add_up_on_one_row_per_model_and_speed() {
+    let f = working();
     beat(&f, "exec", &[opus(1), at("claude-opus-5-5", "fast", 3)]);
     beat(&f, "exec", &[opus(2)]);
     beat(&f, "exec", &[]);
@@ -159,11 +156,10 @@ fn beats_of_one_round_add_up_on_one_row_per_model_and_speed(backend: Backend) {
         ]
     );
 }
-}
 
-on_both! {
-fn a_session_working_no_task_spends_on_none_in_its_kind_and_an_unbound_key_on_nobody(backend: Backend) {
-    let f = working(backend);
+#[test]
+fn a_session_working_no_task_spends_on_none_in_its_kind_and_an_unbound_key_on_nobody() {
+    let f = working();
     // Orchestrating is no task's work: its calls go to no task, in the session's kind.
     assert!(f.store.bind_agent("owl", "ochre-owl", false).unwrap());
     assert_eq!(beat(&f, "owl", &[opus(5)]).as_deref(), Some("ochre-owl"));
@@ -189,11 +185,10 @@ fn a_session_working_no_task_spends_on_none_in_its_kind_and_an_unbound_key_on_no
         .collect();
     assert_eq!(by, [("ochre-owl".to_string(), tokens(5))]);
 }
-}
 
-on_both! {
-fn what_a_session_spent_is_priced_row_by_row_at_each_rows_model_and_speed(backend: Backend) {
-    let f = working(backend);
+#[test]
+fn what_a_session_spent_is_priced_row_by_row_at_each_rows_model_and_speed() {
+    let f = working();
     beat(
         &f,
         "exec",
@@ -230,10 +225,9 @@ fn what_a_session_spent_is_priced_row_by_row_at_each_rows_model_and_speed(backen
     let rows = f.store.spent_on(&["sim/jump"]).unwrap();
     assert_eq!(Tally::of(&rows).total.cost, cost);
 }
-}
 
 /// Where one beat of `amber-heron`, holding `roles`, spends: the task and role.
-fn spends_on(backend: Backend, roles: &[(&str, &str, &str)]) -> Vec<(String, String)> {
+fn spends_on(roles: &[(&str, &str, &str)]) -> Vec<(String, String)> {
     let mut seed = Seed::default().session("amber-heron");
     for (slug, status, role) in roles {
         seed = seed.task(slug, status);
@@ -243,7 +237,7 @@ fn spends_on(backend: Backend, roles: &[(&str, &str, &str)]) -> Vec<(String, Str
             seed.role(slug, "amber-heron", role)
         };
     }
-    let f = Fixture::on(backend, seed);
+    let f = Fixture::new(seed);
     assert!(f.store.bind_agent("k", "amber-heron", false).unwrap());
     beat(&f, "k", &[opus(1)]);
     let slugs: Vec<&str> = std::iter::once("")
@@ -254,47 +248,45 @@ fn spends_on(backend: Backend, roles: &[(&str, &str, &str)]) -> Vec<(String, Str
         .collect()
 }
 
-on_both! {
-fn an_open_tasks_execution_comes_before_its_review_before_a_reservation_and_a_finished_task_never(backend: Backend)
+#[test]
+fn an_open_tasks_execution_comes_before_its_review_before_a_reservation_and_a_finished_task_never()
 {
     let on = |slug: &str, role: &str| vec![(slug.to_string(), role.to_string())];
     let done = ("sim/done", "done", "executor");
     let review = ("sim/a", "review", "reviewer");
     let reserved = ("sim/c", "ready", "reserved");
     assert_eq!(
-        spends_on(backend, &[done, review, ("sim/b", "review", "executor"), reserved]),
+        spends_on(&[done, review, ("sim/b", "review", "executor"), reserved]),
         on("sim/b", "executor"),
         "an executor waiting on its review still works its task"
     );
     assert_eq!(
-        spends_on(backend, &[done, reserved, review]),
+        spends_on(&[done, reserved, review]),
         on("sim/a", "reviewer")
     );
-    assert_eq!(spends_on(backend, &[done, reserved]), on("sim/c", "reserved"));
-    assert_eq!(spends_on(backend, &[done]), on("", "worker"));
-}
+    assert_eq!(spends_on(&[done, reserved]), on("sim/c", "reserved"));
+    assert_eq!(spends_on(&[done]), on("", "worker"));
 }
 
-// SurrealDB alone: reconstructs schema 18 without the usage table.
 #[test]
 fn a_board_of_schema_18_gains_the_usage_table_with_every_row_kept_and_a_beat_then_spends() {
-    let f = working(Backend::SurrealDb);
+    let f = working();
     let original = f.store.dump().unwrap();
     assert!(original.usages.is_empty());
     // The board as schema 18 left it: every table but `usage`, which it never had.
-    f.store
-        .client()
-        .write(
-            "BEGIN TRANSACTION; REMOVE TABLE usage; UPDATE meta:schema SET version = 18; COMMIT TRANSACTION;",
-            json!({}),
-        )
+    let client = f.postgresql();
+    client.simple("DROP TABLE usage").unwrap();
+    (f.store.raw().row("meta", "schema"))
+        .set(json!({"version": 18}))
         .unwrap();
-    let tables = |store: &symphony_board::Store| -> Vec<String> {
-        let found = store
-            .client()
-            .query("RETURN object::keys((INFO FOR DB).tables);", json!({}))
+    let tables = |_: &symphony_board::Store| -> Vec<String> {
+        let listed = client
+            .request(&[symphony_board::pg::Step::bare(
+                "SELECT coalesce(jsonb_agg(table_name::text ORDER BY table_name), '[]')::text \
+                 FROM information_schema.tables WHERE table_schema = current_schema()",
+            )])
             .unwrap();
-        serde_json::from_value(found.last().cloned().unwrap()).unwrap()
+        serde_json::from_str(listed[0].value().unwrap()).unwrap()
     };
     assert!(!tables(&f.store).contains(&"usage".to_string()));
     let upgraded = f.other();
@@ -313,10 +305,9 @@ fn a_board_of_schema_18_gains_the_usage_table_with_every_row_kept_and_a_beat_the
     assert_eq!(read, [("amber-heron", "executor", 1, tokens(2))]);
 }
 
-// SurrealDB alone until tools/board-pg-search-and-copy supplies the copy/dump twin.
 #[test]
 fn a_copy_carries_the_rows_and_the_dump_reads_them_back() {
-    let f = working(Backend::SurrealDb);
+    let f = working();
     beat(&f, "exec", &[opus(3)]);
     let dump = f.store.dump().unwrap();
     assert_eq!(dump.usages.len(), 1);
@@ -344,9 +335,9 @@ fn token_sum(role: &str, round: u32, model: &str, t: Tokens) -> symphony_api::re
     }
 }
 
-on_both! {
-fn the_roll_ups_read_sums_the_table_and_names_a_landed_task_with_its_subtasks(backend: Backend) {
-    let f = working(backend);
+#[test]
+fn the_roll_ups_read_sums_the_table_and_names_a_landed_task_with_its_subtasks() {
+    let f = working();
     f.task_with(symphony_board::NewTask {
         parent: Some("sim/jump".into()),
         ..symphony_board::NewTask::new("sim/jump/fix", "Fix it", "ochre-owl")
@@ -372,7 +363,10 @@ fn the_roll_ups_read_sums_the_table_and_names_a_landed_task_with_its_subtasks(ba
         token_sum("reviewer", 0, "claude-opus-5-5", sum(&[2])),
         token_sum("worker", 0, "gpt-x", tokens(5)),
     ];
-    assert_eq!(open.usage, usage, "the whole table, by role, model and speed");
+    assert_eq!(
+        open.usage, usage,
+        "the whole table, by role, model and speed"
+    );
     assert!(open.spent.is_empty(), "no task is done yet");
     f.store
         .verdict("sim/jump", "brisk-finch", "approve", "fine")
@@ -400,21 +394,30 @@ fn the_roll_ups_read_sums_the_table_and_names_a_landed_task_with_its_subtasks(ba
         spent,
         [
             // Its subtask's round 1 is added to its own.
-            ("sim/jump", &token_sum("executor", 1, "claude-opus-5-5", sum(&[1, 4]))),
-            ("sim/jump", &token_sum("reviewer", 2, "claude-opus-5-5", sum(&[2]))),
+            (
+                "sim/jump",
+                &token_sum("executor", 1, "claude-opus-5-5", sum(&[1, 4]))
+            ),
+            (
+                "sim/jump",
+                &token_sum("reviewer", 2, "claude-opus-5-5", sum(&[2]))
+            ),
         ]
     );
 }
-}
 
-on_both! {
-fn the_cards_read_gives_each_task_its_subtasks_spend_in_one_round_trip(backend: Backend) {
-    let f = working(backend);
+#[test]
+fn the_cards_read_gives_each_task_its_subtasks_spend_in_one_round_trip() {
+    let f = working();
     f.task_with(symphony_board::NewTask {
         parent: Some("sim/jump".into()),
         ..symphony_board::NewTask::new("sim/jump/fix", "Fix it", "ochre-owl")
     });
-    f.task_with(symphony_board::NewTask::new("sim/quiet", "Quiet", "ochre-owl"));
+    f.task_with(symphony_board::NewTask::new(
+        "sim/quiet",
+        "Quiet",
+        "ochre-owl",
+    ));
     let wren = f.session("worker");
     f.store.claim("sim/jump/fix", &wren).unwrap();
     assert!(f.store.bind_agent("fix", &wren, false).unwrap());
@@ -427,7 +430,11 @@ fn the_cards_read_gives_each_task_its_subtasks_spend_in_one_round_trip(backend: 
         .spent_under(&["sim/jump", "sim/jump/fix", "sim/quiet", "sim/none"])
         .unwrap();
     let (after, writes_after) = log.report(symphony_board::sweep::trigger::now());
-    assert_eq!(after.count - before.count, 1, "one round trip for every slug");
+    assert_eq!(
+        after.count - before.count,
+        1,
+        "one round trip for every slug"
+    );
     assert_eq!(writes_after.count, writes.count, "and no write");
     let prices = Prices::embedded();
     let spend = |rows: &[&str]| {
@@ -440,12 +447,15 @@ fn the_cards_read_gives_each_task_its_subtasks_spend_in_one_round_trip(backend: 
     // A task's figure is its page's: its own and its subtasks', every model's.
     assert_eq!(read["sim/jump"], spend(&["sim/jump", "sim/jump/fix"]));
     assert_eq!(read["sim/jump/fix"], spend(&["sim/jump/fix"]));
-    assert_eq!(read["sim/jump"].cost.unpriced.len(), 1, "gpt-x has no price");
+    assert_eq!(
+        read["sim/jump"].cost.unpriced.len(),
+        1,
+        "gpt-x has no price"
+    );
     assert_eq!(
         read.keys().collect::<Vec<_>>(),
         ["sim/jump", "sim/jump/fix"],
         "one that took none, or no task at all, is left out"
     );
     assert!(f.store.spent_under(&[]).unwrap().is_empty());
-}
 }

@@ -284,10 +284,10 @@ fn looks(board: &Board, waiter: &str) -> Vec<String> {
 }
 
 /// The bounds of the median CPU, for the test's own (debug) build of `tasks` on a machine other
-/// agents' runs share. Measured on 2026-11-12 in five runs at load 23 to 140, one with a workspace
-/// build beside it, the medians of CPU (wall): say 5.6 to 6.9 s (8.7 to 31.8 s), of which the
-/// server's 1.6 to 2.1 s; inbox 0.12 to 0.16 s; the slowest api answer 0.08 to 0.11 s (`inbox`).
-/// The bounds are the highest of those medians times 2.9 (say), 6.3 (inbox) and 4.5 (api);
+/// agents' runs share. Measured on SurrealDB on 2026-11-12 in five runs at load 23 to 140, one
+/// with a workspace build beside it, the medians of CPU (wall): say 5.6 to 6.9 s (8.7 to 31.8 s),
+/// of which the server's 1.6 to 2.1 s; inbox 0.12 to 0.16 s; the slowest api answer 0.08 to
+/// 0.11 s (`inbox`). The bounds are the highest of those medians times 2.9 (say), 6.3 (inbox) and 4.5 (api);
 /// claim's is said below. Load beyond the cores spreads a command over the efficiency cores and
 /// caches others share, which moves its CPU far less than its wall, but moves it: in a review's
 /// runs and later ones at load 62 to 225, say took 6.3 to 9.2 s, the highest with a workspace build
@@ -301,10 +301,11 @@ fn looks(board: &Board, waiter: &str) -> Vec<String> {
 /// 3.7 s for an inbox.
 ///
 /// A claim's write builds the PULL of the orchestrator it makes due, whose unanswered lookup reads
-/// the open tasks' threads alone (`store/unanswered.rs`). Measured on 2026-11-13, the claim's
-/// median CPU was 6.8 s (the server's 1.6 to 2.1 s) at load 12 to 29, and 9.4 s (the server's 2.7
+/// the open tasks' threads alone (`store/unanswered.rs`). Measured on SurrealDB on 2026-11-13,
+/// the claim's median CPU was 6.8 s (the server's 1.6 to 2.1 s) at load 12 to 29, and 9.4 s (the server's 2.7
 /// to 2.9 s) at load 75 to 124: its bound is 3.5 and 2.6 times those. It does not bound the
-/// lookup alone, which its own test does (`unanswered`).
+/// lookup alone, which its own test does (`unanswered`). The bounds are kept on PostgreSQL, whose
+/// figures each run prints.
 const SAY: Duration = Duration::from_secs(20);
 const CLAIM: Duration = Duration::from_secs(24);
 const INBOX: Duration = Duration::from_secs(1);

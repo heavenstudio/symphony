@@ -1,4 +1,5 @@
-//! PostgreSQL twin of the stored settings' read and write.
+//! The statements of `store/stored_settings.rs` on PostgreSQL: the stored settings' read and
+//! write.
 
 use super::Pg;
 use std::borrow::Cow;

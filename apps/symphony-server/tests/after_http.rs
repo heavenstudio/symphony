@@ -2,7 +2,7 @@
 
 #[expect(
     dead_code,
-    reason = "Only the private database client is needed by this HTTP fixture"
+    reason = "Only the private database is needed by this HTTP fixture"
 )]
 #[path = "../../../crates/tasks/tests/store/common.rs"]
 mod board;
@@ -160,13 +160,15 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
     if std::env::var_os(CHILD).is_none() {
         let began = Instant::now();
         let tree = made();
-        let client = board::client();
+        let client = board::database();
         // The board's command line makes the board; the Symphony, a reader, never does.
-        symphony_board::Store::open(symphony_board::rpc::Client::new(
-            client.addr(),
-            "sf",
-            client.database(),
-        ))
+        symphony_board::Store::opening_on(
+            client.another(),
+            Box::new(|| board::NOW),
+            Box::new(|_| false),
+            board::HOST,
+            &symphony_board::Opening::write(),
+        )
         .unwrap();
         let mut command = Command::new(std::env::current_exe().unwrap());
         match test {

@@ -6,8 +6,23 @@ use super::{Pg, act, logged, rows};
 use crate::orchestration::WAITING;
 use crate::red::FIELDS;
 use crate::stages::{ARROW, BLOCK_LINE, MOVED};
-use crate::store::surreal::work::Creating;
 use std::borrow::Cow;
+
+/// What a new task's write turns on.
+pub(in crate::store) struct Creating {
+    /// A session files it, not the owner.
+    pub(in crate::store) acts: bool,
+    /// It keeps an owner's save receipt.
+    pub(in crate::store) receipt: bool,
+    /// Its filer marks it red.
+    pub(in crate::store) red: bool,
+    /// It is filed on an arm.
+    pub(in crate::store) arm: bool,
+    /// It is filed as a kind (`crate::kind`).
+    pub(in crate::store) kind: bool,
+    /// A custom workflow is active, and it starts at the initial pair (`super::workflow::PLACED`).
+    pub(in crate::store) placed: bool,
+}
 
 /// The task, its dependencies and parent there, its assignee a session, and a slug nobody took.
 const CREATE: &str = "IF EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug') THEN \
@@ -68,7 +83,7 @@ pub(in crate::store) const FILED: &str = "IF (SELECT kind FROM session WHERE han
 END IF;";
 
 /// A new task ([`CREATE`]) with the marks `new` names, its line on the thread (`said`) and, where
-/// a task it waits on is cancelled, its block (`super::super::surreal::work::create`).
+/// a task it waits on is cancelled, its block.
 pub(in crate::store) fn create(new: &Creating) -> String {
     let mut block = String::new();
     if new.acts {
@@ -110,8 +125,8 @@ pub(in crate::store) fn create(new: &Creating) -> String {
 }
 
 /// Cancellation does not satisfy a prerequisite: the unfinished dependents of a cancelled task
-/// blocked, with the line that says so and the status each held (`super::super::surreal::work`'s
-/// own). `cancelling`: the task cancelled is `v ->> 'slug'`; else it is the one created or moved.
+/// blocked, with the line that says so and the status each held. `cancelling`: the task cancelled
+/// is `v ->> 'slug'`; else it is the one created or moved.
 pub(in crate::store) fn block_cancelled_dependencies(cancelling: bool) -> String {
     let scope = if cancelling {
         "l.target = v ->> 'slug'"
@@ -241,7 +256,7 @@ INSERT INTO counter (id, last) VALUES ('\"tree\"', 1) \
 UPDATE task SET parent = v ->> 'parent', updated = (v ->> 'now')::double precision, \
     version = version + 1 WHERE slug = v ->> 'slug';";
 
-/// What `Store::run_for` reads, in one statement (`super::super::surreal::work::run_for_read`).
+/// What `Store::run_for` reads, in one statement.
 pub(in crate::store) fn run_for_read() -> Pg<'static> {
     const SEEN_AS: &str =
         "SELECT s.handle, s.last_seen, s.busy_until, s.pid, s.host FROM session s";
@@ -289,7 +304,7 @@ pub(in crate::store) const RECEIVER_GONE: &str = "EXISTS (SELECT 1 \
 
 /// A pass's writes, after its fences: each receiver still there and fenced, its slot counter where
 /// it was read; each give's role, version, slot counter and line, sent by `sender`; each mark set
-/// or lifted (`super::super::surreal::work::gives`).
+/// or lifted.
 pub(in crate::store) fn gives() -> String {
     format!(
         "IF {RECEIVER_GONE} THEN \

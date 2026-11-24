@@ -80,7 +80,7 @@ nothing, and who writes each:
 | Public Rust items a consumer calls | the [consumer-API guards](CHECKS.md#consumer-api-changes) that changed | `api`: `OLD => NEW` for a replacement shipped beside the old item, `removed OLD => NEW` for a removal |
 | symphony.toml | the keys [PROJECT_FILE](../operations/PROJECT_FILE.md)'s tables list anew, and those they list no more | `settings`: what a project writes instead, a file or a command's arguments |
 | Installed recipes, skills, hooks and rules | the files under `crates/symphony/shipped/` that changed, which `symphony init` rewrites | `init` |
-| Tools | the Rust toolchain (`rust-toolchain.toml`), SurrealDB (`tools/surreal.sh`), Node (`apps/symphony-web/.node-version`) and the oldest PostgreSQL the board's server runs on (`crates/tasks/src/server/postgres.rs`), each when it changed | `tools`: any other |
+| Tools | the Rust toolchain (`rust-toolchain.toml`), Node (`apps/symphony-web/.node-version`) and the oldest PostgreSQL the board's server runs on (`crates/tasks/src/server/postgres.rs`), each when it changed | `tools`: any other |
 | Run once | | `once` |
 
 - **An entry** is a trailer of a commit on the landing's own branch, one line each, which git
@@ -1382,7 +1382,8 @@ Once a release's tag is pushed, the run does this, in order:
   own pin, and a board moved past it would leave that server only reading it.
 - **The boards.** A release that keeps the board schema of the release `current` names, or is
   behind it, moves no board back and judges only a board read behind its schema, one an earlier
-  refresh left behind, saying nothing of the rest (`RELEASE serves board schema N, as the release
+  refresh left behind, and a board still on SurrealDB, red (below), saying nothing of the rest
+  (`RELEASE serves board schema N, as the release
   current names serves N: only a board left behind it moves`; `RELEASE serves board schema N,
   behind the release current names, which serves M: none moves back, and only a board left behind
   N moves`). One that raises it, or the first, with no `current`, judges the live board of each
@@ -1439,9 +1440,9 @@ Once a release's tag is pushed, the run does this, in order:
     release, as a project with no build of its own does.
   - A board whose database is not running is red: nothing here starts, signals or stops a
     database, and once it runs (any `just tasks` in its checkout starts it) the retry moves it. So
-    is one running an older SurrealDB than the release pins, which the move would replace, and one
-    whose versions cannot be read, the release's or the database's: the guard fails closed. So is
-    a board whose schema or writers cannot be read.
+    is a board still on SurrealDB, refused in the words that say how it moves
+    ([POSTGRESQL](../operations/POSTGRESQL.md#a-board-still-on-surrealdb)), and a board whose schema
+    or writers cannot be read.
   - A board below schema 18, from before the board recorded who writes it, has no record to judge
     and is never moved here: its project's own `just tasks migrate`, in its main checkout, brings it
     up. It is the project's to finish.
@@ -1454,12 +1455,11 @@ Once a release's tag is pushed, the run does this, in order:
   the machine's server at its next round ([a held update tried
   again](#a-held-update-tried-again)), and until then it holds no later release either. Each board
   that can move is snapshotted through its running database just before its own move
-  (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the
-  newest 5 kept; for a board on PostgreSQL `before-schema-N-RELEASE.sql`, `pg_dump`'s text of
-  the board's database, which `psql` restores): a snapshot that fails is that board's red, and it
-  is not moved. A board on PostgreSQL is read on that engine, by the PostgreSQL programs its
-  project names, and waits on no SurrealDB version, as a release pins none of the machine's
-  PostgreSQL. Then it is moved by the release's own `tasks migrate`
+  (`symphony/tasks/snapshots/before-schema-N-RELEASE.sql` in the project's git common dir,
+  `pg_dump`'s text of the board's database, which `psql` restores, the newest 5 kept): a snapshot
+  that fails is that board's red, and it is not moved. The board is read by the PostgreSQL
+  programs its project names, as a release pins none of the machine's PostgreSQL. Then it is
+  moved by the release's own `tasks migrate`
   (`releases/RELEASE/bin/tasks`) run in the project's main checkout, the one command that moves a
   project's board, and its schema is read again. Where the only writers behind are a release's own
   or not counted, it runs with `--leave-behind`, which names them; otherwise the migrate's own
@@ -1511,7 +1511,7 @@ Each step ends in one of three:
   `release: refresh-ID the project's to finish`), the run's record (the step named in
   `refreshed.theirs`, its line in `refreshed.said`) and `--status`.
 - **Red**: the refresh's own work failed. The registry cannot be read; a board's database is not
-  running, could be replaced by the move, or its schema or writers cannot be read; a snapshot or a
+  running or is still SurrealDB's, or its schema or writers cannot be read; a snapshot or a
   migrate fails, or a board ends short of the release's schema. A refusal met once the run's time
   was up or it was told to stop is red, as the run's own.
 
@@ -1624,7 +1624,7 @@ when nothing holds it, without a refresh (`crates/symphony/src/machine/held.rs`)
   not a release's own, not gone from its path and not a build its project no longer runs unseen
   past its bound, holds the board; a board from before the writer
   record is its project's own migrate's; a database down, writers or schema that cannot be read, or
-  a SurrealDB older than the release pins is red. Nothing is ever moved past the schema the release
+  a board still on SurrealDB is red. Nothing is ever moved past the schema the release
   serves, and no program is run from a path a board's record names.
 - **The move** is the refresh's: the store snapshotted first, to the same file a refresh writes
   (`snapshots/before-schema-N-RELEASE`, the newest five kept), then the release's own `tasks
@@ -1665,7 +1665,7 @@ releases/release-2026-11-20/
   bin/tasks
   bin/agent-send
   bin/symphony
-  bin/tasks-move       the move of a board's store, which no recipe runs
+  bin/tasks-move       a snapshot put back over a board, which no recipe runs
   client/HASH/         the client, named by the hash of its files
 current -> releases/release-2026-11-20
 ```
@@ -1673,9 +1673,8 @@ current -> releases/release-2026-11-20
 - **The build.** In the run's own checkout, at the release's commit and in its build folder, the
   run builds the release profile of the five binaries (`tools/cargo.sh build --release --locked`,
   each named with `--bin`, of the packages `symphony-server`, `symphony-board` and
-  `symphony-app`): the four a project's recipes run, and `tasks-move`, by which a project on
-  the release moves its board's store to PostgreSQL
-  ([one board's move](../operations/analysis/board-pg-cutover.md#one-boards-move)). No recipe and no refresh
+  `symphony-app`): the four a project's recipes run, and `tasks-move`, which puts a snapshot back
+  over a board ([POSTGRESQL](../operations/POSTGRESQL.md#holds-snapshots-and-recovery)). No recipe and no refresh
   runs that one: the project's orchestrator or owner runs it by its path under `current`, and
   `symphony init` links and names no build of it, so it has no size line
   ([size budgets](CHECKS.md#size-budgets)). The server
@@ -1801,7 +1800,7 @@ with no build of its own runs that release from then on. Nothing else goes back 
 the newer release moved stays at that release's schema, which the older release's server reads
 and writes nothing to ([the switch](#the-switch)) and the older release's `tasks` refuses. Its
 store as it was before the move is the snapshot the refresh took
-(`before-schema-N-RELEASE.surql`, or `.sql` of a board on PostgreSQL), and a board put back to it is one that went back, which the
+(`before-schema-N-RELEASE.sql`), and a board put back to it is one that went back, which the
 owner accepts ([BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#a-board-that-went-back)). Pointing `current` back on the machine whose
 server is the shared one is the owner's word. Pointing it forward is not: while this
 repository's board is at a schema the release `current` names does not serve, an orchestrator
@@ -1906,7 +1905,7 @@ last publish: of release-2026-11-20 by the run 2026-11-20T1000-34446, 2026-11-20
 last refresh: green, of release-2026-11-20 by the run 2026-11-20T1000-34446, 2026-11-20 10:00 (1 h ago)
   installed release-2026-11-20 in /machine/releases/release-2026-11-20, built in 660 s: symphony-server 31,402,112 bytes, tasks 31,675,888 bytes, agent-send 5,601,824 bytes, symphony 22,668,544 bytes, client/5f0c2d9a41b7e386 6,204,518 bytes in 322 files
   release-2026-11-20 serves board schema 19, plugin protocol 0.3 and tasks api 1.15, at Symphony pin 1
-  alpha: its board moved from schema 18 to 19 by release-2026-11-20's own `tasks migrate --leave-behind`, its store snapshotted first to /work/alpha/.git/symphony/tasks/snapshots/before-schema-19-release-2026-11-20.surql
+  alpha: its board moved from schema 18 to 19 by release-2026-11-20's own `tasks migrate --leave-behind`, its store snapshotted first to /work/alpha/.git/symphony/tasks/snapshots/before-schema-19-release-2026-11-20.sql
   beta: it keeps no board (/work/beta/.git/symphony/tasks is not there): nothing to move
   /machine/current names release-2026-11-20 (it named release-2026-11-12, which stays installed): a project with no build of its own runs it
   the machine's server (process 50111, port 8765), the release release-2026-11-12, followed current by its own reload (apps/symphony-server/src/reload.rs): process 51234 on port 8765 answers as release-2026-11-20
@@ -2019,7 +2018,7 @@ nothing because a board's record names it. It never moves a board below schema 1
 project's board hold another's or `current`, and never points `current` while a project's linked
 plugin holds the switch. It never starts, signals, stops or restarts a board's database
 or a server, a release's server taking the `current` it points by its own reload; past its time it
-stops only the `surreal export` client it started. Its tests run on a repository of their own with a bare
+stops only the `pg_dump` it started. Its tests run on a repository of their own with a bare
 repository for its remote and a user git configuration that asks every push for more, a scratch
 board and a machine folder of their own, with stand-in checks (`crates/symphony-build/tests/release/`),
 and shorten the refresh's wait for the shared server with `SYMPHONY_RELEASE_RELOAD_SECONDS`,

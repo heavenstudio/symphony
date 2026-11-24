@@ -1,9 +1,9 @@
 //! What the machine was doing beside a visit: its load averages, the share of its CPU busy, and
 //! the memory resident in the server answering the project's address and in the board databases
-//! that server holds connections to, read with `lsof` and `ps` (what a missing one cannot read is
-//! said unknown).
+//! that server holds connections to (each a board's PostgreSQL, with the processes it started),
+//! read with `lsof` and `ps` (what a missing one cannot read is said unknown).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 #[cfg(test)]
@@ -127,16 +127,18 @@ pub(super) fn mb(bytes: Option<f64>) -> String {
 }
 
 /// The processes whose resident memory a visit records: the one listening on the project's port
-/// and the board databases (SurrealDB) it holds a connection to.
+/// and the board databases it holds a connection to, each its PostgreSQL server's process and the
+/// processes that server started ([`board_servers`], [`connected`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Watched {
     pub(super) server: Option<u32>,
-    pub(super) databases: Vec<u32>,
+    pub(super) databases: Vec<Vec<u32>>,
 }
 
 impl Watched {
     /// Found now, for the server at `base`: none for an address with no port this machine
-    /// listens on, or with no lsof to ask.
+    /// listens on, or with no lsof to ask; no database where none of its connections reaches one,
+    /// or where lsof names no socket's other end, which macOS's does.
     pub(super) fn find(base: &str) -> Watched {
         let Some(port) = port_of(base) else {
             return Watched::default();
@@ -153,50 +155,19 @@ impl Watched {
         else {
             return Watched::default();
         };
-        let connected = run(
-            "lsof",
-            &[
-                "-nP",
-                "-w",
-                "-a",
-                "-p",
-                &server.to_string(),
-                "-iTCP",
-                "-sTCP:ESTABLISHED",
-                "-Fn",
-            ],
-        )
-        .map(|said| ports_reached(&said, port))
-        .unwrap_or_default();
-        let databases = if connected.is_empty() {
-            Vec::new()
-        } else {
-            let ports: Vec<String> = connected.iter().map(u16::to_string).collect();
-            run(
-                "lsof",
-                &[
-                    "-nP",
-                    "-w",
-                    &format!("-iTCP:{}", ports.join(",")),
-                    "-sTCP:LISTEN",
-                    "-Fpc",
-                ],
-            )
-            .map(|said| listeners_named(&said, "surreal"))
-            .unwrap_or_default()
-        };
         Watched {
             server: Some(server),
-            databases,
+            databases: databases_of(server),
         }
     }
 
-    /// What is resident in each now, beside the tab's `heap` its caller read.
+    /// What is resident in each now, beside the tab's `heap` its caller read: a database's, all
+    /// its processes' summed.
     pub(super) fn memory(&self, heap: Option<f64>) -> Memory {
         let pids: Vec<String> = self
             .server
             .iter()
-            .chain(&self.databases)
+            .chain(self.databases.iter().flatten())
             .map(u32::to_string)
             .collect();
         let resident = if pids.is_empty() {
@@ -206,10 +177,13 @@ impl Watched {
                 .map(|said| resident_bytes(&said))
                 .unwrap_or_default()
         };
-        let databases: Vec<f64> = self
-            .databases
-            .iter()
-            .filter_map(|pid| resident.get(pid).copied())
+        let databases: Vec<f64> = (self.databases.iter())
+            .filter_map(|processes| {
+                let read: Vec<f64> = (processes.iter())
+                    .filter_map(|pid| resident.get(pid).copied())
+                    .collect();
+                (!read.is_empty()).then(|| read.iter().sum())
+            })
             .collect();
         Memory {
             heap,
@@ -218,6 +192,37 @@ impl Watched {
             databases: (!databases.is_empty()).then(|| databases.iter().sum()),
         }
     }
+}
+
+/// The board databases the process `server` holds a connection to: the other ends of its Unix
+/// sockets as lsof names them, matched with the sockets of the processes each board's PostgreSQL
+/// started, its connections' backends among them. None where a step says nothing.
+fn databases_of(server: u32) -> Vec<Vec<u32>> {
+    let Some(peers) = run(
+        "lsof",
+        &["-nP", "-w", "-a", "-p", &server.to_string(), "-U", "-Fn"],
+    )
+    .map(|said| peers(&said))
+    .filter(|peers| !peers.is_empty()) else {
+        return Vec::new();
+    };
+    let servers = run("ps", &["-axo", "pid=,ppid=,command="])
+        .map(|said| board_servers(&said))
+        .unwrap_or_default();
+    let started: Vec<String> = (servers.iter())
+        .flat_map(|processes| processes.iter().skip(1))
+        .map(u32::to_string)
+        .collect();
+    if started.is_empty() {
+        return Vec::new();
+    }
+    let sockets = run(
+        "lsof",
+        &["-nP", "-w", "-a", "-p", &started.join(","), "-U", "-Fpd"],
+    )
+    .map(|said| sockets(&said))
+    .unwrap_or_default();
+    connected(servers, &peers, &sockets)
 }
 
 /// What `program` printed, run to its end; none when it cannot run or says nothing.
@@ -241,39 +246,67 @@ pub(super) fn port_of(base: &str) -> Option<u16> {
     }
 }
 
-/// The ports of the listeners a process reached, from its `lsof -Fn` connections
-/// (`n127.0.0.1:60163->127.0.0.1:50699`): each connection's far end, but those made to its own
-/// `port` (the browser's, to the server).
-pub(super) fn ports_reached(said: &str, port: u16) -> Vec<u16> {
-    let mut ports: Vec<u16> = said
+/// The boards' PostgreSQL servers in a `ps -axo pid=,ppid=,command=` listing, each its server on a
+/// board's data in a git common dir ([`symphony_board::server::board_served`]) first, then each
+/// process that server started, its connections' backends among them.
+pub(super) fn board_servers(said: &str) -> Vec<Vec<u32>> {
+    let rows: Vec<(u32, u32, &str)> = said
         .lines()
-        .filter_map(|line| line.strip_prefix('n')?.split_once("->"))
-        .filter_map(|(near, far)| {
-            let end = |address: &str| address.rsplit_once(':')?.1.parse::<u16>().ok();
-            (end(near)? != port).then(|| end(far)).flatten()
+        .filter_map(|line| {
+            let (pid, rest) = line.trim_start().split_once(char::is_whitespace)?;
+            let (parent, command) = rest.trim_start().split_once(char::is_whitespace)?;
+            Some((pid.parse().ok()?, parent.parse().ok()?, command.trim()))
         })
         .collect();
-    ports.sort_unstable();
-    ports.dedup();
-    ports
+    (rows.iter())
+        .filter(|(_, _, command)| symphony_board::server::board_served(command).is_some())
+        .map(|(server, _, _)| {
+            let started = (rows.iter())
+                .filter(|(pid, parent, _)| parent == server && pid != server)
+                .map(|(pid, _, _)| *pid);
+            std::iter::once(*server).chain(started).collect()
+        })
+        .collect()
 }
 
-/// The processes in an `lsof -Fpc` listing whose command's name holds `named`.
-pub(super) fn listeners_named(said: &str, named: &str) -> Vec<u32> {
-    let mut pids = Vec::new();
-    let mut pid = None;
+/// The other ends of a process's Unix sockets in `lsof -U -Fn`'s output: each `n->ADDRESS`.
+pub(super) fn peers(said: &str) -> BTreeSet<String> {
+    said.lines()
+        .filter_map(|line| line.strip_prefix("n->"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Each process's own Unix sockets in `lsof -U -Fpd`'s output: under each `pPID`, each `dADDRESS`.
+pub(super) fn sockets(said: &str) -> BTreeMap<u32, BTreeSet<String>> {
+    let mut sockets: BTreeMap<u32, BTreeSet<String>> = BTreeMap::new();
+    let mut process = None;
     for line in said.lines() {
-        if let Some(number) = line.strip_prefix('p') {
-            pid = number.parse::<u32>().ok();
-        } else if let Some(command) = line.strip_prefix('c')
-            && command.contains(named)
-            && let Some(pid) = pid
-            && !pids.contains(&pid)
-        {
-            pids.push(pid);
+        if let Some(pid) = line.strip_prefix('p') {
+            process = pid.parse().ok();
+        } else if let (Some(pid), Some(address)) = (process, line.strip_prefix('d')) {
+            sockets.entry(pid).or_default().insert(address.to_string());
         }
     }
-    pids
+    sockets
+}
+
+/// Of `servers` ([`board_servers`]), the ones a process whose sockets' other ends are `peers` holds
+/// a connection to: one of the processes each started owns one of those ends.
+pub(super) fn connected(
+    servers: Vec<Vec<u32>>,
+    peers: &BTreeSet<String>,
+    sockets: &BTreeMap<u32, BTreeSet<String>>,
+) -> Vec<Vec<u32>> {
+    servers
+        .into_iter()
+        .filter(|processes| {
+            processes
+                .iter()
+                .skip(1)
+                .any(|pid| sockets.get(pid).is_some_and(|own| !own.is_disjoint(peers)))
+        })
+        .collect()
 }
 
 /// Each process's resident memory in bytes, from `ps -o pid=,rss=` (in KB).

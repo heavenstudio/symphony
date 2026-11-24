@@ -337,7 +337,8 @@ fn the_calls_a_projects_programs_make_answer_the_fields_they_read() {
 #[test]
 fn version_answers_this_builds_api_and_schema_without_the_board() {
     let mut env = crate::env();
-    env.vars.insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+    env.vars
+        .insert("TASKS_SERVER".into(), crate::UNREACHED_SERVER.into());
     assert_eq!(
         answer(&env, json!({"method": "version"})),
         json!({"ok": {"api": {"major": 2, "minor": 7},

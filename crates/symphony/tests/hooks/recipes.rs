@@ -48,7 +48,7 @@ impl Project {
             .env("SYMPHONY_MACHINE_DIR", self.dir.path().join("machine"))
             .env("TASKS_DISPATCH", "inline");
         if let Some(board) = board {
-            let client = board.other_client();
+            let client = board.other_database();
             command
                 .env("TASKS_SERVER", client.addr())
                 .env("TASKS_DATABASE", client.database())
@@ -313,8 +313,8 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
     ] {
         assert!(out.contains(said), "{said:?} in {out}");
     }
-    // `just` is on the search path, so nothing asks to install it; a board not made yet needs
-    // no SurrealDB.
+    // `just` is on the search path, so nothing asks to install it; a board not made yet is told
+    // nothing of SurrealDB, which only a board still on it is (how it moves).
     assert!(!out.contains("install `just`"), "{out}");
     assert!(!out.contains("SurrealDB"), "{out}");
     // The build running init is a checkout's: the step links it from there.

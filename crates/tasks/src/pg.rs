@@ -27,8 +27,8 @@
 //! is never sent twice, a read no more than a write, so a client never repeats work the server may
 //! have done. One the server took on a connection that worked and did not answer within the
 //! client's wait ([`Client::waiting`]), or a startup it did not answer in that time, says the
-//! server is slow in the words SurrealDB's client says it in ([`crate::rpc::slow`] knows both): a
-//! server that is there and late, never one that cannot be reached. The system says such a wait
+//! server is slow in the words [`crate::rpc::slow`] knows, as the `rpc` client consumers keep says
+//! it: a server that is there and late, never one that cannot be reached. The system says such a wait
 //! run out as its bare error, `EAGAIN`, "Resource temporarily unavailable", which names no wait.
 
 use crate::db::DbError;
@@ -53,8 +53,8 @@ mod tests;
 pub const USER: &str = crate::server::postgres::USER;
 /// The database a connection that makes another names: PostgreSQL's own.
 pub const MAINTENANCE: &str = "postgres";
-/// How long a request may wait on the server, as the SurrealDB client's, to take each write of it
-/// and to give each read of its answers: a whole board's copy, on a loaded machine, is the longest.
+/// How long a request may wait on the server, to take each write of it and to give each read of
+/// its answers: a whole board's copy, on a loaded machine, is the longest.
 const TIMEOUT: Duration = Duration::from_secs(300);
 /// SQLSTATEs a write is tried again on: `serialization_failure` and `deadlock_detected`.
 const AGAIN: [&str; 2] = ["40001", "40P01"];

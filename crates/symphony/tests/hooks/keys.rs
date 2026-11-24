@@ -37,7 +37,10 @@ fn identical_session_keys_and_builds_are_isolated_by_the_events_project() {
     }
     assert_eq!(runs(&alpha.join(".target/bin/tasks")), ["beat", "beat"]);
     assert!(runs(&beta.join(".target/bin/tasks")).is_empty());
-    assert!(!beta.join(".git/symphony/tasks/server.json").exists());
+    // No board was made or started for the checkout whose key it is not.
+    for made in ["postgresql", "backend.json"] {
+        assert!(!beta.join(".git/symphony/tasks").join(made).exists());
+    }
 }
 
 #[test]

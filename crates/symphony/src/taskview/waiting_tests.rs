@@ -400,10 +400,10 @@ fn review_summaries_batch_closed_tasks_keep_reads_and_invalidate_changed_history
     history_move(&f, "sim/cancelled", "cancelled");
     let board = f.store.board().unwrap();
     let mut stood = Stood::default();
-    let before = f.store.client().requests();
+    let before = f.store.database().requests();
     stood.read(&f.store, &board).unwrap();
     assert_eq!(
-        f.store.client().requests() - before,
+        f.store.database().requests() - before,
         1,
         "all histories in one request"
     );
@@ -421,13 +421,13 @@ fn review_summaries_batch_closed_tasks_keep_reads_and_invalidate_changed_history
     assert_eq!(first["sim/ready"], Some(0));
     // A separate review task never contributes a round to the task it names.
     assert_eq!(first["sim/reviewed/review"], Some(1));
-    let before = f.store.client().requests();
+    let before = f.store.database().requests();
     for _ in 0..3 {
         stood.read(&f.store, &board).unwrap();
         assert_eq!(counts(&board, &stood), first);
     }
     assert_eq!(
-        f.store.client().requests(),
+        f.store.database().requests(),
         before,
         "kept snapshots read no histories"
     );
@@ -442,9 +442,9 @@ fn review_summaries_batch_closed_tasks_keep_reads_and_invalidate_changed_history
         "stale is not zero or an old count"
     );
     let ready_key = stood.by_slug["sim/ready"].clone();
-    let before = f.store.client().requests();
+    let before = f.store.database().requests();
     stood.read(&f.store, &changed).unwrap();
-    assert_eq!(f.store.client().requests() - before, 1);
+    assert_eq!(f.store.database().requests() - before, 1);
     assert_eq!(counts(&changed, &stood)["sim/reviewed"], Some(2));
     assert_eq!(stood.by_slug["sim/ready"], ready_key);
     f.advance(1.0);
@@ -452,10 +452,10 @@ fn review_summaries_batch_closed_tasks_keep_reads_and_invalidate_changed_history
     let mut closed = f.store.board().unwrap();
     stood.read(&f.store, &closed).unwrap();
     assert_eq!(counts(&closed, &stood)["sim/reviewed"], Some(2));
-    let before = f.store.client().requests();
+    let before = f.store.database().requests();
     stood.read(&f.store, &closed).unwrap();
     assert_eq!(
-        f.store.client().requests(),
+        f.store.database().requests(),
         before,
         "closed histories are kept too"
     );
@@ -470,31 +470,25 @@ fn review_summaries_batch_closed_tasks_keep_reads_and_invalidate_changed_history
 }
 
 #[test]
-fn review_summary_batch_has_the_same_counts_on_both_boards() {
-    use crate::taskview::page_tests::store_fixture::{Backend, Fixture, Seed};
-    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let f = Fixture::on(backend, Seed::default());
-        f.task("sim/rounds");
-        let mut stood = Stood::default();
-        for (status, count) in [
-            ("review", 1),
-            ("in_progress", 1),
-            ("review", 2),
-            ("blocked", 2),
-            ("review", 3),
-            ("done", 3),
-            ("review", 4),
-            ("cancelled", 4),
-        ] {
-            history_move(&f, "sim/rounds", status);
-            let board = f.store.board().unwrap();
-            stood.read(&f.store, &board).unwrap();
-            let wire = crate::taskview::snapshot_board(&board, &stood, &BTreeMap::new()).0;
-            assert_eq!(
-                wire.tasks[0].review_rounds,
-                Some(count),
-                "{backend:?}, {status}"
-            );
-        }
+fn review_summary_batch_counts_each_move_to_review() {
+    use crate::taskview::page_tests::store_fixture::{Fixture, Seed};
+    let f = Fixture::new(Seed::default());
+    f.task("sim/rounds");
+    let mut stood = Stood::default();
+    for (status, count) in [
+        ("review", 1),
+        ("in_progress", 1),
+        ("review", 2),
+        ("blocked", 2),
+        ("review", 3),
+        ("done", 3),
+        ("review", 4),
+        ("cancelled", 4),
+    ] {
+        history_move(&f, "sim/rounds", status);
+        let board = f.store.board().unwrap();
+        stood.read(&f.store, &board).unwrap();
+        let wire = crate::taskview::snapshot_board(&board, &stood, &BTreeMap::new()).0;
+        assert_eq!(wire.tasks[0].review_rounds, Some(count), "{status}");
     }
 }

@@ -552,7 +552,7 @@ mod beats {
         }
         b.c.env
             .vars
-            .insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+            .insert("TASKS_SERVER".into(), crate::UNREACHED_SERVER.into());
         let ran = b.run(&["beat"], &bash("ls").agent("a").0.to_string());
         assert_eq!((ran.code, ran.out.as_str(), ran.err.as_str()), (0, "", ""));
     }

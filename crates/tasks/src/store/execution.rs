@@ -8,13 +8,12 @@
 //! the row again and asks its caller again, as every write of the board's does.
 
 use super::postgres::execution as pg;
-use super::statement::both;
-use super::surreal::execution as sql;
+use super::statement::Statement;
 use super::{Error, Failure, Store};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// What an admission found ([`sql::ADMIT`]).
+/// What an admission found ([`pg::admit`]).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub(crate) enum Admission {
@@ -31,7 +30,7 @@ pub(crate) enum Admission {
     Full { reserved: Vec<String> },
 }
 
-/// What a claim of an attempt's lease found ([`sql::CLAIM`]).
+/// What a claim of an attempt's lease found ([`pg::claim`]).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub(crate) enum Claim {
@@ -48,7 +47,7 @@ pub(crate) enum Claim {
     },
 }
 
-/// What a fenced write of an attempt did ([`sql::COMMIT`]).
+/// What a fenced write of an attempt did ([`pg::commit`]).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub(crate) enum Commit {
@@ -98,7 +97,7 @@ pub(crate) struct Write {
 type Decide<'a> = dyn FnMut(&Value) -> Result<Option<Box<Write>>, Error> + 'a;
 
 impl Store {
-    /// Admit attempt `vars["attempt"]` as [`sql::ADMIT`] says, tried again while the board moves
+    /// Admit attempt `vars["attempt"]` as [`pg::admit`] says, tried again while the board moves
     /// under it. A retry or a resume names its `predecessor`, whose row `follow` is asked about on
     /// each try: the write it answers (none once it was followed) is made in the admission's own
     /// transaction, fenced on that row, so the new attempt is never admitted with its predecessor
@@ -112,10 +111,8 @@ impl Store {
         self.retrying(|| {
             let mut vars = vars.clone();
             if let Some(attempt) = predecessor {
-                let row: Option<Value> = self.read(
-                    both(sql::ATTEMPT, pg::attempt()),
-                    json!({"attempt": attempt}),
-                )?;
+                let row: Option<Value> =
+                    self.read(Statement::from(pg::attempt()), json!({"attempt": attempt}))?;
                 let Some(row) = row else {
                     return Err(Failure::Stop(Error::Refused(format!(
                         "there is no execution attempt {attempt}"
@@ -139,7 +136,7 @@ impl Store {
                     });
                 }
             }
-            self.transact(both(sql::ADMIT, pg::admit()), vars)
+            self.transact(Statement::from(pg::admit()), vars)
         })
     }
 
@@ -151,7 +148,7 @@ impl Store {
         lease_ms: u64,
     ) -> Result<Claim, Error> {
         let vars = json!({"attempt": attempt, "owner": owner, "lease_ms": lease_ms});
-        self.retrying(|| self.transact(both(sql::CLAIM, pg::claim()), vars.clone()))
+        self.retrying(|| self.transact(Statement::from(pg::claim()), vars.clone()))
     }
 
     /// Attempt `attempt` written as `decide` says of the row it read, with the value it answered:
@@ -188,10 +185,8 @@ impl Store {
         decide: &mut Decide<'_>,
     ) -> Result<Option<Commit>, Error> {
         self.retrying(|| {
-            let row: Option<Value> = self.read(
-                both(sql::ATTEMPT, pg::attempt()),
-                json!({"attempt": attempt}),
-            )?;
+            let row: Option<Value> =
+                self.read(Statement::from(pg::attempt()), json!({"attempt": attempt}))?;
             let Some(row) = row else {
                 return Err(Failure::Stop(Error::Refused(format!(
                     "there is no execution attempt {attempt}"
@@ -220,24 +215,18 @@ impl Store {
                 vars["live"] = json!(live);
                 vars["due_in"] = json!(due_in);
             }
-            self.transact(both(sql::COMMIT, pg::commit()), vars)
-                .map(Some)
+            self.transact(Statement::from(pg::commit()), vars).map(Some)
         })
     }
 
     /// Attempt `attempt`'s row, if there is one.
     pub(crate) fn execution_attempt(&self, attempt: &str) -> Result<Option<Value>, Error> {
-        self.retrying(|| {
-            self.read(
-                both(sql::ATTEMPT, pg::attempt()),
-                json!({"attempt": attempt}),
-            )
-        })
+        self.retrying(|| self.read(Statement::from(pg::attempt()), json!({"attempt": attempt})))
     }
 
     /// Every attempt of task `slug`, oldest first.
     pub(crate) fn execution_of_task(&self, slug: &str) -> Result<Vec<Value>, Error> {
-        self.retrying(|| self.read(both(sql::OF_TASK, pg::of_task()), json!({"task": slug})))
+        self.retrying(|| self.read(Statement::from(pg::of_task()), json!({"task": slug})))
     }
 
     /// How many execution attempts task `slug` has had, ended ones included: whether its page has a
@@ -250,7 +239,7 @@ impl Store {
     /// have ended, or held for a person to settle), oldest first: what a workflow change waits on
     /// before it moves the task.
     pub fn live_attempts(&self, slug: &str) -> Result<Vec<String>, Error> {
-        self.retrying(|| self.read(both(sql::LIVE, pg::live()), json!({"task": slug})))
+        self.retrying(|| self.read(Statement::from(pg::live()), json!({"task": slug})))
     }
 
     /// Up to `limit` open attempts under `configuration` whose work is due by the database's clock,
@@ -261,19 +250,19 @@ impl Store {
         limit: usize,
     ) -> Result<Vec<String>, Error> {
         let vars = json!({"configuration": configuration, "limit": limit});
-        self.retrying(|| self.read(both(sql::DUE, pg::due()), vars.clone()))
+        self.retrying(|| self.read(Statement::from(pg::due()), vars.clone()))
     }
 
     /// Attempt `attempt`'s facts, each `{seq, at, fact}`, in order.
     pub(crate) fn execution_facts(&self, attempt: &str) -> Result<Vec<Value>, Error> {
-        self.retrying(|| self.read(both(sql::FACTS, pg::facts()), json!({"attempt": attempt})))
+        self.retrying(|| self.read(Statement::from(pg::facts()), json!({"attempt": attempt})))
     }
 
     /// Attempt `attempt`'s artifacts, each `{name, at, artifact}`, by name.
     pub(crate) fn execution_artifacts(&self, attempt: &str) -> Result<Vec<Value>, Error> {
         self.retrying(|| {
             self.read(
-                both(sql::ARTIFACTS, pg::artifacts()),
+                Statement::from(pg::artifacts()),
                 json!({"attempt": attempt}),
             )
         })
@@ -281,6 +270,6 @@ impl Store {
 
     /// The fence `key` (`['request', KEY]`, `['lane', TASK, LANE]` or `['capacity', SCOPE]`).
     pub(crate) fn execution_fence(&self, key: Value) -> Result<Option<Value>, Error> {
-        self.retrying(|| self.read(both(sql::FENCE, pg::fence()), json!({"key": key})))
+        self.retrying(|| self.read(Statement::from(pg::fence()), json!({"key": key})))
     }
 }

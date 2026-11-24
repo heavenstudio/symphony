@@ -113,12 +113,12 @@ fn a_child_started_without_the_cargo_variable_is_refused_as_the_process_cargo_or
     let why = |caller: &str| why_by(caller, "Cargo");
 
     // Refused before its server is started.
-    live.home().stop().unwrap();
+    live.home().stop_board().unwrap();
     let (ran, caller) = run(&cargo, &live.wt, &[TASKS, "list"], "");
     refused(&ran, &why(&caller));
-    assert!(live.home().recorded().is_none());
+    assert!(!live.serving());
 
-    live.home().ensure().unwrap();
+    live.start();
     live.seed("tasks");
     let addr = live.addr();
     let (ran, caller) = run(&cargo, &live.wt, &[TASKS, "list"], "");

@@ -27,7 +27,7 @@ async fn native_hosted_project_models_withhold_machine_inventory_and_keep_projec
             .role("tools/visible", "worker", "executor"),
     );
     let mut hub = Hub::new(&root, &root);
-    let client = board.other_client();
+    let client = board.other_database();
     hub.connect_reader = Box::new(move |_| Ok(store_on(&client)));
     hub.refresh_page("", &root).unwrap();
     let mut visible = agent("worker");

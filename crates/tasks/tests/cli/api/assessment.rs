@@ -152,7 +152,7 @@ fn stale_state_untrusted_actors_and_extra_fields_are_refused_through_the_actual_
     let mut unreachable = case.env.clone();
     unreachable
         .vars
-        .insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+        .insert("TASKS_SERVER".into(), crate::UNREACHED_SERVER.into());
     let mut unknown = request(&actor, "protocol", &current);
     unknown["args"]["protocol"] = json!("assessment/99");
     let error = answer(&unreachable, unknown);

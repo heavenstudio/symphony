@@ -5,7 +5,6 @@
 //! said under its own key and attempts, as the digest is at delivery. Whichever, what older
 //! dispatchers read records the digest then, and what the orchestrator was told changes only when
 //! a PULL is acknowledged, whichever generation records it (`pull_acknowledgements`).
-use crate::common::Backend;
 
 use super::callbacks::Listener;
 use super::hand_over_outage::{FREE, Outage};
@@ -87,9 +86,9 @@ pub(super) fn said_once(outage: &Outage, back: &Listener) {
     assert_eq!(again, [Vec::<String>::new()]);
 }
 
-on_both! {
-fn a_pull_reading_the_same_at_delivery_records_the_work_withheld_from_it_meanwhile(backend: Backend) {
-    let outage = Outage::on(backend);
+#[test]
+fn a_pull_reading_the_same_at_delivery_records_the_work_withheld_from_it_meanwhile() {
+    let outage = Outage::on();
     let Outage {
         fixture,
         elsewhere,
@@ -142,7 +141,6 @@ fn a_pull_reading_the_same_at_delivery_records_the_work_withheld_from_it_meanwhi
     ];
     assert_eq!(told, theirs);
 }
-}
 
 /// The attempts a PULL waiting made to reach its orchestrator.
 #[derive(Clone, Copy, Debug)]
@@ -165,8 +163,8 @@ impl Attempts {
 /// `scratch/theirs`, the successor's, was withheld from it. Unreachable since, it has a PULL
 /// waiting of seven new ready rows, `scratch/row-00` to `-06`, which shows four of them and counts
 /// the rest, after the `attempts` it made.
-pub(super) fn waited(backend: Backend, attempts: Attempts) -> Outage {
-    let outage = Outage::on(backend);
+pub(super) fn waited(attempts: Attempts) -> Outage {
+    let outage = Outage::on();
     let Outage {
         fixture,
         elsewhere,
@@ -246,10 +244,10 @@ struct HandOver<'outage> {
 /// Each case once with one attempt made and once with every attempt made: the PULL that waits
 /// after it is the digest as it is at delivery, and the one the former orchestrator hears when it
 /// is back; what older dispatchers read then records the digest, and no PULL follows.
-fn judge(backend: Backend, scope: Scope, cases: &[Case]) {
+fn judge(scope: Scope, cases: &[Case]) {
     let runs = (cases.iter()).flat_map(|&case| [Attempts::One, Attempts::All].map(|a| (case, a)));
     for (case, attempts) in runs {
-        let outage = waited(backend, attempts);
+        let outage = waited(attempts);
         let Outage {
             fixture,
             elsewhere,
@@ -328,9 +326,9 @@ fn judge(backend: Backend, scope: Scope, cases: &[Case]) {
     }
 }
 
-on_both! {
-fn a_pull_waiting_while_the_orchestrator_keeps_its_work_is_judged_by_what_is_new_beyond_it(backend: Backend) {
-    judge(backend,
+#[test]
+fn a_pull_waiting_while_the_orchestrator_keeps_its_work_is_judged_by_what_is_new_beyond_it() {
+    judge(
         Scope::Same,
         &[
             Case {
@@ -361,10 +359,9 @@ fn a_pull_waiting_while_the_orchestrator_keeps_its_work_is_judged_by_what_is_new
         ],
     );
 }
-}
 
-on_both! {
-fn a_pull_waiting_while_the_orchestrator_gains_work_withheld_from_it_names_it_anew(backend: Backend) {
+#[test]
+fn a_pull_waiting_while_the_orchestrator_gains_work_withheld_from_it_names_it_anew() {
     let new = |change| Case {
         change,
         outcome: Outcome::New,
@@ -377,13 +374,12 @@ fn a_pull_waiting_while_the_orchestrator_gains_work_withheld_from_it_names_it_an
         Change::AllDeparted,
         Change::Replaced,
     ];
-    judge(backend, Scope::Gained, &changes.map(new));
-}
+    judge(Scope::Gained, &changes.map(new));
 }
 
-on_both! {
-fn a_pull_waiting_while_the_orchestrator_loses_work_it_was_told_of_keeps_its_budget(backend: Backend) {
-    judge(backend,
+#[test]
+fn a_pull_waiting_while_the_orchestrator_loses_work_it_was_told_of_keeps_its_budget() {
+    judge(
         Scope::Lost,
         &[
             Case {
@@ -413,5 +409,4 @@ fn a_pull_waiting_while_the_orchestrator_loses_work_it_was_told_of_keeps_its_bud
             },
         ],
     );
-}
 }

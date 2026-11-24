@@ -39,10 +39,7 @@ impl Hub {
     /// why there is none. An opening that fails makes no dispatch pass: the board's health counts it
     /// failed, unless the project has no board ([`symphony_board::board_health::absent`]), which is
     /// not unwell. A board refused because it went back below the schema it was seen at
-    /// ([`symphony_board::live::seen`]) is said so on the board's health, until a store opens it;
-    /// one refused while a start replays its store's log, this server's own run apart from this
-    /// thread or another's ([`symphony_board::server::replaying_in`]), is said to be starting,
-    /// until a reach finds no replay.
+    /// ([`symphony_board::live::seen`]) is said so on the board's health, until a store opens it.
     pub(crate) fn reconnect(
         &self,
         connect: &mut impl FnMut(&Path) -> Result<symphony_board::Store, String>,
@@ -50,19 +47,16 @@ impl Hub {
         match connect(&self.root) {
             Ok(store) => {
                 let now = self.now();
-                let replayed = self.replaying_now(None);
-                if self.health.went_back(now, None) || replayed {
+                if self.health.went_back(now, None) {
                     self.tell_health(now);
                 }
                 Some(store)
             }
             Err(error) => {
                 let now = self.now();
-                let replaying = self.replaying_now(symphony_board::server::replaying_in(&error));
                 let changed = self
                     .health
-                    .went_back(now, symphony_board::live::seen::Rollback::line_in(&error))
-                    || replaying;
+                    .went_back(now, symphony_board::live::seen::Rollback::line_in(&error));
                 if !symphony_board::board_health::absent(&error) {
                     self.health.dispatched(
                         now,
@@ -83,24 +77,16 @@ impl Hub {
     /// a held board reads it: no board is reached or started. Never for a folder no repository held.
     pub(super) fn board_held(&self) -> bool {
         self.repository.as_ref().is_some_and(|common| {
-            symphony_board::server::Home::in_common(common, None)
+            symphony_board::server::Home::in_common(common)
                 .held()
                 .is_some()
         })
     }
 
-    /// Keep `line`, what the pages say of a replay under way, or none: whether it changed.
-    fn replaying_now(&self, line: Option<String>) -> bool {
-        let mut held = self.replaying.lock().recover();
-        let changed = *held != line;
-        *held = line;
-        changed
-    }
-
-    /// Whether the project has no board: the last reach of it said none is made, or that it has no
-    /// store and no SurrealDB here to serve one ([`symphony_board::board_health::absent`]). A store
-    /// that is there and cannot be served is a board, and unwell. Read as [`Hub::tasks_read`]
-    /// answers, it never waits on a board read under way.
+    /// Whether the project has no board: the last reach of it said none is made yet, or that the
+    /// project's folder is gone ([`symphony_board::board_health::absent`]). A board that is there
+    /// and cannot be served, one still on SurrealDB among them, is a board, and unwell. Read as
+    /// [`Hub::tasks_read`] answers, it never waits on a board read under way.
     pub(crate) fn boardless(&self) -> bool {
         self.tasks_read()
             .err()

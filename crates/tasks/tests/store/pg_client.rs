@@ -290,10 +290,7 @@ fn marker_store(client: &pg::Client, how: symphony_board::Opening) -> symphony_b
 }
 
 fn marker_client(store: &symphony_board::Store) -> &pg::Client {
-    let symphony_board::Database::PostgreSql(client) = store.database() else {
-        unreachable!()
-    };
-    client
+    store.database().postgresql()
 }
 
 fn marker_value(client: &pg::Client, expression: &str) -> i64 {

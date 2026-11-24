@@ -1,25 +1,23 @@
-//! The database a store's board is in: SurrealDB's, reached by its RPC ([`crate::rpc`]), or
-//! PostgreSQL's, reached on its socket ([`crate::pg`]). The store's modules never ask which: a
-//! statement names its text in each database's language ([`super::statement`]), and the store's one
-//! sender ([`super::transaction`]) hands it to the database the board is in.
+//! The database a store's board is in: PostgreSQL's, reached on its socket ([`crate::pg`]), or a
+//! hosted board's pool. The store's one sender ([`super::transaction`]) hands each statement
+//! ([`super::statement`]) to it.
 
 use crate::db::DbError;
 use crate::pg;
 use crate::rpc;
-use serde_json::Value;
 use std::time::Duration;
 
 /// Where a board is.
+///
+/// Non-exhaustive: an earlier release had a SurrealDB variant too, and a consumer's code reads the
+/// client by a refutable pattern (`let Database::PostgreSql(client) = store.database() else …`),
+/// which a single exhaustive variant would make irrefutable, refused by its lint
+/// (`irrefutable_let_patterns` under `-D warnings`). Outside this crate the client is
+/// [`Database::postgresql`]'s or [`Database::into_postgresql`]'s.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Database {
-    SurrealDb(rpc::Client),
     PostgreSql(pg::Client),
-}
-
-impl From<rpc::Client> for Database {
-    fn from(client: rpc::Client) -> Database {
-        Database::SurrealDb(client)
-    }
 }
 
 impl From<pg::Client> for Database {
@@ -28,12 +26,36 @@ impl From<pg::Client> for Database {
     }
 }
 
+/// The refusal of a client that names a SurrealDB server: a board is reached on PostgreSQL alone,
+/// and one still on SurrealDB is moved first by an earlier release ([`crate::server::GONE`]).
+pub fn surrealdb_refused(addr: &str) -> String {
+    format!(
+        "{addr} names a SurrealDB server, and this build reaches a board on PostgreSQL alone \
+         (`postgresql:SOCKET`): {}",
+        crate::server::GONE
+    )
+}
+
 impl Database {
-    /// The server a command names to reach the board again: SurrealDB's address, or `postgresql:`
-    /// and its socket's folder.
+    /// The board a board's address names ([`rpc::Client`], as `cli::board_client` and a
+    /// consumer's code hand it on): `postgresql:` and its socket's folder, waiting for each answer
+    /// as the client does. Any other address is a SurrealDB server's, refused
+    /// ([`surrealdb_refused`]).
+    pub fn named(client: &rpc::Client) -> Result<Database, String> {
+        match client.addr().strip_prefix("postgresql:") {
+            Some(socket) => Ok(
+                pg::Client::new(std::path::Path::new(socket), client.database())
+                    .waiting(client.wait_limit())
+                    .into(),
+            ),
+            None => Err(surrealdb_refused(client.addr())),
+        }
+    }
+
+    /// The server a command names to reach the board again: `postgresql:` and its socket's
+    /// folder.
     pub fn addr(&self) -> String {
         match self {
-            Database::SurrealDb(client) => client.addr().to_string(),
             Database::PostgreSql(client) => client.addr(),
         }
     }
@@ -41,7 +63,6 @@ impl Database {
     /// The board's database on its server.
     pub fn database(&self) -> &str {
         match self {
-            Database::SurrealDb(client) => client.database(),
             Database::PostgreSql(client) => client.database(),
         }
     }
@@ -49,7 +70,6 @@ impl Database {
     /// How many requests its client has made: a read's round trips, for the tests that count them.
     pub fn requests(&self) -> usize {
         match self {
-            Database::SurrealDb(client) => client.requests(),
             Database::PostgreSql(client) => client.requests(),
         }
     }
@@ -57,7 +77,6 @@ impl Database {
     /// Request and write telemetry shared by clients of this board.
     pub fn queries(&self) -> std::sync::Arc<crate::board_health::QueryLog> {
         match self {
-            Database::SurrealDb(client) => client.queries(),
             Database::PostgreSql(client) => client.queries(),
         }
     }
@@ -66,45 +85,48 @@ impl Database {
     /// answer as this one does.
     pub fn another(&self) -> Database {
         match self {
-            Database::SurrealDb(client) => Database::SurrealDb(
-                rpc::Client::new(client.addr(), client.namespace(), client.database())
-                    .waiting(client.wait_limit()),
-            ),
             Database::PostgreSql(client) => Database::PostgreSql(client.another()),
         }
     }
 
-    /// Whether this is a PostgreSQL board.
+    /// Whether this is a PostgreSQL board: every board is.
     pub fn is_postgresql(&self) -> bool {
         matches!(self, Database::PostgreSql(_))
     }
 
-    /// The same board, each answer waited for at most `most` and a read that met it sent no
-    /// second time ([`rpc::Client::bounded`]; PostgreSQL's client sends nothing twice).
+    /// Its PostgreSQL client: every board this build reaches is on PostgreSQL.
+    pub fn postgresql(&self) -> &pg::Client {
+        match self {
+            Database::PostgreSql(client) => client,
+        }
+    }
+
+    /// Its PostgreSQL client, taken whole ([`Database::postgresql`]).
+    pub fn into_postgresql(self) -> pg::Client {
+        match self {
+            Database::PostgreSql(client) => client,
+        }
+    }
+
+    /// The same board, each answer waited for at most `most` (PostgreSQL's client sends nothing
+    /// twice).
     pub(super) fn bounded(&self, most: Duration) -> Database {
         match self {
-            Database::SurrealDb(client) => Database::SurrealDb(client.bounded(most)),
             Database::PostgreSql(client) => Database::PostgreSql(client.bounded(most)),
         }
     }
 
-    /// Whether the server said `said` of a board no one has opened: SurrealDB's namespace or
-    /// database not there ([`super::opening::undefined`]), or PostgreSQL's database.
+    /// Whether the server said `said` of a board no one has opened: its database not there.
     pub(super) fn undefined(&self, said: &str) -> bool {
         match self {
-            Database::SurrealDb(client) => super::opening::undefined(said, client.database()),
             Database::PostgreSql(_) => pg::no_database(said),
         }
     }
 
     /// The board's database made on its server, if it is not there yet.
     #[track_caller]
-    pub(super) fn define(&self, nothing: &str) -> Result<(), DbError> {
+    pub(super) fn define(&self) -> Result<(), DbError> {
         match self {
-            Database::SurrealDb(client) => {
-                client.define_then(nothing, Value::Object(serde_json::Map::new()))?;
-                Ok(())
-            }
             Database::PostgreSql(client) => client.make_database(),
         }
     }
@@ -141,12 +163,6 @@ impl Postgres<'_> {
     }
 }
 
-/// The client a statement goes to, by the language it is sent in.
-pub(super) enum Reach<'a> {
-    SurrealDb(&'a rpc::Client),
-    PostgreSql(Postgres<'a>),
-}
-
 /// Where a store's board is: one of the [`Database`]s a caller names, or a hosted board, which
 /// no caller's [`Database`] names and the store alone dispatches to.
 #[derive(Debug)]
@@ -163,24 +179,21 @@ impl From<Database> for Board {
 }
 
 impl Board {
-    pub(super) fn reach(&self) -> Reach<'_> {
+    /// The client a statement goes to.
+    pub(super) fn reach(&self) -> Postgres<'_> {
         match self {
-            Board::Local(Database::SurrealDb(client)) => Reach::SurrealDb(client),
-            Board::Local(Database::PostgreSql(client)) => {
-                Reach::PostgreSql(Postgres::Socket(client))
-            }
+            Board::Local(Database::PostgreSql(client)) => Postgres::Socket(client),
             #[cfg(feature = "hosted-postgresql")]
-            Board::Hosted(client) => Reach::PostgreSql(Postgres::Hosted(client)),
+            Board::Hosted(client) => Postgres::Hosted(client),
         }
     }
 
-    /// How long a PostgreSQL board's client waits for a request's answer; none on SurrealDB.
-    pub(super) fn postgresql_wait(&self) -> Option<std::time::Duration> {
+    /// How long the board's client waits for a request's answer.
+    pub(super) fn postgresql_wait(&self) -> std::time::Duration {
         match self {
-            Board::Local(Database::SurrealDb(_)) => None,
-            Board::Local(Database::PostgreSql(client)) => Some(client.wait()),
+            Board::Local(Database::PostgreSql(client)) => client.wait(),
             #[cfg(feature = "hosted-postgresql")]
-            Board::Hosted(client) => Some(client.wait()),
+            Board::Hosted(client) => client.wait(),
         }
     }
 
@@ -225,10 +238,6 @@ impl Board {
         }
     }
 
-    pub(super) fn is_postgresql(&self) -> bool {
-        matches!(self.reach(), Reach::PostgreSql(_))
-    }
-
     /// A refusal of this board's schema, `why`, as its reader takes it: the commands it names
     /// make and move a local board, and a hosted one is its deployment's migration's.
     pub(super) fn refusal(&self, why: String) -> String {
@@ -261,9 +270,9 @@ impl Board {
     }
 
     #[track_caller]
-    pub(super) fn define(&self, nothing: &str) -> Result<(), DbError> {
+    pub(super) fn define(&self) -> Result<(), DbError> {
         match self {
-            Board::Local(db) => db.define(nothing),
+            Board::Local(db) => db.define(),
             #[cfg(feature = "hosted-postgresql")]
             Board::Hosted(_) => Err(DbError::Failed(
                 "a hosted board's database is made by its platform, and nothing here makes one"

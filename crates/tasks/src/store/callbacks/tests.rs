@@ -294,8 +294,8 @@ fn a_visit_with_no_holdings_observation_has_no_holdings_to_read() {
 /// upgrade, and nothing queued; a visit with no holdings observation plans none.
 #[test]
 fn a_due_pull_is_queued_first_and_upgraded_for_a_legacy_observer() {
-    use crate::store_fixture::{Backend, Fixture, Seed};
-    let fixture = Fixture::on(Backend::SurrealDb, Seed::default().task("p/ready", "ready"));
+    use crate::store_fixture::{Fixture, Seed};
+    let fixture = Fixture::new(Seed::default().task("p/ready", "ready"));
     let store = &fixture.store;
     let handle = fixture.session("orchestrator");
     let (board, _) = store.callback_board().unwrap();
@@ -835,8 +835,9 @@ fn of<'r, T>(rows: &'r [(String, T)], handle: &str) -> &'r T {
 /// (none for a recipient with no row), when its PULL was last checked, the lines a hand-over can
 /// take back, and whether a line of its outbox is due, as the read of one recipient alone gives
 /// them; the owner's chat events due only for the one holding the seat. No recipient reads nothing.
-fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::Backend) {
-    let fixture = crate::store_fixture::Fixture::on(backend, crate::store_fixture::Seed::default());
+#[test]
+fn stored_states_of_every_recipient_in_one_read() {
+    let fixture = crate::store_fixture::Fixture::new(crate::store_fixture::Seed::default());
     let store = &fixture.store;
     let now = store.now();
     let (amber, birch, cedar) = ("amber-wren", "birch-fox", "cedar-owl");
@@ -1006,20 +1007,11 @@ fn stored_states_of_every_recipient_in_one_read(backend: crate::store_fixture::B
     assert_eq!(sent, 0, "no recipient, no read");
 }
 
-#[test]
-fn stored_states_of_every_recipient_in_one_read_on_surrealdb() {
-    stored_states_of_every_recipient_in_one_read(crate::store_fixture::Backend::SurrealDb);
-}
-
-#[test]
-fn stored_states_of_every_recipient_in_one_read_on_postgresql() {
-    stored_states_of_every_recipient_in_one_read(crate::store_fixture::Backend::PostgreSql);
-}
-
 /// The pane lines still queued for every recipient come in one read, each under its handle: a
 /// line delivered, one of a message, or one that is no pane line left out.
-fn queued_panes_of_every_recipient_in_one_read(backend: crate::store_fixture::Backend) {
-    let fixture = crate::store_fixture::Fixture::on(backend, crate::store_fixture::Seed::default());
+#[test]
+fn queued_panes_of_every_recipient_in_one_read() {
+    let fixture = crate::store_fixture::Fixture::new(crate::store_fixture::Seed::default());
     let store = &fixture.store;
     let (amber, birch, cedar) = ("amber-wren", "birch-fox", "cedar-owl");
     line(store, amber, "pane-1-0", json!({}));
@@ -1053,16 +1045,6 @@ fn queued_panes_of_every_recipient_in_one_read(backend: crate::store_fixture::Ba
     let (none, sent) = requests(store, || store.queued_panes(&[]).unwrap());
     assert!(none.is_empty());
     assert_eq!(sent, 0, "no recipient, no read");
-}
-
-#[test]
-fn queued_panes_of_every_recipient_in_one_read_on_surrealdb() {
-    queued_panes_of_every_recipient_in_one_read(crate::store_fixture::Backend::SurrealDb);
-}
-
-#[test]
-fn queued_panes_of_every_recipient_in_one_read_on_postgresql() {
-    queued_panes_of_every_recipient_in_one_read(crate::store_fixture::Backend::PostgreSql);
 }
 
 /// A read of many recipients gives its rows in the answer's order, each read by field, and each
@@ -1150,87 +1132,81 @@ fn a_read_of_many_recipients_takes_each_row_once_and_refuses_another_shape() {
 /// terminal's, whatever its records say.
 #[test]
 fn a_codex_thread_from_no_terminal_retires_once_every_terminal_it_was_launched_in_is_gone() {
-    use crate::store_fixture::{Backend, Fixture, Seed};
-    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let seed = Seed::default().task("p/work", "in_progress");
-        let f = Fixture::on(backend, seed.task("p/next", "ready"));
-        let store = &f.store;
-        let [launched, unplaced, placed] = ["worker"; 3].map(|kind| f.session(kind));
-        let launch = |slug: &str, handle: &str, thread: &str, pane: &str| {
-            let new = crate::NewLaunch {
-                claude_session: format!("codex:{thread}"),
-                pane: pane.into(),
-                ..crate::NewLaunch::new(slug, handle, "executor")
-            };
-            store.record_launch(&new).unwrap();
+    use crate::store_fixture::{Fixture, Seed};
+    let seed = Seed::default().task("p/work", "in_progress");
+    let f = Fixture::new(seed.task("p/next", "ready"));
+    let store = &f.store;
+    let [launched, unplaced, placed] = ["worker"; 3].map(|kind| f.session(kind));
+    let launch = |slug: &str, handle: &str, thread: &str, pane: &str| {
+        let new = crate::NewLaunch {
+            claude_session: format!("codex:{thread}"),
+            pane: pane.into(),
+            ..crate::NewLaunch::new(slug, handle, "executor")
         };
-        let register = |handle: &str, thread: &str, terminal: Option<&str>| {
-            let address = format!("codex:{thread}");
-            (store.callback_in(handle, Some(&address), false, false, terminal)).unwrap();
-        };
-        launch("p/work", &launched, "0aaa", "t1");
-        register(&launched, "0aaa", None);
-        register(&unplaced, "0bbb", None);
-        launch("p/work", &placed, "0ccc", "t2");
+        store.record_launch(&new).unwrap();
+    };
+    let register = |handle: &str, thread: &str, terminal: Option<&str>| {
+        let address = format!("codex:{thread}");
+        (store.callback_in(handle, Some(&address), false, false, terminal)).unwrap();
+    };
+    launch("p/work", &launched, "0aaa", "t1");
+    register(&launched, "0aaa", None);
+    register(&unplaced, "0bbb", None);
+    launch("p/work", &placed, "0ccc", "t2");
+    store
+        .close_task_session("p/work", &placed, "its program ended", "")
+        .unwrap();
+    register(&placed, "0ccc", Some("t3"));
+    let terminal = |address: &str, agent: &str| -> crate::launch::hc::Object {
+        let listed = json!({"address": address, "agent": agent, "state": "live"});
+        listed.as_object().unwrap().clone()
+    };
+    let sweep = |live: &[crate::launch::hc::Object], refresh: bool| {
+        let presence = crate::launch::reap::presence(store, live).unwrap();
+        store.callback_presence(Some(&presence), refresh).unwrap()
+    };
+    let registered = || {
         store
-            .close_task_session("p/work", &placed, "its program ended", "")
-            .unwrap();
-        register(&placed, "0ccc", Some("t3"));
-        let terminal = |address: &str, agent: &str| -> crate::launch::hc::Object {
-            let listed = json!({"address": address, "agent": agent, "state": "live"});
-            listed.as_object().unwrap().clone()
-        };
-        let sweep = |live: &[crate::launch::hc::Object], refresh: bool| {
-            let presence = crate::launch::reap::presence(store, live).unwrap();
-            store.callback_presence(Some(&presence), refresh).unwrap()
-        };
-        let registered = || {
-            store
-                .callbacks()
-                .unwrap()
-                .into_keys()
-                .collect::<BTreeSet<_>>()
-        };
-        let set = |handles: &[&String]| -> BTreeSet<String> {
-            handles.iter().map(|h| h.to_string()).collect()
-        };
+            .callbacks()
+            .unwrap()
+            .into_keys()
+            .collect::<BTreeSet<_>>()
+    };
+    let set = |handles: &[&String]| -> BTreeSet<String> {
+        handles.iter().map(|h| h.to_string()).collect()
+    };
 
-        let codex = [terminal("t1", "codex"), terminal("t3", "codex")];
-        assert_eq!(
-            sweep(&codex, true),
-            set(&[&launched, &placed]),
-            "{backend:?}"
-        );
-        assert_eq!(registered(), set(&[&launched, &unplaced, &placed]));
+    let codex = [terminal("t1", "codex"), terminal("t3", "codex")];
+    assert_eq!(sweep(&codex, true), set(&[&launched, &placed]));
+    assert_eq!(registered(), set(&[&launched, &unplaced, &placed]));
 
-        // Its launch's terminal runs something else: kept, unconfirmed. The terminal `placed`
-        // registered from is gone: retired, though its own records were closed all along.
-        let shell = [terminal("t1", "zsh")];
-        assert_eq!(sweep(&shell, false), BTreeSet::new());
-        assert_eq!(registered(), set(&[&launched, &unplaced, &placed]));
-        assert_eq!(sweep(&shell, true), BTreeSet::new());
-        assert_eq!(registered(), set(&[&launched, &unplaced]), "{backend:?}");
+    // Its launch's terminal runs something else: kept, unconfirmed. The terminal `placed`
+    // registered from is gone: retired, though its own records were closed all along.
+    let shell = [terminal("t1", "zsh")];
+    assert_eq!(sweep(&shell, false), BTreeSet::new());
+    assert_eq!(registered(), set(&[&launched, &unplaced, &placed]));
+    assert_eq!(sweep(&shell, true), BTreeSet::new());
+    assert_eq!(registered(), set(&[&launched, &unplaced]));
 
-        // Its launch's terminal is gone: nothing changes without hc or on a dry run; a sweep
-        // retires it. The thread no launch records stays.
-        assert_eq!(
-            store.callback_presence(None, true).unwrap(),
-            BTreeSet::new()
-        );
-        assert_eq!(sweep(&[], false), BTreeSet::new());
-        assert_eq!(registered(), set(&[&launched, &unplaced]));
-        sweep(&[], true);
-        assert_eq!(registered(), set(&[&unplaced]), "{backend:?}");
+    // Its launch's terminal is gone: nothing changes without hc or on a dry run; a sweep
+    // retires it. The thread no launch records stays.
+    assert_eq!(
+        store.callback_presence(None, true).unwrap(),
+        BTreeSet::new()
+    );
+    assert_eq!(sweep(&[], false), BTreeSet::new());
+    assert_eq!(registered(), set(&[&launched, &unplaced]));
+    sweep(&[], true);
+    assert_eq!(registered(), set(&[&unplaced]));
 
-        // Launched again for another task, its first record closed: present in the new terminal.
-        store
-            .close_task_session("p/work", &launched, "its program ended", "")
-            .unwrap();
-        launch("p/next", &launched, "0aaa", "t4");
-        register(&launched, "0aaa", None);
-        assert_eq!(sweep(&[terminal("t4", "codex")], true), set(&[&launched]));
-        assert_eq!(registered(), set(&[&launched, &unplaced]), "{backend:?}");
-    }
+    // Launched again for another task, its first record closed: present in the new terminal.
+    store
+        .close_task_session("p/work", &launched, "its program ended", "")
+        .unwrap();
+    launch("p/next", &launched, "0aaa", "t4");
+    register(&launched, "0aaa", None);
+    assert_eq!(sweep(&[terminal("t4", "codex")], true), set(&[&launched]));
+    assert_eq!(registered(), set(&[&launched, &unplaced]));
 }
 
 /// What holds a Codex thread, on both stores: an open launch record naming a terminal hc lists
@@ -1242,84 +1218,72 @@ fn a_codex_thread_from_no_terminal_retires_once_every_terminal_it_was_launched_i
 /// there while that terminal runs Codex, whatever its records say.
 #[test]
 fn a_codex_thread_is_held_only_by_an_open_record_naming_a_live_terminal() {
-    use crate::store_fixture::{Backend, Fixture, Seed};
-    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-        let seed = Seed::default().task("p/work", "in_progress");
-        let f = Fixture::on(backend, seed.task("p/next", "ready"));
-        let store = &f.store;
-        let [reused, paneless, borrower, owner, restored] = ["worker"; 5].map(|k| f.session(k));
-        let launch = |slug: &str, handle: &str, thread: &str, pane: &str| {
-            let new = crate::NewLaunch {
-                claude_session: format!("codex:{thread}"),
-                pane: pane.into(),
-                ..crate::NewLaunch::new(slug, handle, "executor")
-            };
-            store.record_launch(&new).unwrap();
+    use crate::store_fixture::{Fixture, Seed};
+    let seed = Seed::default().task("p/work", "in_progress");
+    let f = Fixture::new(seed.task("p/next", "ready"));
+    let store = &f.store;
+    let [reused, paneless, borrower, owner, restored] = ["worker"; 5].map(|k| f.session(k));
+    let launch = |slug: &str, handle: &str, thread: &str, pane: &str| {
+        let new = crate::NewLaunch {
+            claude_session: format!("codex:{thread}"),
+            pane: pane.into(),
+            ..crate::NewLaunch::new(slug, handle, "executor")
         };
-        let close = |slug: &str, handle: &str| {
-            (store.close_task_session(slug, handle, "its program ended", "")).unwrap();
-        };
-        let register = |handle: &str, thread: &str, terminal: Option<&str>| {
-            let address = format!("codex:{thread}");
-            (store.callback_in(handle, Some(&address), false, false, terminal)).unwrap();
-        };
-        let terminal = |address: &str, agent: &str| -> crate::launch::hc::Object {
-            let listed = json!({"address": address, "agent": agent, "state": "live"});
-            listed.as_object().unwrap().clone()
-        };
-        let presence = |live: &[crate::launch::hc::Object]| {
-            crate::launch::reap::presence(store, live).unwrap()
-        };
-        let sweep = |live: &[crate::launch::hc::Object]| {
-            (store.callback_presence(Some(&presence(live)), true)).unwrap()
-        };
-        let registered =
-            || -> BTreeSet<String> { store.callbacks().unwrap().into_keys().collect() };
-        let set = |handles: &[&String]| -> BTreeSet<String> {
-            handles.iter().map(|h| h.to_string()).collect()
-        };
+        store.record_launch(&new).unwrap();
+    };
+    let close = |slug: &str, handle: &str| {
+        (store.close_task_session(slug, handle, "its program ended", "")).unwrap();
+    };
+    let register = |handle: &str, thread: &str, terminal: Option<&str>| {
+        let address = format!("codex:{thread}");
+        (store.callback_in(handle, Some(&address), false, false, terminal)).unwrap();
+    };
+    let terminal = |address: &str, agent: &str| -> crate::launch::hc::Object {
+        let listed = json!({"address": address, "agent": agent, "state": "live"});
+        listed.as_object().unwrap().clone()
+    };
+    let presence =
+        |live: &[crate::launch::hc::Object]| crate::launch::reap::presence(store, live).unwrap();
+    let sweep = |live: &[crate::launch::hc::Object]| {
+        (store.callback_presence(Some(&presence(live)), true)).unwrap()
+    };
+    let registered = || -> BTreeSet<String> { store.callbacks().unwrap().into_keys().collect() };
+    let set = |handles: &[&String]| -> BTreeSet<String> {
+        handles.iter().map(|h| h.to_string()).collect()
+    };
 
-        // `reused`'s record closed on t5, which hc lists live again for another Codex: it holds
-        // nothing, so the thread is gone. `paneless`'s one record names no terminal: not launched.
-        launch("p/work", &reused, "0aaa", "t5");
-        close("p/work", &reused);
-        register(&reused, "0aaa", None);
-        launch("p/work", &paneless, "0bbb", "");
-        register(&paneless, "0bbb", None);
-        // `borrower` registers the thread `owner`'s open record puts in t6, where Codex runs.
-        launch("p/work", &owner, "0ccc", "t6");
-        register(&borrower, "0ccc", None);
-        // `restored`'s record closed with its terminal; its restore started Codex in t7, which
-        // registered from there before the record names t7.
-        launch("p/next", &restored, "0ddd", "t4");
-        close("p/next", &restored);
-        register(&restored, "0ddd", Some("t7"));
+    // `reused`'s record closed on t5, which hc lists live again for another Codex: it holds
+    // nothing, so the thread is gone. `paneless`'s one record names no terminal: not launched.
+    launch("p/work", &reused, "0aaa", "t5");
+    close("p/work", &reused);
+    register(&reused, "0aaa", None);
+    launch("p/work", &paneless, "0bbb", "");
+    register(&paneless, "0bbb", None);
+    // `borrower` registers the thread `owner`'s open record puts in t6, where Codex runs.
+    launch("p/work", &owner, "0ccc", "t6");
+    register(&borrower, "0ccc", None);
+    // `restored`'s record closed with its terminal; its restore started Codex in t7, which
+    // registered from there before the record names t7.
+    launch("p/next", &restored, "0ddd", "t4");
+    close("p/next", &restored);
+    register(&restored, "0ddd", Some("t7"));
 
-        let live = [
-            terminal("t5", "codex"),
-            terminal("t6", "codex"),
-            terminal("t7", "codex"),
-        ];
-        let read = presence(&live);
-        assert_eq!(read.threads, ["0ccc".to_string()].into(), "{backend:?}");
-        assert_eq!(
-            read.gone,
-            ["0aaa", "0ddd"].map(String::from).into(),
-            "{backend:?}"
-        );
-        assert_eq!(sweep(&live), set(&[&borrower, &restored]), "{backend:?}");
-        assert_eq!(
-            registered(),
-            set(&[&paneless, &borrower, &restored]),
-            "{backend:?}"
-        );
+    let live = [
+        terminal("t5", "codex"),
+        terminal("t6", "codex"),
+        terminal("t7", "codex"),
+    ];
+    let read = presence(&live);
+    assert_eq!(read.threads, ["0ccc".to_string()].into());
+    assert_eq!(read.gone, ["0aaa", "0ddd"].map(String::from).into(),);
+    assert_eq!(sweep(&live), set(&[&borrower, &restored]));
+    assert_eq!(registered(), set(&[&paneless, &borrower, &restored]),);
 
-        // `owner`'s terminal is gone, though its record is open: the borrowed thread goes with it.
-        // The restored Codex's terminal still runs Codex, and the paneless thread stays.
-        assert_eq!(sweep(&[terminal("t7", "codex")]), set(&[&restored]));
-        assert_eq!(registered(), set(&[&paneless, &restored]), "{backend:?}");
-        // Its terminal is gone: the registration goes with it.
-        assert_eq!(sweep(&[]), BTreeSet::new());
-        assert_eq!(registered(), set(&[&paneless]), "{backend:?}");
-    }
+    // `owner`'s terminal is gone, though its record is open: the borrowed thread goes with it.
+    // The restored Codex's terminal still runs Codex, and the paneless thread stays.
+    assert_eq!(sweep(&[terminal("t7", "codex")]), set(&[&restored]));
+    assert_eq!(registered(), set(&[&paneless, &restored]));
+    // Its terminal is gone: the registration goes with it.
+    assert_eq!(sweep(&[]), BTreeSet::new());
+    assert_eq!(registered(), set(&[&paneless]));
 }

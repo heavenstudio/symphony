@@ -1,6 +1,5 @@
 //! The clock and the dispatcher on an in-process executor gone quiet while what it started works
 //! in its worktree.
-use crate::common::Backend;
 
 use super::*;
 use crate::children::Child as _;
@@ -29,16 +28,16 @@ impl Drop for Working {
     }
 }
 
-on_both! {
 /// 2026-11-08: the shared server told an orchestrator LOST of an in-process executor that was waiting
 /// on its own background test run, the only sign of it a process working in its worktree. While one
 /// it started there works the clock calls it neither stale nor lost nor its task orphaned; once it
 /// ends, the executor is lost as before.
-fn an_in_process_child_waiting_on_a_process_in_its_worktree_is_told_lost_only_once_it_ends(backend: Backend) {
+#[test]
+fn an_in_process_child_waiting_on_a_process_in_its_worktree_is_told_lost_only_once_it_ends() {
     use symphony_board::cli::agents::PROCESS_SCAN_SECONDS;
     use symphony_board::{Beat, Health, NewSession};
 
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     // The process's start is the machine's, so the board's clock is too, before any session beats.
     f.advance(wall_clock() - f.now());
     let orchestrator = f.session("orchestrator");
@@ -119,5 +118,4 @@ fn an_in_process_child_waiting_on_a_process_in_its_worktree_is_told_lost_only_on
         ["in_progress_orphaned p2 tools/waiting — Jump departure"],
         "{said:?}"
     );
-}
 }

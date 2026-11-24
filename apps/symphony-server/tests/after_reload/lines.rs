@@ -83,12 +83,6 @@ impl Lines {
         }
     }
 
-    /// Everything the child said, once both its streams have closed.
-    pub(super) fn said(&mut self) -> String {
-        self.closed();
-        self.history.join("\n")
-    }
-
     /// The lines that arrived at or after `mark`, each after the seconds since `mark`.
     pub(super) fn since(&self, mark: Instant) -> String {
         self.arrived

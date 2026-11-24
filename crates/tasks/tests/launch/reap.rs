@@ -255,13 +255,11 @@ fn restore(slug: &str, handle: &str) -> String {
 /// Seed a Codex registration on the board, without invoking the real Codex queue transport: from
 /// `terminal`, if one is given.
 fn register_codex(w: &World, handle: &str, thread: &str, terminal: Option<&str>) {
-    w.store()
-        .client()
-        .query(
-            "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = $address, \
-             host = 'this-host', confirmed_until = $until, lease = $lease, terminal = $terminal RETURN NONE;",
-            json!({"handle": handle, "address": format!("codex:{thread}"), "terminal": terminal,
-                   "until": w.f.now() + 390.0, "lease": w.f.now() + 1_000_000.0}),
+    (w.store().raw().row("callback_state", handle))
+        .put(
+            json!({"handle": handle, "address": format!("codex:{thread}"), "host": "this-host",
+                    "confirmed_until": w.f.now() + 390.0, "lease": w.f.now() + 1_000_000.0,
+                    "terminal": terminal}),
         )
         .unwrap();
 }
@@ -295,8 +293,12 @@ fn failed_or_unanswered_presence_rounds_hold_work_until_the_cap_and_confirmation
     let finished = w.executor_on("done", "tools/presence-finished");
     register_codex(&w, &finished, "abcdef0f", None);
     let before = cli::attach::observe(w.store(), &w.orch, "orchestrator").unwrap();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap().to_string();
+    // A PostgreSQL socket whose server takes the connection and never answers it.
+    let silent = Folder::new();
+    let listener = std::os::unix::net::UnixListener::bind(
+        silent.0.join(symphony_board::server::postgres::SOCKET_FILE),
+    )
+    .unwrap();
     // The server says nothing until the round is over, or until the backstop of the 5 s the round
     // once had has passed, when it closes the connection: a round that waited for it says the
     // server closed, not that it is slow.
@@ -306,12 +308,14 @@ fn failed_or_unanswered_presence_rounds_hold_work_until_the_cap_and_confirmation
         let _ = held.recv_timeout(test_time::backstop(Duration::from_secs(5)));
     });
     let now = w.f.now();
-    let failed = Store::unchecked(
-        symphony_board::rpc::Client::new(&addr, "sf", w.store().client().database())
-            .waiting(Duration::from_millis(30)),
+    let failed = Store::unchecked_on(
+        symphony_board::pg::Client::new(&silent.0, w.store().database().database())
+            .waiting(Duration::from_millis(30))
+            .into(),
         Box::new(move || now),
         Box::new(|_| true),
         "this-host",
+        &symphony_board::Opening::write(),
     );
     let m = w.machine();
     let how = w.reap(How::default(), &*m.processes);
@@ -1195,7 +1199,7 @@ fn tasks_reap_state_names_it() {
     let env = env_of(
         &[
             ("TASKS_REAP_STATE", "/x/reap.json"),
-            ("TASKS_SERVER", "127.0.0.1:9"),
+            ("TASKS_SERVER", "postgresql:/scratch/socket"),
         ],
         std::env::temp_dir(),
     );
@@ -1209,7 +1213,10 @@ fn tasks_reap_state_names_it() {
 fn a_board_tasks_server_names_keeps_it_apart_from_the_live_boards() {
     let at = |db: &str| {
         let env = env_of(
-            &[("TASKS_SERVER", "127.0.0.1:9"), ("TASKS_DATABASE", db)],
+            &[
+                ("TASKS_SERVER", "postgresql:/scratch/socket"),
+                ("TASKS_DATABASE", db),
+            ],
             std::env::temp_dir(),
         );
         state_path(&env, &std::env::temp_dir()).unwrap()
@@ -1510,7 +1517,7 @@ fn a_worker_becoming_a_protected_session_during_the_sweep_is_kept() {
         let terminal = w.agent(Agent::named(&handle));
         w.sweep();
         let (swept, warned) = sweep_changing(&w, 1, || {
-            Raw::on(&w.f.other_client())
+            Raw::of(&w.f.other_database())
                 .row("session", json!(handle))
                 .set(json!({"kind": kind}))
                 .unwrap();
@@ -1634,14 +1641,14 @@ fn a_close_whose_record_fails_is_not_closed_and_the_sweep_goes_on() {
     let second = w.agent(Agent::named(&w.executor_on("done", "sim/dock")));
     w.sweep();
     let reads = Cell::new(0);
-    let client = w.f.other_client();
+    let db = w.f.other_database();
     let removed = gone.clone();
     let machine = w.machine();
     let processes = move |pid| {
         reads.set(reads.get() + 1);
         if reads.get() == 2 {
             // Final eligibility was confirmed; the board then refuses its close record.
-            Raw::on(&client)
+            Raw::of(&db)
                 .row("session", json!(removed))
                 .delete()
                 .unwrap();

@@ -191,25 +191,20 @@ struct Stopped(symphony_board::server::Home);
 
 impl Drop for Stopped {
     fn drop(&mut self) {
-        let _ = self.0.stop();
+        let _ = self.0.stop_board();
     }
 }
 
 /// The Symphony's reaches of the board of a project removed under it (`cli::board`, which starts
 /// a board's server, and `cli::running_board`) are refused as gone, and start no server and write
-/// nothing in the checkout that held its folder, though a SurrealDB is there to start one.
+/// nothing in the checkout that held its folder, though PostgreSQL is there to start one.
 #[test]
 fn the_symphonys_reach_from_a_projects_folder_that_is_gone_starts_no_board() {
     let (outer, inner) = nested("project-reach-gone");
-    let surreal = crate::common::surreal();
-    let outer_board = Stopped(symphony_board::server::Home::in_common(
-        &outer.join(".git"),
-        Some(&surreal),
-    ));
+    let outer_board = Stopped(symphony_board::server::Home::in_common(&outer.join(".git")));
     std::fs::remove_dir_all(&inner).unwrap();
     let env = symphony_board::cli::Env {
         vars: [
-            ("SYMPHONY_SURREAL", surreal.display().to_string()),
             (
                 MACHINE_DIR,
                 outer
@@ -244,7 +239,10 @@ fn the_symphonys_reach_from_a_projects_folder_that_is_gone_starts_no_board() {
             "{how}"
         );
     }
-    assert_eq!(outer_board.0.recorded(), None, "a board's server started");
+    assert!(
+        outer_board.0.board_server(&outer, false).is_err(),
+        "a board's server started"
+    );
     assert!(
         !outer
             .join(".git")
@@ -394,9 +392,7 @@ fn the_board_guide_is_the_files_else_the_default() {
 }
 
 /// A board whose server cannot start says where its server comes from in the board guide the
-/// project's file names: with no store yet, the board is made on PostgreSQL, which is missing;
-/// with the board's SurrealDB store there, it is a board that cannot be served, and SurrealDB is
-/// what is missing, never PostgreSQL.
+/// project's file names: with no store yet, the board is made on PostgreSQL, which is missing.
 #[test]
 fn a_board_that_cannot_be_served_names_the_guide_the_project_file_names() {
     let main = repository(&scratch("project-guide-refusal").join("main"))
@@ -411,13 +407,8 @@ fn a_board_that_cannot_be_served_names_the_guide_the_project_file_names() {
             programs.display().to_string()
         ),
     );
-    let missing = main.join("no-surreal");
-    let vars = [(
-        "SYMPHONY_SURREAL".to_string(),
-        missing.display().to_string(),
-    )];
     let env = symphony_board::cli::Env {
-        vars: vars.into_iter().collect(),
+        vars: Default::default(),
         cwd: main.clone(),
     };
     let ran = crate::run(&env, &["list"], "");
@@ -440,25 +431,6 @@ fn a_board_that_cannot_be_served_names_the_guide_the_project_file_names() {
         ran.err
     );
     assert!(!ran.err.contains("SurrealDB"), "{}", ran.err);
-    let data = main
-        .join(".git")
-        .join(symphony_board::folders::TASKS)
-        .join("data");
-    std::fs::create_dir_all(&data).unwrap();
-    let ran = crate::run(&env, &["list"], "");
-    assert_eq!(
-        (ran.code, ran.err),
-        (
-            2,
-            format!(
-                "✖ the board's store at {} cannot be served: SurrealDB {}, which serves it, is not \
-                 at {}, where `SYMPHONY_SURREAL` names it (handbook/BOARD.md#where-it-lives)\n",
-                data.display(),
-                symphony_board::server::SURREAL_VERSION,
-                missing.display()
-            )
-        )
-    );
 }
 
 #[test]

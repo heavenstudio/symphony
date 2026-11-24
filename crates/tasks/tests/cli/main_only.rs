@@ -1,6 +1,6 @@
 //! Which build moves a project's live board forward ([`symphony_board::live`]), held at every entry a
 //! binary reaches the board by: a repository of its own under the temp folder, its main checkout's
-//! board (the `tasks` database on the SurrealDB server its common dir records) made by a build one
+//! board (the `tasks` database on the PostgreSQL server of its common dir) made by a build one
 //! schema version behind this one, and a linked worktree of it (`wt/`, branch `feature`). Each run is
 //! this build's binary in a process of its own, as a session runs one: by its path from either
 //! checkout, through the launcher, under Cargo, with `TASKS_SERVER`, or by the server's address.
@@ -15,19 +15,21 @@ mod unfollowed;
 mod writers;
 
 use crate::children::Child as _;
-use crate::common::{NOW, surreal};
-use crate::{Ran, git, repository, scratch};
+use crate::common::{NOW, project_root};
+use crate::{Ran, git, project_file, repository, scratch};
 use std::cell::Cell;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use symphony_board::live::SOURCE;
-use symphony_board::rpc::Client;
+use symphony_board::live::{POSTGRES_SOURCE, SOURCE};
 use symphony_board::server::Home;
-use symphony_board::{NewTask, Opening, Program, Raw, Schema, Store};
+use symphony_board::{Database, NewTask, Opening, Program, Raw, Schema, Store};
 
 /// This build's schema source, which the binaries under test embed.
 const OWN: &str = include_str!("../../src/schema.rs");
+/// This build's PostgreSQL definitions, which a build moving a live board must also match
+/// ([`POSTGRES_SOURCE`]).
+const OWN_POSTGRES: &str = include_str!("../../src/store/postgres/schema.rs");
 
 /// The binaries under test, this build's.
 const TASKS: &str = env!("CARGO_BIN_EXE_tasks");
@@ -65,7 +67,7 @@ impl Live {
     fn new(name: &str, held: Held) -> Live {
         let base = scratch(name);
         let main = repository(&base.join("main"));
-        std::fs::write(main.join("symphony.toml"), "[project]\nid = \"live\"\n").unwrap();
+        std::fs::write(main.join("symphony.toml"), project_file("live", "")).unwrap();
         git(&main, &["add", "-A"]);
         git(&main, &["commit", "-qm", "project"]);
         git(&main, &["worktree", "add", "-q", "-b", "feature", "../wt"]);
@@ -86,7 +88,7 @@ impl Live {
             serde_json::json!({"projects": [{"id": "live", "root": live.main}]}).to_string(),
         )
         .unwrap();
-        live.home().ensure().unwrap();
+        live.start();
         live
     }
 
@@ -104,20 +106,26 @@ impl Live {
     fn seed(&self, db: &str) {
         let held = self.held.get();
         self.hold(Held::Nothing);
-        seed(self.client(db));
+        seed(self.database(db));
         self.hold(held);
     }
 
-    /// `held` at [`SOURCE`] in the main checkout's working tree, committed on the branch it has out.
+    /// `held` at [`SOURCE`] in the main checkout's working tree, committed on the branch it has out,
+    /// with this build's PostgreSQL definitions at [`POSTGRES_SOURCE`] beside a source it holds.
     fn hold(&self, held: Held) {
         let source = self.main.join(SOURCE);
-        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        let postgres = self.main.join(POSTGRES_SOURCE);
+        std::fs::create_dir_all(postgres.parent().unwrap()).unwrap();
         match held {
             Held::Own => std::fs::write(&source, OWN).unwrap(),
             Held::Other => std::fs::write(&source, format!("{OWN}// a branch's line\n")).unwrap(),
             Held::Nothing => {
                 let _ = std::fs::remove_file(&source);
+                let _ = std::fs::remove_file(&postgres);
             }
+        }
+        if !matches!(held, Held::Nothing) {
+            std::fs::write(&postgres, OWN_POSTGRES).unwrap();
         }
         git(&self.main, &["add", "-A"]);
         git(&self.main, &["commit", "-q", "--allow-empty", "-m", "held"]);
@@ -125,24 +133,37 @@ impl Live {
     }
 
     fn home(&self) -> Home {
-        Home::in_common(&self.main.join(".git"), Some(&surreal()))
+        Home::in_common(&self.main.join(".git"))
+    }
+
+    /// The board's server started by this test's process, whose children's commands reach it:
+    /// a scratch board's server ends with the process that started it.
+    fn start(&self) {
+        self.home().board_server(&self.main, true).unwrap();
+    }
+
+    /// Whether the board's server runs.
+    fn serving(&self) -> bool {
+        self.home().board_server(&self.main, false).is_ok()
     }
 
     /// The address of the board's server.
     fn addr(&self) -> String {
-        self.home().recorded().expect("the board's server").addr
+        self.home()
+            .board_server(&self.main, false)
+            .expect("the board's server")
+            .addr
     }
 
-    fn client(&self, db: &str) -> Client {
-        Client::new(&self.addr(), "sf", db)
+    /// The database `db` on the board's server.
+    fn database(&self, db: &str) -> Database {
+        on_server(&self.addr(), db)
     }
 
     /// The schema version the database `db` records, none before it is made: one read, which
     /// defines and writes nothing.
     fn version(&self, db: &str) -> Option<i64> {
-        Store::unchecked(self.client(db), Box::new(|| NOW), Box::new(|_| true), "")
-            .board_version()
-            .unwrap()
+        version(self.database(db))
     }
 
     /// `program ARGS` in `cwd`, `input` on stdin, on an environment of only what a session's run
@@ -205,18 +226,39 @@ impl Live {
 
 impl Drop for Live {
     fn drop(&mut self) {
-        let _ = self.home().stop();
+        let _ = self.home().stop_board();
     }
 }
 
-/// The board `client` reaches, made by the build one schema version behind, holding the task
-/// `live/one`: main's own `tasks` on this machine before its rebuild at this build's schema, so the
-/// line it writes (a build at schema 18 or later keeps one) is the migrate's own, which leaves it
-/// out.
-fn seed(client: Client) {
+/// The database `db` on the PostgreSQL at `addr`, `postgresql:SOCKET`.
+fn on_server(addr: &str, db: &str) -> Database {
+    let socket = addr
+        .strip_prefix("postgresql:")
+        .expect("a PostgreSQL address");
+    symphony_board::pg::Client::new(Path::new(socket), db).into()
+}
+
+/// The schema version the board in `db` records, none before it is made: one read, which defines
+/// and writes nothing.
+fn version(db: Database) -> Option<i64> {
+    Store::unchecked_on(
+        db,
+        Box::new(|| NOW),
+        Box::new(|_| true),
+        "",
+        &Opening::write(),
+    )
+    .board_version()
+    .unwrap()
+}
+
+/// The board in `db`, made by the build one schema version behind, holding the task `live/one`:
+/// main's own `tasks` on this machine before its rebuild at this build's schema, so the line it
+/// writes (a build at schema 18 or later keeps one) is the migrate's own, which leaves it out.
+fn seed(db: Database) {
     let tasks = Path::new(TASKS).canonicalize().unwrap();
-    Store::opening(
-        client,
+    Store::opening_on(
+        db,
         Box::new(|| NOW),
         Box::new(|_| false),
         &symphony_board::sys::hostname(),
@@ -249,7 +291,6 @@ fn run(
         .cleared()
         .env("PATH", path)
         .env("HOME", base.join("home"))
-        .env("SYMPHONY_SURREAL", surreal())
         .env("TASKS_NOW", NOW.to_string())
         .env("TASKS_SWEEP", "off")
         .env("TASKS_DISPATCH", "inline")
@@ -358,7 +399,7 @@ fn a_branch_build_moves_the_live_board_by_no_entry_and_each_refusal_names_what_d
     refused(&live.tasks(&live.main, &["migrate"]), &why);
 
     assert_eq!(live.version("tasks"), Some(before()));
-    let titles = (Raw::on(&live.client("tasks")).table("task"))
+    let titles = (Raw::of(&live.database("tasks")).table("task"))
         .fields(&["title"])
         .unwrap();
     let titles: Vec<serde_json::Value> = (titles.as_array().unwrap().iter())
@@ -493,12 +534,12 @@ fn a_process_cargo_runs_from_the_repository_never_reaches_its_live_board() {
     std::fs::create_dir_all(&cargo).unwrap();
     let under = [("CARGO_MANIFEST_DIR", cargo.to_str().unwrap())];
     // Refused before its server is started.
-    live.home().stop().unwrap();
+    live.home().stop_board().unwrap();
     let ran = live.run(Path::new(TASKS), &live.wt, &under, &["list"], "");
     refused(&ran, &live.under_cargo(&cargo));
-    assert!(live.home().recorded().is_none());
+    assert!(!live.serving());
 
-    live.home().ensure().unwrap();
+    live.start();
     live.seed("tasks");
     let addr = live.addr();
     let ran = live.run(Path::new(TASKS), &live.wt, &under, &["list"], "");
@@ -590,38 +631,44 @@ fn migrate_takes_only_help_and_an_actor_and_says_what_it_did_to_a_scratch_board(
     );
 }
 
-/// A board server in the common dir `0`, stopped when the case ends, however it ends.
+/// A board server in the common dir `0`, stopped when the case ends, however it ends: one of a
+/// repository with no main checkout, so its programs are the machine's, which its project file
+/// names too.
 struct Served(PathBuf);
 
 impl Served {
-    fn home(&self) -> Home {
-        Home::in_common(&self.0, Some(&surreal()))
+    fn pg(&self) -> symphony_board::server::Postgres {
+        let programs =
+            symphony_board::server::postgres::discover_programs(&project_root()).unwrap();
+        Home::in_common(&self.0).postgresql(&programs)
+    }
+
+    /// The board's server started by this test's process, its address.
+    fn start(&self) -> String {
+        let serving = self.pg().ensure().unwrap();
+        format!("postgresql:{}", serving.socket.display())
     }
 
     /// The schema version of its `tasks` database: one read, which defines and writes nothing.
     fn version(&self) -> Option<i64> {
-        let addr = self.home().recorded().expect("the board's server").addr;
-        Store::unchecked(
-            Client::new(&addr, "sf", "tasks"),
-            Box::new(|| NOW),
-            Box::new(|_| true),
-            "",
-        )
-        .board_version()
-        .unwrap()
+        let serving = self.pg().current().unwrap().expect("the board's server");
+        version(on_server(
+            &format!("postgresql:{}", serving.socket.display()),
+            "tasks",
+        ))
     }
 }
 
 impl Drop for Served {
     fn drop(&mut self) {
-        let _ = self.home().stop();
+        let _ = self.pg().stop();
     }
 }
 
 /// A repository at `path` holding the file of the project `loose`, committed on `main`.
 fn loose_project(path: &Path) -> PathBuf {
     let seed = repository(path);
-    std::fs::write(seed.join("symphony.toml"), "[project]\nid = \"loose\"\n").unwrap();
+    std::fs::write(seed.join("symphony.toml"), project_file("loose", "")).unwrap();
     git(&seed, &["add", "-A"]);
     git(&seed, &["commit", "-qm", "project"]);
     seed
@@ -659,8 +706,8 @@ fn a_repository_with_no_main_checkout_moves_its_live_board_by_migrate_in_any_che
         (sup.join(".git/modules/sub"), sup.join("sub")),
     ] {
         let served = Served(common.canonicalize().unwrap());
-        let addr = served.home().ensure().unwrap().addr;
-        seed(Client::new(&addr, "sf", "tasks"));
+        let addr = served.start();
+        seed(on_server(&addr, "tasks"));
         let tasks =
             |args: &[&str]| run(&base, &machine, Path::new(TASKS), &checkout, &[], args, "");
 

@@ -45,7 +45,7 @@ per project, side by side as the width allows.
 | Green | the board is well, or the project has none | nothing |
 | Amber | its writes were slow over the last hour, or requests went unanswered | *Board slow (writes 3 s, 48 unanswered this hour)* |
 | Amber | ready work waits to start and no orchestrator is live | *orchestrator stale* while the one holding it has gone quiet, *no orchestrator* when none is there |
-| Red | the board is starting, failing its callbacks or its idle sweep, or went back to an older schema | what every page of the project says of it ([notices](FRAME.md#notices)) |
+| Red | the board is failing its callbacks or its idle sweep, or went back to an older schema | what every page of the project says of it ([notices](FRAME.md#notices)) |
 
 Two amber reasons share the line, a dot between them.
 
@@ -64,7 +64,7 @@ was loaded: a reload brings the counts up to date.
 
 | State | What the page shows |
 | --- | --- |
-| A project still starting | its name alone; then its dot, red with *The task board is starting* while its board is, and no counts until its board is first read |
+| A project still starting | its name alone; then its dot, and no counts until its board is first read |
 | A project this Symphony cannot serve | its name and, in place of its counts, why, and what serves it: *its folder is gone: run `just symphony` in its new folder*, or that this Symphony is older or lacks a part the project needs, and what to run |
 | An address no project answers | *No project is called “Orchard” here: this Symphony serves the projects below.*, then, when a project's address differs from it only in its capitals, *Did you mean orchard?* with a link, over the list |
 | A project asked for that it cannot serve | *The Symphony does not serve orchard now*, why, over the list |

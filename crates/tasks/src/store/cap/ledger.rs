@@ -1,11 +1,9 @@
 //! One canonical admission ledger builder, shared with the read-only holdings producer.
 
-use super::{
-    DEPTH, Failure, Level, Read, Recorded, RoleRead, Row, Store, View, branches, slots, sql,
-};
+use super::{DEPTH, Failure, Level, Read, Recorded, RoleRead, Row, Store, View, branches, slots};
 use crate::slots::{Entry, Ledger};
 use crate::store::postgres::cap as pg;
-use crate::store::statement::both;
+use crate::store::statement::Statement;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 
@@ -82,7 +80,7 @@ impl Observation {
                 break;
             }
             looked.extend(wanted.iter().cloned());
-            let read = both(sql::level(), pg::level());
+            let read = Statement::from(pg::level());
             let level: Level = store.read_together(read, json!({"slot_wanted": wanted}))?;
             for row in level.tasks {
                 self.rows.entry(row.slug.clone()).or_insert(row);

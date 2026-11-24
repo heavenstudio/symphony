@@ -1024,14 +1024,13 @@ pub fn init(root: &Path, shipped: &Shipped) -> io::Result<Report> {
     Ok(report)
 }
 
-/// What the machine tells [`steps`]: its Symphony's folder (the registry's), the search path, the
-/// SurrealDB `SYMPHONY_SURREAL` names and the folder of the `symphony` build running init, where a
-/// Symphony checkout's build of the others is too.
+/// What the machine tells [`steps`]: its Symphony's folder (the registry's), the search path and
+/// the folder of the `symphony` build running init, where a Symphony checkout's build of the others
+/// is too.
 pub struct Machine<'a> {
     /// None when the machine has no Symphony folder to read.
     pub folder: Option<&'a Path>,
     pub path: Option<&'a OsStr>,
-    pub surreal: Option<&'a Path>,
     pub beside: Option<&'a Path>,
 }
 
@@ -1046,13 +1045,14 @@ impl Machine<'_> {
     }
 }
 
-/// The engine the board of the checkout at `root` runs on, read from its home without starting
-/// anything ([`symphony_board::server::Home::backend`]): SurrealDB for a board that holds its
-/// store, PostgreSQL for one whose home names it and for a board not made yet, which is made on
-/// it. None outside a checkout, or for a home a board command refuses, which says why itself.
-fn board_engine(root: &Path, named: Option<&Path>) -> Option<Engine> {
+/// The engine the board of the checkout at `root` is on, read from its home without starting
+/// anything ([`symphony_board::server::Home::backend`]): PostgreSQL for one whose home names it and
+/// for a board not made yet, which is made on it; SurrealDB for a board an earlier release kept
+/// there, which this build serves no more. None outside a checkout, or for a home a board command
+/// refuses, which says why itself.
+fn board_engine(root: &Path) -> Option<Engine> {
     let common = symphony_board::git::checkout_common_dir(root)?;
-    symphony_board::server::Home::in_common(&common, named)
+    symphony_board::server::Home::in_common(&common)
         .backend()
         .ok()
 }
@@ -1071,13 +1071,14 @@ fn postgresql_step(why: &str) -> String {
     )
 }
 
-/// The SurrealDB the board of the checkout at `root` would start, when it is not there to run:
-/// `named` (`SYMPHONY_SURREAL`), else the pinned one in the repository's common dir. None outside a
-/// checkout. Asked only of a board on SurrealDB ([`board_engine`]).
-fn missing_surreal(root: &Path, named: Option<&Path>) -> Option<PathBuf> {
-    let common = symphony_board::git::checkout_common_dir(root)?;
-    let home = symphony_board::server::Home::in_common(&common, named);
-    (!builds::runnable(home.surreal())).then(|| home.surreal().to_path_buf())
+/// The step for a board still on SurrealDB, which this build serves no more: how it moves
+/// ([`symphony_board::server::GONE`]).
+fn surrealdb_step() -> String {
+    format!(
+        "move the board to PostgreSQL, as it is still on SurrealDB, which this release serves no \
+         more: {}",
+        symphony_board::server::GONE
+    )
 }
 
 /// Whether `root` lies in its repository's git dir `common` (canonical) and in no checkout there:
@@ -1094,16 +1095,15 @@ fn in_git_dir(root: &Path, common: &Path) -> bool {
             .any(|folder| folder.join(".git").symlink_metadata().is_ok())
 }
 
-/// Whether the board of the checkout at `root`, its server run from `named` (`SYMPHONY_SURREAL`)
-/// or the pinned one, is not made yet, read without starting anything: by the server's answer
-/// while one runs (a board's server may run before its board is made), else by its home holding
-/// neither engine's data ([`symphony_board::server::Home::unmade`]): a stopped board, on either
-/// engine, is made. False outside a checkout.
-fn unmade_board(root: &Path, named: Option<&Path>) -> bool {
+/// Whether the board of the checkout at `root` is not made yet, read without starting anything: by
+/// the server's answer while one runs (a board's server may run before its board is made), else by
+/// its home holding neither engine's data ([`symphony_board::server::Home::unmade`]): a stopped
+/// board is made, and so is one still on SurrealDB. False outside a checkout.
+fn unmade_board(root: &Path) -> bool {
     let Some(common) = symphony_board::git::checkout_common_dir(root) else {
         return false;
     };
-    let home = symphony_board::server::Home::in_common(&common, named);
+    let home = symphony_board::server::Home::in_common(&common);
     match home.schema(symphony_board::DATABASE) {
         Ok(schema) => schema.is_none(),
         Err(_) => home.unmade().unwrap_or(false),
@@ -1254,23 +1254,8 @@ pub(crate) fn steps_within(
                 .to_string(),
         );
     }
-    match board_engine(root, machine.surreal) {
-        Some(Engine::SurrealDb) => {
-            if let Some(surreal) = missing_surreal(root, machine.surreal) {
-                let fetch = machine.surreal.is_none().then(|| {
-                    symphony_board::server::surreal_fetch(
-                        &surreal,
-                        std::env::consts::OS,
-                        std::env::consts::ARCH,
-                    )
-                });
-                steps.push(surreal_step(
-                    &surreal,
-                    machine.surreal.is_some(),
-                    fetch.flatten(),
-                ));
-            }
-        }
+    match board_engine(root) {
+        Some(Engine::SurrealDb) => steps.push(surrealdb_step()),
         Some(Engine::PostgreSql) => {
             if let Err(why) =
                 symphony_board::server::postgres::discover_with_path(root, machine.path)
@@ -1280,7 +1265,7 @@ pub(crate) fn steps_within(
         }
         None => {}
     }
-    if unmade_board(root, machine.surreal) {
+    if unmade_board(root) {
         steps.push(MAKE_BOARD.to_string());
     }
     if let Some(folder) = machine.folder {
@@ -1396,28 +1381,6 @@ fn build_steps(unfound: &[&str], own: &[&str], beside: Option<&Path>) -> Vec<Str
         ));
     }
     steps
-}
-
-/// The step for the SurrealDB the board's server runs from `surreal`, which is not there: `named`
-/// when `SYMPHONY_SURREAL` names it, else the pinned one, with `fetch` the shell that fetches it for
-/// this machine ([`symphony_board::server::surreal_fetch`]).
-fn surreal_step(surreal: &Path, named: bool, fetch: Option<String>) -> String {
-    let version = symphony_board::server::SURREAL_VERSION;
-    let at = surreal.display();
-    match (named, fetch) {
-        (true, _) => format!(
-            "put SurrealDB {version} at {at}, where SYMPHONY_SURREAL names it: the board's server \
-             runs it"
-        ),
-        (false, Some(fetch)) => format!(
-            "fetch SurrealDB {version}, which the board's server runs from {at}: `{fetch}` (or name \
-             another with SYMPHONY_SURREAL)"
-        ),
-        (false, None) => format!(
-            "put SurrealDB {version}'s release binary for this machine at {at}, where the board's \
-             server runs it, or name one with SYMPHONY_SURREAL"
-        ),
-    }
 }
 
 /// Whether the machine's registry in `folder` holds the project of `root`'s main checkout. A
@@ -1557,12 +1520,10 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
             }
             let folder = crate::machine::dir().ok();
             let path = std::env::var_os("PATH");
-            let surreal = symphony_env::SURREAL.os();
             let running = std::env::current_exe().and_then(|exe| exe.canonicalize());
             let machine = Machine {
                 folder: folder.as_deref(),
                 path: path.as_deref(),
-                surreal: surreal.as_deref().map(Path::new),
                 beside: running.as_deref().ok().and_then(Path::parent),
             };
             let _ = writeln!(out, "\n{}\n\n{TRUST}", next(&steps(&root, &machine)));

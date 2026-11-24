@@ -3,12 +3,9 @@
 //! another terminal, launched again, closed by another close) is left as it is, and nothing is said.
 //! And the session's hold, which a close and a restore take for their whole run, and which each of
 //! their writes carries.
-use crate::common::Backend;
 
 use crate::common::{Fixture, refused};
-use crate::gate::Gate;
 use crate::launches::launch;
-use serde_json::json;
 use symphony_board::NewLaunch;
 use symphony_board::rows::TaskSessionRow;
 
@@ -27,9 +24,9 @@ fn current(fixture: &Fixture) -> TaskSessionRow {
     record
 }
 
-on_both! {
-fn a_bound_close_closes_only_the_launch_in_the_terminal_it_read_and_only_once(backend: Backend) {
-    let fixture = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_bound_close_closes_only_the_launch_in_the_terminal_it_read_and_only_once() {
+    let fixture = Fixture::new(crate::common::Seed::default());
     fixture.task("sim/jump");
     let read = launch(&fixture, "sim/jump", "executor");
     let handle = &read.handle;
@@ -75,11 +72,10 @@ fn a_bound_close_closes_only_the_launch_in_the_terminal_it_read_and_only_once(ba
         )]
     );
 }
-}
 
-on_both! {
-fn a_session_is_held_by_one_close_or_restore_until_it_is_released_or_its_hold_lapses(backend: Backend) {
-    let fixture = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_session_is_held_by_one_close_or_restore_until_it_is_released_or_its_hold_lapses() {
+    let fixture = Fixture::new(crate::common::Seed::default());
     let store = &fixture.store;
     let handle = fixture.session("worker");
     let other = fixture.session("worker");
@@ -128,11 +124,10 @@ fn a_session_is_held_by_one_close_or_restore_until_it_is_released_or_its_hold_la
         (true, false)
     );
 }
-}
 
-on_both! {
-fn no_write_of_a_hold_another_took_over_lands_and_one_lapsed_but_not_taken_over_still_writes(backend: Backend) {
-    let fixture = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn no_write_of_a_hold_another_took_over_lands_and_one_lapsed_but_not_taken_over_still_writes() {
+    let fixture = Fixture::new(crate::common::Seed::default());
     fixture.task("sim/jump");
     let store = &fixture.store;
     let read = launch(&fixture, "sim/jump", "executor");
@@ -176,57 +171,10 @@ fn no_write_of_a_hold_another_took_over_lands_and_one_lapsed_but_not_taken_over_
         (true, true, None, "t11")
     );
 }
-}
 
-// SurrealDB alone: pauses a SurrealDB transaction with an HTTP event gate during lease takeover.
 #[test]
-fn a_write_under_way_as_a_takeover_of_its_hold_commits_fails_and_tried_again_is_refused() {
-    let fixture = Fixture::empty();
-    fixture.task("sim/jump");
-    let read = launch(&fixture, "sim/jump", "executor");
-    let handle = &read.handle;
-    let restore = format!("just tasks restore sim/jump {handle}");
-    let before = fixture.said("sim/jump").len();
-    let hold = fixture.store.take_session(handle, "a close by o").unwrap();
-    // The closure, once its guard passed and it is written, waits uncommitted at a gate the test
-    // opens.
-    let gate = Gate::new();
-    let pause = format!(
-        "DEFINE EVENT paused ON task_session WHEN $after.closed_why = 'closed by o' THEN {{ {} }};",
-        gate.wait_here()
-    );
-    fixture.store.client().query(&pause, json!({})).unwrap();
-    fixture.advance(300.0);
-    let writer = fixture.other();
-    let (closed, taken) = std::thread::scope(|scope| {
-        let opening = gate.opening();
-        let closing =
-            scope.spawn(|| writer.close_task_session_as(&read, "closed by o", &restore, hold));
-        // Its first try passed its guard before the takeover, and waits.
-        gate.reached();
-        // The hold has lapsed: a restore takes the session over, and commits first.
-        let taken = fixture.store.take_session(handle, "a restore").unwrap();
-        assert!(
-            !closing.is_finished(),
-            "the close went on before the gate opened"
-        );
-        drop(opening);
-        (closing.join().unwrap(), taken)
-    });
-    assert_eq!(
-        refused(closed),
-        format!("another close or a restore of {handle} took its session over")
-    );
-    assert_eq!(
-        (current(&fixture), fixture.said("sim/jump").len()),
-        (read.clone(), before)
-    );
-    assert!(fixture.store.renew_session(handle, taken).unwrap());
-}
-
-on_both! {
-fn a_session_found_running_is_recorded_closed_in_one_line_once_per_terminal(backend: Backend) {
-    let fixture = Fixture::on(backend, crate::common::Seed::default());
+fn a_session_found_running_is_recorded_closed_in_one_line_once_per_terminal() {
+    let fixture = Fixture::new(crate::common::Seed::default());
     fixture.task("sim/jump");
     let handle = fixture.session("worker");
     let restore = format!("just tasks restore sim/jump {handle}");
@@ -308,11 +256,10 @@ fn a_session_found_running_is_recorded_closed_in_one_line_once_per_terminal(back
         "no task 'sim/none'"
     );
 }
-}
 
-on_both! {
-fn a_bound_reopen_never_takes_back_a_session_closed_in_another_terminal_since(backend: Backend) {
-    let fixture = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_bound_reopen_never_takes_back_a_session_closed_in_another_terminal_since() {
+    let fixture = Fixture::new(crate::common::Seed::default());
     fixture.task("sim/jump");
     let read = launch(&fixture, "sim/jump", "executor");
     let handle = &read.handle;
@@ -370,5 +317,4 @@ fn a_bound_reopen_never_takes_back_a_session_closed_in_another_terminal_since(ba
         fixture.said("sim/jump")[before..],
         [format!("restored {handle} in pane t11")]
     );
-}
 }

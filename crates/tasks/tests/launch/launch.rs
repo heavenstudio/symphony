@@ -668,7 +668,7 @@ fn a_launched_agent_is_given_the_board_its_launcher_reaches() {
         let mut machine = w.machine();
         machine.board_env = vec![
             ("TASKS_DATABASE".into(), "scratch".into()),
-            ("TASKS_SERVER".into(), "127.0.0.1:9".into()),
+            ("TASKS_SERVER".into(), "postgresql:/scratch/socket".into()),
         ];
         let ask = Ask {
             kind: kind.clone(),
@@ -685,7 +685,7 @@ fn a_launched_agent_is_given_the_board_its_launcher_reaches() {
                 "env".to_string(),
                 format!("TASKS_SESSION={}", s.handle),
                 "TASKS_DATABASE=scratch".into(),
-                "TASKS_SERVER=127.0.0.1:9".into()
+                "TASKS_SERVER=postgresql:/scratch/socket".into()
             ]
         );
         if kind.is_none() {

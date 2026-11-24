@@ -5,7 +5,7 @@
 //! Its cancel tells the executor the task moves no further. A task an orchestrator files is its
 //! own.
 
-use super::common::{Backend, Fixture, Seed};
+use super::common::{Fixture, Seed};
 use super::quiet_callbacks::listen;
 use symphony_board::cli::Env;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
@@ -48,9 +48,9 @@ fn line(f: &Fixture, slug: &str, text: &str) -> i64 {
     found.unwrap_or_else(|| panic!("{text} in {thread:?}")).id
 }
 
-on_both! {
-fn the_owners_post_on_a_task_nobody_orchestrates_reaches_every_orchestrator_marked(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn the_owners_post_on_a_task_nobody_orchestrates_reaches_every_orchestrator_marked() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (a, b, c) = (
         f.session("orchestrator"),
         f.session("orchestrator"),
@@ -84,11 +84,10 @@ fn the_owners_post_on_a_task_nobody_orchestrates_reaches_every_orchestrator_mark
     // The thread keeps the line as the owner wrote it.
     assert_eq!(f.said("tools/loose").last().unwrap(), "stop it");
 }
-}
 
-on_both! {
-fn the_owners_post_on_an_orchestrated_task_reaches_its_orchestrator_alone(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn the_owners_post_on_an_orchestrated_task_reaches_its_orchestrator_alone() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (mine, theirs) = (f.session("orchestrator"), f.session("orchestrator"));
     f.task("tools/held");
     f.task_with(NewTask {
@@ -117,16 +116,15 @@ fn the_owners_post_on_an_orchestrated_task_reaches_its_orchestrator_alone(backen
     assert!(words(read(&f, &theirs)).is_empty());
     assert!(inbox(&f, &theirs).is_empty());
 }
-}
 
-on_both! {
 /// An orchestrator holding a task that is not live, gone stale or lost, keeps the owner's word to
 /// itself no longer: every other orchestrator waiting hears the post and the cancel at once and
 /// once, marked with the holder that is not live; the stale holder still hears both, unmarked, and
 /// so does the executor.
-fn the_owners_word_on_a_task_whose_orchestrator_is_not_live_reaches_every_orchestrator(backend: Backend) {
+#[test]
+fn the_owners_word_on_a_task_whose_orchestrator_is_not_live_reaches_every_orchestrator() {
     for lost in [false, true] {
-        let f = Fixture::on(backend, crate::common::Seed::default());
+        let f = Fixture::new(crate::common::Seed::default());
         let (gone, here) = (f.session("orchestrator"), f.session("orchestrator"));
         let exe = f.session("worker");
         f.task("tools/left");
@@ -165,11 +163,10 @@ fn the_owners_word_on_a_task_whose_orchestrator_is_not_live_reaches_every_orches
         }
     }
 }
-}
 
-on_both! {
-fn an_orchestrator_gone_quiet_leaves_its_task_nobody_s_and_the_owners_word_everyone_s(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn an_orchestrator_gone_quiet_leaves_its_task_nobody_s_and_the_owners_word_everyone_s() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (gone, here) = (f.session("orchestrator"), f.session("orchestrator"));
     f.task("tools/left");
     f.store
@@ -187,11 +184,10 @@ fn an_orchestrator_gone_quiet_leaves_its_task_nobody_s_and_the_owners_word_every
         [format!("{UNOWNED}busy?"), format!("{UNOWNED}anyone?")]
     );
 }
-}
 
-on_both! {
-fn the_owners_cancel_reaches_the_executor_at_once_saying_the_task_moves_no_further(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn the_owners_cancel_reaches_the_executor_at_once_saying_the_task_moves_no_further() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, exe) = (f.session("orchestrator"), f.session("worker"));
     f.task("tools/loose");
     f.store.claim("tools/loose", &exe).unwrap();
@@ -218,11 +214,10 @@ fn the_owners_cancel_reaches_the_executor_at_once_saying_the_task_moves_no_furth
     assert_eq!(words(read(&f, &orch)), told(UNOWNED));
     assert!(words(read(&f, &exe)).is_empty());
 }
-}
 
-on_both! {
-fn the_owners_cancel_of_an_orchestrated_task_is_said_to_those_on_it_and_no_other(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn the_owners_cancel_of_an_orchestrated_task_is_said_to_those_on_it_and_no_other() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, theirs) = (f.session("orchestrator"), f.session("orchestrator"));
     let exe = f.session_with(NewSession {
         parent: Some(orch.clone()),
@@ -250,11 +245,10 @@ fn the_owners_cancel_of_an_orchestrated_task_is_said_to_those_on_it_and_no_other
     assert!(words(read(&f, &theirs)).is_empty());
     assert!(inbox(&f, &theirs).is_empty());
 }
-}
 
-on_both! {
-fn an_inbox_reads_the_owners_move_as_one_and_an_agents_move_not_at_all(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn an_inbox_reads_the_owners_move_as_one_and_an_agents_move_not_at_all() {
+    let f = Fixture::new(Seed::default());
     let (orch, exe) = (f.session("orchestrator"), f.session("worker"));
     f.task("tools/loose");
     f.task("tools/agents");
@@ -273,13 +267,11 @@ fn an_inbox_reads_the_owners_move_as_one_and_an_agents_move_not_at_all(backend: 
         .collect();
     f.store.ack(&exe, &ids).unwrap();
     assert!(inbox(&f, &exe).is_empty());
-
-}
 }
 
-on_both! {
-fn a_channel_carries_the_owners_word_on_a_task_nobody_orchestrates(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_channel_carries_the_owners_word_on_a_task_nobody_orchestrates() {
+    let f = Fixture::new(crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let sender = f.session("worker");
     let o = listen(&f, &orch);
@@ -296,11 +288,10 @@ fn a_channel_carries_the_owners_word_on_a_task_nobody_orchestrates(backend: Back
         )]
     );
 }
-}
 
-on_both! {
-fn a_task_an_orchestrator_files_is_its_own_unless_filed_under_one_held(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_task_an_orchestrator_files_is_its_own_unless_filed_under_one_held() {
+    let f = Fixture::new(Seed::default());
     let (orch, other, worker) = (
         f.session("orchestrator"),
         f.session("orchestrator"),
@@ -337,13 +328,11 @@ fn a_task_an_orchestrator_files_is_its_own_unless_filed_under_one_held(backend: 
     // A filer the board has no session of takes none, and the task stays filed.
     assert!(!f.store.orchestrate_filed("tools/owners", "nobody").unwrap());
     assert_eq!(holders("tools/owners"), 0);
-
-}
 }
 
-on_both! {
-fn a_claim_by_an_orchestrators_child_leaves_its_role_as_it_is(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_claim_by_an_orchestrators_child_leaves_its_role_as_it_is() {
+    let f = Fixture::new(crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let kid = f.session_with(NewSession {
         parent: Some(orch.clone()),
@@ -355,5 +344,4 @@ fn a_claim_by_an_orchestrators_child_leaves_its_role_as_it_is(backend: Backend) 
     let task = f.store.get("tools/mine").unwrap();
     assert_eq!(task.holders("orchestrator"), [orch.as_str()]);
     assert_eq!(task.holders("executor"), [kid.as_str()]);
-}
 }

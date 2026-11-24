@@ -4,8 +4,7 @@
 
 use super::database::{Board, Database};
 use super::postgres::{self, Pg};
-use super::statement::both;
-use super::surreal as sql;
+use super::statement::Statement;
 use super::transaction::Run;
 use super::writers::{self, Line, Program};
 use super::{Clock, Error, Failure, Probe, Store, now, sessions};
@@ -194,10 +193,10 @@ impl Store {
         host: &str,
         how: &Opening,
     ) -> Result<Store, Error> {
-        Store::opening_on(client.into(), clock, pid_alive, host, how)
+        Store::opening_on(named(&client)?, clock, pid_alive, host, how)
     }
 
-    /// As [`Store::opening`], the board in `db`, on SurrealDB or PostgreSQL.
+    /// As [`Store::opening`], the board in `db`.
     pub fn opening_on(
         db: Database,
         clock: Clock,
@@ -231,10 +230,10 @@ impl Store {
         host: &str,
         how: &Opening,
     ) -> Result<Store, Error> {
-        Store::reading_on(client.into(), clock, pid_alive, host, how)
+        Store::reading_on(named(&client)?, clock, pid_alive, host, how)
     }
 
-    /// As [`Store::reading`], the board in `db`, on SurrealDB or PostgreSQL.
+    /// As [`Store::reading`], the board in `db`.
     pub fn reading_on(
         db: Database,
         clock: Clock,
@@ -446,12 +445,7 @@ impl Store {
     /// Whether this store, opened by `how`, may move `board`, a project's live board found at
     /// `found` (none: not made yet), forward ([`live::may_move`]). A scratch board it always may.
     fn may_move(&self, how: &Opening, board: &Live, found: Option<i64>) -> Result<(), Failure> {
-        let may_move = if self.db.is_postgresql() {
-            live::may_move_postgresql
-        } else {
-            live::may_move
-        };
-        may_move(
+        live::may_move(
             board,
             how.schema == Schema::this_build(),
             how.migrating,
@@ -474,12 +468,7 @@ impl Store {
     /// schema write it ([`schema::COMPATIBLE`]). One read, which defines and writes nothing; the
     /// guard still reads the record again in each write's own transaction.
     pub fn board_standing(&self) -> Result<Standing, Error> {
-        let read = || {
-            both(
-                sql::opening::BOARD_STANDING,
-                postgres::opening::BOARD_STANDING,
-            )
-        };
+        let read = || Statement::from(postgres::opening::BOARD_STANDING);
         let record = self.retrying(|| {
             let found = self.request(read(), json!({}));
             let record = found.map(|mut found| found.pop().unwrap_or(Value::Null));
@@ -493,25 +482,9 @@ impl Store {
         })
     }
 
-    /// As `with`, taking the board's tables as they are, without the request that checks them: the
-    /// heartbeat's, one request on every tool call, on a board any other command has opened. Its
-    /// writes still meet the guard of this build's schema.
-    pub fn unchecked(client: Client, clock: Clock, pid_alive: Probe, host: &str) -> Store {
-        Store::unchecked_as(client, clock, pid_alive, host, &Opening::write())
-    }
-
-    /// As `unchecked`, writing at `how`'s schema and naming its project in a refusal.
-    pub fn unchecked_as(
-        client: Client,
-        clock: Clock,
-        pid_alive: Probe,
-        host: &str,
-        how: &Opening,
-    ) -> Store {
-        Store::unchecked_on(client.into(), clock, pid_alive, host, how)
-    }
-
-    /// As `unchecked_as`, the board in `db`, on SurrealDB or PostgreSQL.
+    /// As `with`, the board in `db`, taking its tables as they are, without the request that checks
+    /// them: the heartbeat's, one request on every tool call, on a board any other command has
+    /// opened. Its writes still meet the guard of `how`'s schema, and a refusal names its project.
     pub fn unchecked_on(
         db: Database,
         clock: Clock,
@@ -560,13 +533,10 @@ impl Store {
     }
 
     /// As [`Store::board_schema`], with `program`'s line in the board's writers on this host and the
-    /// board's count of additive steps, in the same one read ([`sql::writers::OPENING`]).
+    /// board's count of additive steps, in the same one read ([`postgres::writers::OPENING`]).
     fn board_opening(&self, program: &Program) -> Result<(Option<i64>, bool, Line, i64), Failure> {
         let vars = writers::opening_vars(program, &self.host);
-        let answer = self.request(
-            both(sql::writers::OPENING, postgres::writers::OPENING),
-            vars,
-        );
+        let answer = self.request(Statement::from(postgres::writers::OPENING), vars);
         let opened = answer.map(|answer| {
             let (found, line, additions) = writers::opened(&answer);
             (found, true, line, additions)
@@ -584,12 +554,7 @@ impl Store {
 
     /// How many additive steps on its contract the board has: one read.
     fn board_additions(&self) -> Result<i64, Error> {
-        let read = || {
-            both(
-                sql::opening::BOARD_ADDITIONS,
-                postgres::opening::BOARD_ADDITIONS,
-            )
-        };
+        let read = || Statement::from(postgres::opening::BOARD_ADDITIONS);
         self.retrying(|| {
             let found = self.request(read(), json!({}));
             let additions = found.map(|found| found.last().and_then(Value::as_i64).unwrap_or(0));
@@ -598,10 +563,10 @@ impl Store {
     }
 
     /// Refused, in the guard's words, unless the board, where it is of this store's contract, has
-    /// exactly this store's additive steps: what a whole-board read takes, which a copy, an export
-    /// or a move to another engine is made from ([`schema::Steps::exactly`]), as it holds only the
-    /// tables and fields this build knows. Read before and after `read`, so a move of steps while
-    /// it read is refused too.
+    /// exactly this store's additive steps: what a whole-board read takes, which a copy or an
+    /// export is made from ([`schema::Steps::exactly`]), as it holds only the tables and fields
+    /// this build knows. Read before and after `read`, so a move of steps while it read is refused
+    /// too.
     pub(super) fn with_own_steps<T>(
         &self,
         read: impl FnOnce() -> Result<T, Error>,
@@ -627,15 +592,14 @@ impl Store {
     /// The board's schema version (none for a board not made yet), and whether its namespace and
     /// database are on the server: one read in them, which defines nothing.
     fn board_schema(&self) -> Result<(Option<i64>, bool), Failure> {
-        let read = both(sql::opening::BOARD_SCHEMA, postgres::opening::BOARD_SCHEMA);
+        let read = Statement::from(postgres::opening::BOARD_SCHEMA);
         let found = self.request(read, json!({}));
         let schema = found.map(|found| (found.last().and_then(Value::as_i64), true));
         self.absent_board(schema, (None, false))
     }
 
     /// `read`, a read of the board, or `none` where the server said the board is not there: its
-    /// database, or on SurrealDB its namespace, never made ([`Board::undefined`]). Any other
-    /// failure is the read's.
+    /// database never made ([`Board::undefined`]). Any other failure is the read's.
     pub(super) fn absent_board<T>(&self, read: Result<T, DbError>, none: T) -> Result<T, Failure> {
         match read {
             Err(DbError::Failed(said)) if self.db.undefined(&said) => Ok(none),
@@ -643,14 +607,12 @@ impl Store {
         }
     }
 
-    /// Bring the board, found at `found`, to `schema` once: its namespace and database defined
-    /// first if they were not (`defined`), and the analyzer, committed as an index needs it; then
-    /// the steps and the records in one transaction that first checks the board is still at
-    /// `found`, its version and its additive steps, so a migration that fails or loses to another's
-    /// leaves the board as it was, and one another open finished first is read again rather than
-    /// run twice. The records name the version and the oldest schema whose Symphony may write the
-    /// board ([`Schema::writable_from`]), together, and the schema's additive steps. A SurrealDB
-    /// board is made STRICT in the same transaction ([`sql::opening::strict`]).
+    /// Bring the board, found at `found`, to `schema` once: its database made first if it was not
+    /// (`defined`); then the steps and the records in one transaction that first checks the board
+    /// is still at `found`, its version and its additive steps, so a migration that fails or loses
+    /// to another's leaves the board as it was, and one another open finished first is read again
+    /// rather than run twice. The records name the version and the oldest schema whose Symphony may
+    /// write the board ([`Schema::writable_from`]), together, and the schema's additive steps.
     fn migrate(
         &self,
         schema: &Schema,
@@ -661,8 +623,6 @@ impl Store {
         if !defined {
             self.define()?;
         }
-        self.request(both(schema::ANALYZERS, Pg::Nothing), json!({}))?;
-        let steps = sql::opening::migration(&schema.steps(), self.db.database());
         let postgres_steps = postgres::opening::migration(
             &format!("{}\n{}", self.defined()?, schema.postgres_steps()),
             found.version,
@@ -675,7 +635,7 @@ impl Store {
             empty,
         );
         self.run_transaction::<Value>(
-            both(steps, Pg::Simple(postgres_steps.into())),
+            Statement::from(Pg::Simple(postgres_steps.into())),
             json!({
                 "version": schema.version(),
                 "writable_from": schema.writable_from(),
@@ -696,12 +656,9 @@ impl Store {
     /// ([`postgres::schema::define_on_16`]).
     fn defined(&self) -> Result<String, Failure> {
         #[cfg(feature = "hosted-postgresql")]
-        if self.db.is_postgresql() {
+        {
             let version = self.request(
-                both(
-                    sql::opening::POSTGRESQL_ALONE,
-                    postgres::opening::SERVER_VERSION,
-                ),
+                Statement::from(postgres::opening::SERVER_VERSION),
                 json!({}),
             )?;
             if version
@@ -724,79 +681,57 @@ fn went_back(live: &Live, found: Option<i64>) -> Result<(), Failure> {
     }
 }
 
-/// Whether the server said `said` of a request in a namespace, or in the database `database`, it
-/// does not hold yet: a board no one has opened. These are the pinned server's words.
-pub(super) fn undefined(said: &str, database: &str) -> bool {
-    said == format!("The database '{database}' does not exist")
-        || said
-            .strip_prefix("The namespace '")
-            .is_some_and(|name| name.ends_with("' does not exist"))
+/// The board `client`, a board's address, names ([`Database::named`]): a SurrealDB server's is
+/// refused.
+fn named(client: &Client) -> Result<Database, Error> {
+    Database::named(client).map_err(Error::Refused)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::sql::opening::BOARD_SCHEMA;
-    use super::undefined;
-
-    #[test]
-    fn only_a_namespace_or_this_database_not_on_the_server_reads_as_a_board_not_made_yet() {
-        assert!(undefined("The namespace 'sf' does not exist", "tasks"));
-        assert!(undefined("The database 'tasks' does not exist", "tasks"));
-        for other in [
-            "The database 'other' does not exist",
-            "The table 'meta' does not exist",
-            "The namespace 'sf' already exists",
-            "The namespace 'sf",
-            "the server at 127.0.0.1:1 is slow: The database 'tasks' does not exist",
-        ] {
-            assert!(!undefined(other, "tasks"), "{other}");
-        }
-    }
-
-    /// A read of a board not there is the `none` its caller gives, in the words of the engine the
-    /// store is on alone; any other answer, or any other failure, is the read's own.
+    /// A read of a board not there is the `none` its caller gives, in PostgreSQL's words; any
+    /// other answer, or any other failure, is the read's own.
     #[test]
     fn a_read_of_a_board_not_there_is_none_and_any_other_answer_is_the_reads_own() {
         use crate::db::DbError;
         use crate::store::{Error, Failure};
-        use crate::store_fixture::{Backend, Fixture, Seed};
-        let surreal = "The namespace 'sf' does not exist";
-        let postgresql = "database \"sf\" does not exist (SQLSTATE 3D000)";
-        for (backend, absent, elsewhere) in [
-            (Backend::SurrealDb, surreal, postgresql),
-            (Backend::PostgreSql, postgresql, surreal),
+        use crate::store_fixture::{Fixture, Seed};
+        let absent = "database \"sf\" does not exist (SQLSTATE 3D000)";
+        let f = Fixture::new(Seed::default());
+        let failed = |said: &str| Err::<i64, _>(DbError::Failed(said.into()));
+        assert!(matches!(f.store.absent_board(Ok(3), 0), Ok(3)));
+        assert!(matches!(f.store.absent_board(failed(absent), 0), Ok(0)));
+        for other in [
+            "The namespace 'sf' does not exist",
+            "relation \"meta\" does not exist",
+            "unreachable",
         ] {
-            let f = Fixture::on(backend, Seed::default());
-            let failed = |said: &str| Err::<i64, _>(DbError::Failed(said.into()));
-            assert!(matches!(f.store.absent_board(Ok(3), 0), Ok(3)));
-            assert!(matches!(f.store.absent_board(failed(absent), 0), Ok(0)));
-            for other in [elsewhere, "The table 'meta' does not exist", "unreachable"] {
-                assert!(
-                    matches!(
-                        f.store.absent_board(failed(other), 0),
-                        Err(Failure::Stop(Error::Db(said))) if said == other
-                    ),
-                    "{other}"
-                );
-            }
-            let conflict = f.store.absent_board(Err::<i64, _>(DbError::Conflict), 0);
-            assert!(matches!(conflict, Err(Failure::Again)));
-            let thrown = Err::<i64, _>(DbError::Thrown("refused: not yours".into()));
-            assert!(matches!(
-                f.store.absent_board(thrown, 0),
-                Err(Failure::Stop(Error::Refused(why))) if why == "not yours"
-            ));
+            assert!(
+                matches!(
+                    f.store.absent_board(failed(other), 0),
+                    Err(Failure::Stop(Error::Db(said))) if said == other
+                ),
+                "{other}"
+            );
         }
+        let conflict = f.store.absent_board(Err::<i64, _>(DbError::Conflict), 0);
+        assert!(matches!(conflict, Err(Failure::Again)));
+        let thrown = Err::<i64, _>(DbError::Thrown("refused: not yours".into()));
+        assert!(matches!(
+            f.store.absent_board(thrown, 0),
+            Err(Failure::Stop(Error::Refused(why))) if why == "not yours"
+        ));
     }
 
-    /// The open's check of the version, with its writer's line, is a read, so a late answer to it
-    /// goes once more.
+    /// A board's address that names a SurrealDB server is refused before anything is sent, in
+    /// the words that say how such a board moves.
     #[test]
-    fn the_schema_version_check_is_a_read() {
-        assert_eq!(crate::rpc::Kind::of(BOARD_SCHEMA), crate::rpc::Kind::Read);
-        assert_eq!(
-            crate::rpc::Kind::of(super::sql::writers::OPENING),
-            crate::rpc::Kind::Read
-        );
+    fn a_client_naming_a_surrealdb_server_opens_no_store() {
+        use crate::store::Error;
+        let client = crate::rpc::Client::new("127.0.0.1:9", "sf", "board");
+        let Err(Error::Refused(why)) = crate::Store::open(client) else {
+            panic!("a SurrealDB server's address opened a store");
+        };
+        assert!(why.contains(crate::server::GONE), "{why}");
     }
 }

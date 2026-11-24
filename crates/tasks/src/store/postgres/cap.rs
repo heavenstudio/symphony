@@ -1,5 +1,5 @@
-//! The statements of `store/cap.rs` on PostgreSQL: the cap's reads, by the same names as
-//! `super::super::surreal::cap`'s, and the writes that hold its counters.
+//! The statements of `store/cap.rs` on PostgreSQL: the cap's reads and the writes that hold its
+//! counters.
 
 use super::Pg;
 use super::branches::{ON_BRANCHES, of_tasks};
@@ -12,8 +12,8 @@ const ROW: &str = "jsonb_build_object('slug', t.slug, 'parent', t.parent, 'statu
 /// A task `t` in a status a task holding a slot may be in (`slot_statuses`, [`lets`]).
 const OPEN: &str = "t.status IN (SELECT status FROM slot_statuses)";
 
-/// Twin of `super::super::surreal::cap::SLOT_POSITIONS`: the CTEs `slot_positions` and
-/// `slot_statuses`.
+/// The CTEs `slot_positions`, the positions of the active custom workflow, and `slot_statuses`,
+/// the statuses a task holding a slot may be in.
 const SLOT_POSITIONS: &str = "slot_positions AS (SELECT p -> 'at' ->> 'phase' AS phase, \
         p -> 'at' ->> 'state' AS state, p ->> 'slot' AS slot, p ->> 'legacy' AS legacy \
         FROM workflow d CROSS JOIN LATERAL jsonb_array_elements(d.body -> 'definition' -> 'positions') p \
@@ -38,7 +38,7 @@ fn counters(kind: &str, column: &str) -> String {
     )
 }
 
-/// Every slot counter, as a read of its own (`super::super::surreal::cap::COUNTERS`).
+/// Every slot counter, as a read of its own.
 pub(in crate::store) fn counted() -> Pg<'static> {
     Pg::read(counters("slots", "last"))
 }

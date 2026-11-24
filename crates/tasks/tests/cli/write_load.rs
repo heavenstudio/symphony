@@ -51,7 +51,7 @@ fn create_and_launch_finish_under_32_beats_without_the_counter_board_conflict() 
             .map(|(store, agent, handle)| {
                 let (start, stopped, ready) = (&start, &stopped, ready.clone());
                 threads.spawn(move || {
-                    let requests = store.client().requests();
+                    let requests = store.database().requests();
                     let mut beats = 0;
                     start.wait();
                     while !stopped.load(Ordering::Relaxed) {
@@ -69,7 +69,7 @@ fn create_and_launch_finish_under_32_beats_without_the_counter_board_conflict() 
                             ready.send(()).unwrap();
                         }
                     }
-                    (beats, store.client().requests() - requests)
+                    (beats, store.database().requests() - requests)
                 })
             })
             .collect();

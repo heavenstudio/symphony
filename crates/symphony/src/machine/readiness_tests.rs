@@ -212,7 +212,6 @@ fn init_keeps_the_board_refusal_as_a_next_step_for_a_registered_project() {
         &crate::init::Machine {
             folder: Some(&machine),
             path: None,
-            surreal: None,
             beside: None,
         },
     );
@@ -241,7 +240,6 @@ fn init_keeps_the_board_refusal_as_a_next_step_for_a_registered_project() {
         &crate::init::Machine {
             folder: Some(&machine),
             path: None,
-            surreal: None,
             beside: None,
         },
     );
@@ -283,7 +281,6 @@ fn init_identifies_the_selected_older_installed_writer_even_before_registration(
             &crate::init::Machine {
                 folder: Some(&machine),
                 path: None,
-                surreal: None,
                 beside: None,
             },
         )
@@ -342,5 +339,8 @@ fn init_identifies_the_selected_older_installed_writer_even_before_registration(
         std::fs::read_to_string(linked).unwrap(),
         "#!/bin/sh\nexit 0\n"
     );
-    assert!(!tree.path(".git/symphony/tasks/server.json").exists());
+    // No board was made or started.
+    for made in ["postgresql", "backend.json"] {
+        assert!(!tree.path(&format!(".git/symphony/tasks/{made}")).exists());
+    }
 }

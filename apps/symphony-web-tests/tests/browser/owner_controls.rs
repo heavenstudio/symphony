@@ -1,33 +1,24 @@
 //! Owner writes against an owned scratch board and the real native server.
 use super::{SHOWN, binaries, chrome, restored::Native};
 use serde_json::{Value, json};
-use std::convert::Infallible;
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Instant;
 
-/// The board's port helper (`symphony_board::port`), taken as a file: this crate links nothing of the board's.
-#[path = "../../../../crates/tasks/src/port.rs"]
-mod port;
-
-/// std's `lsof`, which [`port::listens`] runs here: the board's own is its `sys` command.
-impl port::Lsof for Command {
-    fn lsof(program: &str, args: &[&str]) -> Self {
-        let mut lsof = Command::new(program);
-        lsof.args(args);
-        lsof
-    }
-}
-
-/// An in-memory board that is seen to hold its address's listener itself before any write.
+/// A board's PostgreSQL of the test's own, which it is seen to serve before any write: the
+/// machine's programs, as a board finds them when its project file names none (the first
+/// `postgres` on `PATH`), its data made by `initdb` in a scratch folder, listening on a socket in a
+/// short folder under `/tmp` alone (a socket's path has a length limit, which a temp folder can
+/// pass), never on TCP, and ended with the test however that ends. This crate links nothing of
+/// the board's: its address is `postgresql:` and that folder, as the board names one.
 pub(super) struct ScratchBoard {
     child: Option<Child>,
     reader: Option<std::thread::JoinHandle<()>>,
     root: PathBuf,
+    socket: PathBuf,
     address: String,
     tasks: &'static Path,
 }
@@ -53,21 +44,37 @@ fn scratch_roots_are_unique_when_clock_readings_repeat_across_threads() {
     assert_eq!(roots.len(), 8, "scratch paths collided: {roots:?}");
 }
 
+/// The folder of the machine's PostgreSQL programs: that of the first executable `postgres` on
+/// `PATH`, which must hold `initdb` too.
+fn programs() -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let executable = |path: &Path| {
+        std::fs::metadata(path)
+            .is_ok_and(|file| file.is_file() && file.permissions().mode() & 0o111 != 0)
+    };
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let folder = std::env::split_paths(&path)
+        .find(|folder| executable(&folder.join("postgres")))
+        .unwrap_or_else(|| {
+            panic!(
+                "no executable postgres on PATH: the browser tests' boards run on PostgreSQL 18 or \
+                 later (`brew install postgresql@18` on a Mac, its bin folder on PATH)"
+            )
+        });
+    assert!(
+        executable(&folder.join("initdb")),
+        "{} holds postgres but no initdb",
+        folder.display()
+    );
+    folder
+}
+
 impl ScratchBoard {
     pub(super) fn start() -> Self {
+        static SOCKETS: AtomicUsize = AtomicUsize::new(0);
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let tasks = binaries::tasks();
-        let surreal = symphony_env::SURREAL.os().map_or_else(
-            || {
-                let done = Command::new("bash")
-                    .arg(workspace.join("tools/surreal.sh"))
-                    .output()
-                    .unwrap();
-                assert!(done.status.success(), "SurrealDB lookup: {done:?}");
-                PathBuf::from(String::from_utf8(done.stdout).unwrap().trim())
-            },
-            PathBuf::from,
-        );
+        let programs = programs();
         let root = scratch_root(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -75,110 +82,92 @@ impl ScratchBoard {
                 .as_nanos(),
         );
         std::fs::create_dir(&root).unwrap();
+        let socket = PathBuf::from(format!(
+            "/tmp/symphony-wb-{}-{}",
+            std::process::id(),
+            SOCKETS.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&socket);
+        std::fs::create_dir(&socket).unwrap();
+        let data = root.join("data");
+        let made = Command::new(programs.join("initdb"))
+            .arg("-D")
+            .arg(&data)
+            .args([
+                "--encoding=UTF8",
+                "--no-locale",
+                "--auth-local=trust",
+                "--auth-host=reject",
+                "--no-instructions",
+                "--no-sync",
+                "--username=postgres",
+            ])
+            .env("LC_ALL", "C")
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "private board's initdb: {made:?}");
         let mut board = Self {
             child: None,
             reader: None,
             root,
-            address: String::new(),
+            address: format!("postgresql:{}", socket.display()),
+            socket,
             tasks,
         };
-        // SurrealDB prints its configured address for :0, so it is told a reserved port, and
-        // started again on another when that port was taken before it bound it (symphony_board::port),
-        // every start within the one readiness backstop: a quiet machine has it up within SHOWN,
-        // and only a stall reaches the backstop (RULES.md `tests/no-test-fails-on-load`).
-        let ready_by = Instant::now() + super::STALL;
-        port::start_on_free_port(port::ATTEMPTS, ready_by, |expected| {
-            assert_ne!(expected.port(), 8765);
-            board.address = expected.to_string();
-            // Match the store harness's pipe leash: EOF also stops the database when the suite
-            // is interrupted and Rust destructors cannot run. Both children are named by $!, and
-            // the database's pid is said on the shell's output.
-            board.child = Some(
-                Command::new("bash")
-                    .arg("-c")
-                    .arg(concat!(
-                        r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log info memory 3<&- & server=$!; "#,
-                        r#"echo "server pid $server"; "#,
-                        r#"(fixture_wait_eof <&3; kill $server 2>/dev/null) & leash=$!; "#,
-                        r#"exec 3<&-; wait $server; kill $leash 2>/dev/null; wait $leash 2>/dev/null"#,
-                    ))
-                    .arg(&surreal)
-                    .arg(&board.address)
-                    .arg(workspace.join("tools/fixture_process.sh"))
-                    .env("NO_COLOR", "1")
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(std::fs::File::create(board.root.join("stderr.log")).unwrap())
-                    .spawn()
-                    .unwrap(),
-            );
-            let stdout = board.child.as_mut().unwrap().stdout.take().unwrap();
-            let log = board.root.join("stdout.log");
-            let (send, receive) = std::sync::mpsc::channel();
-            let (send_pid, receive_pid) = std::sync::mpsc::channel();
-            board.reader = Some(std::thread::spawn(move || {
-                let mut log = std::fs::File::create(log).unwrap();
-                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                    writeln!(log, "{line}").unwrap();
-                    if let Some(pid) = line.strip_prefix("server pid ") {
-                        let _ = send_pid.send(pid.trim().parse::<u32>().unwrap());
-                    } else if let Some((_, address)) = line.split_once("Started web server on ") {
-                        let _ = send.send(address.trim().parse::<std::net::SocketAddr>().unwrap());
-                    }
+        // The store harness's pipe leash: EOF also stops the database when the suite is
+        // interrupted and Rust destructors cannot run, by a fast shutdown, which ends its
+        // connections. Both children are named by $!, and the database's pid is said on the
+        // shell's output, with what the database says.
+        board.child = Some(
+            Command::new("bash")
+                .arg("-c")
+                .arg(concat!(
+                    r#". "$3"; fixture_close_fds; exec 3<&0; "#,
+                    r#""$0" -D "$1" -c listen_addresses= -c unix_socket_directories="$2" "#,
+                    r#"-c unix_socket_permissions=0700 -c fsync=off -c lc_messages=C 3<&- 2>&1 & server=$!; "#,
+                    r#"echo "server pid $server"; "#,
+                    r#"(fixture_wait_eof <&3; kill -INT $server 2>/dev/null) & leash=$!; "#,
+                    r#"exec 3<&-; wait $server; kill $leash 2>/dev/null; wait $leash 2>/dev/null"#,
+                ))
+                .arg(programs.join("postgres"))
+                .arg(&data)
+                .arg(&board.socket)
+                .arg(workspace.join("tools/fixture_process.sh"))
+                .env("LC_ALL", "C")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(std::fs::File::create(board.root.join("stderr.log")).unwrap())
+                .spawn()
+                .unwrap(),
+        );
+        let stdout = board.child.as_mut().unwrap().stdout.take().unwrap();
+        let log = board.root.join("stdout.log");
+        let (send, receive) = std::sync::mpsc::channel();
+        board.reader = Some(std::thread::spawn(move || {
+            let mut log = std::fs::File::create(log).unwrap();
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                writeln!(log, "{line}").unwrap();
+                if line.contains("database system is ready to accept connections") {
+                    let _ = send.send(());
                 }
-            }));
-            let remaining = || ready_by.saturating_duration_since(Instant::now());
-            // What a board that never said `what` comes to: one that ended, said its end.
-            let said = |board: &mut Self,
-                        what: &str,
-                        error: RecvTimeoutError|
-             -> Result<port::Start<()>, Infallible> {
-                match error {
-                    RecvTimeoutError::Disconnected => Ok(port::Start::Ended(board.ended())),
-                    RecvTimeoutError::Timeout => panic!(
-                        "private board {what}: stalled: not said by the readiness backstop of {:?} \
-                         ({error}); {}; {}",
-                        super::STALL,
-                        test_time::Load::now(),
-                        std::fs::read_to_string(board.root.join("stderr.log")).unwrap()
-                    ),
-                }
-            };
-            let server = match receive_pid.recv_timeout(remaining()) {
-                Ok(server) => server,
-                Err(error) => return said(&mut board, "pid", error),
-            };
-            let actual = match receive.recv_timeout(remaining()) {
-                Ok(actual) => actual,
-                Err(error) => return said(&mut board, "readiness", error),
-            };
-            assert_eq!(
-                actual, expected,
-                "a lost reservation must fail before connecting"
-            );
-            // An answer counts only once this database itself listens on the port: a process
-            // that took the port answers too.
-            let up = test_time::until(
-                format!("the private board answering on {expected}"),
-                remaining(),
-                || {
-                    if board.child.as_mut().unwrap().try_wait().unwrap().is_some() {
-                        return Some(false);
-                    }
-                    (board.healthy() && port::listens(server, expected, Command::output).unwrap())
-                        .then_some(true)
-                },
-            );
-            match up {
-                Ok(true) => Ok::<_, Infallible>(port::Start::Up(())),
-                Ok(false) => Ok(port::Start::Ended(board.ended())),
-                Err(stall) => panic!(
-                    "{stall}; {}",
-                    std::fs::read_to_string(board.root.join("stderr.log")).unwrap()
-                ),
             }
-        })
-        .unwrap_or_else(|why| panic!("private board ended before its health answer: {why}"));
+        }));
+        // A quiet machine has it up within SHOWN, and only a stall reaches the backstop
+        // (RULES.md `tests/no-test-fails-on-load`).
+        let ready_by = Instant::now() + super::STALL;
+        match receive.recv_timeout(ready_by.saturating_duration_since(Instant::now())) {
+            Ok(()) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("private board ended before it was ready: {}", board.ended())
+            }
+            Err(error @ RecvTimeoutError::Timeout) => panic!(
+                "private board: stalled: not ready by the readiness backstop of {:?} ({error}); \
+                 {}; {}",
+                super::STALL,
+                test_time::Load::now(),
+                std::fs::read_to_string(board.root.join("stdout.log")).unwrap_or_default()
+            ),
+        }
         board
     }
 
@@ -193,24 +182,6 @@ impl ScratchBoard {
         }
         let read = |name| std::fs::read_to_string(self.root.join(name)).unwrap_or_default();
         format!("{}{}", read("stdout.log"), read("stderr.log"))
-    }
-
-    fn healthy(&self) -> bool {
-        let probe = || -> std::io::Result<bool> {
-            let address = self.address.parse::<std::net::SocketAddr>().unwrap();
-            let timeout = std::time::Duration::from_secs(2);
-            let mut stream = TcpStream::connect_timeout(&address, timeout)?;
-            stream.set_read_timeout(Some(timeout))?;
-            stream.set_write_timeout(Some(timeout))?;
-            stream.write_all(
-                format!("GET /health HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
-                    .as_bytes(),
-            )?;
-            let mut status = String::new();
-            BufReader::new(stream).read_line(&mut status)?;
-            Ok(status.split_whitespace().nth(1) == Some("200"))
-        };
-        probe().unwrap_or(false)
     }
 
     pub(super) fn address(&self) -> &str {
@@ -257,6 +228,7 @@ impl Drop for ScratchBoard {
             let _ = reader.join();
         }
         let _ = std::fs::remove_dir_all(&self.root);
+        let _ = std::fs::remove_dir_all(&self.socket);
     }
 }
 

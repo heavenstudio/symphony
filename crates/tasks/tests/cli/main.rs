@@ -1,4 +1,5 @@
-//! The `tasks` command line over a real SurrealDB server: the store's tests' server, one per binary.
+//! The `tasks` command line over a real PostgreSQL server: the store's tests' server, one per
+//! binary, a database of its own per test.
 
 // How a test starts its own children ([`children::Child`]).
 #[path = "../support/children.rs"]
@@ -75,9 +76,9 @@ pub struct Ran {
 
 /// An environment reaching a database of its own on the tests' server, its clock at `common::NOW`.
 pub fn env() -> Env {
-    let db = common::client();
+    let db = common::postgresql();
     let vars: BTreeMap<String, String> = [
-        ("TASKS_SERVER", db.addr().to_string()),
+        ("TASKS_SERVER", db.addr()),
         ("TASKS_DATABASE", db.database().to_string()),
         ("TASKS_NOW", common::NOW.to_string()),
         (
@@ -230,6 +231,24 @@ pub fn git(dir: &Path, args: &[&str]) {
     )
     .unwrap();
     assert!(done.status.success(), "git {args:?}: {done:?}");
+}
+
+/// The socket folder of a board no server answers: a connection to it is refused at once.
+pub const UNREACHED_FOLDER: &str = "/nonexistent/symphony-unreached";
+
+/// A board that cannot be reached ([`UNREACHED_FOLDER`]), as `TASKS_SERVER` names it.
+pub const UNREACHED_SERVER: &str = "postgresql:/nonexistent/symphony-unreached";
+
+/// The text of the project file of the project `id`, `rest` after its `[project]` lines, naming
+/// the machine's PostgreSQL (`[board] postgresql`): the programs its board's server runs on,
+/// whatever a child's `PATH` holds.
+pub fn project_file(id: &str, rest: &str) -> String {
+    let programs =
+        symphony_board::server::postgres::discover_programs(&common::project_root()).unwrap();
+    format!(
+        "[project]\nid = \"{id}\"\n{rest}[board]\npostgresql = {:?}\n",
+        programs.display().to_string()
+    )
 }
 
 /// A repository at `path` with one commit on `main`.

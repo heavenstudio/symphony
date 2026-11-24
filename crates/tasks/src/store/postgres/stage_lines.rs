@@ -13,7 +13,7 @@ fn lines(slug: &str, kinds: &str) -> String {
 }
 
 /// The top-level tasks made since `since` and those done that were written since, who executes
-/// them, and each one's thread without its posts (`super::super::surreal::stage_lines::READ`).
+/// them, and each one's thread without its posts.
 pub(in crate::store) fn read() -> Pg<'static> {
     Pg::read(format!(
         "(WITH picked AS (SELECT sid, slug, status, created, updated, fields #> '{{_board,arm}}' AS arm \

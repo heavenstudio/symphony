@@ -1,19 +1,18 @@
 //! A child server started on a loopback port of its own, for a child that can neither take a
-//! listening socket from its starter nor bind port 0 and say which port it got: SurrealDB 3.3 prints
-//! the address it was given, `:0` included. The port is reserved by binding port 0 and letting go of
-//! it, then the child is told to bind it; another process can take the port in between, and the
-//! child then ends saying its address is in use. Only that end starts the child again, on another
-//! port, at most a bounded number of times and none after the caller's deadline; a child that ends
-//! for any other reason is a failure, with what it said.
+//! listening socket from its starter nor bind port 0 and say which port it got. The port is
+//! reserved by binding port 0 and letting go of it, then the child is told to bind it; another
+//! process can take the port in between, and the child then ends saying its address is in use.
+//! Only that end starts the child again, on another port, at most a bounded number of times and
+//! none after the caller's deadline; a child that ends for any other reason is a failure, with
+//! what it said.
 //!
 //! What counts as up is the starter's own check, and an answer on the port counts only once the
 //! child itself holds the port's listener ([`listens`]): a process that took the port answers too,
 //! while the child is still on its way to finding the port taken.
 //!
-//! It uses std alone, so a crate that does not link this one takes the file as a module of its own
-//! (the Symphony client's browser tests, by `#[path]`), and [`listens`] is handed what runs its
-//! `lsof`. It starts no child itself: the command is [`Lsof`]'s, the board's from `crate::sys`
-//! and std's from the crate that takes the file.
+//! It uses std alone, so a crate that does not link this one can take the file as a module of its
+//! own, and [`listens`] is handed what runs its `lsof`. It starts no child itself: the command is
+//! [`Lsof`]'s, the board's from `crate::sys` and std's from the crate that takes the file.
 
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
