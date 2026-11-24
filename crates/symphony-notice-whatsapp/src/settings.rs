@@ -10,7 +10,8 @@
 use serde::Deserialize;
 use std::fmt;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::io;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use symphony_notice::Kind;
 
@@ -49,13 +50,20 @@ pub(crate) fn folder(machine: &Path) -> Result<PathBuf, String> {
 }
 
 /// What the file at `path` holds, refused unless it is a plain file its owner's alone, and no
-/// link.
+/// link. It is opened without following a link, and what is checked is the opened file's own, so
+/// nothing swapped in between the check and the read is read.
 fn private(path: &Path) -> Result<String, String> {
     let named = path.display();
-    let meta = fs::symlink_metadata(path).map_err(|error| format!("{named}: {error}"))?;
-    if meta.file_type().is_symlink() {
-        return Err(format!("{named} is a link; keep the file itself there"));
-    }
+    let file = (fs::OpenOptions::new().read(true))
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| match error.raw_os_error() {
+            Some(libc::ELOOP) => format!("{named} is a link; keep the file itself there"),
+            _ => format!("{named}: {error}"),
+        })?;
+    let meta = file
+        .metadata()
+        .map_err(|error| format!("{named}: {error}"))?;
     if !meta.is_file() {
         return Err(format!("{named} is not a file"));
     }
@@ -64,7 +72,8 @@ fn private(path: &Path) -> Result<String, String> {
             "{named} is open to others than its owner; chmod 600 it"
         ));
     }
-    fs::read_to_string(path).map_err(|error| format!("{named}: {error}"))
+    // From the file opened and checked, never opened again by its path.
+    io::read_to_string(file).map_err(|error| format!("{named}: {error}"))
 }
 
 /// The settings file as it is written.
@@ -219,7 +228,9 @@ fn unread(text: &str, error: &toml::de::Error) -> String {
         .and_then(|at| text.get(..at.start))
         .map(|before| before.matches('\n').count() + 1);
     let message = error.message();
-    let quotes_a_value = ["invalid type", "invalid value", "unknown variant"]
+    // serde's words, which quote the value; toml's own `invalid value` (a bad unicode escape) has
+    // no colon and quotes nothing, so it is said as the syntax error it is.
+    let quotes_a_value = ["invalid type: ", "invalid value: ", "unknown variant `"]
         .iter()
         .any(|serde_says| message.starts_with(serde_says));
     let said = if let Some(unknown) = message.strip_prefix("unknown field `") {

@@ -1,15 +1,17 @@
 //! `people …`: who is on the board and what each may do there ([`crate::people`],
 //! [`crate::Store::add_person`]), and the machine's profiles of them (`people.json` in the
 //! machine folder), from the terminal, whose account is the machine's. Every change is recorded
-//! as `--as`'s, and nothing it prints or logs names a sign-in's subject: a sign-in is said by its
-//! service alone.
+//! as `--as`'s, and nothing it prints or logs names a sign-in's subject, an address or the way a
+//! notice goes by: a sign-in is said by its service alone, and `list`, which an agent runs unasked,
+//! shows no address and no way.
 
 use super::{Context, Stop};
 use crate::Store;
 use crate::people::change::{self, Given, Stopped, Writer};
-use crate::people::{Change, Holder, People, Power, Profile, Profiles, Signin};
+use crate::people::{Change, Holder, People, Power, Profile, Profiles, Signin, ways};
 use crate::sys::local_minute;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -154,13 +156,34 @@ fn profile(c: &mut Context, name: &str) -> Result<(), Stop> {
     Ok(())
 }
 
-/// What `--display`, `--signin` and `--git` give a profile.
+/// What `--display`, `--signin`, `--git`, `--email`, `--slack`, `--whatsapp` and `--notice` give a
+/// profile.
 fn given(c: &Context) -> Result<Given, Stop> {
+    let addresses = (ways::WAYS.into_iter())
+        .filter_map(|way| Some((way.to_string(), c.parsed.get(way)?.to_string())))
+        .collect();
     Ok(Given {
         display: c.parsed.get("display").map(str::to_string),
         signins: parsed_signins(c)?,
         git: c.parsed.all("git").to_vec(),
+        addresses,
+        notices: parsed_notices(c)?,
     })
+}
+
+/// The ways `--notice KIND=WAY` names, by kind: `KIND=` sends that kind by none.
+fn parsed_notices(c: &Context) -> Result<BTreeMap<String, String>, Stop> {
+    (c.parsed.all("notice").iter())
+        .map(|text| {
+            let (kind, way) = text.split_once('=').ok_or_else(|| {
+                Stop::Refused(
+                    "a notice is KIND=WAY, as card=slack, or KIND= for none: nothing was written"
+                        .into(),
+                )
+            })?;
+            Ok((kind.trim().to_string(), way.trim().to_string()))
+        })
+        .collect()
 }
 
 /// A change's stop as the command's: a refusal exits 1, a failure 2, said with its cause, as the

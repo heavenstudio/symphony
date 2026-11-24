@@ -253,7 +253,10 @@ fn the_machines_person_under_their_name_is_the_sender_and_mover_on_a_board_namin
     let asked = on_the_board(&f, &machines("stefano", "Stefano"), &tree.root);
     assert_eq!(
         asked,
-        ["offer sim/a", "submit sim/a from stefano (Stefano, stefano-b)"]
+        [
+            "offer sim/a",
+            "submit sim/a from stefano (Stefano, stefano-b)"
+        ]
     );
     let lines = thread(&f, "sim/a");
     for said in ["Ready when you are", "signed tip for Stefano"] {
@@ -262,9 +265,15 @@ fn the_machines_person_under_their_name_is_the_sender_and_mover_on_a_board_namin
             "{said}: {lines:?}"
         );
     }
-    assert!((lines.iter().skip(1)).all(|(sender, _)| sender != "owner"), "{lines:?}");
+    assert!(
+        (lines.iter().skip(1)).all(|(sender, _)| sender != "owner"),
+        "{lines:?}"
+    );
     let marks = marked(&f, "sim/a");
-    assert!(!marks.is_empty() && marks.iter().all(|s| s == "stefano"), "{marks:?}");
+    assert!(
+        !marks.is_empty() && marks.iter().all(|s| s == "stefano"),
+        "{marks:?}"
+    );
     assert_eq!(f.store.get("sim/a").unwrap().status, "cancelled");
     assert!(
         thread(&f, "sim/held").contains(&(

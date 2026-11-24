@@ -168,7 +168,11 @@ fn a_line_is_told_with_its_card_stamp_and_page_under_a_key_of_what_it_says() {
          nothing, so it stays blocked on decision:layout: which screens?"
     );
     assert!(key.starts_with("decided:layout:2026-11-20 04:10:"), "{key}");
-    assert_eq!(told("layout", &said, None).1, key, "the same line, the same key");
+    assert_eq!(
+        told("layout", &said, None).1,
+        key,
+        "the same line, the same key"
+    );
     let other = line("2026-11-20 04:10", None, "which pages?");
     assert_ne!(told("layout", &other, None).1, key);
     let asked = line("2026-11-20 04:10", Some("question"), "which screens?");
@@ -183,9 +187,13 @@ fn a_line_is_told_with_its_card_stamp_and_page_under_a_key_of_what_it_says() {
             .ends_with("decision:layout: question — which screens?")
     );
     assert!(
-        told("layout", &line("2026-11-20 04:10", Some("pending"), ""), None)
-            .0
-            .ends_with(": pending")
+        told(
+            "layout",
+            &line("2026-11-20 04:10", Some("pending"), ""),
+            None
+        )
+        .0
+        .ends_with(": pending")
     );
     // A long line is cut: the card has the rest.
     let long = line("2026-11-20 04:10", None, &"é".repeat(400));
@@ -336,8 +344,15 @@ fn the_machines_persons_word_is_told_and_counted_by_how_they_are_shown() {
     }
     let mine = line("2026-11-20 04:10", None, "which screens?");
     let (text, key) = told("layout", &mine, machine);
-    assert!(text.starts_with("Stefano on card layout [2026-11-20 04:10]"), "{text}");
-    assert_eq!(key, told("layout", &mine, None).1, "told once, named or not");
+    assert!(
+        text.starts_with("Stefano on card layout [2026-11-20 04:10]"),
+        "{text}"
+    );
+    assert_eq!(
+        key,
+        told("layout", &mine, None).1,
+        "told once, named or not"
+    );
     assert_eq!(
         approved_why("ana", &[], tip, machine),
         "ana approved 1a2b3c4",

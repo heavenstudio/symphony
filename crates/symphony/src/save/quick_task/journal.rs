@@ -340,7 +340,14 @@ mod tests {
         ];
         for (letter, name, machine, kept) in cases {
             let identity = letter.repeat(32);
-            let made = ok(reserve(&tree.root, &identity, "", &payload, &by(name), machine));
+            let made = ok(reserve(
+                &tree.root,
+                &identity,
+                "",
+                &payload,
+                &by(name),
+                machine,
+            ));
             assert_eq!((made.task().by.as_str(), made.machine()), (name, kept));
             let text = std::fs::read_to_string(path(&tree.root, &identity)).unwrap();
             assert_eq!(text.contains("\"machine\""), kept, "{text}");
@@ -370,9 +377,16 @@ mod tests {
         );
         let blocked = tree.root.join("blocked");
         std::fs::write(&blocked, "not a directory").unwrap();
-        let error = reserve(&blocked, &identity, "", &payload, &task("inbox/task"), false)
-            .err()
-            .expect("unwritable record");
+        let error = reserve(
+            &blocked,
+            &identity,
+            "",
+            &payload,
+            &task("inbox/task"),
+            false,
+        )
+        .err()
+        .expect("unwritable record");
         assert_eq!(error.status, 503);
         assert!(error.error.contains("blocked"), "{}", error.error);
     }

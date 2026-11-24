@@ -133,6 +133,25 @@ fn a_folder_where_the_file_is_kept_or_a_file_where_the_folder_is_is_refused() {
 }
 
 #[test]
+fn a_fifo_where_the_file_is_kept_is_refused_without_waiting_on_it() {
+    let machine = folder("fifo");
+    fs::create_dir_all(machine.join("notices")).unwrap();
+    fs::set_permissions(machine.join("notices"), fs::Permissions::from_mode(0o700)).unwrap();
+    let file = machine.join("notices/slack.token");
+    let made = std::process::Command::new("mkfifo")
+        .args(["-m", "600"])
+        .arg(&file)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    // Opened without waiting for a writer, it is seen to be no file and never read.
+    assert_eq!(
+        read(&machine).unwrap_err(),
+        format!("no token was read: {} is not a file", file.display())
+    );
+}
+
+#[test]
 fn a_file_its_owner_cannot_read_says_so() {
     let machine = folder("unreadable");
     keep(&machine, TOKEN);

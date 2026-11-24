@@ -18,60 +18,6 @@ fn notice(id: &str, kind: Kind) -> Notice {
 }
 
 #[test]
-fn a_plain_address_is_taken() {
-    for taken in [
-        "ana@example.com",
-        "a@b",
-        "first.last+tag@mail.example.co.uk",
-        "!#$%&'*+-/=?^_`{|}~@example.com",
-        "x@1-2.example",
-        &format!("{}@example.com", "l".repeat(64)),
-        &format!("a@{}.example", "d".repeat(63)),
-    ] {
-        assert!(address(taken), "{taken}");
-    }
-}
-
-#[test]
-fn what_a_header_or_a_command_could_read_as_more_is_refused() {
-    let long_local = format!("{}@example.com", "l".repeat(65));
-    let long_label = format!("a@{}.example", "d".repeat(64));
-    let long = format!("a@{}.example", vec!["d".repeat(60); 5].join("."));
-    for refused in [
-        "",
-        "ana",
-        "@example.com",
-        "ana@",
-        "ana@@example.com",
-        "a@b@example.com",
-        "\"ana\"@example.com",
-        "ana smith@example.com",
-        "Ana <ana@example.com>",
-        "ana@example.com, bob@example.com",
-        "ana@example.com;bob@example.com",
-        "ana@example.com>",
-        ".ana@example.com",
-        "ana.@example.com",
-        "an..a@example.com",
-        "ana@example..com",
-        "ana@.example.com",
-        "ana@example.com.",
-        "ana@-example.com",
-        "ana@example-.com",
-        "ana@exa_mple.com",
-        "ana@[127.0.0.1]",
-        "ana(comment)@example.com",
-        "anä@example.com",
-        "ana@exämple.com",
-        &long_local,
-        &long_label,
-        &long,
-    ] {
-        assert!(!address(refused), "{refused}");
-    }
-}
-
-#[test]
 fn a_mail_says_what_waits_in_which_project_and_the_link() {
     let now = UNIX_EPOCH + Duration::from_secs(NOVEMBER_24);
     let mail = Mail::of(

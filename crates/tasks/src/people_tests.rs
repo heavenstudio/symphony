@@ -479,7 +479,13 @@ fn the_machines_person_is_the_profile_machine_names_and_none_without_it() {
     unnamed.write(&machine.0).unwrap();
     let text = fs::read_to_string(machine.0.join(FILE)).unwrap();
     assert!(!text.contains("machine"), "{text}");
-    assert_eq!((Profiles::read(&machine.0).unwrap().machine(), machine_name(&machine.0)), (None, None));
+    assert_eq!(
+        (
+            Profiles::read(&machine.0).unwrap().machine(),
+            machine_name(&machine.0)
+        ),
+        (None, None)
+    );
     let stefano = Profile {
         name: "stefano".into(),
         display: "Stefano".into(),
@@ -503,7 +509,10 @@ fn the_machines_person_is_the_profile_machine_names_and_none_without_it() {
     fs::write(machine.0.join(FILE), r#"{"machine": 7, "people": []}"#).unwrap();
     assert_eq!(machine_name(&machine.0), None);
     let said = Profiles::read(&machine.0).unwrap_err();
-    assert!(said.contains(": machine: a value of a type or form"), "{said}");
+    assert!(
+        said.contains(": machine: a value of a type or form"),
+        "{said}"
+    );
 }
 
 /// The machine folder an environment names is where the machine's person's name is read, and an
@@ -548,9 +557,15 @@ fn the_machines_person_decides_beside_the_boards_deciders_once() {
         shown: "Stefano".into(),
     };
     assert_eq!(with_machine(ana.clone(), None), ["ana"]);
-    assert_eq!(with_machine(ana.clone(), Some(&named("stefano"))), ["ana", "stefano"]);
+    assert_eq!(
+        with_machine(ana.clone(), Some(&named("stefano"))),
+        ["ana", "stefano"]
+    );
     assert_eq!(with_machine(ana, Some(&named("ana"))), ["ana"]);
-    assert_eq!(with_machine(Vec::new(), Some(&named("stefano"))), ["stefano"]);
+    assert_eq!(
+        with_machine(Vec::new(), Some(&named("stefano"))),
+        ["stefano"]
+    );
 }
 
 /// A sentence names the person at the machine by how they are shown, under `owner` as under the
@@ -584,7 +599,11 @@ fn a_sentence_names_the_machines_person_by_how_they_are_shown() {
         .map(|person| person.shown)
     };
     assert_eq!(shown("Stefano B"), Some("Stefano B".into()));
-    assert_eq!(shown("  "), Some("stefano".into()), "a blank display name is none");
+    assert_eq!(
+        shown("  "),
+        Some("stefano".into()),
+        "a blank display name is none"
+    );
     assert_eq!(Profiles::default().machine_person(), None);
 }
 
@@ -597,6 +616,7 @@ mod naming {
             display: Some(display.into()).filter(|d: &String| !d.is_empty()),
             signins: Vec::new(),
             git: git.iter().map(|g| (*g).to_string()).collect(),
+            ..Given::default()
         }
     }
 
@@ -617,11 +637,20 @@ mod naming {
     #[test]
     fn the_person_at_the_machine_names_themselves_once_with_their_display_name_and_git() {
         let machine = Machine::new("name-once");
-        name_machine(&machine.0, " stefano ", &given("Stefano", &["stefano-b"]), nothing).unwrap();
+        name_machine(
+            &machine.0,
+            " stefano ",
+            &given("Stefano", &["stefano-b"]),
+            nothing,
+        )
+        .unwrap();
         let read = Profiles::read(&machine.0).unwrap();
         assert_eq!(read.machine.as_deref(), Some("stefano"));
         let mine = read.machine().unwrap();
-        assert_eq!((mine.shown(), mine.git.clone()), ("Stefano", vec!["stefano-b".to_string()]));
+        assert_eq!(
+            (mine.shown(), mine.git.clone()),
+            ("Stefano", vec!["stefano-b".to_string()])
+        );
         assert!(mine.signins.is_empty());
         assert_eq!(machine.mode(FILE), MODE);
         for again in ["stefano", "teo"] {
@@ -632,7 +661,11 @@ mod naming {
                  nothing was written"
             );
         }
-        assert_eq!(Profiles::read(&machine.0).unwrap(), read, "nothing was written");
+        assert_eq!(
+            Profiles::read(&machine.0).unwrap(),
+            read,
+            "nothing was written"
+        );
     }
 
     /// A name no board could give a person, and a sign-in, are refused before the profiles are
@@ -649,7 +682,10 @@ mod naming {
             ..given("", &[])
         };
         let why = refused(name_machine(&machine.0, "stefano", &signed, nothing));
-        assert!(why.starts_with("the person at the machine is known by where they are"), "{why}");
+        assert!(
+            why.starts_with("the person at the machine is known by where they are"),
+            "{why}"
+        );
         assert!(!machine.0.join(FILE).exists(), "nothing was written");
     }
 
@@ -733,6 +769,179 @@ mod naming {
             ),
             other => panic!("not failed: {other:?}"),
         }
-        assert_eq!(fs::read_to_string(machine.0.join(FILE)).unwrap(), "{not json");
+        assert_eq!(
+            fs::read_to_string(machine.0.join(FILE)).unwrap(),
+            "{not json"
+        );
     }
+}
+
+/// Ana reached by every way: two emails, a Slack member id and a WhatsApp number as written, each
+/// kind by its own way.
+fn reached() -> Profile {
+    let map = |value: serde_json::Value| value.as_object().unwrap().clone();
+    Profile {
+        emails: vec!["ana@example.com".into(), "ana@work.example".into()],
+        chat: map(serde_json::json!({"slack": "U024BE7LH", "whatsapp": "+1 (555) 123-4567"})),
+        preferences: map(
+            serde_json::json!({"card": "slack", "question": "email", "verdict": "whatsapp"}),
+        ),
+        ..ana()
+    }
+}
+
+/// Where `profile`'s notice of `kind` reaches, as `(way, address)`.
+fn reach_of(profile: &Profile, kind: &str) -> Option<(&'static str, String)> {
+    profile
+        .reach(kind)
+        .map(|reach| (reach.way(), reach.address().to_string()))
+}
+
+#[test]
+fn a_notice_reaches_a_person_by_the_way_they_chose_for_its_kind_at_their_address_for_it() {
+    let profiles = Profiles {
+        machine: None,
+        people: vec![
+            reached(),
+            Profile {
+                name: "bo".into(),
+                emails: vec!["bo@example.com".into()],
+                ..Profile::default()
+            },
+        ],
+    };
+    let reach = |name: &str, kind: &str| {
+        (profiles.reach(name, kind)).map(|reach| (reach.way(), reach.address().to_string()))
+    };
+    assert_eq!(reach("ana", "card"), Some(("slack", "U024BE7LH".into())));
+    assert_eq!(
+        reach("ana", "question"),
+        Some(("email", "ana@example.com".into())),
+        "the first email"
+    );
+    assert_eq!(
+        reach("ana", "verdict"),
+        Some(("whatsapp", "+15551234567".into())),
+        "a number as its sender sends to it"
+    );
+    assert_eq!(reach("ana", "poll"), None, "a kind the board does not know");
+    for kind in ways::KINDS {
+        assert_eq!(reach("bo", kind), None, "bo chose no way: {kind}");
+        assert_eq!(
+            reach("cy", kind),
+            None,
+            "the machine holds no profile of cy"
+        );
+    }
+    let ana = reached();
+    assert_eq!(
+        ways::WAYS.map(|way| ana.address(way)),
+        [
+            Some("ana@example.com".into()),
+            Some("U024BE7LH".into()),
+            Some("+15551234567".into())
+        ]
+    );
+    assert_eq!(ana.address("sms"), None);
+    assert_eq!(
+        ways::KINDS.map(|kind| ana.way(kind)),
+        [Some("slack"), Some("email"), Some("whatsapp")]
+    );
+}
+
+#[test]
+fn a_way_that_is_none_or_an_address_its_sender_refuses_reaches_no_one() {
+    let with = |chat: serde_json::Value, preferences: serde_json::Value, emails: &[&str]| Profile {
+        chat: chat.as_object().unwrap().clone(),
+        preferences: preferences.as_object().unwrap().clone(),
+        emails: emails.iter().map(|email| (*email).to_string()).collect(),
+        ..ana()
+    };
+    let slack = serde_json::json!({"card": "slack"});
+    for chat in [
+        serde_json::json!({"slack": "C024BE7LH"}),
+        serde_json::json!({"slack": " U024BE7LH"}),
+        serde_json::json!({"slack": {"id": "U024BE7LH"}}),
+        serde_json::json!({"slack": 1}),
+        serde_json::json!({"Slack": "U024BE7LH"}),
+        serde_json::json!({}),
+    ] {
+        assert_eq!(
+            reach_of(&with(chat.clone(), slack.clone(), &[]), "card"),
+            None,
+            "{chat}"
+        );
+    }
+    let chat = serde_json::json!({"slack": "U024BE7LH"});
+    for preferences in [
+        serde_json::json!({"card": "sms"}),
+        serde_json::json!({"card": "Slack"}),
+        serde_json::json!({"card": ["slack"]}),
+        serde_json::json!({"card": null}),
+        serde_json::json!({"cards": "slack"}),
+        serde_json::json!({}),
+    ] {
+        let profile = with(chat.clone(), preferences.clone(), &[]);
+        assert_eq!(reach_of(&profile, "card"), None, "{preferences}");
+    }
+    // A kind the board does not know is no kind, whatever the file says of it.
+    let poll = with(chat.clone(), serde_json::json!({"poll": "slack"}), &[]);
+    assert_eq!(poll.way("poll"), None);
+    // The first email is the one a notice goes to: one its sender refuses sends none, though a
+    // later one is plain.
+    let email = serde_json::json!({"question": "email"});
+    let first = with(
+        chat.clone(),
+        email.clone(),
+        &["Ana <ana@example.com>", "ana@example.com"],
+    );
+    assert_eq!(reach_of(&first, "question"), None);
+    assert_eq!(reach_of(&with(chat, email, &[]), "question"), None);
+}
+
+#[test]
+fn a_reach_prints_its_way_and_never_its_address() {
+    let reach = reached().reach("card").unwrap();
+    let printed = format!("{reach:?}");
+    assert_eq!(printed, r#"Reach { way: "slack", address: "<hidden>" }"#);
+}
+
+#[test]
+fn a_profiles_file_written_before_addresses_had_a_meaning_reads_as_before() {
+    let machine = Machine::new("before");
+    fs::create_dir_all(&machine.0).unwrap();
+    // As a hand could have written one: chat and preferences of any shape, keys of no meaning.
+    let text = r#"{
+  "people": [
+    {
+      "name": "ana",
+      "display": "Ana Lima",
+      "git": ["ana-l"],
+      "emails": ["Ana <ana@example.com>", "ana@work.example"],
+      "chat": {"slack": {"user": "ana"}, "teams": "ana.lima", "whatsapp": 15551234567},
+      "preferences": {"digest": true, "card": ["slack"], "verdict": "teams"}
+    },
+    {"name": "bo"}
+  ]
+}
+"#;
+    fs::write(machine.0.join(FILE), text).unwrap();
+    let profiles = Profiles::read(&machine.0).unwrap();
+    let ana = profiles.get("ana").unwrap();
+    assert_eq!(ana.emails.len(), 2);
+    assert_eq!(
+        ana.chat.keys().collect::<Vec<_>>(),
+        ["slack", "teams", "whatsapp"]
+    );
+    assert_eq!(ana.preferences["digest"], serde_json::json!(true));
+    for kind in ways::KINDS {
+        assert!(profiles.reach("ana", kind).is_none(), "{kind}");
+    }
+    // Written back, it is what it was, each key where it stood.
+    profiles.write(&machine.0).unwrap();
+    let back: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(machine.0.join(FILE)).unwrap()).unwrap();
+    let before: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(back.to_string(), before.to_string(), "in the same order");
+    assert_eq!(Profiles::read(&machine.0).unwrap(), profiles);
 }

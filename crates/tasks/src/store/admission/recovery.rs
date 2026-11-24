@@ -167,7 +167,9 @@ impl Store {
             .map_err(refusal)?;
             let slots = self.recovery_slots(&decided, &recovery, &principal)?;
             let person = self.is_person(by);
-            let vars = vars(&decided, &recovery, holder, role, seen, slots, by, person, at);
+            let vars = vars(
+                &decided, &recovery, holder, role, seen, slots, by, person, at,
+            );
             let guarded = !vars["slots"].as_array().is_none_or(Vec::is_empty);
             self.written(applied(guarded), vars, slug)?;
             Ok(recovery.transition)

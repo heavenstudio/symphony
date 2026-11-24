@@ -44,7 +44,13 @@ pub(crate) struct Reader {
 
 /// [`page`], served to `reader`: the header names them, and the lines of the person at the machine
 /// are drawn with how they are shown, from the page's own view, so neither asks for anything more.
-pub(crate) fn page_for(shell: &str, root: &Path, base: &str, banner: &str, reader: &Reader) -> String {
+pub(crate) fn page_for(
+    shell: &str,
+    root: &Path,
+    base: &str,
+    banner: &str,
+    reader: &Reader,
+) -> String {
     let project = Project::of(root);
     let package = Package::of(&project);
     let mut page = shell.to_string();

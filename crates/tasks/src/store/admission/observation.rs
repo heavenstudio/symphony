@@ -252,7 +252,17 @@ impl Store {
         let guarded = !slots.is_empty();
         // No holder's roles relied on, as an attempt names none, and no session to check is still
         // there: the board's write, said by its recovery service.
-        let mut vars = vars(decided, recovery, "", None, Vec::new(), slots, BOARD, false, at);
+        let mut vars = vars(
+            decided,
+            recovery,
+            "",
+            None,
+            Vec::new(),
+            slots,
+            BOARD,
+            false,
+            at,
+        );
         vars["sender"] = json!(sender(principal));
         if let Some(why) = why {
             vars["said"] = json!(format!("{}; {why}", said(recovery, "")));

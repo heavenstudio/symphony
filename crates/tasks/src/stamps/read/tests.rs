@@ -740,7 +740,10 @@ fn the_owner_stamp_names_the_machines_person_by_how_they_are_shown() {
             (true, Some(by), "Approved by Stefano at 4be91c2")
         );
         let stale = owner_by(&theirs, LATER, &alone, machine);
-        assert_eq!(stale.detail, "Stefano approved 4be91c2, not the tip 7c0ffee");
+        assert_eq!(
+            stale.detail,
+            "Stefano approved 4be91c2, not the tip 7c0ffee"
+        );
     }
     assert_eq!(
         owner_by(&[], TIP, &alone, machine).detail,
@@ -761,7 +764,10 @@ fn the_owner_stamp_names_the_machines_person_by_how_they_are_shown() {
         },
         by: "owner".into(),
     });
-    assert_eq!(cards.detail, "Approved by Stefano on card layout, at 4be91c2");
+    assert_eq!(
+        cards.detail,
+        "Approved by Stefano on card layout, at 4be91c2"
+    );
     let changed = owner_with_by(&[], TIP, &alone, machine, || Approval {
         posted: Posted::Changed {
             cards: strings(&["layout"]),

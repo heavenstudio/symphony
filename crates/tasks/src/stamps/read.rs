@@ -16,8 +16,8 @@
 use super::posted::{self, Approval, Posted};
 use super::{Catalogue, Needs, short};
 use crate::Message;
-use crate::people::MachinePerson;
 use crate::cli::machine_work::recorded::{Phase, Record, Step};
+use crate::people::MachinePerson;
 use std::path::Path;
 
 /// The route the owner's uploads are served under, `<sha256>.<ext>` after it, whatever the
@@ -499,7 +499,8 @@ pub fn owner_by(
     let approves = thread.iter().filter(|post| approves_by(post, deciders));
     let at_tip = short(tip);
     let Some((post, reading)) = newest(approves, tip, |post| post.sender.clone()) else {
-        let others = (deciders.iter()).any(|name| machine.is_none_or(|machine| *name != machine.name));
+        let others =
+            (deciders.iter()).any(|name| machine.is_none_or(|machine| *name != machine.name));
         let waits = if others {
             "an approve of the owner's or a decider's".to_string()
         } else {
@@ -514,7 +515,10 @@ pub fn owner_by(
     // A sentence starts with the owner as `The owner`, and with a person's name as it is.
     let first = MachinePerson::first(&post.sender, machine);
     let detail = match (reading.met, reading.commit.as_deref()) {
-        (true, _) => format!("Approved by {} at {at_tip}", MachinePerson::said(&post.sender, machine)),
+        (true, _) => format!(
+            "Approved by {} at {at_tip}",
+            MachinePerson::said(&post.sender, machine)
+        ),
         (false, Some(commit)) => {
             format!("{first} approved {}, not the tip {at_tip}", short(commit))
         }

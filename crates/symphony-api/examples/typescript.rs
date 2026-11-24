@@ -262,6 +262,8 @@ fn page_declarations(cfg: &Config) -> Vec<Declared> {
         // The People page's.
         declared::<api::PeoplePage>(cfg),
         declared::<api::PersonRow>(cfg),
+        declared::<api::Addresses>(cfg),
+        declared::<api::NoticeWay>(cfg),
         declared::<api::GroupRow>(cfg),
         declared::<api::WithheldPower>(cfg),
         declared::<api::PeopleLogLine>(cfg),
@@ -2657,8 +2659,9 @@ fn settings_stored() -> Vec<api::StoredSetting> {
 }
 
 /// The People page as the person at the machine reads it: Ana, given speak and deciding by the
-/// group staff, signing in by two services; Bo, who has no profile, given administer; Cy, a
-/// reader; the group staff; and the log of every change that made them.
+/// group staff, signing in by two services, reached by mail and Slack, her cards by Slack and her
+/// verdicts by mail; Bo, who has no profile, given administer; Cy, a reader who set nothing for
+/// notices; the group staff; and the log of every change that made them.
 fn people() -> api::PeoplePage {
     let words = |powers: &[&str]| powers.iter().map(|power| (*power).to_string()).collect();
     let person = |name: &str, display: &str, powers: &[&str], own: &[&str], groups: &[&str]| {
@@ -2681,12 +2684,29 @@ fn people() -> api::PeoplePage {
             group: group.map(Into::into),
             powers: words(powers),
         };
+    let notices = |ways: [Option<&str>; 3]| {
+        let kinds = ["card", "question", "verdict"];
+        let ways = kinds
+            .into_iter()
+            .zip(ways)
+            .map(|(kind, way)| api::NoticeWay {
+                kind: kind.into(),
+                way: way.map(Into::into),
+            });
+        Some(ways.collect())
+    };
     api::PeoplePage {
         people: vec![
             api::PersonRow {
                 signins: words(&["tailscale", "github"]),
                 git: words(&["ana-lima"]),
                 profile: true,
+                addresses: Some(api::Addresses {
+                    email: Some("ana@example.com".into()),
+                    slack: Some("U024BE7LH".into()),
+                    whatsapp: None,
+                }),
+                notices: notices([Some("slack"), None, Some("email")]),
                 ..person(
                     "ana",
                     "Ana Lima",
@@ -2699,6 +2719,8 @@ fn people() -> api::PeoplePage {
             api::PersonRow {
                 signins: words(&["tailscale"]),
                 profile: true,
+                addresses: Some(api::Addresses::default()),
+                notices: notices([None, None, None]),
                 ..person("cy", "Cy Okafor", &["read"], &["read"], &[])
             },
         ],

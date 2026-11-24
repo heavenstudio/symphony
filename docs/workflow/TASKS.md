@@ -2367,7 +2367,18 @@ as it did before. That person stays `owner`, with every power, once others are n
 - **A profile is the machine's**, not the board's: `people.json` in the machine folder, with its
   lock `people.lock`, both mode 600, holding each person's display name, sign-ins
   (`SERVICE:SUBJECT`, each one person's alone, matched ignoring case), git handles, emails, chat and
-  preferences. A git handle is not one person's alone: a person writes their own, and nothing checks
+  preferences.
+- **Where a notice reaches a person** is their profile's: `emails`, the first the one a notice by
+  mail goes to; `chat`, their Slack member id under `slack` and their WhatsApp number under
+  `whatsapp`; and `preferences`, the way each kind of notice goes by (`card`, `question` or
+  `verdict` to `email`, `slack` or `whatsapp`). A kind with no way goes by none, as the page and
+  the Mac app show every notice. Each address is held to the rule its notice plugin sends by
+  ([NOTICES](../engineering/NOTICES.md#ways-and-addresses)), a WhatsApp number kept as `+` and its
+  digits, and a refusal says the rule, never the address. `chat` and `preferences` read any JSON, so
+  a file written before they had a meaning reads as it did: a value is an address or a way only
+  where it is text its rule takes. `Profiles::reach` is the server's read of where one notice of
+  theirs goes, the way and the address, which nothing prints: `list` shows no address and no way,
+  and no agent or project plugin is handed one. A git handle is not one person's alone: a person writes their own, and nothing checks
   that no other profile holds it, so nothing decides by a git handle alone whose commit or write
   something is (a plugin is told them as the sender's, never as proof). A board and its copies hold
   none of it. The board's log and the server's log lines name the short name, never a sign-in's
@@ -2414,14 +2425,21 @@ could match each spelling, and Codex's rules take no word but those they name.
 - `join NAME GROUP`, `leave NAME GROUP`, `grant NAME POWER…`, `revoke NAME POWER…`, `grant --group
   GROUP POWER…`, `revoke --group GROUP POWER…`, `group add GROUP [POWER…]`, `group remove GROUP`
   (its members are out of it).
-- `profile NAME [--display D] [--signin …]… [--git H]…`: the profile alone, on no board.
+- `profile NAME [--display D] [--signin …]… [--git H]… [--email E] [--slack ID] [--whatsapp N]
+  [--notice KIND=WAY]…`: the profile alone, on no board. `--email` puts the email first,
+  `--slack` and `--whatsapp` set those addresses, each an empty one taking it away, and `--notice
+  card=slack` sends that kind by that way, `card=` by none. `add` takes them too.
 
 ### The People page
 
 `/people`, after Settings in the header, shows whoever is on the board its people, each with the
 powers they hold, their own told apart from their groups' by a word as well as an edge, their
 groups, the services they sign in by and their git handles; its groups; and its log, newest first.
-It shows no sign-in's subject, no email and no chat address to anyone. Its controls are drawn for
+It shows no sign-in's subject to anyone. A person's addresses (the email a notice goes to, their
+Slack member id and WhatsApp number) are shown to them, to the person at the machine and to the
+board's admins, and the way each kind of notice goes by to them and the person at the machine
+alone: anyone else's answer carries neither, on the wire as on the page. Their card's Notices,
+beside its Profile, sets both. Its controls are drawn for
 whoever holds `administer`, as the person at the machine always does: a person added with a display
 name, git handles, powers and groups (and sign-ins, by the person at the machine alone), put in a
 group or taken out of one, given a power or one taken back, taken off the board; a group made, given
@@ -2439,9 +2457,11 @@ refused it ([the server guide](../../apps/symphony-server/README.md)).
 Who writes a profile:
 
 - the person at the machine writes any profile, its sign-ins among them;
-- a person writes their own display name and git handles, from their own row, and no sign-in;
+- a person writes their own display name, git handles, addresses and the ways their notices go
+  by, from their own row, and no sign-in;
 - a board's admin makes a profile only for someone the machine holds none of, with a display
-  name and git handles and no sign-in: someone who has one is added as their profile is, and an
+  name and git handles and no sign-in, address or way, as where a person's notices go is theirs
+  to say: someone who has one is added as their profile is, and an
   add that names a display name or a git handle for them is refused, with nothing written;
 - a sign-in is the person at the machine's alone to give, to a new profile as to an existing
   one, as a sign-in says who a visitor is on every board of the machine holding the name, now

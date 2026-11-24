@@ -173,7 +173,10 @@ fn a_persons_entry_names_them_and_the_owners_or_any_word_no_short_name_names_no_
         assert!(!written.contains("person"), "{none:?}: {written}");
         assert!(!written.contains("machine"), "{none:?}: {written}");
     }
-    assert_eq!(Delivery::saved_by(&tree.root, &person(" ana ")).acting(), "ana");
+    assert_eq!(
+        Delivery::saved_by(&tree.root, &person(" ana ")).acting(),
+        "ana"
+    );
     assert!(!written_of(&Delivery::saved_by(&tree.root, &person("ana"))).contains("machine"));
 }
 

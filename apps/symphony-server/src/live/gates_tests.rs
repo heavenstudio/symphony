@@ -704,7 +704,10 @@ fn the_machines_persons_approve_under_their_name_meets_the_owner_stamp() {
         let (status, offer) = ask("/api/task-offer?slug=tools/own");
         assert_eq!(status, StatusCode::OK, "{offer}");
         shared.stop();
-        let gate = gates(&answer).into_iter().find(|gate| gate.0 == "owner").unwrap();
+        let gate = gates(&answer)
+            .into_iter()
+            .find(|gate| gate.0 == "owner")
+            .unwrap();
         (gate, offer["payload"].clone())
     };
     assert_eq!(

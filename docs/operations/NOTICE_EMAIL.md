@@ -13,7 +13,8 @@ The plugin sends the notice it is handed. Nothing hands it one yet: the server's
 told, of what and by which way, the settings that name each way's program, and its hand again
 after a `75`) is step 4 of
 [the way from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner), and
-the address it sends to will be the email in the person's profile. Until then it is set up as
+the address it sends to is the first email in the person's profile, which they write on the
+People page held to the plugin's own rule ([TASKS](../workflow/TASKS.md#the-people-page)). Until then it is set up as
 below and [checked by hand](#checking-it).
 
 ## What it needs
@@ -52,7 +53,8 @@ there, each named for its way.
   `chmod 600`. It is there exactly when the settings name a `user`.
 
 A folder or a file that is a link, or that others can read, is refused before anything in it is
-read, and nothing is sent: keep the folder and the files themselves there. Settings that do not
+read, and nothing is sent: keep the folder and the files themselves there. A file is opened without
+following a link, and its mode is read from the file opened, so the file checked is the file read. Settings that do not
 read are refused by their line, never by what it holds: a key the settings do not know (a
 password in `email.toml` is such a key) is said only to be one, and a value of another type than
 its key takes is named by its key.

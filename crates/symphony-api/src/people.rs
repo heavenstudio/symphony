@@ -3,11 +3,16 @@
 //! the groups and the log of every change, and what the one reading may change there. `POST`
 //! [`PEOPLE_CHANGE_PATH`] takes a [`PeopleChange`], one change of the board's people, which needs
 //! the administer power; `POST` [`PROFILE_PATH`] takes a [`ProfileWrite`], a person's own display
-//! name and git handles, or any profile for the person at the machine. Both answer the page as the
-//! change left it, or a refusal that says why with nothing written.
+//! name, git handles, addresses and the ways their notices go by, or any profile for the person at
+//! the machine. Both answer the page as the change left it, or a refusal that says why with nothing
+//! written.
 //!
-//! A sign-in is named by its service alone: no answer carries a sign-in's subject, an email or a
-//! chat address. A power is the word the board writes (`decide`, `direct_agents`).
+//! A sign-in is named by its service alone: no answer carries a sign-in's subject. A person's
+//! addresses ([`PersonRow::addresses`]) are in the answer of the person themself, of the person at
+//! the machine and of the board's admins, and the ways their notices go by
+//! ([`PersonRow::notices`]) in the person's and the person at the machine's alone: anyone else's
+//! answer carries neither field. A power is the word the board writes (`decide`,
+//! `direct_agents`).
 
 use serde::{Deserialize, Serialize};
 
@@ -90,6 +95,41 @@ pub struct PersonRow {
     pub git: Vec<String>,
     /// Whether the machine holds a profile of theirs.
     pub profile: bool,
+    /// Where their notices reach them: in the answer of the person themself, of the person at the
+    /// machine and of the board's admins; in no one else's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addresses: Option<Addresses>,
+    /// The way each kind of notice goes by, every kind the board knows in its order: in the answer
+    /// of the person themself and of the person at the machine; in no one else's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notices: Option<Vec<NoticeWay>>,
+}
+
+/// A person's addresses, each the one a notice by its way goes to, and none where they hold none.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct Addresses {
+    /// The email a notice by mail goes to: the first of their emails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    /// Their Slack member id (`U024BE7LH`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slack: Option<String>,
+    /// Their WhatsApp number, `+` and its digits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp: Option<String>,
+}
+
+/// The way one kind of notice goes by.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct NoticeWay {
+    /// The kind, as a notice writes it: `card`, `question`, `verdict`.
+    pub kind: String,
+    /// The way it goes by, `email`, `slack` or `whatsapp`; none where it goes by none, as the page
+    /// and the Mac app show every notice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub way: Option<String>,
 }
 
 /// A power the board gives no one yet.
@@ -195,6 +235,19 @@ pub struct ProfileWrite {
     /// Sign-ins added to it, each `SERVICE:SUBJECT`: the person at the machine's alone to give.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub signins: Vec<String>,
+    /// The email a notice by mail goes to, put first among their emails; an empty one takes the
+    /// first away.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    /// Their Slack member id; an empty one takes it away.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slack: Option<String>,
+    /// Their WhatsApp number, `+` and its country code; an empty one takes it away.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp: Option<String>,
+    /// The ways kinds of notice go by, each kind named set: a way of none sends it by none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<NoticeWay>,
     /// Whether it gives the person at the machine `name` as their own short name, once and for
     /// good: theirs alone to ask, and refused once they have one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

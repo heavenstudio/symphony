@@ -258,7 +258,10 @@ impl<'a> Evidence<'a> {
             let machine = crate::people::machine_person_in(|name| {
                 env.var(name).map(std::ffi::OsString::from)
             });
-            (crate::people::with_machine(store.deciders(), machine.as_ref()), machine)
+            (
+                crate::people::with_machine(store.deciders(), machine.as_ref()),
+                machine,
+            )
         } else {
             (Vec::new(), None)
         };

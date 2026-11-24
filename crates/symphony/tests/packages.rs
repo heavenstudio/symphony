@@ -51,8 +51,9 @@ const PRODUCT: [&str; 5] = [
 /// The files a published package carries as a copy of one outside it, which it cannot read from
 /// there once packaged, each beside the file it copies: the copy first. The client's stylesheets
 /// are its package's, which the server's does not carry, and the board's fixtures find the source
-/// root by the descriptor-closing script where it is, so neither can move.
-const COPIES: [(&str, &str); 3] = [
+/// root by the descriptor-closing script where it is, so neither can move. The ways a notice goes
+/// by and their addresses' rules are the notice crate's, which the published board cannot link.
+const COPIES: [(&str, &str); 4] = [
     (
         "apps/symphony-server/src/board.css",
         "apps/symphony-web/src/styles/board.css",
@@ -64,6 +65,10 @@ const COPIES: [(&str, &str); 3] = [
     (
         "crates/chrome-devtools/src/fixture_process.sh",
         "tools/fixture_process.sh",
+    ),
+    (
+        "crates/tasks/src/people/ways.rs",
+        "crates/symphony-notice/src/ways.rs",
     ),
 ];
 

@@ -145,7 +145,10 @@ pub fn word(lines: &[OwnerLine], since: f64) -> Word<'_> {
 /// `ana decided NAME (approve)` for a person `by` names, the person at the machine (`machine`) by
 /// how they are shown once they gave themselves a name ([`MachinePerson::said`]).
 pub fn decided_why(name: &str, word: &str, by: &str, machine: Option<&MachinePerson>) -> String {
-    format!("{} decided {name} ({word})", MachinePerson::said(by, machine))
+    format!(
+        "{} decided {name} ({word})",
+        MachinePerson::said(by, machine)
+    )
 }
 
 /// Why a block on the owner's approve ended, by the approve of `by` naming `tip`, `the owner
@@ -367,13 +370,10 @@ fn approve(
     let Some(tip) = tip(root, slug) else {
         return;
     };
-    match store
-        .thread(slug)
-        .map(|thread| {
-            let deciders = symphony_board::people::with_machine(store.deciders(), machine);
-            approves(&thread, &tip, root, &deciders, machine)
-        })
-    {
+    match store.thread(slug).map(|thread| {
+        let deciders = symphony_board::people::with_machine(store.deciders(), machine);
+        approves(&thread, &tip, root, &deciders, machine)
+    }) {
         Ok(Some(why)) => resume(store, slug, block, &why, looked),
         Ok(None) => {}
         Err(error) => looked

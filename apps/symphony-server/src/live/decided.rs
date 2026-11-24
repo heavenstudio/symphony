@@ -31,7 +31,14 @@ impl Hub {
             return false;
         };
         let machine = self.gates.machine_person();
-        let looked = kept.look(store, &self.root, board, &said, (self.clock)(), machine.as_ref());
+        let looked = kept.look(
+            store,
+            &self.root,
+            board,
+            &said,
+            (self.clock)(),
+            machine.as_ref(),
+        );
         for line in &looked.lines {
             eprintln!("BLOCKS {line}");
         }

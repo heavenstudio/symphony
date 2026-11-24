@@ -268,6 +268,13 @@ fn a_value_of_another_type_is_refused_by_its_key_and_never_said() {
 }
 
 #[test]
+fn a_bad_unicode_escape_is_said_as_the_syntax_error_it_is() {
+    let refused = with("language", "\"\\uD800\"").unwrap_err();
+    assert!(refused.starts_with("line 3: invalid value"), "{refused}");
+    assert!(!refused.contains("another type"), "{refused}");
+}
+
+#[test]
 fn a_key_with_no_default_is_needed() {
     for (key, missing) in [
         ("phone_number_id", "phone_number_id = \"1234567890\""),
@@ -437,6 +444,18 @@ fn the_token_is_read_from_its_file_its_owners_alone_and_never_said() {
     let missing = settings.token().unwrap_err();
     assert!(missing.starts_with(&format!("{named}: ")), "{missing}");
     fs::create_dir(&file).unwrap();
+    assert_eq!(
+        settings.token().unwrap_err(),
+        format!("{named} is not a file")
+    );
+    // A FIFO is opened without waiting for a writer, seen to be no file and never read.
+    fs::remove_dir(&file).unwrap();
+    let made = std::process::Command::new("mkfifo")
+        .args(["-m", "600"])
+        .arg(&file)
+        .status()
+        .unwrap();
+    assert!(made.success());
     assert_eq!(
         settings.token().unwrap_err(),
         format!("{named} is not a file")

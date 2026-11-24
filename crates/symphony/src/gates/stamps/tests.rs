@@ -796,13 +796,23 @@ fn the_owner_gate_names_the_machines_person_by_how_they_are_shown() {
             tip: Some(TIP),
             cards: &[],
         };
-        let gates = read_deciding(&record, &read, &catalogue, &deciders, Some(&stefano), &nothing);
+        let gates = read_deciding(
+            &record,
+            &read,
+            &catalogue,
+            &deciders,
+            Some(&stefano),
+            &nothing,
+        );
         let owner = gates.into_iter().find(|gate| gate.name == "owner").unwrap();
         (owner.state, owner.detail)
     };
     assert_eq!(
         owner_gate(&[]),
-        (GateState::Held, "Waits on Stefano's approve of 4be91c2".to_string())
+        (
+            GateState::Held,
+            "Waits on Stefano's approve of 4be91c2".to_string()
+        )
     );
     for by in ["owner", "stefano"] {
         let theirs = [line(4, "msg", by, &format!("approve {TIP}"))];

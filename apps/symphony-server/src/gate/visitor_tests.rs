@@ -425,7 +425,10 @@ fn the_person_at_the_machine_writes_under_the_name_their_profile_gives_them() {
     for address in ["127.0.0.1", OWN_IP, PHONE_IP] {
         let visitor = gate.visitor(ip(address)).unwrap();
         assert_eq!(visitor, Visitor::Machine, "{address}");
-        assert_eq!(gate.member(Path::new("/alpha"), &visitor), Some(named.clone()));
+        assert_eq!(
+            gate.member(Path::new("/alpha"), &visitor),
+            Some(named.clone())
+        );
     }
     assert_eq!(
         gate.machine_person(),
@@ -449,9 +452,15 @@ fn the_machine_is_on_a_tailnet_while_its_status_lists_its_names() {
     assert!(Judge::new(&[Ok(STATUS)]).gate.tailnet());
     let failing = Judge::new(&[Err(TIMED_OUT)]);
     assert!(!failing.gate.tailnet(), "no answer yet: no tailnet");
-    assert!(!Judge::new(&[Ok("{}")]).gate.tailnet(), "an answer naming no node");
+    assert!(
+        !Judge::new(&[Ok("{}")]).gate.tailnet(),
+        "an answer naming no node"
+    );
     let kept = Judge::new(&[Ok(STATUS), Err(TIMED_OUT)]);
     assert!(kept.gate.tailnet());
-    assert!(kept.after(TTL).gate.tailnet(), "a failed refresh keeps the last answer");
+    assert!(
+        kept.after(TTL).gate.tailnet(),
+        "a failed refresh keeps the last answer"
+    );
     assert_eq!(kept.unasked(), 0);
 }

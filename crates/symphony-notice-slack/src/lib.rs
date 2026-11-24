@@ -42,7 +42,7 @@ pub fn send(notice: &Notice, folder: Result<PathBuf, String>, api: &str) -> Resu
             to.way()
         )));
     }
-    if !slack::member(to.address()) {
+    if !symphony_notice::ways::slack(to.address()) {
         return Err(Unsent::Never(
             "the address is no Slack member id (U or W, then capital letters and digits)".into(),
         ));

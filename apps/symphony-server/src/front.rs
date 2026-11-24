@@ -533,10 +533,9 @@ impl Admitted {
         shared: &Shared,
         extensions: &axum::http::Extensions,
     ) -> symphony_plugin::Actor {
-        extensions.get::<Admitted>().map_or_else(
-            || shared.gate.person(),
-            |admitted| admitted.actor.clone(),
-        )
+        extensions
+            .get::<Admitted>()
+            .map_or_else(|| shared.gate.person(), |admitted| admitted.actor.clone())
     }
 
     /// Whether a request whose extensions are `extensions` is the person at the machine's: as a
