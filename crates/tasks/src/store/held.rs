@@ -1,0 +1,184 @@
+//! Words held for people ([`crate::held`]): a person's message held with the board's line that says
+//! so, a held message passed on, and the reads of a task's held messages, in the table of
+//! [`crate::schema::HELD`]. A board without the step holds nothing: its reads find none, and a hold
+//! or a pass there is refused by the schema's guard before anything is written.
+
+use super::messages::{BOARD, Poster};
+use super::postgres::held as pg;
+use super::statement::Statement;
+use super::work::{OWNER, ROLES};
+use super::{Error, Failure, REFUSED, Store, refused, repr};
+use crate::held::{Held, MARKER, Said, passed_text};
+use crate::people::Power;
+use serde_json::{Value, json};
+
+impl Store {
+    /// `sender`'s message on `slug`'s thread, which waits on an agent's answer: said as
+    /// [`Store::say_asking_as`] says it where they may direct agents (the owner always does), and
+    /// held for people ([`Store::hold_words`]) where they are a person a board named who may not.
+    /// A person who may direct agents and may not decide is refused a line that would read as an
+    /// approve ([`crate::stamps::read::reads_as_approve`]), with nothing written: the `owner` stamp
+    /// counts a decider's approve by their powers when it is read, so it would count once they
+    /// were given decide. Their held words, passed on, read as the passer's first
+    /// ([`crate::held::passed_text`]), never as an approve.
+    pub fn say_or_hold_as(
+        &self,
+        slug: &str,
+        sender: &str,
+        text: &str,
+        to: Option<&str>,
+    ) -> Result<Said, Error> {
+        if sender == OWNER || !self.is_person(sender) {
+            return self.say_asking_as(slug, sender, text, to).map(Said::Line);
+        }
+        let powers = self.people()?.powers_of(sender);
+        if !powers.holds(Power::DirectAgents) {
+            return self.hold_words(slug, sender, text, to).map(Said::Held);
+        }
+        if !powers.holds(Power::Decide) && crate::stamps::read::reads_as_approve(text) {
+            return Err(refused(format!(
+                "{sender} may not decide on this board, and a line of theirs that starts with \
+                 approve reads as one: nothing was written"
+            )));
+        }
+        self.say_asking_as(slug, sender, text, to).map(Said::Line)
+    }
+
+    /// Whether `name` may direct the board's agents: the owner, a session (an agent's own words
+    /// are no person's), or a person the board gives the power to.
+    pub fn may_direct_agents(&self, name: &str) -> Result<bool, Error> {
+        if name == OWNER || !self.is_person(name) {
+            return Ok(true);
+        }
+        Ok(self.people()?.powers_of(name).holds(Power::DirectAgents))
+    }
+
+    /// `author`'s message `text` on `slug`'s thread, to `to` (a role, a session or nobody), held for
+    /// people: the row, and the board's line to `owner` saying a message is held, whose number is
+    /// the row's ([`crate::held`]). No agent is handed the words. Refused, with nothing written: an
+    /// author who is not a person this store writes for ([`Store::for_person`]; the owner's words
+    /// are never held), an empty text, a task, role or session that is not there, and a board
+    /// without the step.
+    pub fn hold_words(
+        &self,
+        slug: &str,
+        author: &str,
+        text: &str,
+        to: Option<&str>,
+    ) -> Result<Held, Error> {
+        if author == OWNER || !self.is_person(author) {
+            return Err(refused(format!(
+                "only a person's words are held, and {} writes as no person here: nothing was \
+                 written",
+                repr(author)
+            )));
+        }
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(refused("an empty message says nothing".into()));
+        }
+        let mut vars = self.acting(
+            author,
+            self.now(),
+            json!({
+                "slug": slug, "sender": BOARD, "author": author, "text": text, "to": to,
+                "marker": MARKER,
+            }),
+        );
+        addressed(&mut vars, slug, to);
+        let body = || Statement::from(pg::hold()).posting().naming(&pg::TABLES);
+        self.retrying(|| self.transact(body(), vars.clone()))
+    }
+
+    /// The held message `id` on `slug`'s thread, passed on by `by`: the owner or the person this
+    /// store writes for, or a session, which is the person at the machine's own agent. In one
+    /// write its words go on the thread under its author's name, marked a person's, to whom they
+    /// were written, with the passer first ([`passed_text`]), opening or joining the task's ask as
+    /// a person's message does, and the row is marked passed with that line's number. Refused, with
+    /// nothing written: no such message held on the task, one passed already (naming who passed
+    /// it), a session that is not on the board, and a board without the step. Whether `by` may
+    /// direct agents is its caller's to have checked, as every power is
+    /// (`apps/symphony-server/src/powers.rs`).
+    pub fn pass(&self, slug: &str, id: i64, by: &str) -> Result<Held, Error> {
+        let held = (self.held_on(slug)?.into_iter())
+            .find(|held| held.id == id)
+            .ok_or_else(|| none_held(slug, id))?;
+        let text = passed_text(by, &held.text);
+        let to = held.to.as_deref();
+        let (task_about, task_words) = super::asks::on_thread_vars(slug, &text);
+        let mut vars = self.acting(
+            by,
+            self.now(),
+            json!({
+                "slug": slug, "id": id, "by": by, "sender": held.author, "text": text, "to": to,
+                "task_about": task_about, "task_words": task_words, "asking": true,
+                "none_held": format!("{REFUSED}{}", none_held_text(slug, id)),
+                "passed_already": format!(
+                    "{REFUSED}message #{id} on {slug} was passed on already, by %s: nothing was \
+                     written"
+                ),
+            }),
+        );
+        // The line is its author's, a person's whoever passes it.
+        vars["by_person"] = held.author.clone().into();
+        addressed(&mut vars, slug, to);
+        let poster = if self.is_person(by) {
+            Poster::Owner
+        } else {
+            Poster::Session
+        };
+        let body = || {
+            Statement::from(pg::pass(poster))
+                .posting()
+                .naming(&pg::TABLES)
+        };
+        self.retrying(|| self.transact(body(), vars.clone()))
+    }
+
+    /// The messages held on `slug`, passed on or not, oldest first: none on a board without the
+    /// step. A person's read alone: no agent is handed what it answers.
+    pub fn held_on(&self, slug: &str) -> Result<Vec<Held>, Error> {
+        self.retrying(|| {
+            let answer = self.request(Statement::from(pg::on_task()), json!({"slug": slug}));
+            let answer = answer.map_err(Failure::from)?;
+            let answer = answer.last().cloned().unwrap_or(Value::Null);
+            crate::objects::read(&answer)
+                .map_err(|e| Failure::Stop(Error::Db(format!("the held messages: {e}"))))
+        })
+    }
+
+    /// How many messages on `slug` are held and not passed on: what an agent is told of them.
+    pub fn held_count(&self, slug: &str) -> Result<u64, Error> {
+        self.retrying(|| {
+            let answer = self.request(Statement::from(pg::count()), json!({"slug": slug}));
+            let answer = answer.map_err(Failure::from)?;
+            let count = answer.last().and_then(Value::as_u64).unwrap_or(0);
+            Ok(count)
+        })
+    }
+}
+
+/// The variables a line to `to` on `slug`'s thread is checked by, as a post's: a role it names
+/// that is none, and a session's handle it names, refused if no session has it.
+fn addressed(vars: &mut Value, slug: &str, to: Option<&str>) {
+    let role = to.and_then(|to| to.strip_prefix('@'));
+    if let Some(role) = role.filter(|role| !ROLES.contains(role)) {
+        let roles: Vec<String> = ROLES.iter().map(|r| format!("@{r}")).collect();
+        vars["no_role"] =
+            format!("{REFUSED}no role @{role}; use one of {}", roles.join(", ")).into();
+    }
+    if let Some(handle) = to.filter(|to| *to != OWNER && role.is_none()) {
+        vars["handle"] = handle.into();
+        vars["nobody"] = format!("{REFUSED}no session {} to send to", repr(handle)).into();
+    }
+    vars["no_task"] = format!("{REFUSED}{}", super::work::no_task(slug)).into();
+}
+
+fn none_held_text(slug: &str, id: i64) -> String {
+    format!("no message #{id} is held on {slug}: nothing was written")
+}
+
+/// The refusal of a pass of `id`, which no message held on `slug` has.
+fn none_held(slug: &str, id: i64) -> Error {
+    refused(none_held_text(slug, id))
+}

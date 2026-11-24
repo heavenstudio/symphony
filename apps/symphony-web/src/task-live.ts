@@ -26,6 +26,7 @@ import { field, holdPlace, list } from "./shared";
 import { holderHealth, merge, readItemChange, readListing, readTaskChange } from "./task";
 import { heardEntry, readHistory, readOffer, readTaskPage } from "./task-read";
 import {
+  type HeldWords,
   type ItemChange,
   type MachineWork,
   TASK_GATES_PATH,
@@ -100,14 +101,37 @@ export function gatesBranch(slug: string, answered: readonly [string, string] | 
   return answered !== null && answered[0] === slug ? answered[1] : slug;
 }
 
-/** `entries` with each of `page` it lacks, in id order. */
+/**
+ * `entries` with each of `page` it lacks, in id order. A message held for people that `page` says
+ * more of is taken as `page` says it: on the board's line for it as `page` sends that line, and
+ * passed on as the line its words became says, which is how a page hears a pass.
+ */
 export function withEntries(
   entries: readonly TaskEntry[],
   page: readonly TaskEntry[],
 ): TaskEntry[] {
   const shown = new Set(entries.map((entry) => entry.message.id));
   const added = page.filter((entry) => !shown.has(entry.message.id));
-  return [...entries, ...added].sort((a, b) => a.message.id - b.message.id);
+  return [...heldAs(entries, page), ...added].sort((a, b) => a.message.id - b.message.id);
+}
+
+/** `entries` with each held message as `page` says it, where it says one, as the same object where
+ * it says nothing new. */
+function heldAs(entries: readonly TaskEntry[], page: readonly TaskEntry[]): TaskEntry[] {
+  const said = new Map<number, HeldWords>();
+  for (const entry of page) {
+    const held = entry.held ?? null;
+    if (held !== null && (held.id === entry.message.id || (held.passed_by ?? null) !== null)) {
+      said.set(held.id, held);
+    }
+  }
+  return entries.map((entry) => {
+    const held = entry.held ?? null;
+    const now = said.get(entry.message.id);
+    return held === null || now === undefined || held.passed_by === now.passed_by
+      ? entry
+      : { ...entry, held: now };
+  });
 }
 
 /** `tasks` with `change` made: a task removed, replaced or added last. */
@@ -326,23 +350,22 @@ export function rejoined(answer: Thread, held: Thread): Thread {
   };
 }
 
-/** What the feed's `changes` leave of the thread of `slug`: each of its messages, once. */
+/** What the feed's `changes` leave of the thread of `slug`: each of its messages, once, and a
+ * message held for people passed on as the line its words became says. */
 export function hearThread(
   slug: string,
   thread: Thread | undefined,
   changes: readonly Change[],
 ): Heard<Thread> | null {
   if (thread === undefined) return null;
-  const held = new Set(ids(thread.entries));
   const came = changes.flatMap((change) =>
-    change.region === "message" &&
-    change.entry.message.slug === slug &&
-    !held.has(change.entry.message.id)
-      ? [change.entry]
-      : [],
+    change.region === "message" && change.entry.message.slug === slug ? [change.entry] : [],
   );
-  if (came.length === 0) return null;
-  return { value: { ...thread, entries: withEntries(thread.entries, came) } };
+  const entries = withEntries(thread.entries, came);
+  const same =
+    entries.length === thread.entries.length &&
+    entries.every((entry, at) => entry === thread.entries[at]);
+  return same ? null : { value: { ...thread, entries } };
 }
 
 /** The newest page of the thread of the task `slug`: the part of the page that matters most. */

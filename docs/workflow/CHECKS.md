@@ -1015,10 +1015,13 @@ settles documents alone or given afresh for the merged tip
 ([TASKS](TASKS.md#the-default-landing)), leaves
 the candidate on the commit approved before the merge; a fix that needed no review has none, so
 its land then drops the candidate. One that merges main before any approve gives the candidate
-nothing it can take, and drops it. Where a pull request delivers it, a fix that changes what the
-client is built from merges main once before its land, from a second head after its first is
-approved, keeping main's side of the generated paths, and that head is assessed, tested and
-approved as any new head ([RELEASES](RELEASES.md#the-release-candidate)).
+nothing it can take, and drops it. Where a pull request delivers it, the fix never merges
+`release-candidate`, which an advance moves to a head main's history does not hold: one started
+before that advance is rebased onto it while not yet published or approved, a new head whose
+evidence and approve are its own, and left as it is after, its land dropping the candidate. And
+a fix that changes what the client is built from merges main once before its land, from a second
+head after its first is approved, keeping main's side of the generated paths, and that head is
+assessed, tested and approved as any new head ([RELEASES](RELEASES.md#the-release-candidate)).
 
 **At the land: nothing automatic, and nothing that blocks.** A land's only check on the merge is
 `[verdicts] check`, which this project turns off (`[land] check = false`, `symphony.toml`), for

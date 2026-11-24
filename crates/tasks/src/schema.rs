@@ -38,7 +38,8 @@
 //! read at each read of the settings. The second additive step on schema 28 is the index of
 //! `session` by `handle` (`session_handle`), where a session is read by its handle rather than by
 //! its id. The third marks a person's line ([`PERSON_LINES`]), the fourth keeps a board's people
-//! ([`PEOPLE`]) and the fifth which group a thing belongs to ([`OWNERSHIP`]).
+//! ([`PEOPLE`]), the fifth which group a thing belongs to ([`OWNERSHIP`]) and the sixth the words
+//! held for people ([`HELD`]).
 //!
 //! `writer` holds a program that opens the board to write, the schema it was built at and when it
 //! was last seen (`store/writers.rs`), from schema 18: builds of other schemas write it, and a line
@@ -129,6 +130,7 @@ pub const ADDED: &[Addition] = &[
     PERSON_LINES,
     PEOPLE,
     OWNERSHIP,
+    HELD,
 ];
 
 /// The step that marks a person's line ([`crate::rows::MessageRow::person`]): the nullable column
@@ -172,6 +174,23 @@ pub const OWNERSHIP: Addition = Addition {
     why: "the table ownership, the board's map of places to groups and its hand-overs \
           (crate::people::ownership): a build without it never reads or writes the table, so it \
           gives no card or task a group, as every build before it, and no rule on a table there \
+          before reads it",
+};
+
+/// The step that holds the words of a person who may not direct agents ([`crate::held`]): the table
+/// `held_message`, a row a message held for people, whole in its `doc`, with an index by its task.
+/// Its key is the number of the line the board puts on the task's thread for it, which says a
+/// message is held and nothing of it; no read of `message` reads the words.
+pub const HELD: Addition = Addition {
+    postgres: "CREATE TABLE IF NOT EXISTS held_message (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));\n\
+               CREATE INDEX IF NOT EXISTS held_message_slug ON held_message ((doc ->> 'slug'));",
+    tables: &["held_message"],
+    why: "the table held_message, the words of a person who may not direct agents, held for \
+          people until someone who may passes them on (crate::held): a build without it never \
+          reads or writes the table, so no agent it serves is handed them, the line the board put \
+          on the thread for each reads as any line, and it holds nobody's words, refusing a \
+          person without direct agents as every build before it did; no rule on a table there \
           before reads it",
 };
 

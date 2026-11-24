@@ -698,8 +698,11 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   which answers it once that land advanced the candidate; one covered by any other landing has
   its fix on main and not in the candidate, which is dropped. A red fixed outside this
   repository is answered by its task cancelled, saying where; one done otherwise waits for its
-  land. Where a pull request delivers it ([below](#a-land-delivered-by-a-pull-request)), a fix
-  that changes what the client is built from is the one branch that merges main before its land:
+  land. Where a pull request delivers it ([below](#a-land-delivered-by-a-pull-request)), the fix
+  never merges `release-candidate`, which an advance moves to a head main's history does not
+  hold: one started before that advance is rebased onto it while not yet published or approved,
+  a new head, and left as it is after, its land dropping the candidate. And a fix that changes
+  what the client is built from is the one branch that merges main before its land:
   once from a second head, after the head that commits its own outputs is approved
   ([RELEASES](RELEASES.md#the-release-candidate)).
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
@@ -2351,12 +2354,11 @@ as it did before. That person stays `owner`, with every power, once others are n
   a change, `people are not on this board yet`, with nothing written.
 - **The powers** are `read`, `speak`, `decide`, `direct_agents` and `administer`. Every power
   includes read, and a person holds their own and their groups'. A person listed with none reaches
-  nothing. `direct_agents` is given to no one yet: it is refused as a grant, a person's or a
-  group's, until a board holds the words of someone who may not direct agents (step 5 of [the way
-  from one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner)), so every
-  route that reaches the agents stays the person at the machine's. `administer` guards the
-  People page's changes ([below](#the-people-page)); the command is the terminal's, and an agent
-  is asked before it (below).
+  nothing. `direct_agents` has a person's words reach the board's agents and control their
+  attempts: one who holds it writes on a task as the person at the machine does, and the words of
+  one who may speak and may not are held for people ([below](#words-held-for-people)).
+  `administer` guards the People page's changes ([below](#the-people-page)); the command is the
+  terminal's, and an agent is asked before it (below).
 - **One name space.** A person's name and a group's are short names, as a line writes them
   ([REVIEW](REVIEW.md#card-history)), never `owner`, `agent`, `board` or
   `unknown`, never another person's or group's, never a handle any session on the board was
@@ -2396,11 +2398,12 @@ as it did before. That person stays `owner`, with every power, once others are n
 - **What each write needs**, read from the board as the write arrives, so a revoke holds from the
   next one: a card's verdict and its note, Later, a task's priority, field, cancel and action (the
   approve that is the `owner` stamp among them), a workflow's edge and a setting need `decide`; a
-  comment, a message, a task's message, an ask, its reply, the quick chat and a quick task need
-  `speak` and `direct_agents`; an upload needs `speak`; an attempt's controls need `decide` and
-  `direct_agents`; a change of the board's people needs `administer`, and a profile's write from the
-  People page and a hand-over ([below](#which-group-a-thing-belongs-to)) being on the board;
-  anything else is the person at the machine's alone. A refusal is a
+  comment, a message, an ask, its reply, the quick chat, a quick task and passing a held message on
+  (`/api/task-pass`) need `speak` and `direct_agents`; a task's message needs `speak`, held for
+  people where its writer lacks `direct_agents`; an upload needs `speak`; an attempt's controls
+  need `decide` and `direct_agents`; a change of the board's people needs `administer`, and a
+  profile's write from the People page and a hand-over ([below](#which-group-a-thing-belongs-to))
+  being on the board; anything else is the person at the machine's alone. A refusal is a
   403 naming the power, `Forbidden: ana may not decide on this board`, and nothing is written. A
   custom workflow's `owner` capability is held by each person holding `decide`, as by the person at
   the machine.
@@ -2408,10 +2411,11 @@ as it did before. That person stays `owner`, with every power, once others are n
   board, on the thread or on the cards, named as theirs: `Approved by ana at 1a2b3c4`. Who
   decides is read when the stamp is read. A revoke withdraws an approve its person gave, and a
   grant made after an approve counts that approve too. That is safe: while she lacked `decide`
-  the server refused her verdicts and her approve, and no route writes her words to the agents
-  yet, so no line of hers that reads as an approve was written through the Symphony while she
-  could not decide. A line committed into a document by hand is its committer's, as an owner's
-  line written so already is.
+  the server refused her verdicts and her approve, the board refuses her a task's message whose
+  first word is `approve`, and her held words passed on read as the passer's first (`[passed on
+  by bo] approve …`), so no line of hers that reads as an approve was written through the
+  Symphony while she could not decide. A line committed into a document by hand is its
+  committer's, as an owner's line written so already is.
 
 `just tasks-people … --as HANDLE` changes them, each change a line of the log naming `--as`; a
 change of nothing writes nothing, and a refusal says why and writes nothing, on the board or in
@@ -2484,6 +2488,41 @@ nobody, every thing is the person at the machine's, and nothing of this is drawn
   and a card shows it beside its actions (`/api/card-owners?path=DOC`), each with what gave it:
   `named on it`, `from the folder docs/design`, `the board's default group`.
 
+### Words held for people
+
+A task's message from a person who may speak and may not direct agents is held for people: the
+board keeps her words in a row of their own (`held_message`, schema 28's additive step `HELD`)
+that no read of a thread reads, and writes a line of its own to `owner`, `a message is held for
+people: #N`, N that line's number. What an agent reads of the thread (`show`, `inbox`, `wait`, a
+callback, `--json`, `search`) is that line and nothing of her words or her name, and `show` says
+how many are held (`held for people: 1 message`, `"held"` in its JSON). The line pushes to no
+session's inbox, as a line to `owner` never does. It waits on the person at the machine as a
+question does, until a person's line follows it on the thread, the one its pass writes among
+them.
+
+- **On the task page** a person's read draws the held message at that line: her name, to whom, her
+  words and the state `held`, and Pass on for the person at the machine and anyone holding `speak`
+  and `direct_agents`, no one else. The feed brings it to an open page as any line.
+- **A pass** (`just tasks pass SLUG N --as HANDLE`, or Pass on, `/api/task-pass`) writes her words
+  on the thread under her name, marked a person's, to whom she wrote them, with the passer first:
+  `[passed on by bo] …`. From then they read as any person's message: they reach the task's
+  agents, once, and open or join its ask. The held row is marked passed, by whom and as which
+  line, and the page draws the held line `passed on by bo`, her words the new line's. A second
+  pass is refused naming who passed it, and a number no message held on the task has is refused,
+  each with nothing written. A session's pass is the person at the machine's, as every board
+  command is.
+- **Who is told** of a held message is whom the board's line for it reaches: the person at the
+  machine, on whom it waits, and each member of the task's group, its author too when one of
+  them, whom the machine's server tells as of any question to the person at the machine, by the
+  way they chose, a link alone ([NOTICES](../engineering/NOTICES.md#the-servers-part)). Its pass
+  is a person's line and tells no one. A board with nobody named holds nothing, and every line
+  reads as before.
+- **A build and a board a step apart** follow [the additive step rule](RELEASES.md): a build
+  without the step never reads or writes the table, so it serves no agent the words, the board's
+  line reads as any line, and it refuses a person without `direct_agents` a task's message, as
+  every build before it did; a build with it, on a board without it, holds nothing and refuses a
+  hold or a pass, `this write names held_message`, with nothing written.
+
 ### The People page
 
 `/people`, after Settings in the header, shows whoever is on the board its people, each with the
@@ -2497,10 +2536,7 @@ beside its Profile, sets both. Its controls are drawn for
 whoever holds `administer`, as the person at the machine always does: a person added with a display
 name, git handles, powers and groups (and sign-ins, by the person at the machine alone), put in a
 group or taken out of one, given a power or one taken back, taken off the board; a group made, given
-a power or removed. A power the board gives no one yet (direct agents, until step 5 of [the way from
-one owner](../product/analysis/users-and-identity.md#the-way-from-one-owner)) is drawn not
-pressable, faded, with the board's reason as its title and said once in each add form, in the words
-its refusal of a grant says. Taking a person off the board and removing a group, which a press
+a power or removed, direct agents as any other. Taking a person off the board and removing a group, which a press
 cannot take back, ask first as a task's Cancel does: a named confirmation, then Confirm removal or
 Keep. Each change is one change of the log, the command's own, named as the actor who made it
 (`owner` for the person at the machine). `administer` is read from the board as the change arrives,

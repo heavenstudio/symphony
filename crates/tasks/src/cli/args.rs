@@ -433,6 +433,11 @@ const COMMANDS: &[Command] = &[
         opts: &[AS, opt("--to", "to", STR), opt("--file", "file", STR)],
     },
     Command {
+        name: "pass",
+        pos: &[pos("slug"), pos("id")],
+        opts: &[AS],
+    },
+    Command {
         name: "launch",
         pos: SLUG,
         opts: &[

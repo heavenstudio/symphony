@@ -88,8 +88,7 @@ impl Store {
 
     /// Puts the person `name` on the board, in `groups` and with `powers`, as `by`'s change.
     /// Refused, with nothing written: a name [`refused_name`] refuses (no short name, a person's
-    /// or a group's here already, a session's handle), a group the board does not keep, and a
-    /// power no one is given yet ([`given`]).
+    /// or a group's here already, a session's handle) and a group the board does not keep.
     pub fn add_person(
         &self,
         name: &str,
@@ -97,7 +96,6 @@ impl Store {
         powers: &[Power],
         by: &str,
     ) -> Result<Change, Error> {
-        given(powers)?;
         let changed = self.change_people(by, |people| {
             let handles = self.session_handles()?;
             if let Some(why) = refused_name(name, people, &handles) {
@@ -181,8 +179,8 @@ impl Store {
     }
 
     /// Gives `holder` `powers` as `by`'s change, the line naming those it did not hold: none, and
-    /// nothing written, where it held every one. Refused where the board keeps no such holder, no
-    /// power is named, or one no one is given yet is ([`given`]).
+    /// nothing written, where it held every one. Refused where the board keeps no such holder or no
+    /// power is named.
     pub fn grant(
         &self,
         holder: Holder<'_>,
@@ -231,9 +229,7 @@ impl Store {
 
     /// Makes the group `name`, with `powers`, as `by`'s change. Refused, with nothing written,
     /// where [`refused_name`] refuses the name (people and groups share one name space), or a
-    /// power no one is given yet is named ([`given`]).
     pub fn add_group(&self, name: &str, powers: &[Power], by: &str) -> Result<Change, Error> {
-        given(powers)?;
         let changed = self.change_people(by, |people| {
             let handles = self.session_handles()?;
             if let Some(why) = refused_name(name, people, &handles) {
@@ -427,23 +423,12 @@ fn said(holder: Holder<'_>) -> (&'static str, &str) {
     }
 }
 
-/// Refused where no power is named, or one no one is given yet is.
+/// Refused where no power is named.
 fn named_powers(powers: &[Power]) -> Result<(), Error> {
     if powers.is_empty() {
         return Err(nothing("name at least one power".into()));
     }
-    given(powers)
-}
-
-/// Refused where `powers` hold one no one is given yet ([`Power::withheld`]), in its words.
-fn given(powers: &[Power]) -> Result<(), Error> {
-    match (powers.iter()).find_map(|power| power.withheld().map(|why| (power, why))) {
-        Some((power, why)) => Err(nothing(format!(
-            "{} is given to no one yet: {why}",
-            power.said()
-        ))),
-        None => Ok(()),
-    }
+    Ok(())
 }
 
 /// `powers` once each, in the order they are said.

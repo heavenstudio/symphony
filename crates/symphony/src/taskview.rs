@@ -337,6 +337,7 @@ pub fn page(
         attempts: store
             .attempt_count(&record.slug)
             .map_err(|e| e.to_string())?,
+        passes: false,
         // Said to who asks ([`crate::owners::task`]), which the server puts here.
         owner: None,
     })
@@ -487,9 +488,13 @@ pub fn history(
         selected.len()
     };
     let render = Render::new(root);
-    let entries: Vec<_> = selected[start..end]
-        .iter()
-        .map(|record| entry(&message_row(record), &render))
+    let shown = &selected[start..end];
+    let held = held_words(store, shown)?;
+    let entries: Vec<_> = (shown.iter())
+        .map(|record| symphony_api::TaskEntry {
+            held: held.get(&record.id).cloned(),
+            ..entry(&message_row(record), &render)
+        })
         .collect();
     Ok(symphony_api::TaskHistory {
         before: if start > 0 {
@@ -525,7 +530,39 @@ pub fn entry(message: &Message, render: &Render) -> symphony_api::TaskEntry {
         message: message.clone(),
         stamp: stamp(message.ts),
         blocks,
+        held: None,
     }
+}
+
+/// The message held for people each of `rows` is of, by the line's id: the board's line that says
+/// a message is held, and the line its words became once passed on ([`symphony_board::held`]). A
+/// person's read of a thread alone carries them. Only the tasks of lines that can be such a line
+/// are read ([`symphony_board::held::may_be_of_one`]).
+pub fn held_words(
+    store: &symphony_board::Store,
+    rows: &[&symphony_board::rows::MessageRow],
+) -> Result<std::collections::BTreeMap<i64, symphony_api::HeldWords>, symphony_board::Error> {
+    let slugs: std::collections::BTreeSet<&str> = (rows.iter())
+        .filter(|row| symphony_board::held::may_be_of_one(row))
+        .map(|row| row.slug.as_str())
+        .collect();
+    let mut found = std::collections::BTreeMap::new();
+    for slug in slugs {
+        for held in store.held_on(slug)? {
+            let words = symphony_api::HeldWords {
+                id: held.id,
+                author: held.author,
+                text: held.text,
+                to: held.to,
+                passed_by: held.passed.as_ref().map(|passed| passed.by.clone()),
+            };
+            if let Some(passed) = &held.passed {
+                found.insert(passed.line, words.clone());
+            }
+            found.insert(held.id, words);
+        }
+    }
+    Ok(found)
 }
 
 /// Task text links and pictures resolve as on the board's guide (`[board] guide`).

@@ -29,7 +29,7 @@ pub(in crate::store) fn threads() -> Pg<'static> {
 /// The task's ask moves with a line just put on its thread (`sid_`, `ts_`): the owner's or a
 /// person's, when it asks, opens it or joins the open one; a line of a session holding a role on
 /// the task, or of the session the last line of the owner's or a person's named, answers it.
-static ON_THREAD: LazyLock<String> = LazyLock::new(|| {
+pub(in crate::store) static ON_THREAD: LazyLock<String> = LazyLock::new(|| {
     format!("DECLARE
     task_ask_ bigint;
     holds_ boolean;
