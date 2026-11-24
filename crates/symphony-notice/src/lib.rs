@@ -26,13 +26,9 @@ use std::process::ExitCode;
 /// The format's major, written as the message's `notice`: a message of another is refused by name.
 pub const FORMAT: u64 = 1;
 
-/// The way a notice goes by mail: its address is an email address.
-pub const EMAIL: &str = "email";
-/// The way a notice goes by Slack: its address is the person's Slack user id.
-pub const SLACK: &str = "slack";
-/// The way a notice goes by WhatsApp: its address is the person's number with its country code
-/// (`+15551234567`).
-pub const WHATSAPP: &str = "whatsapp";
+pub mod ways;
+
+pub use ways::{EMAIL, SLACK, WHATSAPP};
 
 /// A plugin's exit status for a notice it sent.
 pub const SENT: u8 = 0;
@@ -392,3 +388,5 @@ struct WireTo<'a> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod ways_tests;

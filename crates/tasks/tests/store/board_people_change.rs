@@ -71,6 +71,7 @@ fn given(display: &str, signins: &[&str], git: &[&str]) -> Given {
         display: Some(display.into()),
         signins: signins.iter().map(|text| signin(text)).collect(),
         git: git.iter().map(|git| (*git).to_string()).collect(),
+        ..Given::default()
     }
 }
 
@@ -279,6 +280,7 @@ fn a_display_name_of_spaces_or_a_blank_handle_gives_nothing() {
         display: Some("   ".into()),
         signins: vec![],
         git: vec![" ".into()],
+        ..Given::default()
     };
     assert!(blank.is_empty());
     assert!(Given::default().is_empty());

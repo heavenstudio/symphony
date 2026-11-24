@@ -5,10 +5,13 @@
 //! its writer. Both writes run the command line's code, answer the page as they left it, and are
 //! the main checkout's: a worktree's page changes none.
 //!
-//! No answer names a sign-in's subject, an email or a chat address: a sign-in is said by its
-//! service. A hosted visitor reads none of it, as the board's people are this machine's gate's.
-//! A failure is told to anyone but the person at the machine without its cause, which can name
-//! the machine folder's path or the board's ([`told`]): the server's log keeps it whole.
+//! No answer names a sign-in's subject: a sign-in is said by its service. A person's addresses go
+//! to the person themself, the person at the machine and the board's admins, and the ways their
+//! notices go by to the person and the person at the machine alone: anyone else's answer carries
+//! neither field ([`page`]). A hosted visitor reads none of it, as the board's people are this
+//! machine's gate's. A failure is told to anyone but the person at the machine without its cause,
+//! which can name the machine folder's path or the board's ([`told`]): the server's log keeps it
+//! whole.
 
 use crate::api::{answered, error};
 use crate::front::{Admitted, Shared};
@@ -19,12 +22,12 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use symphony_api::{
-    GroupRow, PEOPLE_CHANGE_PATH, PeopleAction, PeopleChange, PeopleLogLine, PeoplePage, PersonRow,
-    ProfileWrite, WithheldPower,
+    Addresses, GroupRow, NoticeWay, PEOPLE_CHANGE_PATH, PeopleAction, PeopleChange, PeopleLogLine,
+    PeoplePage, PersonRow, ProfileWrite, WithheldPower,
 };
 use symphony_board::Store;
 use symphony_board::people::change::{self, Given, Stopped, Writer};
-use symphony_board::people::{Change, Holder, People, Power, Profiles, Signin};
+use symphony_board::people::{Change, Holder, People, Power, Profile, Profiles, Signin, ways};
 
 /// A route's refusal: its status and its words.
 type Failed = (StatusCode, String);
@@ -130,9 +133,10 @@ fn profiles(machine: Option<&Path>) -> Result<Profiles, String> {
 }
 
 /// The page `asker` is shown of `board`'s people and log and the machine's `profiles`: each
-/// person with their profile's display name, git handles and the services they sign in by, and
-/// what `asker` may change. A board or profiles not read are said, the people listed without
-/// what was not read.
+/// person with their profile's display name, git handles and the services they sign in by, their
+/// addresses where `asker` is them, the person at the machine or an admin of the board, the ways
+/// their notices go by where `asker` is them or the person at the machine, and what `asker` may
+/// change. A board or profiles not read are said, the people listed without what was not read.
 pub(crate) fn page(
     board: Result<(People, Vec<Change>), String>,
     profiles: Result<Profiles, String>,
@@ -155,9 +159,11 @@ pub(crate) fn page(
             .map(|power| power.word().to_string())
             .collect()
     };
+    let administers = asker.machine || people.powers_of(&asker.name).holds(Power::Administer);
     let rows = (people.members.iter())
         .map(|member| {
             let profile = profiles.get(&member.name);
+            let theirs = asker.machine || asker.name == member.name;
             let mut signins: Vec<String> = Vec::new();
             for signin in profile.iter().flat_map(|profile| &profile.signins) {
                 if !signins.contains(&signin.service) {
@@ -175,6 +181,8 @@ pub(crate) fn page(
                     .map(|profile| profile.git.clone())
                     .unwrap_or_default(),
                 profile: profile.is_some(),
+                addresses: (theirs || administers).then(|| addresses(profile)),
+                notices: theirs.then(|| notices(profile)),
             }
         })
         .collect();
@@ -196,7 +204,7 @@ pub(crate) fn page(
         })
         .collect();
     PeoplePage {
-        administers: asker.machine || people.powers_of(&asker.name).holds(Power::Administer),
+        administers,
         you: (!asker.machine).then(|| asker.name.clone()),
         machine: asker.machine,
         revision: people.revision,
@@ -213,6 +221,28 @@ pub(crate) fn page(
             .collect(),
         problem: (!problems.is_empty()).then(|| problems.join("; ")),
     }
+}
+
+/// The addresses `profile` holds, each the one a notice by its way goes to: none without one.
+fn addresses(profile: Option<&Profile>) -> Addresses {
+    let address = |way| profile.and_then(|profile| profile.address(way));
+    Addresses {
+        email: address(ways::EMAIL),
+        slack: address(ways::SLACK),
+        whatsapp: address(ways::WHATSAPP),
+    }
+}
+
+/// The way each kind of notice goes by for `profile`, every kind in its order: none without one.
+fn notices(profile: Option<&Profile>) -> Vec<NoticeWay> {
+    (ways::KINDS.into_iter())
+        .map(|kind| NoticeWay {
+            kind: kind.into(),
+            way: profile
+                .and_then(|profile| profile.way(kind))
+                .map(Into::into),
+        })
+        .collect()
 }
 
 fn bad(why: String) -> Failed {
@@ -306,6 +336,7 @@ fn changed(
                 display: asked.display.clone(),
                 signins: signins(&asked.signins)?,
                 git: asked.git.clone(),
+                ..Given::default()
             };
             let writer = if asker.machine {
                 Writer::Machine
@@ -350,10 +381,21 @@ fn profiled(machine: Option<&Path>, asked: &ProfileWrite, asker: &Asker) -> Resu
     } else {
         Writer::Other
     };
+    let addresses = [
+        (ways::EMAIL, &asked.email),
+        (ways::SLACK, &asked.slack),
+        (ways::WHATSAPP, &asked.whatsapp),
+    ];
     let given = Given {
         display: asked.display.clone(),
         signins: signins(&asked.signins)?,
         git: asked.git.clone(),
+        addresses: (addresses.into_iter())
+            .filter_map(|(way, text)| Some((way.to_string(), text.clone()?)))
+            .collect(),
+        notices: (asked.notices.iter())
+            .map(|notice| (notice.kind.clone(), notice.way.clone().unwrap_or_default()))
+            .collect(),
     };
     change::profile(&folder(machine)?, &asked.name, &given, writer).map_err(stopped(asker))?;
     Ok(())
