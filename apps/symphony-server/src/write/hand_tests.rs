@@ -1,8 +1,9 @@
 //! Whose a card or a task is and its hand-over, through the real router, by a visitor the board
 //! named (docs/workflow/TASKS.md, "Which group a thing belongs to"): ana, of design, reads whose a
 //! card and a task are and whom she may hand each to, and hands each on; a thing of a group she is
-//! no member of is refused her with nothing written; and on a board that names nobody the person
-//! at the machine reads no owner at all.
+//! no member of is refused her with nothing written; a card handed again to the name written on it
+//! writes nothing; a hosted visitor is offered no one to hand to; and on a board that names nobody
+//! the person at the machine reads no owner at all.
 
 use crate::front::{Shared, router};
 use crate::testing::{Board, LAPTOP, Tree, laptop_with, repository_holding};
@@ -210,4 +211,53 @@ async fn a_board_that_names_nobody_says_no_owner_to_the_person_at_the_machine() 
     let (status, body) = post(&shared, "127.0.0.1:5000", "/api/task-hand", hand).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(body.contains("this board names nobody"), "{body}");
+}
+
+/// A card handed to the name already written on it writes nothing, on the page or the board, and
+/// says it was a repeat; a hosted visitor, who saves nothing here, reads whose it is and is
+/// offered no one to hand it to.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_card_handed_again_to_its_name_writes_nothing_and_a_hosted_visitor_is_offered_no_one() {
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
+    let _board = named(&root);
+    let store = Board::store(&root);
+    store
+        .map_place(&Place::Folder("docs".into()), "design", "owner")
+        .unwrap();
+    let shared = Shared::new(1, 8123, &root, None, ana_at(&root));
+    let to_ana = json!({"path": "docs/TOPIC.md", "slug": "one", "to": "ana"});
+    let (status, body) = post(&shared, LAPTOP, "/api/card-hand", to_ana.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    shared.saves.get().unwrap().close();
+    let page = std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap();
+    assert!(page.contains("**one** — *For:* ana. proposal."), "{page}");
+    let lines = store.ownership_log().unwrap().len();
+    let shared = Shared::new(1, 8123, &root, None, ana_at(&root));
+    let (status, body) = post(&shared, LAPTOP, "/api/card-hand", to_ana).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        json!({"ok": true, "repeat": true})
+    );
+    shared.saves.get().unwrap().close();
+    assert_eq!(
+        std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap(),
+        page
+    );
+    assert_eq!(store.ownership_log().unwrap().len(), lines);
+    let mut request = Request::get("/api/card-owners?path=docs/TOPIC.md")
+        .header(header::HOST, HOST)
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(crate::hosted::tests::admitted().await);
+    let (status, body) = sent(&shared, LAPTOP, request).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let owners: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        owners["cards"]["one"],
+        json!({"name": "ana", "kind": "person", "by": "named", "said": "named on it"})
+    );
 }
