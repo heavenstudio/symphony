@@ -222,3 +222,55 @@ fn a_persons_line_goes_out_on_the_feed_marked_as_theirs_and_answers_as_the_owner
         .collect();
     assert_eq!(asks, [waiting(0)], "her word answers it");
 }
+
+#[test]
+fn a_held_message_goes_out_with_the_boards_line_waits_on_the_owner_and_its_pass_answers_it() {
+    let tree = Tree::new();
+    let f = Fixture::new(
+        Seed::default()
+            .session("worker")
+            .task("tools/ask", "in_progress")
+            .role("tools/ask", "worker", "executor"),
+    );
+    let hub = hub(&tree);
+    assert_eq!(observe(&hub, &f.store), [waiting(0)]);
+    (f.store)
+        .add_person("ana", &[], &[symphony_board::people::Power::Speak], "owner")
+        .unwrap();
+    let ana = f.other().for_person("ana");
+    let words = "the header is cut off";
+    let held = ana.hold_words("tools/ask", "ana", words, None).unwrap();
+    let held_out = changes(&hub, &f.store);
+    let heard = |changes: &[Value]| -> Vec<Value> {
+        (changes.iter())
+            .filter(|change| change["region"] == "message")
+            .map(|change| change["data"].clone())
+            .collect()
+    };
+    let lines = heard(&held_out);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["id"], held.id);
+    assert_eq!(lines[0]["sender"], "board");
+    assert!(!lines[0]["text"].as_str().unwrap().contains(words));
+    assert_eq!(
+        lines[0]["held"],
+        json!({"id": held.id, "author": "ana", "text": words})
+    );
+    let asks: Vec<_> = (held_out.iter())
+        .filter(|change| change["region"] == "task-asks")
+        .map(|change| change["data"].clone())
+        .collect();
+    assert_eq!(asks, [waiting(1)], "it waits on the person at the machine");
+    f.store.pass("tools/ask", held.id, "owner").unwrap();
+    let passed_out = changes(&hub, &f.store);
+    let lines = heard(&passed_out);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["sender"], "ana");
+    assert_eq!(lines[0]["text"], format!("[passed on by owner] {words}"));
+    assert_eq!(lines[0]["held"]["passed_by"], "owner");
+    let asks: Vec<_> = (passed_out.iter())
+        .filter(|change| change["region"] == "task-asks")
+        .map(|change| change["data"].clone())
+        .collect();
+    assert_eq!(asks, [waiting(0)], "passing it on answers it");
+}

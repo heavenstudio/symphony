@@ -876,6 +876,7 @@ async fn board_read(
                             hub.observed_page(page)
                         };
                         page.local = local;
+                        page.passes = !hosted && passes(&store, asker.1, &asker.0);
                         page.owner = owner;
                         // The room its gates held last time, from what is kept: the page never
                         // waits on them.
@@ -893,6 +894,17 @@ async fn board_read(
         hub.read_on(&store, read)
     });
     answered(read.await, "")
+}
+
+/// Whether `name` may pass a held message on (`symphony_api::TASK_PASS_ROUTE`): the person at the
+/// machine, or a person holding what the route needs. A board whose people cannot be read gives
+/// no one but the machine's person the control, whose press the route would refuse.
+fn passes(store: &symphony_board::Store, machine: bool, name: &str) -> bool {
+    let needs = crate::powers::needs(symphony_api::TASK_PASS_ROUTE);
+    machine
+        || store.people().is_ok_and(|people| {
+            crate::powers::refused(name, &people.powers_of(name), needs).is_none()
+        })
 }
 
 /// A document's cards' owners refused: a route no page is, 404, as a document's read answers it,

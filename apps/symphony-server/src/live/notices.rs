@@ -30,13 +30,16 @@ use symphony_board::recording::State;
 
 /// What the hub keeps of its notices' worker.
 pub(crate) struct Worker {
-    /// Wakes the worker: its only sender, so the worker ends once the hub is gone.
+    /// Wakes the worker: its only sender, so the worker ends once the hub is gone. Not a
+    /// [`crate::backstop::Wakes`], whose loop keeps a sender of its own and so never sees its
+    /// wakers go: a worker of a hub dropped without a stop would wait on and hold the record.
     wake: mpsc::SyncSender<()>,
     running: Arc<Running>,
+    /// None where its thread did not start.
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
-/// Where the link of a notice begins, `http://HOST:PORT`, asked as each notice is made.
+/// Where the link of a notice begins, `http://HOST:PORT`, asked by each look that makes one.
 pub(crate) type Origin = Box<dyn FnMut() -> String + Send>;
 
 /// What a look read, so the next reads again only when one of them moved.
@@ -68,6 +71,35 @@ impl Said {
     }
 }
 
+/// What the worker keeps from one turn to the next: its project, how its hands wait, how its links
+/// begin and what its hands share with the server's stop, then its runner, what its last look read
+/// and what went wrong that it said.
+struct Turns {
+    project: String,
+    bounds: Bounds,
+    origin: Origin,
+    running: Arc<Running>,
+    /// None while the gate is not open, or before it opened its record.
+    runner: Option<Runner>,
+    /// None before a look, and after the runner is let go.
+    last: Option<Read>,
+    said: Said,
+}
+
+impl Turns {
+    fn new(project: &str, bounds: Bounds, origin: Origin, running: Arc<Running>) -> Self {
+        Turns {
+            project: project.into(),
+            bounds,
+            origin,
+            running,
+            runner: None,
+            last: None,
+            said: Said::default(),
+        }
+    }
+}
+
 impl Hub {
     /// Start telling the people of the project `project`, served on `port`, of its notices: the
     /// machine's one server's alone. A link begins with the machine's tailnet name, else
@@ -87,34 +119,30 @@ impl Hub {
         );
     }
 
-    /// [`Hub::start_notices`], each hand waiting by `bounds` and each link begun by `origin`.
+    /// [`Hub::start_notices`], each hand waiting by `bounds` and each link begun by `origin`. The
+    /// worker is made once: a second start starts nothing, and lets its `origin` go.
     pub(super) fn start_notices_with(
         self: &Arc<Self>,
         project: &str,
         bounds: Bounds,
         origin: Origin,
     ) {
-        let (wake, woken) = mpsc::sync_channel(1);
-        let running = Arc::new(Running::default());
-        let (weak, project, worker_running) =
-            (Arc::downgrade(self), project.to_string(), running.clone());
-        let started = std::thread::Builder::new()
-            .name("review notices".into())
-            .spawn(move || work(&weak, &woken, &worker_running, &project, bounds, origin));
-        match started {
-            Ok(thread) => {
-                let worker = Worker {
-                    wake,
-                    running,
-                    thread: Mutex::new(Some(thread)),
-                };
-                if let Err(worker) = self.notice_worker.set(worker) {
-                    // Started twice: the second ends at once.
-                    worker.running.stop();
-                }
+        self.notice_worker.get_or_init(|| {
+            let (wake, woken) = mpsc::sync_channel(1);
+            let running = Arc::new(Running::default());
+            let turns = Turns::new(project, bounds, origin, running.clone());
+            let weak = Arc::downgrade(self);
+            let thread = std::thread::Builder::new()
+                .name("review notices".into())
+                .spawn(move || work(&weak, &woken, turns))
+                .map_err(|error| eprintln!("NOTICE: no worker started: {error}"))
+                .ok();
+            Worker {
+                wake,
+                running,
+                thread: Mutex::new(thread),
             }
-            Err(error) => eprintln!("NOTICE: no worker started: {error}"),
-        }
+        });
     }
 
     /// Wake the notices' worker, where the hub has one: something it reads may have moved.
@@ -169,54 +197,36 @@ impl Hub {
     /// stands open, the runner opened (its record read) as the gate opens; none while it is held
     /// or closed, or before it is given, and the runner let go, so the record is read again when
     /// it opens.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one turn's state, each kept by the worker"
-    )]
-    fn notice_turn(
-        &self,
-        runner: &mut Option<Runner>,
-        last: &mut Option<Read>,
-        running: &Running,
-        bounds: Bounds,
-        origin: &mut dyn FnMut() -> String,
-        said: &mut Said,
-        project: &str,
-    ) {
+    fn notice_turn(&self, turns: &mut Turns) {
         let open = (self.recording_gate.get())
             .is_some_and(|gate| matches!(gate.stands(), State::Open { .. }));
         if !open {
-            *runner = None;
-            *last = None;
+            turns.runner = None;
+            turns.last = None;
             return;
         }
-        if runner.is_none() {
-            *runner = self.open_notices(project, said);
-            *last = None;
+        if turns.runner.is_none() {
+            turns.runner = self.open_notices(&turns.project, &mut turns.said);
+            turns.last = None;
         }
-        if let Some(runner) = runner {
-            self.notice_pass(runner, last, running, bounds, origin, said, project);
-        }
+        self.notice_pass(turns);
     }
 
-    /// One pass of `runner`: a look, where what it reads moved since `last`, then the hand of what
-    /// is due. A machine folder, a board or profiles that cannot be read leaves the record as it
-    /// was, said once; programs that are refused send nothing, said once, and the look goes on.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one pass's state, each kept by the worker"
-    )]
-    fn notice_pass(
-        &self,
-        runner: &mut Runner,
-        last: &mut Option<Read>,
-        running: &Running,
-        bounds: Bounds,
-        origin: &mut dyn FnMut() -> String,
-        said: &mut Said,
-        project: &str,
-    ) {
-        let Some(machine) = self.machine.as_deref() else {
+    /// One pass of the turns' runner: a look, where what it reads moved since the last, then the
+    /// hand of what is due. A machine folder, a board or profiles that cannot be read leaves the
+    /// record as it was, said once; programs that are refused send nothing, said once, and the
+    /// look goes on.
+    fn notice_pass(&self, turns: &mut Turns) {
+        let Turns {
+            project,
+            bounds,
+            origin,
+            running,
+            runner,
+            last,
+            said,
+        } = turns;
+        let (Some(runner), Some(machine)) = (runner.as_mut(), self.machine.as_deref()) else {
             return;
         };
         let programs = match Programs::read(machine) {
@@ -303,15 +313,15 @@ impl Hub {
                 lines,
                 latest,
             };
-            match runner.look(&look, &profiles, &programs, now, origin) {
+            match runner.look(&look, &profiles, &programs, now, &mut **origin) {
                 Ok(()) => *last = Some(read),
                 Err(why) => return said.once(project, "record", why),
             }
         }
         let clock = || (self.clock)();
-        let ends = |pid: u32| symphony_board::sys::gone(i64::from(pid), bounds.ends);
+        let ends = |pid: u32, within: Duration| symphony_board::sys::gone(i64::from(pid), within);
         let mut handing = |program: &std::path::Path, line: &str, hidden: &[&str]| {
-            hand::hand(program, line, hidden, running, &ends, bounds.heard)
+            hand::hand(program, line, hidden, running, &ends, *bounds)
         };
         let mut log = |line: String| eprintln!("{line}");
         match runner.hand_due(&profiles, &programs, &clock, &mut handing, &mut log) {
@@ -361,37 +371,21 @@ fn told_lines(
 
 /// The worker: a pass at each wake, and when the next notice is due, until the server stops or the
 /// hub is gone.
-fn work(
-    hub: &Weak<Hub>,
-    woken: &mpsc::Receiver<()>,
-    running: &Running,
-    project: &str,
-    bounds: Bounds,
-    mut origin: Origin,
-) {
-    let (mut runner, mut last, mut said) = (None, None, Said::default());
+fn work(hub: &Weak<Hub>, woken: &mpsc::Receiver<()>, mut turns: Turns) {
     loop {
-        if running.stopping() {
+        if turns.running.stopping() {
             return;
         }
         let now = {
             let Some(hub) = hub.upgrade() else {
                 return;
             };
-            hub.notice_turn(
-                &mut runner,
-                &mut last,
-                running,
-                bounds,
-                &mut *origin,
-                &mut said,
-                project,
-            );
+            hub.notice_turn(&mut turns);
             (hub.clock)()
         };
         // Until a wake, or until the next notice is due: a retry's backoff, its deadline the
         // record's own (RULES.md `code/no-timed-waits`).
-        let woke = match runner.as_ref().and_then(Runner::next_due) {
+        let woke = match turns.runner.as_ref().and_then(Runner::next_due) {
             None => woken.recv().is_ok(),
             Some(due) => !matches!(
                 woken.recv_timeout(Duration::from_secs_f64((due - now).max(0.0))),

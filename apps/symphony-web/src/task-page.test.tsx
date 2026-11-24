@@ -313,6 +313,41 @@ describe("a message of a task's thread", () => {
     expect(system).toContain('class="entry system"');
     expect(system).toContain('<div class="entry-text literal">Said</div>');
   });
+
+  it("held for people, is its author's words marked held at the board's line, Pass on for one who may", () => {
+    const words = { id: 4, author: "ana", text: "Cut", to: "@executor", passed_by: null };
+    const line = { ...anEntry(4, "board"), held: words };
+    const held = html(<TaskMessage entry={line} />);
+    expect(held).toContain(
+      '<div class="entry owner" data-held="held"><time>2026-11-11</time> ' +
+        '<span class="from">ana → @executor</span><b class="entry-held">held</b>' +
+        '<div class="entry-text literal">Cut</div></div>',
+    );
+    expect(held).not.toContain("Said");
+    const passes = html(<TaskMessage entry={line} passes />);
+    expect(passes).toContain('<div class="row"><button class="dx-button"');
+    expect(passes).toContain(">Pass on</button>");
+    STALE.set(true);
+    expect(html(<TaskMessage entry={line} passes />)).toContain(`>${CHECKING}</button>`);
+    STALE.set(false);
+    // Passed on, it says by whom and no more: its words are the line they became.
+    const passed = { ...line, held: { ...words, to: null, passed_by: "bo" } };
+    const after = html(<TaskMessage entry={passed} passes />);
+    expect(after).toContain(
+      '<div class="entry owner" data-held="passed"><time>2026-11-11</time> ' +
+        '<span class="from">ana</span><b class="entry-held">passed on by bo</b></div>',
+    );
+    // That line is a person's message as any other.
+    const became = anEntry(9, "ana");
+    const spoken = {
+      ...became,
+      message: { ...became.message, person: true, text: "[passed on by bo] Cut" },
+      held: passed.held,
+    };
+    const drawn = html(<TaskMessage entry={spoken} passes />);
+    expect(drawn).toContain('<div class="entry-text literal">[passed on by bo] Cut</div>');
+    expect(drawn).not.toContain("entry-held");
+  });
 });
 
 describe("a task's page", () => {

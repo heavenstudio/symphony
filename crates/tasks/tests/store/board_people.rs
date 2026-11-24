@@ -193,19 +193,13 @@ fn a_refused_change_says_why_and_writes_nothing() {
         refused(f.store.add_person(BY, &[], &[], BY)),
         refused(f.store.add_person("owner", &[], &[], BY)),
         refused(f.store.add_person("bob", &["crew".into()], &[], BY)),
-        refused(f.store.add_person("bob", &[], &[Power::DirectAgents], BY)),
         refused(f.store.add_person("bob", &[], &[], " ")),
         refused(f.store.add_group("ana", &[], BY)),
-        refused(f.store.add_group("crew", &[Power::DirectAgents], BY)),
         refused(f.store.remove_person("bob", BY)),
         refused(f.store.join_group("ana", "crew", BY)),
         refused(f.store.join_group("bob", "staff", BY)),
         refused(f.store.leave_group("ana", "staff", BY)),
         refused(f.store.grant(Holder::Person("ana"), &[], BY)),
-        refused(
-            f.store
-                .grant(Holder::Person("ana"), &[Power::DirectAgents], BY),
-        ),
         refused(f.store.grant(Holder::Group("crew"), &[Power::Decide], BY)),
         refused(f.store.revoke(Holder::Person("ana"), &[Power::Decide], BY)),
         refused(f.store.remove_group("crew", BY)),
@@ -223,19 +217,72 @@ fn a_refused_change_says_why_and_writes_nothing() {
         refusals[3]
     );
     assert!(refusals[5].starts_with("this board keeps no group crew"));
-    assert!(
-        refusals[6].starts_with("direct agents is given to no one yet"),
-        "{}",
-        refusals[6]
-    );
-    assert!(refusals[7].contains("says who made it"));
-    assert!(refusals[8].starts_with("ana is a person on this board already"));
-    assert!(refusals[10].starts_with("no person bob is on this board"));
-    assert!(refusals[13].starts_with("ana is in no group staff"));
-    assert!(refusals[14].starts_with("name at least one power"));
-    assert!(refusals[17].starts_with("the person ana holds none of those powers"));
-    assert!(refusals[19].starts_with("the group staff holds none of those powers"));
+    assert!(refusals[6].contains("says who made it"));
+    assert!(refusals[7].starts_with("ana is a person on this board already"));
+    assert!(refusals[8].starts_with("no person bob is on this board"));
+    assert!(refusals[11].starts_with("ana is in no group staff"));
+    assert!(refusals[12].starts_with("name at least one power"));
+    assert!(refusals[14].starts_with("the person ana holds none of those powers"));
+    assert!(refusals[16].starts_with("the group staff holds none of those powers"));
     assert_eq!((f.store.people().unwrap(), logged(&f.store)), before);
+}
+
+#[test]
+fn direct_agents_is_given_read_and_taken_as_every_power_is() {
+    let f = board();
+    let crew = f
+        .store
+        .add_group("crew", &[Power::DirectAgents], BY)
+        .unwrap();
+    assert_eq!(crew.powers, [Power::DirectAgents]);
+    f.store
+        .add_person("ana", &[], &[Power::Speak, Power::DirectAgents], BY)
+        .unwrap();
+    f.store
+        .add_person("bob", &["crew".into()], &[Power::Speak], BY)
+        .unwrap();
+    f.store.add_person("cid", &[], &[Power::Speak], BY).unwrap();
+    let holds = |name: &str| {
+        let people = f.store.people().unwrap();
+        people.powers_of(name).holds(Power::DirectAgents)
+    };
+    assert!(holds("ana"), "given her own");
+    assert!(holds("bob"), "given by his group");
+    assert!(!holds("cid"));
+    let granted = f
+        .store
+        .grant(Holder::Person("cid"), &[Power::DirectAgents], BY);
+    let granted = granted
+        .unwrap()
+        .expect("a grant of a power not held changes the board");
+    assert_eq!(
+        (granted.did, granted.powers),
+        (Did::Grant, vec![Power::DirectAgents])
+    );
+    assert!(holds("cid"));
+    for name in ["ana", "cid"] {
+        let taken = f
+            .store
+            .revoke(Holder::Person(name), &[Power::DirectAgents], BY);
+        assert_eq!(taken.unwrap().powers, [Power::DirectAgents]);
+        assert!(!holds(name), "{name} lost it");
+    }
+    f.store
+        .revoke(Holder::Group("crew"), &[Power::DirectAgents], BY)
+        .unwrap();
+    assert!(!holds("bob"), "his group lost it");
+    assert_eq!(
+        listed(&f.store),
+        [
+            ("ana".into(), vec![Power::Read, Power::Speak], vec![]),
+            (
+                "bob".into(),
+                vec![Power::Read, Power::Speak],
+                vec!["crew".into()]
+            ),
+            ("cid".into(), vec![Power::Read, Power::Speak], vec![]),
+        ]
+    );
 }
 
 #[test]

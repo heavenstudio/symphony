@@ -1429,6 +1429,13 @@ Each step can ship alone, and a machine with one person sees none of them.
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
    The note beside a verdict is written with it. A personal agent, tied to its person on the
    board, reaches a task's agents as its person does, a review among it.
+   Built: on a task's thread, the message of a person who may speak and may not direct agents held
+   for people, shown to them on the task page and waiting on the person at the machine, its line
+   told to the members of the task's group as step 4 tells a question, an agent's read saying only
+   how many are held; passed on with one press or `just tasks pass`, under both names, as an ask;
+   and direct agents given and taken as any power
+   ([TASKS](../../workflow/TASKS.md#words-held-for-people)). Not yet: held comments on documents,
+   the verdict's note and personal agents.
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
    saves through the same writes as local ones. Then the Symphony's own sign-in service, a
    separate program in front.

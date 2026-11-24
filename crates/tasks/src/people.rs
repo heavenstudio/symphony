@@ -64,10 +64,9 @@ pub enum Power {
     /// Give a verdict and its note, move a task and change its fields, and change the board's
     /// settings: the approve that meets the `owner` stamp among them.
     Decide,
-    /// Have their words reach the board's agents, and control the agents' attempts. Given to no
-    /// one yet: every grant of it is refused until the board holds the words of someone who may
-    /// not direct agents (step 5 of docs/product/analysis/users-and-identity.md), so the routes
-    /// that need it stay the person at the machine's.
+    /// Have their words reach the board's agents, and control the agents' attempts: the words of
+    /// someone who may speak and may not are held for people until someone who may passes them on
+    /// ([`crate::held`]).
     DirectAgents,
     /// Say who is on the board, in which groups and with what powers: the People page's changes
     /// need it, and the command line is the terminal's.
@@ -100,20 +99,6 @@ impl Power {
         match self {
             Power::DirectAgents => "direct agents",
             other => other.word(),
-        }
-    }
-
-    /// Why no one is given it yet, where no one is: direct agents, until a board speaks to its
-    /// agents for a person (step 5 of docs/product/analysis/users-and-identity.md), so every
-    /// route that asks them for work stays the person at the machine's. Every grant of it is
-    /// refused in these words, and the People page draws it as not yet givable with them.
-    pub fn withheld(self) -> Option<&'static str> {
-        match self {
-            Power::DirectAgents => Some(
-                "until a board speaks to its agents for a person, asking them for work is the \
-                 person at the machine's",
-            ),
-            Power::Read | Power::Speak | Power::Decide | Power::Administer => None,
         }
     }
 

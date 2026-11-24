@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use symphony_api::{
     Addresses, GroupRow, NoticeWay, PEOPLE_CHANGE_PATH, PeopleAction, PeopleChange, PeopleLogLine,
-    PeoplePage, PersonRow, ProfileWrite, WithheldPower,
+    PeoplePage, PersonRow, ProfileWrite,
 };
 use symphony_board::Store;
 use symphony_board::people::change::{self, Given, Stopped, Writer};
@@ -211,14 +211,6 @@ pub(crate) fn page(
         people: rows,
         groups,
         log,
-        withheld: (Power::ALL.into_iter())
-            .filter_map(|power| {
-                Some(WithheldPower {
-                    power: power.word().into(),
-                    why: power.withheld()?.into(),
-                })
-            })
-            .collect(),
         problem: (!problems.is_empty()).then(|| problems.join("; ")),
     }
 }
