@@ -1,8 +1,9 @@
 // A part of a task's page that a chunk of its own draws, imported once the part is first drawn: a
-// workflow's next actions (nextactions.tsx), a task's attempts (attempts.tsx) and the files of its
-// changes (task-diff-files.tsx). One that does not come is said with its retry, once the shell has
-// said the page's build is not gone (the page then loads again). Such a chunk imports nothing of the
-// kind's own, so the kind's entry stays one file (the client's guide).
+// workflow's next actions (nextactions.tsx), whose the task is (owner-part.tsx), a task's attempts
+// (attempts.tsx) and the files of its changes (task-diff-files.tsx). One that does not come is said
+// with its retry, once the shell has said the page's build is not gone (the page then loads again).
+// Such a chunk imports nothing of the kind's own, so the kind's entry stays one file (the client's
+// guide).
 
 import { useEffect, useState } from "react";
 import { Button } from "./button";

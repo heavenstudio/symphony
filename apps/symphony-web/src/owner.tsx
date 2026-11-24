@@ -3,35 +3,17 @@
 // may hand it on, whom to. A task's comes with its page (`TaskPage.owner`); a document's cards'
 // with a read of their own (`CARD_OWNERS_PATH`), read again as the document moves. A board that
 // names nobody says none, and nothing is drawn. The select is drawn only where the server named
-// someone to hand it to: a control that could not act is left out.
+// someone to hand it to: a control that could not act is left out. A document's page imports this
+// module; a task's page imports its line as a chunk (`owner-part.tsx`) for a task with an owner
+// alone, and reads the owner with owner-read.ts.
 
 import { createContext, useState } from "react";
 import { useMount } from "./mount";
+import { readOwner } from "./owner-read";
 import { said } from "./request";
 import { SelectField } from "./select";
 import { field, STALE, useStore } from "./shared";
 import type { Owner } from "./wire";
-
-const isText = (value: unknown): value is string => typeof value === "string";
-
-/** Whose a thing is, or none: as serde reads an `Owner`, its `hand_to` empty when absent. */
-export function readOwner(value: unknown): Owner | null {
-  const names = field(value, "hand_to") ?? [];
-  if (
-    !["name", "kind", "by", "said"].every((key) => isText(field(value, key))) ||
-    !Array.isArray(names) ||
-    !names.every(isText)
-  ) {
-    return null;
-  }
-  return {
-    name: field(value, "name") as string,
-    kind: field(value, "kind") as string,
-    by: field(value, "by") as string,
-    said: field(value, "said") as string,
-    hand_to: names as string[],
-  };
-}
 
 /** A document's cards' owners by slug, or none: as serde reads a `CardOwners`. */
 export function readCardOwners(value: unknown): Record<string, Owner> | null {

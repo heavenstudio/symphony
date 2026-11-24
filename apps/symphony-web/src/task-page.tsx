@@ -1,13 +1,23 @@
 // A task's page (`/task/SLUG`): its head (slug, title, state, who filed it, the owner's priority and
-// cancel, its facts, its roles and their sessions, its builds and tests), its gates, its subtasks,
-// its timeline, its brief, its changes, its execution attempts where it has some (attempts.tsx, a
-// chunk of their own), its thread and the composer under it. Each part is drawn from its own
-// read (task-live.ts's parts, in the page's store) as soon as that read is there, and is its own
-// mock-up until then: the head and the brief at the height this browser last drew them, the gates'
-// outline, the timeline's box, the thread's and the composer's ghosts, so a part that comes moves
-// none of the others. Live, it is task-live.ts's `LiveTask`, under the board's notices.
+// cancel, its facts, whose it is where its board names an owner (owner.tsx's line, a chunk of its
+// own), its roles and their sessions, its builds and tests), its gates, its subtasks, its timeline,
+// its brief, its changes, its execution attempts where it has some (attempts.tsx, a chunk of their
+// own), its thread and the composer under it. Each part is drawn from its own read (task-live.ts's
+// parts, in the page's store) as soon as that read is there, and is its own mock-up until then:
+// the head and the brief at the height this browser last drew them, the gates' outline, the
+// timeline's box, the thread's and the composer's ghosts, so a part that comes moves none of the
+// others. Live, it is task-live.ts's `LiveTask`, under the board's notices.
 
-import { type CSSProperties, memo, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  type ComponentType,
+  type CSSProperties,
+  memo,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { AttachControls, useAttach } from "./attach";
 import type { AttemptsProps } from "./attempts";
 import { BlocksView } from "./blocks";
@@ -20,7 +30,7 @@ import { taskKind } from "./kind";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
 import type { NextActionsProps } from "./nextactions";
-import { OwnerLine } from "./owner";
+import type { OwnerLineProps } from "./owner";
 import { PartsContext, type Shown, usePart } from "./parts";
 import { href, scoped } from "./project";
 import { getJson, post, said } from "./request";
@@ -657,6 +667,36 @@ export function Brief({ slug, revision, blocks, omitted, next }: BriefProps) {
   );
 }
 
+/** Whose a task is, its line's chunk once it has come: a task drawn after draws it at once. */
+let ownerLine: ComponentType<OwnerLineProps> | null = null;
+
+/** Import whose a task is, its line's chunk, kept once it has come. */
+export const loadOwnerLine = () =>
+  import("./owner-part").then((chunk) => {
+    ownerLine = chunk.OwnerLine;
+    return ownerLine;
+  });
+
+/**
+ * Whose a task is and whom it may be handed to, a chunk of its own (owner.tsx's line, which a
+ * document's cards draw too), imported for a task whose board names its owner alone (chunk.tsx).
+ * Until it has come, its place is held: a bar for its words and, for one who may hand it on, the
+ * select's box.
+ */
+export function OwnerPart(props: OwnerLineProps) {
+  const [Line, failed, retry] = useChunk(loadOwnerLine, () => ownerLine);
+  if (Line) return <Line {...props} />;
+  if (failed) return chunkFailed("The task's ownership", retry);
+  return (
+    <span className="row">
+      <span className="bone" style={bone("24ch")} />
+      {(props.owner.hand_to ?? []).length > 0 && (
+        <span className="ghost-field" style={{ width: "7rem" }} />
+      )}
+    </span>
+  );
+}
+
 /** A workflow's next actions, imported for a task a custom workflow holds alone. */
 const nextActions = () => import("./nextactions").then((chunk) => chunk.NextActions);
 
@@ -719,7 +759,7 @@ export function TaskHead({ page, scope, connected }: TaskHeadProps) {
         )}
         {page.owner && (
           <li>
-            <OwnerLine
+            <OwnerPart
               owner={page.owner}
               id="task-hand"
               hand={(to) => post(url(TASK_HAND_ROUTE), { slug, to })}

@@ -17,6 +17,7 @@ import {
   GhostHead,
   GhostThread,
   LiveTaskPage,
+  loadOwnerLine,
   NOTHING_READ,
   OwnerControls,
   RoleChips,
@@ -358,7 +359,9 @@ describe("a task's page", () => {
     expect(kinded("chore")).not.toContain("kind:");
   });
 
-  it("says whose it is among its facts where the server says it, and nothing on a board naming nobody", () => {
+  it("says whose it is among its facts where the server says it, and nothing on a board naming nobody", async () => {
+    // Its line's chunk, come as it comes once a page drew a task with an owner.
+    await loadOwnerLine();
     const owner = { name: "design", kind: "group", by: "map", said: "from the area app" };
     const owned = detail({ page: aPage(undefined, { owner: { ...owner, hand_to: ["bo"] } }) });
     expect(owned).toContain('<span class="owner-name">group: design</span>');
@@ -368,6 +371,34 @@ describe("a task's page", () => {
     expect(seen).toContain("group: design");
     expect(seen).not.toContain('id="task-hand"');
     expect(detail({ page: aPage() })).not.toContain('class="owner"');
+  });
+
+  it("holds the place of whose it is until its line's chunk has come, then draws it at once", async () => {
+    vi.resetModules();
+    const fresh = await import("./task-page");
+    const owner = { name: "design", kind: "group", by: "map", said: "from the area app" };
+    const head = (hand_to: string[]) =>
+      html(
+        <fresh.TaskHead
+          page={aPage(undefined, { owner: { ...owner, hand_to } })}
+          scope=""
+          connected
+        />,
+      );
+    const bar = '<span class="bone" style="--w:24ch"></span>';
+    // A bar for its words and, for one who may hand it on, the select's box: no real class of it.
+    const held = head(["bo"]);
+    expect(held).toContain(
+      `<li><span class="row">${bar}<span class="ghost-field" style="width:7rem"></span></span></li>`,
+    );
+    expect(held).not.toContain('class="owner');
+    expect(held).not.toContain("group: design");
+    expect(head([])).toContain(`<li><span class="row">${bar}</span></li>`);
+    await fresh.loadOwnerLine();
+    const come = head(["bo"]);
+    expect(come).toContain('<span class="owner-name">group: design</span>');
+    expect(come).toContain('id="task-hand"');
+    expect(come).not.toContain(bar);
   });
 
   it("offers its subtasks while it has some, to load or load more", () => {

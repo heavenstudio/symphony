@@ -26,8 +26,9 @@ A page kind is an entry under `kinds/` that exports `run` and `stop`, named in `
 - `board`, `/tasks`: `board.tsx`, `boardlive.tsx`, `boardwait.tsx`, `flow.tsx`
   ([the board's design](../../docs/product/analysis/board-design.md)).
 - `task`, `/task/SLUG`: `task-page.tsx`, `task-live.ts`, `parts.ts`, `gates.tsx`, `kind.ts`,
-  `timeline.tsx`, `timeline-cost.ts`, `task-diff.tsx`, `task-diff-files.tsx`, `attempts.tsx`, and
-  for a custom workflow's task `nextactions.tsx`, `guards.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
+  `timeline.tsx`, `timeline-cost.ts`, `task-diff.tsx`, `task-diff-files.tsx`, `attempts.tsx`, for
+  a task with an owner `owner-part.tsx`, and for a custom workflow's task `nextactions.tsx`,
+  `guards.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
   [the timeline](../../docs/workflow/TASKS.md#the-timeline),
   [WORKFLOW](../../docs/workflow/WORKFLOW.md#the-app)).
 - `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx` (what a press does,
@@ -70,7 +71,7 @@ What the kinds share:
 - **The shared controls** (`button.tsx`, `input.tsx`, `textarea.tsx`, `select.tsx`, `tabs.tsx`,
   `tooltip.tsx`), the attach control (`attach.tsx`, its sending `attach-upload.ts`), the task card
   (`taskcard.tsx`), a task's work phases (`work-phases.tsx`) and whose a card or a task is, with
-  its hand-over (`owner.tsx`).
+  its hand-over (`owner.tsx`, its read `owner-read.ts`).
 - **Styles** (`styles/`, [their README](src/styles/README.md)): the shared sheet
   `styles/shared.css`, which states the cascade's order, the media layer's `styles/media.css`,
   and a kind's own sheet, imported by its module.
