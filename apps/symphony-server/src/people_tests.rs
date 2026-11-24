@@ -132,6 +132,14 @@ fn a_page_lists_each_person_by_their_profile_and_names_no_sign_ins_subject() {
         ),
         ("add", ["speak".to_string()].as_slice(), 4)
     );
+    assert_eq!(
+        page.withheld,
+        [symphony_api::WithheldPower {
+            power: "direct_agents".into(),
+            why: Power::DirectAgents.withheld().unwrap().into(),
+        }],
+        "the board's own reason, which its refusal of a grant says"
+    );
     let said = serde_json::to_string(&page).unwrap();
     for private in [
         "ana@example.com",
