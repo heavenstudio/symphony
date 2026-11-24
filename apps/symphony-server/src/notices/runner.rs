@@ -59,11 +59,14 @@ pub(crate) struct Look<'a> {
 }
 
 /// One project's runner: its id, its record's file, the machine's key for the digests the record
-/// keeps, and the record.
+/// keeps, the lock it holds on the record, and the record.
 pub(crate) struct Runner {
     project: String,
     path: PathBuf,
     key: Key,
+    /// Held while it is open ([`symphony::notices::RECORD_LOCK`]): no other runner, of this server
+    /// or another, opens the record meanwhile.
+    _held: std::fs::File,
     /// None until the first look, which takes what stands then as told.
     record: Option<Record>,
 }
@@ -80,12 +83,22 @@ impl std::fmt::Debug for Runner {
 }
 
 impl Runner {
-    /// The runner of the project `project` at `root`, its record read from its artifacts folder
-    /// and its digests made under `key`; with why where a record is there and does not read, which
-    /// is then made anew at the first look, as one never made.
-    pub(crate) fn open(root: &Path, project: &str, key: Key) -> (Runner, Option<String>) {
-        let artifact = symphony::project::Project::of(root).artifact(symphony::notices::RECORD);
-        let path = root.join(artifact);
+    /// The runner of the project `project` at `root`, its record read from its artifacts folder,
+    /// once it holds the record's lock, and its digests made under `key`; with why where a record
+    /// is there and does not read, which is then made anew at the first look, as one never made.
+    ///
+    /// # Errors
+    ///
+    /// Another runner holds the lock, of this server or another (a reload's other generation), or
+    /// the lock cannot be made: the record is not read.
+    pub(crate) fn open(
+        root: &Path,
+        project: &str,
+        key: Key,
+    ) -> Result<(Runner, Option<String>), String> {
+        let project_file = symphony::project::Project::of(root);
+        let path = root.join(project_file.artifact(symphony::notices::RECORD));
+        let held = hold(&root.join(project_file.artifact(symphony::notices::RECORD_LOCK)))?;
         let (record, unread) = match Record::read(&path) {
             Ok(record) => (record, None),
             Err(why) => (None, Some(why)),
@@ -94,9 +107,10 @@ impl Runner {
             project: project.into(),
             path,
             key,
+            _held: held,
             record,
         };
-        (runner, unread)
+        Ok((runner, unread))
     }
 
     /// The newest board line looked at; none before the first look.
@@ -205,7 +219,9 @@ impl Runner {
     ///
     /// # Errors
     ///
-    /// When the record cannot be written: nothing more is handed until it can.
+    /// When the record cannot be written: nothing more is handed until it can. A hand whose mark
+    /// is not written starts no program and uses up none of the notice's hands; an outcome not
+    /// written stands in memory, and the next write carries it.
     pub(crate) fn hand_due(
         &mut self,
         profiles: &Profiles,
@@ -246,12 +262,14 @@ impl Runner {
                 continue;
             };
             let program = program.to_path_buf();
-            {
-                let handing = &mut record.pending[at];
-                handing.hands += 1;
-                handing.handing = true;
-            }
-            record.write(&self.path)?;
+            // Counted and marked handing on the record before its program starts, and in memory
+            // only once that is written: a write that fails starts nothing and uses up no hand.
+            let mut marked = record.clone();
+            let handing = &mut marked.pending[at];
+            handing.hands += 1;
+            handing.handing = true;
+            marked.write(&self.path)?;
+            *record = marked;
             let message = line(
                 &notice.id,
                 kind,
@@ -291,6 +309,30 @@ impl Runner {
             }
             record.write(&self.path)?;
         }
+    }
+}
+
+/// The lock at `path`, made where it is not there, held by the file this answers until it closes.
+fn hold(path: &Path) -> Result<std::fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder).map_err(|e| symphony::text::os_error(&e, folder))?;
+    }
+    let file = (std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true))
+    .truncate(false)
+    .mode(0o600)
+    .open(path)
+    .map_err(|e| symphony::text::os_error(&e, path))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => Err(format!(
+            "{} is held by another server's notices, which tells this project now",
+            path.display()
+        )),
+        Err(std::fs::TryLockError::Error(error)) => Err(symphony::text::os_error(&error, path)),
     }
 }
 

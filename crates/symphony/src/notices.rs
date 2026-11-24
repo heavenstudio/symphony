@@ -25,6 +25,9 @@ pub const PROGRAMS: &str = "programs.toml";
 /// The project's record of its notices, under its artifacts folder
 /// ([`crate::project::Project::artifact`]).
 pub const RECORD: &str = "notices.json";
+/// The file beside [`RECORD`] that a server holding the project's record keeps locked, so no two
+/// tell from it at once.
+pub const RECORD_LOCK: &str = "notices.lock";
 /// The file in [`FOLDER`] holding the machine's key for the digests a record keeps ([`Key`]).
 pub const KEY: &str = "record.key";
 

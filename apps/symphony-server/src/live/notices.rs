@@ -5,6 +5,13 @@
 //! the record's, and the cards waiting from the main page's queue, again only when the board's
 //! newest line, the page, the people or the map moved; then it hands what is due.
 //!
+//! It tells only while its server generation's recording gate stands open
+//! ([`symphony_board::recording`]), as the board's recorders record: a reload's replacement,
+//! whose gate is held until its hand-off commits, reads no record and tells nothing until then,
+//! and the generation it replaces, whose gate closes as it commits, lets its record go. The record
+//! is read again each time the gate opens, and its lock ([`symphony::notices::RECORD_LOCK`]) keeps
+//! a hand still under way in the other generation from overlapping the read.
+//!
 //! The hub's stop ends a program under way with its group and joins the worker; a hub dropped
 //! without a stop takes the worker's wake with it, which ends the worker too.
 
@@ -19,6 +26,7 @@ use symphony::notices::{Key, Kind, Programs};
 use symphony_board::lock::Recovered as _;
 use symphony_board::people::ownership::{self, Map, Thing};
 use symphony_board::people::{People, Profiles};
+use symphony_board::recording::State;
 
 /// What the hub keeps of its notices' worker.
 pub(crate) struct Worker {
@@ -137,11 +145,47 @@ impl Hub {
             }
         };
         said.clear("key");
-        let (runner, unread) = Runner::open(&self.root, project, key);
+        let (runner, unread) = match Runner::open(&self.root, project, key) {
+            Ok(opened) => opened,
+            Err(why) => {
+                said.once(project, "lock", format!("nothing is told yet: {why}"));
+                return None;
+            }
+        };
+        said.clear("lock");
         if let Some(why) = unread {
             eprintln!("NOTICE {project}: its record is made anew, as it does not read: {why}");
         }
         Some(runner)
+    }
+
+    /// One turn of the worker: a pass of the project's runner while its server generation's gate
+    /// stands open, the runner opened (its record read) as the gate opens; none while it is held
+    /// or closed, or before it is given, and the runner let go, so the record is read again when
+    /// it opens.
+    fn notice_turn(
+        &self,
+        runner: &mut Option<Runner>,
+        last: &mut Option<Read>,
+        running: &Running,
+        origin: &mut dyn FnMut() -> String,
+        said: &mut Said,
+        project: &str,
+    ) {
+        let open = (self.recording_gate.get())
+            .is_some_and(|gate| matches!(gate.stands(), State::Open { .. }));
+        if !open {
+            *runner = None;
+            *last = None;
+            return;
+        }
+        if runner.is_none() {
+            *runner = self.open_notices(project, said);
+            *last = None;
+        }
+        if let Some(runner) = runner {
+            self.notice_pass(runner, last, running, origin, said, project);
+        }
     }
 
     /// One pass of `runner`: a look, where what it reads moved since `last`, then the hand of what
@@ -318,12 +362,14 @@ fn work(
             let Some(hub) = hub.upgrade() else {
                 return;
             };
-            if runner.is_none() {
-                runner = hub.open_notices(project, &mut said);
-            }
-            if let Some(runner) = &mut runner {
-                hub.notice_pass(runner, &mut last, running, &mut *origin, &mut said, project);
-            }
+            hub.notice_turn(
+                &mut runner,
+                &mut last,
+                running,
+                &mut *origin,
+                &mut said,
+                project,
+            );
             (hub.clock)()
         };
         // Until a wake, or until the next notice is due: a retry's backoff, its deadline the

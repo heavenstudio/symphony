@@ -6,12 +6,14 @@
 //! is signalled for it. The server's stop ends a hand under way the same way ([`Running::stop`]).
 //!
 //! What the program says on stderr is kept, with every hidden word (the address, the link)
-//! replaced, so nothing a log line repeats of it holds either.
+//! replaced, so nothing a log line repeats of it holds either. It is heard until the pipe closes,
+//! and at most [`HEARD_AFTER`] once the program and its group have ended: a process that left the
+//! group and holds the pipe never holds the hand.
 
-use std::io::{self, Read as _, Write as _};
+use std::io::{self, Read, Write as _};
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use symphony::notices::{Came, came, unstarted};
 use symphony_board::lock::Recovered as _;
@@ -21,7 +23,11 @@ use symphony_board::sys::Stdio;
 /// requests well within it.
 pub(crate) const MOST: Duration = Duration::from_secs(60);
 
-/// The most of a program's stderr read: a program that says more is still read to its end.
+/// The longest what a program said is still heard for once it and its group have ended: what it
+/// wrote is in the pipe already, so only a process that left the group and holds the pipe is
+/// waited for, and not past this.
+pub(crate) const HEARD_AFTER: Duration = Duration::from_secs(5);
+/// The most of a program's stderr kept: a program that says more is still read to its end.
 const KEPT: usize = 64 * 1024;
 /// The most of what it said that a line repeats.
 const SAID: usize = 300;
@@ -107,16 +113,7 @@ pub(crate) fn hand(
             .write_all(line.as_bytes())
             .and_then(|()| stdin.write_all(b"\n"));
     }
-    let stderr = child.stderr.take().map(|stderr| {
-        std::thread::spawn(move || {
-            let mut kept = Vec::new();
-            let mut stderr = stderr;
-            let _ = (&mut stderr).take(KEPT as u64).read_to_end(&mut kept);
-            // Read to its end, so a program that says more is never held on a full pipe.
-            let _ = io::copy(&mut stderr, &mut io::sink());
-            kept
-        })
-    });
+    let heard = child.stderr.take().map(Heard::listen);
     let ended = ends_within(pid);
     {
         // Ended, not ended within its bound, or its end not watched: the leader is not reaped yet,
@@ -126,8 +123,8 @@ pub(crate) fn hand(
         *group = None;
     }
     let status = child.wait();
-    let said = stderr
-        .and_then(|reader| reader.join().ok())
+    let said = heard
+        .map(|heard| heard.within(HEARD_AFTER))
         .unwrap_or_default();
     let said = hidden_in(&said, hidden);
     if running.stopping() {
@@ -155,6 +152,52 @@ pub(crate) fn hand(
                 }),
             }
         }
+    }
+}
+
+/// What a program says on a pipe, read on a thread of its own as it says it, so it is never held on
+/// a full pipe.
+struct Heard {
+    kept: Arc<Mutex<Vec<u8>>>,
+    /// Sent once the pipe closed and all of it was read.
+    closed: mpsc::Receiver<()>,
+}
+
+impl Heard {
+    /// Read `pipe` to its end, its first [`KEPT`] bytes kept.
+    fn listen(mut pipe: impl Read + Send + 'static) -> Heard {
+        let kept = Arc::new(Mutex::new(Vec::new()));
+        let (closes, closed) = mpsc::channel();
+        let keeping = Arc::clone(&kept);
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 8192];
+            loop {
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        let mut kept = keeping.lock().recover();
+                        let room = KEPT.saturating_sub(kept.len()).min(read);
+                        kept.extend_from_slice(&chunk[..room]);
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+            let _ = closes.send(());
+        });
+        Heard { kept, closed }
+    }
+
+    /// What it heard so far.
+    fn so_far(&self) -> Vec<u8> {
+        self.kept.lock().recover().clone()
+    }
+
+    /// What it heard once the pipe closed, or once `bound` passed with it open still: a deadline
+    /// on the wait for the pipe's end, which leaves the reader to end with it.
+    fn within(self, bound: Duration) -> Vec<u8> {
+        let _ = self.closed.recv_timeout(bound);
+        self.so_far()
     }
 }
 

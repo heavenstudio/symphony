@@ -110,8 +110,11 @@ own: [the server's part](#the-servers-part).
 ## The server's part
 
 The machine's one server makes the notices of every project it serves; a server of a linked
-worktree or a preview makes none, so nothing is told twice. Its module doc is
-`apps/symphony-server/src/notices.rs`.
+worktree or a preview makes none, so nothing is told twice. Through a reload's hand-off one
+generation tells at a time: the replacement reads no record and tells nothing until its hand-off
+commits, the generation it replaces lets the record go as it commits, and the lock it holds while
+it has the record open (`notices.lock` beside it) keeps a hand still under way apart from the
+replacement's first read. Its module doc is `apps/symphony-server/src/notices.rs`.
 
 - **What tells.** A card starting to wait on the main page's queue, an agent's question on a task
   to the person at the machine (a thread line to `owner` that no person wrote), and a reviewer's
@@ -139,8 +142,11 @@ worktree or a preview makes none, so nothing is told twice. Its module doc is
 - **Handed again** after a `75`: a minute after, then twice as long each time, at most an hour,
   eight hands in all; after the eighth it is dropped, said. Any other status is said once and the
   notice dropped. A program that does not end within 60 s, or whose end the server cannot watch,
-  is ended with its whole process group, as a `75`. A notice whose person's way or address for it changed since it was made, or whose way
-  has no program now, is dropped unhanded.
+  is ended with its whole process group, as a `75`; what it said is heard at most 5 s after
+  that, so a process that left the group and holds its stderr never holds the hand. A notice
+  whose person's way or address for it changed since it was made, or whose way has no program now,
+  is dropped unhanded. A hand is counted only once the record says so: a record that cannot be
+  written starts no program and uses up none of a notice's eight hands.
 - **Through a restart.** The project's record is `notices.json` in its artifacts folder: the newest
   board line looked at, who was told of each card while it waits, and each notice still to hand
   with its id, its person, its way and a digest of their address, never the address. The digest

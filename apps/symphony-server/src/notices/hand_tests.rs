@@ -203,3 +203,33 @@ fn what_a_program_says_is_one_line_cut_short_with_every_hidden_word_replaced() {
     assert!(said.ends_with('…'));
     assert_eq!(hidden_in(b"\xff ok", &[]), "\u{fffd} ok");
 }
+
+#[test]
+fn what_is_heard_after_the_end_is_bounded_while_another_holds_the_pipe() {
+    // A process that left the program's group and holds its stderr: the pipe never closes.
+    let (pipe, mut holder) = io::pipe().unwrap();
+    let heard = Heard::listen(pipe);
+    holder.write_all(b"said before it ended").unwrap();
+    test_time::until_true("what was said, heard", MOST, || {
+        heard.so_far() == b"said before it ended"
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    assert_eq!(
+        heard.within(std::time::Duration::ZERO),
+        b"said before it ended",
+        "the hand goes on with what it heard"
+    );
+    drop(holder);
+}
+
+#[test]
+fn a_closed_pipe_is_heard_to_its_end_and_kept_to_its_bound() {
+    let (pipe, mut writer) = io::pipe().unwrap();
+    let heard = Heard::listen(pipe);
+    let long = vec![b'x'; KEPT + 10_000];
+    // Written from a thread, so a pipe no reader drained never holds the test.
+    let writing = std::thread::spawn(move || writer.write_all(&long).unwrap());
+    let kept = heard.within(MOST);
+    crate::testing::joined(writing, "the writer", MOST);
+    assert_eq!(kept.len(), KEPT, "the rest is read and dropped");
+}

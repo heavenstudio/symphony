@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use symphony_board::people::ownership::Place;
 use symphony_board::people::{Power, Profile, Profiles};
+use symphony_board::recording::Gate;
 
 const DOC: &str = "docs/design/palette.md";
 const ORIGIN: &str = "http://studio.tailnet.ts.net:8765";
@@ -39,12 +40,14 @@ fn page_holding(card: &str) -> String {
     )
 }
 
-/// A project, its board, its machine folder and its hub, the hub's main page and board read.
+/// A project, its board, its machine folder and its hub, the hub's main page and board read, and
+/// its server generation's recording gate, open.
 struct Telling {
     tree: Tree,
     root: PathBuf,
     f: Fixture,
     hub: Arc<Hub>,
+    gate: Arc<Gate>,
 }
 
 impl Telling {
@@ -96,11 +99,14 @@ impl Telling {
         hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
         hub.refresh_page("", &root).unwrap();
         hub.observe(&f.store);
+        let gate = Arc::new(Gate::default());
+        hub.gate_recorders(Arc::clone(&gate));
         Telling {
             tree,
             root,
             f,
             hub: Arc::new(hub),
+            gate,
         }
     }
 
@@ -159,29 +165,19 @@ fn profiles() -> Profiles {
     }
 }
 
-/// One pass at a time, as the worker makes them.
+/// One turn at a time, as the worker takes them.
+#[derive(Default)]
 struct Passes {
-    runner: Runner,
+    runner: Option<Runner>,
     last: Option<Read>,
     said: Said,
     running: Running,
 }
 
 impl Passes {
-    fn of(telling: &Telling) -> Passes {
-        let mut said = Said::default();
-        let runner = telling.hub.open_notices("symphony", &mut said).unwrap();
-        Passes {
-            runner,
-            last: None,
-            said,
-            running: Running::default(),
-        }
-    }
-
     fn pass(&mut self, hub: &Hub) {
         let mut origin = || ORIGIN.to_string();
-        hub.notice_pass(
+        hub.notice_turn(
             &mut self.runner,
             &mut self.last,
             &self.running,
@@ -189,6 +185,11 @@ impl Passes {
             &mut self.said,
             "symphony",
         );
+    }
+
+    /// The runner's cursor: none before a runner opened its record and looked.
+    fn cursor(&self) -> Option<i64> {
+        self.runner.as_ref().and_then(Runner::cursor)
     }
 }
 
@@ -208,9 +209,9 @@ fn ask_everything(telling: &Telling) {
 #[test]
 fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_by_their_way() {
     let telling = Telling::new(false);
-    let mut passes = Passes::of(&telling);
+    let mut passes = Passes::default();
     passes.pass(&telling.hub);
-    assert!(passes.runner.cursor().is_some(), "the first look");
+    assert!(passes.cursor().is_some(), "the first look");
     assert!(telling.told().is_empty(), "nothing of what stood");
     ask_everything(&telling);
     passes.pass(&telling.hub);
@@ -265,12 +266,12 @@ fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_b
 #[test]
 fn a_board_that_names_nobody_tells_no_one() {
     let telling = Telling::new(true);
-    let mut passes = Passes::of(&telling);
+    let mut passes = Passes::default();
     passes.pass(&telling.hub);
     ask_everything(&telling);
     passes.pass(&telling.hub);
     assert!(telling.told().is_empty());
-    assert_eq!(passes.runner.next_due(), None);
+    assert_eq!(passes.runner.as_ref().and_then(Runner::next_due), None);
 }
 
 #[test]
@@ -321,18 +322,18 @@ fn what_the_machine_folder_does_not_let_it_trust_tells_no_one_said_once() {
         said.0
     );
     chmod(&key, 0o600);
-    let mut passes = Passes::of(&telling);
+    let mut passes = Passes::default();
     // Profiles that do not read: no look, said.
     let profiles = machine.join("people.json");
     let kept = std::fs::read(&profiles).unwrap();
     std::fs::write(&profiles, "{ not json").unwrap();
     passes.pass(&telling.hub);
-    assert_eq!(passes.runner.cursor(), None);
+    assert_eq!(passes.cursor(), None);
     assert!(passes.said.0.contains_key("profiles"));
     std::fs::write(&profiles, kept).unwrap();
     passes.pass(&telling.hub);
     assert!(!passes.said.0.contains_key("profiles"));
-    let first = passes.runner.cursor().unwrap();
+    let first = passes.cursor().unwrap();
     // Programs another account may write: nothing sent, said, and the look goes on.
     let programs = machine.join("notices/programs.toml");
     chmod(&programs, 0o666);
@@ -340,10 +341,7 @@ fn what_the_machine_folder_does_not_let_it_trust_tells_no_one_said_once() {
     passes.pass(&telling.hub);
     assert!(telling.told().is_empty());
     assert!(passes.said.0["programs"].contains("may be written by another account"));
-    assert!(
-        passes.runner.cursor().unwrap() > first,
-        "its lines are looked at"
-    );
+    assert!(passes.cursor().unwrap() > first, "its lines are looked at");
     // Mended: what passed while it was refused is not told after.
     chmod(&programs, 0o600);
     passes.pass(&telling.hub);
@@ -367,4 +365,67 @@ fn a_fault_is_said_once_until_it_changes_or_clears() {
     assert_eq!(said.0["board"], "refused");
     said.clear("board");
     assert!(said.0.is_empty());
+}
+
+#[test]
+fn a_replacement_tells_nothing_until_its_gate_opens_then_tells_from_the_record_as_it_stands() {
+    let telling = Telling::new(false);
+    // The generation being replaced: its runner holds the record and tells.
+    let mut old = Passes::default();
+    old.pass(&telling.hub);
+    assert!(old.cursor().is_some());
+    // The replacement's hub on the same project, its gate held until its hand-off commits.
+    let gate = Arc::new(Gate::default());
+    gate.hold();
+    let mut replacement = Hub::new(&telling.root, &telling.root.join("build/client"));
+    replacement.machine = telling.hub.machine.clone();
+    let board = telling.f.other_database();
+    replacement.connect_reader = Box::new(move |_| Ok(store_on(&board)));
+    replacement.refresh_page("", &telling.root).unwrap();
+    replacement.gate_recorders(Arc::clone(&gate));
+    let mut new = Passes::default();
+    let record = telling.root.join("artifacts/notices.json");
+    let before = std::fs::read(&record).unwrap();
+    ask_everything(&telling);
+    replacement.refresh_page("", &telling.root).unwrap();
+    replacement.observe(&telling.f.store);
+    new.pass(&replacement);
+    assert!(new.runner.is_none(), "a held gate reads no record");
+    old.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 6, "the old generation tells");
+    assert_ne!(std::fs::read(&record).unwrap(), before);
+    // The hand-off commits: the old gate closes, the new one opens.
+    telling.gate.close(1.0);
+    gate.open(1.0);
+    // A hand the old generation has under way still holds the record: the new reads it after.
+    new.pass(&replacement);
+    assert!(new.runner.is_none());
+    assert!(new.said.0["lock"].contains("held by another server's notices"));
+    old.pass(&telling.hub);
+    assert!(old.runner.is_none(), "a closed gate lets the record go");
+    new.pass(&replacement);
+    assert!(new.runner.is_some());
+    assert_eq!(
+        new.cursor(),
+        old_cursor(&record),
+        "the record as the old one left it"
+    );
+    assert_eq!(telling.told().len(), 6, "nothing told twice");
+    // From then the new generation tells what comes.
+    let both = "- [ ] **new-palette** — Which palette?\n- [ ] **new-grid** — Which grid?\n";
+    std::fs::write(telling.root.join(DOC), page_holding(both)).unwrap();
+    replacement.refresh_page("", &telling.root).unwrap();
+    new.pass(&replacement);
+    assert_eq!(telling.told().len(), 8);
+    assert!(
+        telling.told()[6..]
+            .iter()
+            .all(|told| told.3.ends_with("#new-grid"))
+    );
+}
+
+/// The cursor the record at `path` holds.
+fn old_cursor(path: &std::path::Path) -> Option<i64> {
+    let record: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    record["line"].as_i64()
 }

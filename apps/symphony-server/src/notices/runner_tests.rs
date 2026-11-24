@@ -115,7 +115,7 @@ fn key(tree: &Tree) -> Key {
 
 /// The runner of the project `symphony` in `tree`, as a start opens it.
 fn opened(tree: &Tree) -> (Runner, Option<String>) {
-    Runner::open(&tree.path(""), "symphony", key(tree))
+    Runner::open(&tree.path(""), "symphony", key(tree)).unwrap()
 }
 
 /// A runner of the project `symphony` in `tree`, its first look taken at line 10 over `cards`.
@@ -173,6 +173,17 @@ impl Hands {
         (runner.hand_due(profiles, programs, &clock, &mut hand, &mut log)).unwrap();
     }
 
+    /// [`Hands::at`], what the hand answers.
+    fn tried(&self, runner: &mut Runner, now: f64) -> Result<(), String> {
+        let clock = || now;
+        let mut hand = |program: &Path, message: &str, _: &[&str]| {
+            (self.given.borrow_mut()).push((program.to_path_buf(), message.to_string()));
+            Handed::Sent
+        };
+        let mut log = |line: String| self.log.borrow_mut().push(line);
+        runner.hand_due(&profiles(), &programs(), &clock, &mut hand, &mut log)
+    }
+
     /// Each message given, read as the notice crate reads it: id, kind, way and address.
     fn read(&self) -> Vec<(String, String, String, String)> {
         (self.given.borrow().iter())
@@ -207,6 +218,7 @@ fn the_first_look_takes_what_stands_as_told_and_waits_for_the_cards() {
     look(&mut runner, &people, None, vec![], 7);
     assert_eq!(runner.cursor(), None, "no look before the cards are read");
     assert!(!tree.path("artifacts/notices.json").exists());
+    drop(runner);
     let runner = started(&tree, &people, vec![card(&people, "one", "design")]);
     assert_eq!(runner.cursor(), Some(10));
     let record = record(&runner);
@@ -585,4 +597,53 @@ fn a_record_that_does_not_read_is_said_and_made_anew_at_the_first_look() {
         record(&runner).pending.is_empty(),
         "made anew as at a first look"
     );
+}
+
+#[test]
+fn a_record_that_cannot_be_written_starts_no_program_and_uses_up_no_hand() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let tree = Tree::new();
+    let people = people();
+    let mut runner = started(&tree, &people, vec![]);
+    look(
+        &mut runner,
+        &people,
+        None,
+        vec![task_line(&people, 11, Kind::Question, "ana")],
+        11,
+    );
+    let artifacts = tree.path("artifacts");
+    let mode = |bits: u32| {
+        std::fs::set_permissions(&artifacts, std::fs::Permissions::from_mode(bits)).unwrap();
+    };
+    mode(0o500);
+    let hands = Hands::default();
+    for now in [0.0, 1.0, 2.0] {
+        let why = hands.tried(&mut runner, now).unwrap_err();
+        assert!(why.contains("notices.json"), "{why}");
+    }
+    mode(0o700);
+    assert!(hands.given.borrow().is_empty(), "no program started");
+    let kept = &record(&runner).pending[0];
+    assert_eq!((kept.hands, kept.handing), (0, false), "no hand used up");
+    hands.tried(&mut runner, 3.0).unwrap();
+    assert_eq!(hands.given.borrow().len(), 1);
+    assert!(record(&runner).pending.is_empty());
+}
+
+#[test]
+fn one_runner_at_a_time_holds_a_projects_record() {
+    let tree = Tree::new();
+    let people = people();
+    let first = started(&tree, &people, vec![]);
+    let Err(why) = Runner::open(&tree.path(""), "symphony", key(&tree)) else {
+        panic!("a second runner opened the record the first holds");
+    };
+    assert!(
+        why.contains("notices.lock is held by another server's notices"),
+        "{why}"
+    );
+    drop(first);
+    let (again, _) = opened(&tree);
+    assert_eq!(again.cursor(), Some(10), "the record as the first left it");
 }

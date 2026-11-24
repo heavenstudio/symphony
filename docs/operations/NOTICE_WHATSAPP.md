@@ -66,9 +66,9 @@ tools/cargo.sh build --release -p symphony-notice-whatsapp
 ```
 
 The program is `.target/release/symphony-notice-whatsapp`; keep it where the machine will name
-it ([below](#naming-it-for-the-server)). It needs `curl` on `PATH`, which it reaches Meta through. No proxy is used, whatever
-proxy variable the server's environment sets (`noproxy = "*"`), so the token goes to the API's host
-alone.
+it ([below](#naming-it-for-the-server)). It needs `curl` on `PATH`, which it reaches Meta
+through. No proxy is used, whatever proxy variable the server's environment sets
+(`noproxy = "*"`), so the token goes to the API's host alone.
 
 ## Its folder, settings and token
 
