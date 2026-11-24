@@ -210,6 +210,23 @@ impl Store {
         Ok(())
     }
 
+    /// Takes back the card's hand-over line `line`, which [`Store::hand_card`] wrote, where its
+    /// caller could not write the card's `*For:*`: so the board never names a hand-over the card
+    /// does not hold. Whether it was taken back: not where it is no longer the line written, or
+    /// never was one. A line written after it keeps its number.
+    pub fn take_back(&self, line: &Line) -> Result<bool, Error> {
+        if line.did != Did::Hand {
+            return Ok(false);
+        }
+        self.retrying(|| {
+            self.transact_dispatch(
+                Statement::from(pg::TAKEN_BACK).naming(&["ownership"]),
+                json!({ "line": line }),
+                false,
+            )
+        })
+    }
+
     /// The line `decide` makes from the board's people and map, written as `by`'s at this store's
     /// clock, fenced on the newest line read and, where `fence_people`, on the people revision:
     /// none, and nothing written, where it decides on none.

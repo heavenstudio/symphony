@@ -2,8 +2,9 @@
 //! named (docs/workflow/TASKS.md, "Which group a thing belongs to"): ana, of design, reads whose a
 //! card and a task are and whom she may hand each to, and hands each on; a thing of a group she is
 //! no member of is refused her with nothing written; a card handed again to the name written on it
-//! writes nothing; a hosted visitor is offered no one to hand to; and on a board that names nobody
-//! the person at the machine reads no owner at all.
+//! writes nothing, and one whose file is not written leaves no line on the board; a hosted visitor
+//! is offered no one to hand to; and on a board that names nobody the person at the machine reads no
+//! owner at all.
 
 use crate::front::{Shared, router};
 use crate::testing::{Board, LAPTOP, Tree, laptop_with, repository_holding};
@@ -181,7 +182,9 @@ async fn a_member_reads_whose_a_task_is_on_its_page_and_hands_it_on_once() {
     let (status, body) = post(&shared, LAPTOP, "/api/task-hand", again).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(
-        body.contains("ana is no member of bo, whose it is"),
+        body.contains(
+            "it is bo's, so ana may not hand it on: only bo or the person at the machine does"
+        ),
         "{body}"
     );
     assert_eq!(store.get("app/x").unwrap().group(), Some("bo"));
@@ -259,5 +262,41 @@ async fn a_card_handed_again_to_its_name_writes_nothing_and_a_hosted_visitor_is_
     assert_eq!(
         owners["cards"]["one"],
         json!({"name": "ana", "kind": "person", "by": "named", "said": "named on it"})
+    );
+}
+
+/// A card's hand-over whose file cannot be written (the page made read-only) keeps nothing: the
+/// board's line is taken back, the page reads as it did, and whose the card is is unchanged.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_card_handed_whose_file_is_not_written_leaves_no_line_on_the_board() {
+    use std::os::unix::fs::PermissionsExt;
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
+    let _board = named(&root);
+    let store = Board::store(&root);
+    store
+        .map_place(&Place::Folder("docs".into()), "design", "owner")
+        .unwrap();
+    let lines = store.ownership_log().unwrap();
+    let page = root.join("docs/TOPIC.md");
+    let set = |mode: u32| {
+        std::fs::set_permissions(&page, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    set(0o444);
+    let shared = Shared::new(1, 8123, &root, None, ana_at(&root));
+    let hand = json!({"path": "docs/TOPIC.md", "slug": "one", "to": "engineering"});
+    let (status, body) = post(&shared, LAPTOP, "/api/card-hand", hand).await;
+    set(0o644);
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("ermission denied"), "{body}");
+    assert_eq!(store.ownership_log().unwrap(), lines, "the line taken back");
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), PAGE);
+    let (_, owners) = read(&shared, LAPTOP, "/api/card-owners?path=docs/TOPIC.md").await;
+    assert_eq!(
+        (
+            &owners["cards"]["one"]["name"],
+            &owners["cards"]["one"]["by"]
+        ),
+        (&json!("design"), &json!("map"))
     );
 }

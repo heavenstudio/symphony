@@ -62,7 +62,8 @@ pub fn task(
     if people.members.is_empty() {
         return Ok(None);
     }
-    let owning = store.task_owning(task)?;
+    let places = Thing::Task(task.slug.clone()).places();
+    let owning = ownership::owning(&people, &store.ownership_map()?, task.group(), &places);
     let open = !matches!(task.status.as_str(), "done" | "cancelled");
     Ok(Some(owner(&people, &owning, actor, machine, open)))
 }

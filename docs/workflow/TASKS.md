@@ -2473,9 +2473,12 @@ nobody, every thing is the person at the machine's, and nothing of this is drawn
   **Hand to** select drawn for them alone. A task's name is written on it, with the board's line
   on its thread (`ana handed it to engineering (it was design, from the area app)`); a card's
   `*For:*` is written in its file, as its verdict is, the board's line naming who did, as the
-  commit does not. Anyone else is refused, `bo is no member of the group design, whose it is, so
-  may not hand it on`, with nothing written; so is a name the board does not hold, a closed task
-  and a card that waits on no answer. A session hands nothing: a thing is handed on by a person.
+  commit does not, and taken back where the file is not written. Anyone else is refused, `bo is no
+  member of the group design, whose it is, so may not hand it on` (or `it is ana's, so bo may not
+  hand it on: only ana or the person at the machine does`), with nothing written; so is a name the
+  board does not hold, a closed task and a card that waits on no answer. A session hands nothing: a
+  thing is handed on by a person. Two hand-overs at once take a line number each, the second
+  decided again on what the first left.
 - **What is read.** `just tasks show SLUG` prints `group: NAME (WHAT GAVE IT)` and `--json` its
   `owning`, on a board that names someone. The task page shows the same line among its facts,
   and a card shows it beside its actions (`/api/card-owners?path=DOC`), each with what gave it:

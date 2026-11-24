@@ -422,7 +422,7 @@ pub fn may_hand(people: &People, owning: &Owning, actor: &str, machine: bool) ->
 /// Why `actor` may not hand a thing `owning` says whose it is to `to` on a board of `people`
 /// (`machine`: the actor is the person at the machine): none where they may. Refused: a board
 /// with nobody named, where every thing is the person at the machine's; a name the board holds
-/// nothing by; an actor who is no member of its group.
+/// nothing by; an actor who is no member of its group, or not the person it is written for.
 pub fn refused_hand(
     people: &People,
     owning: &Owning,
@@ -443,14 +443,22 @@ pub fn refused_hand(
         ));
     }
     if !may_hand(people, owning, actor, machine) {
-        let whose = match owning.kind {
-            Kind::Group => format!("the group {}", owning.name),
-            Kind::Person => owning.name.clone(),
-            Kind::Machine => "the person at the machine".into(),
-        };
-        return Some(format!(
-            "{actor} is no member of {whose}, whose it is, so may not hand it on"
-        ));
+        let name = &owning.name;
+        return Some(match owning.kind {
+            Kind::Group => {
+                format!(
+                    "{actor} is no member of the group {name}, whose it is, so may not hand it on"
+                )
+            }
+            Kind::Person => format!(
+                "it is {name}'s, so {actor} may not hand it on: only {name} or the person at the \
+                 machine does"
+            ),
+            Kind::Machine => format!(
+                "it is the person at the machine's, so {actor} may not hand it on: only the person \
+                 at the machine does"
+            ),
+        });
     }
     None
 }

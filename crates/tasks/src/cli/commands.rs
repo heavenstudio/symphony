@@ -948,12 +948,16 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     // Whose it is: the person at the machine's on a board with nobody named, which neither the
     // text nor the JSON says, so such a board's show is as it was.
     let people = store.people()?;
-    let owning = crate::people::ownership::owning(
-        &people,
-        &store.ownership_map()?,
-        task.group(),
-        &crate::people::ownership::Thing::Task(task.slug.clone()).places(),
-    );
+    let owning = if people.members.is_empty() {
+        None
+    } else {
+        Some(crate::people::ownership::owning(
+            &people,
+            &store.ownership_map()?,
+            task.group(),
+            &crate::people::ownership::Thing::Task(task.slug.clone()).places(),
+        ))
+    };
     if c.parsed.flag("json") {
         let mut json = json!({
             "task": shape::task(&task),
@@ -962,7 +966,7 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
             "stages": shape::stages(&stages),
             "tokens": tally.json(&spent, prices),
         });
-        if !people.members.is_empty() {
+        if let Some(owning) = &owning {
             json["owning"] = json!(owning);
         }
         c.say(&serde_json::to_string_pretty(&json).expect("JSON values serialize"));
@@ -1017,7 +1021,7 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     if let Some(kind) = task.kind() {
         c.say(&format!("  kind: {kind}"));
     }
-    if !people.members.is_empty() {
+    if let Some(owning) = &owning {
         c.say(&format!("  group: {} ({})", owning.name, owning.said()));
     }
     c.say(&format!("  {}", stages::summary_line(&stages)));

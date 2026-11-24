@@ -49,10 +49,23 @@ END IF;
     ))
 }
 
+/// The hand-over line `v -> 'line'` removed while it is still the line written: whether it was.
+pub(in crate::store) const TAKEN_BACK: Pg<'static> = Pg::Script(
+    Cow::Borrowed(
+        "DELETE FROM ownership WHERE id = v -> 'line' -> 'n' AND doc = v -> 'line'
+    AND doc ->> 'did' = 'hand';
+board_answer := to_jsonb(FOUND);",
+    ),
+    None,
+);
+
 /// The task `v ->> 'slug'` handed to `v ->> 'name'`, its line `v -> 'line'` and the board's line on
 /// its thread (`said`), while what the hand-over was decided on stands: the name written on it is
 /// still `v ->> 'was'` and [`FENCED`] holds; else refused as `v ->> 'moved'`, which is read again.
-/// A missing task, or a closed one, is refused.
+/// A missing task, or a closed one, is refused. As in [`line`], a line another write took the
+/// number of since this one read writes nothing: under the store's snapshot the insert fails to
+/// serialize and is tried again from a new read, which [`FENCED`] then refuses as moved, and the
+/// whole write, the task's name with it, is undone.
 pub(in crate::store) fn hand_task(said: &str) -> String {
     format!(
         "
@@ -72,7 +85,11 @@ BEGIN
     END IF;
     UPDATE task SET fields = board_fields(id, fields, '{{_board,group}}', v -> 'name'),
         version = version + 1 WHERE slug = v ->> 'slug';
-    INSERT INTO ownership (id, doc) VALUES (v -> 'line' -> 'n', v -> 'line');
+    INSERT INTO ownership (id, doc) VALUES (v -> 'line' -> 'n', v -> 'line')
+        ON CONFLICT (id) DO NOTHING;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '%', v ->> 'moved';
+    END IF;
     {said}
 END;"
     )

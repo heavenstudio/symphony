@@ -810,16 +810,30 @@ impl Saves {
             })?,
             None => text,
         };
-        if let Some(hand) = &handing {
-            let store = self.store_by(actor.name())?;
-            let to = hand.to.as_str();
-            let line = store.hand_card(&hand.thing, hand.written.as_deref(), to, actor.name())?;
-            if line.is_none() {
-                return Ok((json!({"ok":true,"repeat":true}), None));
+        let handed = match &handing {
+            Some(hand) => {
+                let store = self.store_by(actor.name())?;
+                let to = hand.to.as_str();
+                let written = hand.written.as_deref();
+                let Some(line) = store.hand_card(&hand.thing, written, to, actor.name())? else {
+                    return Ok((json!({"ok":true,"repeat":true}), None));
+                };
+                Some((store, line))
             }
-        }
+            None => None,
+        };
+        // A hand-over's line names a `*For:*` the card's text holds: where that text is kept
+        // nowhere, the line is taken back, so the board never says a card was handed that was not.
+        let take_back = |error: String| -> String {
+            if let Some((store, line)) = &handed
+                && let Err(lost) = store.take_back(line)
+            {
+                eprintln!("· could not take back hand-over line {}: {lost}", line.n);
+            }
+            error
+        };
         if !pending {
-            std::fs::write(&target, &text).map_err(|e| e.to_string())?;
+            std::fs::write(&target, &text).map_err(|e| take_back(e.to_string()))?;
         }
         let ask = self.document_ask(route, payload, &root, &rel, &text, comment.as_ref());
         if !matches!(route, "/api/comment" | symphony_api::CARD_HAND_ROUTE) {
@@ -849,7 +863,9 @@ impl Saves {
                         new: text,
                     },
                     actor.name(),
-                )?;
+                )
+                // Kept for delivery, a save is written nowhere else: one not kept keeps no line.
+                .map_err(|error| if pending { take_back(error) } else { error })?;
         }
         if !tap.is_empty() {
             taps.push_back((

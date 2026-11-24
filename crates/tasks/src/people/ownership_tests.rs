@@ -309,10 +309,15 @@ fn a_thing_written_to_a_person_is_theirs_to_hand_and_the_machines_its_alone() {
     assert!(!may_hand(&people, &machines, "ana", false));
     assert_eq!(
         refused_hand(&people, &machines, "design", "ana", false).as_deref(),
-        Some("ana is no member of the person at the machine, whose it is, so may not hand it on")
+        Some(
+            "it is the person at the machine's, so ana may not hand it on: only the person at the \
+             machine does"
+        )
     );
-    let refused = refused_hand(&people, &hers, "bo", "bo", false).unwrap();
-    assert!(refused.contains("no member of ana"), "{refused}");
+    assert_eq!(
+        refused_hand(&people, &hers, "bo", "bo", false).as_deref(),
+        Some("it is ana's, so bo may not hand it on: only ana or the person at the machine does")
+    );
 }
 
 #[test]

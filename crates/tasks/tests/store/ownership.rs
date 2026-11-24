@@ -6,8 +6,9 @@
 //! at the machine, and a board made without the step reads no map and takes no change.
 
 use crate::common::{Fixture, HOST, NOW, Seed, database, refused};
+use std::time::Duration;
 use symphony_board::people::Power;
-use symphony_board::people::ownership::{By, Did, Kind, MACHINE, Place, Thing};
+use symphony_board::people::ownership::{By, Did, Kind, Line, MACHINE, Place, Thing};
 use symphony_board::schema::{ADDED, OWNERSHIP};
 use symphony_board::{NewTask, Opening, Schema, Store};
 
@@ -310,6 +311,123 @@ fn a_card_is_handed_by_a_member_and_the_board_keeps_who_did() {
         .hand_card(&card, now, "design", "bo")
         .unwrap();
     assert!(back.is_some());
+}
+
+/// Two hand-overs for one line number: a card's hand-over line, written by another and not yet
+/// committed, holds the number a task's hand-over decided on, so the task's write waits on it; once
+/// it commits, the task's hand-over is decided again on the log it left and takes the next number,
+/// with no database error to the person and its thread's line said once.
+#[test]
+fn a_hand_over_that_loses_its_line_number_to_another_is_decided_again() {
+    let f = board();
+    f.task("app/x");
+    let next = f
+        .store
+        .ownership_log()
+        .unwrap()
+        .last()
+        .map_or(0, |line| line.n)
+        + 1;
+    let card = Line {
+        n: next,
+        at: NOW,
+        by: "ana".into(),
+        did: Did::Hand,
+        place: None,
+        thing: Some("card new-palette".into()),
+        name: Some("design".into()),
+        from: Some("engineering".into()),
+    };
+    let doc = serde_json::to_string(&card).unwrap().replace('\'', "''");
+    let holder = f.postgresql();
+    holder
+        .simple(&format!(
+            "BEGIN; INSERT INTO ownership (id, doc) VALUES ('{next}'::jsonb, '{doc}'::jsonb)"
+        ))
+        .unwrap();
+    let bo = person(&f, "bo");
+    let handing = std::thread::spawn(move || bo.hand_task("app/x", "design", "bo"));
+    let watcher = f.postgresql();
+    let waiting = "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+                   AND wait_event_type = 'Lock'";
+    test_time::until_true(
+        "the task's hand-over waits on the held line",
+        test_time::backstop(Duration::from_secs(30)),
+        || watcher.simple(waiting).unwrap()[0].value() != Some("0"),
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    holder.simple("COMMIT").unwrap();
+    let handed = (handing.join().unwrap())
+        .unwrap_or_else(|why| panic!("decided again, never a database error: {why:?}"))
+        .expect("the task changes hands");
+    assert_eq!(handed.group(), Some("design"));
+    let log = f.store.ownership_log().unwrap();
+    let ns: Vec<i64> = log.iter().map(|line| line.n).collect();
+    assert_eq!(&ns[ns.len() - 2..], [next, next + 1]);
+    assert_eq!(log[log.len() - 2], card, "the other's line as it wrote it");
+    let last = log.last().unwrap();
+    assert_eq!(
+        (
+            last.by.as_str(),
+            last.thing.as_deref(),
+            last.from.as_deref()
+        ),
+        ("bo", Some("task app/x"), Some("engineering"))
+    );
+    let thread = f.store.thread("app/x").unwrap();
+    let said: Vec<&str> = (thread.iter().map(|line| line.text.as_str()))
+        .filter(|text| text.contains("handed it"))
+        .collect();
+    assert_eq!(
+        said,
+        ["bo handed it to design (it was engineering, from the area app)"]
+    );
+}
+
+/// A card's hand-over line taken back, as a save does when the card's file is not written: gone
+/// from the log while it is the line written, a line after it keeping its number and the map its
+/// revision; nothing taken back twice, nor a line that is no hand-over.
+#[test]
+fn a_cards_hand_over_line_is_taken_back_and_nothing_else_is() {
+    let f = board();
+    f.store
+        .map_place(&Place::Folder("docs/design".into()), "design", BY)
+        .unwrap();
+    let card = Thing::Card {
+        slug: "new-palette".into(),
+        route: "docs/design/palette.md".into(),
+    };
+    let ana = person(&f, "ana");
+    let line = (ana.hand_card(&card, None, "engineering", "ana")).unwrap();
+    let line = line.expect("design's card goes to engineering");
+    let after = (f.store.map_place(&Place::Default, "design", BY)).unwrap();
+    let after = after.expect("the default is mapped");
+    assert!(ana.take_back(&line).unwrap());
+    let log = f.store.ownership_log().unwrap();
+    assert!(log.iter().all(|kept| kept.n != line.n), "{log:?}");
+    assert_eq!(log.last(), Some(&after));
+    assert_eq!(f.store.ownership_map().unwrap().revision, after.n);
+    assert!(!ana.take_back(&line).unwrap(), "taken back once");
+    assert!(
+        !ana.take_back(&after).unwrap(),
+        "a map line is no hand-over"
+    );
+    let changed = Line {
+        name: Some("bo".into()),
+        ..line.clone()
+    };
+    let again = (ana.hand_card(&card, None, "engineering", "ana"))
+        .unwrap()
+        .unwrap();
+    assert!(
+        !ana.take_back(&Line {
+            n: again.n,
+            ..changed
+        })
+        .unwrap(),
+        "a line other than the one written stays"
+    );
+    assert_eq!(f.store.ownership_log().unwrap().last(), Some(&again));
 }
 
 #[test]
