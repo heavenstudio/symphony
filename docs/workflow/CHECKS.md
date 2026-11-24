@@ -36,6 +36,8 @@ every stamp it needs stands on its tip, and refuses naming who gives a missing o
 landing](TASKS.md#the-default-landing)). A change to a test or a check (`[land] check_paths`)
 keeps `review`, since a loosened test or check is how a red turns green unfixed. A change of
 settings' values needs `tests` alone, the settings check ([by kind](#evidence-by-kind-of-change)).
+A commit of a generator's outputs alone (the client distribution rebuilt from main) needs no
+`pictures`: its pictures were its source tasks'.
 
 A gate that must give way for one task gives way by its orchestrator's recorded decision, never
 by a word in a terminal: a limit raised, or a waivable stamp waived at one tip

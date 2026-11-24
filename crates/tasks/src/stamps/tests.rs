@@ -70,6 +70,35 @@ fn a_change_of_settings_values_skips_review_for_the_settings_check_as_tests() {
     }
 }
 
+/// A regenerated distribution owes no pictures: `pictures` skips a commit of a generator's
+/// outputs alone, whose pictures its source tasks posted, and still applies to a page's change.
+#[test]
+fn pictures_skips_a_commit_of_a_generators_outputs_alone() {
+    let own = Catalogue::symphony();
+    let pictures = &own.stamps[2];
+    assert_eq!(pictures.name, "pictures");
+    assert!(
+        pictures.skips.contains(
+            "a commit of a generator's outputs alone (the client distribution rebuilt from \
+             main), whose pictures were its source tasks'"
+        ),
+        "{}",
+        pictures.skips
+    );
+    assert!(
+        pictures.skips.contains("anything off the pages"),
+        "{}",
+        pictures.skips
+    );
+    assert!(
+        pictures
+            .applies
+            .contains("a change to what a page shows or how it lays out"),
+        "{}",
+        pictures.applies
+    );
+}
+
 #[test]
 fn a_project_writes_its_whole_list_each_key_left_out_the_symphonys_own() {
     let text = "\
