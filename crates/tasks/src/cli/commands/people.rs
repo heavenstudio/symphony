@@ -12,36 +12,28 @@ use serde_json::{Value, json};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-/// The actions that change a board's people or a profile: refused under
-/// [`crate::confine::MARKER`], which `just tasks` sets as an agent runs it unasked, so a change
-/// runs by `just tasks-people`, which no allow rule passes and so asks first. `list` and `log`
-/// change nothing and run under it.
-pub const CHANGES: [&str; 8] = [
-    "add", "remove", "join", "leave", "grant", "revoke", "group", "profile",
-];
-
 /// The recipe a change runs by, which asks first: `symphony.just`'s, which `symphony init`
 /// installs.
 pub const RECIPE: &str = "just tasks-people";
 
+/// A change to a board's people or a profile, decided from the command line and not made yet.
+type Pending<'a> = Box<dyn FnOnce(&mut Context<'_>) -> Result<(), Stop> + 'a>;
+
+/// The two reads, `list` and `log`, run as they are. Every other action is a change, refused
+/// under [`crate::confine::MARKER`], which `just tasks` sets as an agent runs it unasked, so a
+/// change runs by `just tasks-people`, which no allow rule passes and so asks first. The dispatch
+/// decides the action, from the command line as parsed wherever it put the action (after `--as`,
+/// an option or a `--`), and only then the guard refuses it: an action added later is refused
+/// until it is written as a read, and an unknown one keeps its usage error.
 pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let action = c.arg("action");
-    // The parsed action, wherever the command line put it: before or after `--as`, the options or
-    // a `--`, so no spelling passes a change under the marker.
-    if CHANGES.contains(&action.as_str()) && c.env.var(crate::confine::MARKER).is_some() {
-        return Err(Stop::Refused(format!(
-            "just tasks refuses people {action}: a change to a board's people or to a profile asks \
-             first, and an agent runs just tasks unasked. Run it as `{RECIPE} {action} …`, which \
-             asks: nothing was written"
-        )));
-    }
     let words: Vec<String> = c.parsed.all("words").to_vec();
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
-    match (action.as_str(), words.as_slice()) {
-        ("list", []) => list(store, c),
-        ("log", []) => log(store, c),
-        ("add", [name]) => add(store, c, name),
-        ("remove", [name]) => {
+    let change: Pending<'_> = match (action.as_str(), words.as_slice()) {
+        ("list", []) => return list(store, c),
+        ("log", []) => return log(store, c),
+        ("add", [name]) => Box::new(move |c| add(store, c, name)),
+        ("remove", [name]) => Box::new(move |c| {
             let line = store.remove_person(name, &c.actor()?)?;
             c.say(&format!(
                 "{name} is on this board no more (change {}): their lines stay theirs, and their \
@@ -49,23 +41,23 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 line.n
             ));
             Ok(())
-        }
-        ("join", [name, group]) => {
+        }),
+        ("join", [name, group]) => Box::new(move |c| {
             let said = match store.join_group(name, group, &c.actor()?)? {
                 Some(line) => format!("{name} is in {group} (change {})", line.n),
                 None => format!("{name} is in {group} already: nothing written"),
             };
             c.say(&said);
             Ok(())
-        }
-        ("leave", [name, group]) => {
+        }),
+        ("leave", [name, group]) => Box::new(move |c| {
             let line = store.leave_group(name, group, &c.actor()?)?;
             c.say(&format!("{name} is not in {group} now (change {})", line.n));
             Ok(())
-        }
-        ("grant", rest) => powers(store, c, true, rest),
-        ("revoke", rest) => powers(store, c, false, rest),
-        ("group", ["add", group, rest @ ..]) => {
+        }),
+        ("grant", rest) => Box::new(move |c| powers(store, c, true, rest)),
+        ("revoke", rest) => Box::new(move |c| powers(store, c, false, rest)),
+        ("group", ["add", group, rest @ ..]) => Box::new(move |c| {
             let given = parsed_powers(rest)?;
             let line = store.add_group(group, &given, &c.actor()?)?;
             c.say(&format!(
@@ -74,23 +66,33 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 said_powers(&line.powers)
             ));
             Ok(())
-        }
-        ("group", ["remove", group]) => {
+        }),
+        ("group", ["remove", group]) => Box::new(move |c| {
             let line = store.remove_group(group, &c.actor()?)?;
             c.say(&format!(
                 "the group {group} is removed (change {}), and its members are out of it",
                 line.n
             ));
             Ok(())
+        }),
+        ("profile", [name]) => Box::new(move |c| profile(c, name)),
+        (other, _) => {
+            return Err(Stop::Refused(format!(
+                "people takes list, log, add NAME, remove NAME, join NAME GROUP, leave NAME \
+                 GROUP, grant NAME POWER…, revoke NAME POWER…, grant --group GROUP POWER…, \
+                 revoke --group GROUP POWER…, group add GROUP [POWER…], group remove GROUP or \
+                 profile NAME, not {other:?} with those arguments"
+            )));
         }
-        ("profile", [name]) => profile(c, name),
-        (other, _) => Err(Stop::Refused(format!(
-            "people takes list, log, add NAME, remove NAME, join NAME GROUP, leave NAME GROUP, \
-             grant NAME POWER…, revoke NAME POWER…, grant --group GROUP POWER…, revoke --group \
-             GROUP POWER…, group add GROUP [POWER…], group remove GROUP or profile NAME, not \
-             {other:?} with those arguments"
-        ))),
+    };
+    if c.env.var(crate::confine::MARKER).is_some() {
+        return Err(Stop::Refused(format!(
+            "just tasks refuses people {action}: a change to a board's people or to a profile asks \
+             first, and an agent runs just tasks unasked. Run it as `{RECIPE} {action} …`, which \
+             asks: nothing was written"
+        )));
     }
+    change(c)
 }
 
 /// `add NAME`: the person put on the board with the powers and groups given, and their profile
@@ -132,7 +134,7 @@ fn add(store: &Store, c: &mut Context, name: &str) -> Result<(), Stop> {
         (Ok(decided), _) => decided?,
         (Err(why), None) => {
             return Err(Stop::Board(format!(
-                "the machine's profiles could not be read ({why}): nothing was written"
+                "the machine's profiles could not be locked or read ({why}): nothing was written"
             )));
         }
         (Err(why), Some(n)) => {
