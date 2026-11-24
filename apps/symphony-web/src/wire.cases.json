@@ -6346,7 +6346,7 @@
     },
     {
       "rust": "crates/symphony-api/src/agents.rs control",
-      "typescript": "sessionControl, src/session.tsx",
+      "typescript": "sessionControl, src/session-control.ts",
       "source": [
         "    pub fn control(&self, local: bool) -> Option<SessionControl<'_>> {",
         "        let url = self.url.as_deref().filter(|url| web_address(url));",
@@ -6361,7 +6361,7 @@
     },
     {
       "rust": "crates/symphony-api/src/agents.rs via_parent",
-      "typescript": "viaParent, src/session.tsx",
+      "typescript": "viaParent, src/session-control.ts",
       "source": [
         "    pub fn via_parent(&self, handle: &str) -> bool {",
         "        self.handle != handle",
