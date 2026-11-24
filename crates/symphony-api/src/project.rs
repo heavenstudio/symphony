@@ -48,6 +48,11 @@ pub struct ProjectView {
     /// page served for nobody in particular.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub you: Option<PersonName>,
+    /// Where who reads the page writes their profile, a path of the project: the person at the
+    /// machine's own section of the People page (`/people#you`), else their own card there
+    /// (`/people#person-NAME`). Empty with no one to name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub profile: String,
     /// The person at the machine, once they gave themselves a name: every line they wrote, under
     /// it and under `owner` before it, is drawn with how they are shown. None while they gave none,
     /// and their lines read `owner`.

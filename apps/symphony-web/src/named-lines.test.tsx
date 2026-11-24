@@ -1,7 +1,7 @@
 // The person at the machine drawn by the name they gave themselves, on every page that draws a line
-// of theirs or names who reads it: a task's thread, a card's history, the header and the Settings
-// page's link, each from the project view the server inlined (`ProjectView.you`, `.machine`). The
-// rest of their tests, with no name given, draw `owner` as before.
+// of theirs or names who reads it: a task's thread, a card's history and the header, each from the
+// project view the server inlined (`ProjectView.you`, `.profile`, `.machine`). The rest of their
+// tests, with no name given, draw `owner` as before.
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,13 +32,22 @@ const { You } = await import("./frame");
 const { TaskMessage } = await import("./task-page");
 
 const stefano = { name: "stefano", shown: "Stefano" };
-const NAMED = { name: "", register: "", nav: [], entrypoints: [], you: stefano, machine: stefano };
+const NAMED = {
+  name: "",
+  register: "",
+  nav: [],
+  entrypoints: [],
+  you: stefano,
+  profile: "/people#you",
+  machine: stefano,
+};
 const UNNAMED = {
   name: "",
   register: "",
   nav: [],
   entrypoints: [],
   you: { name: "owner", shown: "owner" },
+  profile: "/people#you",
 };
 
 const paragraph = (text: string): Block => ({ type: "paragraph", spans: [{ type: "text", text }] });
@@ -112,14 +121,18 @@ describe("a card's history", () => {
 });
 
 describe("the header", () => {
-  it("names who reads the page and links to where they write their profile", () => {
+  it("names who reads the page and links to where the server says they write their profile", () => {
     expect(renderToStaticMarkup(<You view={NAMED} />)).toBe(
-      '<a class="app-you" href="/people#you" title="stefano" aria-label="Stefano, your profile">Stefano</a>',
+      '<a class="app-you" href="/people#you" aria-label="Stefano, your profile">Stefano</a>',
     );
     expect(renderToStaticMarkup(<You view={UNNAMED} />)).toBe(
       '<a class="app-you" href="/people#you" aria-label="owner, your profile">owner</a>',
     );
-    const ana = { ...NAMED, you: { name: "ana", shown: "Ana Lima" } };
+    const ana = {
+      ...NAMED,
+      you: { name: "ana", shown: "Ana Lima" },
+      profile: "/people#person-ana",
+    };
     expect(renderToStaticMarkup(<You view={ana} />)).toContain('href="/people#person-ana"');
     expect(renderToStaticMarkup(<You view={{ ...NAMED, you: null }} />)).toBe("");
   });

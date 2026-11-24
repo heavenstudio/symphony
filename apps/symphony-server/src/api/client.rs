@@ -76,13 +76,7 @@ pub(super) async fn static_response(shared: &Shared, path: &str, request: &Reque
             preload::page(shared, kind, &mut shell).await;
         }
         let actor = crate::front::Admitted::actor(shared, request.extensions());
-        let reader = crate::shell::Reader {
-            you: Some(symphony_api::PersonName {
-                name: actor.name().into(),
-                shown: actor.sender.display.clone(),
-            }),
-            machine: shared.gate.machine_person(),
-        };
+        let reader = crate::shell::Reader::of(&actor, shared.gate.machine_person());
         bytes = Bytes::from(crate::shell::page_for(
             &shell,
             &shared.root,

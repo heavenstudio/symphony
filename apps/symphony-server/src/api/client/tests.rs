@@ -653,7 +653,10 @@ async fn the_page_names_its_reader_and_the_person_at_the_machine_as_their_profil
         name: "owner".into(),
         shown: "owner".into(),
     };
-    assert_eq!((view.you, view.machine), (Some(owner), None));
+    assert_eq!(
+        (view.you, view.profile.as_str(), view.machine),
+        (Some(owner), "/people#you", None)
+    );
     symphony_board::people::Profiles {
         people: vec![symphony_board::people::Profile {
             name: "stefano".into(),
@@ -670,5 +673,8 @@ async fn the_page_names_its_reader_and_the_person_at_the_machine_as_their_profil
         name: "stefano".into(),
         shown: "Stefano".into(),
     };
-    assert_eq!((view.you, view.machine), (Some(named.clone()), Some(named)));
+    assert_eq!(
+        (view.you, view.profile.as_str(), view.machine),
+        (Some(named.clone()), "/people#you", Some(named))
+    );
 }

@@ -39,7 +39,33 @@ pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Reader {
     pub(crate) you: Option<symphony_api::PersonName>,
+    /// Where they write their profile ([`symphony_api::ProjectView::profile`]).
+    pub(crate) profile: String,
     pub(crate) machine: Option<symphony_api::PersonName>,
+}
+
+impl Reader {
+    /// The page served to `actor`, `machine` the person at the machine as the gate names them once
+    /// they gave themselves a name: the header names `actor` and links to their own section of the
+    /// People page when they are the person at the machine, else to their own card there.
+    pub(crate) fn of(
+        actor: &symphony_plugin::Actor,
+        machine: Option<symphony_api::PersonName>,
+    ) -> Reader {
+        let profile = if symphony_board::workflow::is_machine(actor) {
+            "/people#you".to_string()
+        } else {
+            format!("/people#person-{}", actor.name())
+        };
+        Reader {
+            you: Some(symphony_api::PersonName {
+                name: actor.name().into(),
+                shown: actor.sender.display.clone(),
+            }),
+            profile,
+            machine,
+        }
+    }
 }
 
 /// [`page`], served to `reader`: the header names them, and the lines of the person at the machine
@@ -93,6 +119,7 @@ pub(crate) fn page_for(
         let mut view = project.view_at(root);
         view.base = base.into();
         view.you.clone_from(&reader.you);
+        view.profile.clone_from(&reader.profile);
         view.machine.clone_from(&reader.machine);
         if !view.mark.is_empty() {
             view.mark = versioned(root, "", &view.mark)[1..].to_string();

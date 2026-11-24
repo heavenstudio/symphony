@@ -251,12 +251,7 @@ export function readView(value: unknown): ProjectView {
     !urls.every(isText) ||
     !["guide", "base", "wordmark", "mark"].every(
       (field) => view[field] === undefined || isText(view[field]),
-    ) ||
-    // Who reads the page and the person at the machine, each a name and how it is shown.
-    !["you", "machine"].every((field) => {
-      const person = view[field] as Record<string, unknown> | null | undefined;
-      return person == null || (isText(person.name) && isText(person.shown));
-    })
+    )
   ) {
     return PLAIN;
   }
@@ -307,16 +302,6 @@ export function writer(name: string): Drawn {
  */
 export function named(you: PersonName): void {
   current = { ...project(), you, machine: you };
-}
-
-/**
- * Where who reads the page writes their profile: the person at the machine's You section on the
- * People page, another person's own card there.
- */
-export function profilePath(view: ProjectView): string {
-  const you = view.you;
-  const machine = you == null || you.name === "owner" || you.name === view.machine?.name;
-  return machine ? "/people#you" : `/people#person-${you.name}`;
 }
 
 /**

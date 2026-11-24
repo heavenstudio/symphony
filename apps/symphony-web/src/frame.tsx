@@ -13,7 +13,7 @@ import {
   useState,
 } from "react";
 import { Button } from "./button";
-import { crumbs, headerLinks, here, href, profilePath, project, scoped } from "./project";
+import { crumbs, headerLinks, here, href, project, scoped } from "./project";
 import { getJson, said } from "./request";
 import type { Route } from "./route";
 import { useScrollRow } from "./scrollrow";
@@ -283,13 +283,18 @@ function Brand({ view }: { view: ProjectView }) {
 /**
  * Who reads the page, as the server named them in its view (`ProjectView.you`), at the header
  * row's end: their shown name, `owner` for the person at the machine before they give themselves
- * one, linking to where they write their profile. Nothing for a page served for nobody.
+ * one, linking to where the server says they write their profile (`ProjectView.profile`). Nothing
+ * for a page served for nobody.
  */
 export function You({ view }: { view: ProjectView }) {
   const you = view.you;
   return (
     you != null && (
-      <a className="app-you" href={href(profilePath(view))} aria-label={`${you.shown}, your profile`}>
+      <a
+        className="app-you"
+        href={href(view.profile ?? "")}
+        aria-label={`${you.shown}, your profile`}
+      >
         {you.shown}
       </a>
     )

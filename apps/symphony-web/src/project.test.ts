@@ -13,7 +13,6 @@ import {
   navPage,
   ownPages,
   PLAIN,
-  profilePath,
   readmeRoute,
   readView,
   scoped,
@@ -190,22 +189,18 @@ describe("the view the server inlined", () => {
     });
   });
 
-  it("keeps who reads it and the person at the machine as names, and takes one of another shape for no view", () => {
+  it("keeps who reads it, where they write their profile and the person at the machine as the server sent them", () => {
     const you = { name: "stefano", shown: "Stefano" };
-    expect(readView({ name: "n", register: "r", you, machine: you })).toEqual({
+    const profile = "/people#you";
+    expect(readView({ name: "n", register: "r", you, profile, machine: you })).toEqual({
       name: "n",
       register: "r",
       nav: [],
       entrypoints: [],
       you,
+      profile,
       machine: you,
     });
-    // Left out, or null as serde writes none, it is no one.
-    expect(readView({ name: "n", register: "r", you: null, machine: null }).name).toBe("n");
-    for (const odd of ["stefano", { name: "stefano" }, { name: 1, shown: "S" }]) {
-      expect(readView({ name: "n", register: "r", you: odd })).toBe(PLAIN);
-      expect(readView({ name: "n", register: "r", machine: odd })).toBe(PLAIN);
-    }
   });
 
   it.each([
@@ -224,19 +219,6 @@ describe("the view the server inlined", () => {
     ["a mark of another type", { name: "", register: "", mark: {} }],
   ])("is the plain project for %s", (_, value) => {
     expect(readView(value)).toBe(PLAIN);
-  });
-});
-
-describe("where a reader writes their profile", () => {
-  const stefano = { name: "stefano", shown: "Stefano" };
-
-  it("is the You section for the person at the machine, named or not, and a person's own card", () => {
-    expect(profilePath({ ...PLAIN, you: { name: "owner", shown: "owner" } })).toBe("/people#you");
-    expect(profilePath({ ...PLAIN, you: stefano, machine: stefano })).toBe("/people#you");
-    expect(profilePath({ ...PLAIN, you: { name: "ana", shown: "Ana" }, machine: stefano })).toBe(
-      "/people#person-ana",
-    );
-    expect(profilePath(PLAIN)).toBe("/people#you");
   });
 });
 
