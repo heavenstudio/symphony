@@ -1,1 +1,0 @@
-import{pt as e}from"./shared-607a8a177635f61c.js";var t=e();function n({className:e,onChange:n,...r}){return(0,t.jsx)(`input`,{className:e===void 0?`dx-input`:`dx-input ${e}`,...r,onInput:n===void 0?void 0:e=>n(e)})}export{n as t};
