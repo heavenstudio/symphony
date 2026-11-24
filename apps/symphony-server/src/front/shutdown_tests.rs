@@ -65,13 +65,9 @@ exec "$SYMPHONY_REAL_SQLITE" "$@" <<< "$script"
 "##,
             false,
         );
-        let client = board::client();
-        symphony_board::Store::open(symphony_board::rpc::Client::new(
-            client.addr(),
-            "sf",
-            client.database(),
-        ))
-        .unwrap();
+        let client = board::database();
+        // The board's command line makes the board; the Symphony, a reader, never does.
+        crate::testing::store_on(&client);
         let path = std::env::join_paths(
             std::iter::once(control.clone())
                 .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),

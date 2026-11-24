@@ -5,7 +5,6 @@
 use crate::lock::Recovered as _;
 
 use super::messages::DELIVERED;
-use super::surreal::pool as sql;
 use super::work::OWNER;
 use super::{Error, Message, Store};
 use serde_json::{Value, json};
@@ -98,10 +97,9 @@ impl Store {
             .is_some_and(|pool| pool.floor <= since && pool.latest >= latest)
         {
             let floor = pool.as_ref().map_or(since, |pool| pool.floor.min(since));
-            let read = sql::pool();
             let (latest, rows): (i64, Value) = self.retrying(|| {
                 self.read(
-                    super::statement::both(&read, super::postgres::pool::pool()),
+                    super::statement::Statement::from(super::postgres::pool::pool()),
                     json!({"floor": floor, "delivered": DELIVERED}),
                 )
             })?;

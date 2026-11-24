@@ -5,7 +5,7 @@
 //! refresh rendered again is answered with its new outline. Renders are counted, never timed.
 
 use super::Hub;
-use super::read_paths_tests::{Answer, observe, served_with};
+use super::read_paths_tests::{Answer, Move, moved, observe, served_with};
 use crate::testing::{
     Tree,
     board::{Fixture, Seed},
@@ -163,14 +163,11 @@ fn a_document_a_refresh_rendered_again_is_answered_with_its_new_outline() {
     assert_eq!(renders(&hub), rendered);
 }
 
-/// The board's `query`, run on the fixture's board, then read by the hub as its loop reads it: a
-/// board read alone, which asks for no refresh of the documents and renders again only those whose
-/// linking tasks moved.
-fn board_moves(hub: &Hub, f: &Fixture, query: &str) {
-    f.store
-        .client()
-        .query(query, serde_json::json!({}))
-        .unwrap();
+/// `change` made on the fixture's board, then read by the hub as its loop reads it: a board read
+/// alone, which asks for no refresh of the documents and renders again only those whose linking
+/// tasks moved.
+fn board_moves(hub: &Hub, f: &Fixture, change: Move) {
+    moved(&f.store, change);
     observe(hub, &f.store, &[]);
 }
 
@@ -199,24 +196,29 @@ fn a_document_whose_linking_task_moved_on_the_board_alone_is_answered_with_its_n
     let moves = [
         (
             "its status",
-            "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/topic' RETURN NONE;",
+            Move::Set(
+                "tools/topic",
+                serde_json::json!({ "status": "in_progress" }),
+            ),
             "in_progress",
         ),
         (
             "its title",
-            "UPDATE task SET title = 'Retitled since' WHERE slug = 'tools/topic' RETURN NONE;",
+            Move::Set(
+                "tools/topic",
+                serde_json::json!({ "title": "Retitled since" }),
+            ),
             "Retitled since",
         ),
         (
             "another task linking it",
-            "CREATE link CONTENT { slug: 'tools/later', kind: 'doc', target: 'docs/TOPIC.md' } \
-             RETURN NONE;",
+            Move::Link("tools/later", "docs/TOPIC.md"),
             "tools/later",
         ),
     ];
-    for (case, query, words) in moves {
+    for (case, change, words) in moves {
         let rendered = renders(&hub);
-        board_moves(&hub, &f, query);
+        board_moves(&hub, &f, change);
         // The board read rendered the copy again and told open pages.
         assert_eq!(renders(&hub), rendered + 1, "{case}: rendered once");
         let published = hub.pages.read().unwrap()[""].history.len();
@@ -252,7 +254,10 @@ fn a_document_whose_linking_task_moved_on_the_board_alone_is_answered_with_its_n
     board_moves(
         &hub,
         &f,
-        "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/unlinked' RETURN NONE;",
+        Move::Set(
+            "tools/unlinked",
+            serde_json::json!({ "status": "in_progress" }),
+        ),
     );
     let rendered = renders(&hub);
     assert_eq!(ask(OUTLINE, Some(&named)).0, StatusCode::NOT_MODIFIED);

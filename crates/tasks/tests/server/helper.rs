@@ -1,6 +1,7 @@
 //! Waiting on a helper process this test binary started: its readiness is a datagram it sends
 //! ([`answer`]), waited for while the helper lives and given up at once when it exits first
-//! ([`event_of`]), never against a wall-clock bound that load can exceed.
+//! ([`event_of`]), never against a wall-clock bound that load can exceed. And a child started with
+//! an input of its own ([`spawn_with_input`]).
 
 use crate::children::Child as _;
 use crate::common::signal;
@@ -9,6 +10,17 @@ use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use symphony_board::sys::{Child, Command, Stdio};
+
+/// `command` started with its stdin a [`symphony_board::sys::pipe`], kept as `child.stdin`, and its
+/// other streams as `command` sets them: what the child reads ends once the test drops that input,
+/// never later because a child another test spawned took a copy of it. The store tests' own
+/// (`tests/store/common.rs`), which this target no longer includes.
+pub fn spawn_with_input(command: &mut Command) -> std::io::Result<Child> {
+    let (input, stdin) = symphony_board::sys::pipe()?;
+    let mut child = command.stdin(input).spawn()?;
+    child.stdin = Some(std::os::fd::OwnedFd::from(stdin).into());
+    Ok(child)
+}
 
 /// How long [`event_of`] reads before it looks at its helper again.
 const LOOK: Duration = Duration::from_millis(50);
@@ -76,7 +88,7 @@ pub fn answer(events: &UdpSocket, message: &[u8]) {
 
 /// A stand-in helper for [`event_of`]: `cat`, alive until its input is dropped, saying nothing.
 fn quiet_helper() -> Child {
-    crate::store::spawn_with_input(
+    spawn_with_input(
         Command::of("cat")
             .stdout(Stdio::null())
             .stderr(Stdio::null()),
@@ -136,7 +148,7 @@ fn a_helper_that_answers_late_is_heard_acknowledged_and_left_running() {
     events.set_nonblocking(true).unwrap();
     let to = events.local_addr().unwrap();
     // `cat` stands in for the helper, writing out the acknowledgements it is given.
-    let mut helper = crate::store::spawn_with_input(
+    let mut helper = spawn_with_input(
         Command::of("cat")
             .stdout(std::fs::File::create(&read).unwrap())
             .stderr(Stdio::null()),
@@ -198,7 +210,7 @@ const ROUNDS: usize = 100;
 fn every_helper_that_answers_then_exits_at_once_is_heard() {
     for round in 0..ROUNDS {
         let events = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let mut helper = crate::store::spawn_with_input(
+        let mut helper = spawn_with_input(
             Command::of(std::env::current_exe().unwrap())
                 .args([
                     "--ignored",

@@ -50,16 +50,14 @@ struct Boards<'a> {
 impl<'a> Boards<'a> {
     /// The boards of `alpha`, the fixture's main checkout, and of `pantry` at `shelf`.
     fn made(repo: &'a Repo, shelf: &Path) -> Self {
-        let surreal = super::surreal();
         let boards = [(repo.main.as_path(), ALPHA_TASK), (shelf, PANTRY_TASK)]
             .into_iter()
             .map(|(root, task)| {
                 let env = symphony_board::cli::Env {
-                    vars: [
-                        (symphony_env::SURREAL.name, surreal.display().to_string()),
-                        (symphony::machine::DIR_ENV, repo.home.display().to_string()),
-                    ]
-                    .map(|(name, value)| (name.to_string(), value))
+                    vars: [(
+                        symphony::machine::DIR_ENV.to_string(),
+                        repo.home.display().to_string(),
+                    )]
                     .into(),
                     cwd: root.to_path_buf(),
                 };
@@ -67,7 +65,7 @@ impl<'a> Boards<'a> {
                     .unwrap_or_else(|why| panic!("{}'s board: {why}", root.display()))
                     .create(&NewTask::new(task, "Its own project's task", "owner"))
                     .unwrap();
-                Board::in_common(&root.join(".git"), Some(&surreal))
+                Board::in_common(&root.join(".git"))
             })
             .collect();
         Boards { repo, boards }
@@ -85,8 +83,8 @@ impl Drop for Boards<'_> {
     }
 }
 
-/// The fixture's `PATH` and `/usr/sbin`, where macOS keeps `lsof`: a server takes a project's
-/// board as running only once `lsof` shows its recorded server listening at its address.
+/// The fixture's `PATH` and `/usr/sbin`, where macOS keeps `lsof`, which the board's sweep finds
+/// the folders processes run in with.
 fn path(repo: &Repo) -> OsString {
     let (_, mut path) = repo
         .environment()

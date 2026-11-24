@@ -1,4 +1,4 @@
-//! PostgreSQL twin of `store/workflow.rs`'s statements (`super::super::surreal::workflow`).
+//! The statements of `store/workflow.rs` on PostgreSQL.
 
 use super::Pg;
 
@@ -6,7 +6,7 @@ pub(in crate::store) fn active() -> Pg<'static> {
     Pg::read("(SELECT body FROM workflow WHERE id = '[\"active\"]'::jsonb)")
 }
 
-/// Twin of `super::super::surreal::workflow::ACTIVE_SOURCE`.
+/// The active workflow and the revision its definition was recorded with.
 pub(in crate::store) fn active_source() -> Pg<'static> {
     Pg::read(
         "(SELECT jsonb_build_object('active', a.body, 'revision', d.body -> 'revision')
@@ -82,8 +82,8 @@ pub(in crate::store) fn standings() -> Pg<'static> {
     )
 }
 
-/// Twin of `super::super::surreal::workflow::ACTIVATE`, the board's marker moved by
-/// `board_bump`, once in its transaction as every trigger's.
+/// A custom workflow activated as the next generation (`Store::activate_workflow`'s write), the
+/// board's marker moved by `board_bump`, once in its transaction as every trigger's.
 pub(in crate::store) fn activate() -> Pg<'static> {
     Pg::script(
         "
@@ -154,8 +154,8 @@ END;
     )
 }
 
-/// Twin of `super::super::surreal::workflow::RETURN_DEFAULT`, the board's marker moved by
-/// `board_bump`, once in its transaction as every trigger's.
+/// The board returned to its own writers (`Store::return_to_default`'s write), the board's marker
+/// moved by `board_bump`, once in its transaction as every trigger's.
 pub(in crate::store) fn return_default() -> Pg<'static> {
     Pg::script(
         "
@@ -257,9 +257,8 @@ pub(in crate::store) const ATTESTERS: &str = "coalesce((SELECT body -> 'authorit
         WHERE id = jsonb_build_array('activation',
             (SELECT body -> 'generation' FROM workflow WHERE id = '[\"active\"]'::jsonb))), '[]'::jsonb)";
 
-/// `body`, the write of an admitted operation (`super::super::surreal::workflow::APPLY`), with
-/// the slot counters it holds guarded after it when `guarded` and its line `logged` on the
-/// thread.
+/// `body`, the write of an admitted operation, with the slot counters it holds guarded after it
+/// when `guarded` and its line `logged` on the thread.
 pub(in crate::store) fn apply(logged: &str, guarded: bool) -> Pg<'static> {
     let guard = if guarded { super::cap::GUARD } else { "" };
     Pg::script(format!(
@@ -359,7 +358,8 @@ END;
     ))
 }
 
-/// Twin of `super::super::surreal::workflow::PLACED`.
+/// A task filed at the active custom workflow's initial pair: refused where the workflow activated
+/// again since the filing read it, else its first transition recorded and its position written.
 pub(in crate::store) const PLACED: &str = "IF coalesce((SELECT (body ->> 'generation')::bigint FROM workflow
         WHERE id = '[\"active\"]'::jsonb FOR SHARE), 0) <> (v -> 'placing' ->> 'generation')::bigint THEN
     RAISE EXCEPTION '%', 'refused: stale_activation: the workflow activated again while '
@@ -370,7 +370,7 @@ INSERT INTO workflow (id, kind, body, at) VALUES (jsonb_build_array('event', v -
 UPDATE task SET fields = board_fields(id, fields, '{_board,workflow}', v -> 'placed')
     WHERE slug = v ->> 'slug';";
 
-/// Twin of `super::super::surreal::workflow::TRANSITIONS`, by the primary key, in the order the
+/// The bodies of the transitions `v -> 'ids'` names, each by the primary key, in the order the
 /// ids are given.
 pub(in crate::store) fn transitions() -> Pg<'static> {
     Pg::read(
@@ -380,14 +380,14 @@ pub(in crate::store) fn transitions() -> Pg<'static> {
     )
 }
 
-/// Twin of `super::super::surreal::workflow::MAPPINGS`.
+/// The mappings activation `v -> 'generation'` recorded, or null.
 pub(in crate::store) fn mappings() -> Pg<'static> {
     Pg::read(
         "(SELECT body -> 'mappings' FROM workflow WHERE id = jsonb_build_array('activation', v -> 'generation'))",
     )
 }
 
-/// Twin of `super::super::surreal::workflow::AUTHORITIES`.
+/// The project and the approval authorities activation `v -> 'generation'` recorded, or null.
 pub(in crate::store) fn authorities() -> Pg<'static> {
     Pg::read(
         "(SELECT jsonb_build_object('project', body -> 'project', 'authorities', body -> 'authorities')
@@ -395,7 +395,8 @@ pub(in crate::store) fn authorities() -> Pg<'static> {
     )
 }
 
-/// Twin of `super::super::surreal::workflow::REOPEN_PLACED`.
+/// A task reopened under the active custom workflow, placed: `stale` where the workflow activated
+/// again since the rule read it, else its transition recorded and its status and position written.
 pub(in crate::store) const REOPEN_PLACED: &str = "IF coalesce((SELECT (body ->> 'generation')::bigint FROM workflow
         WHERE id = '[\"active\"]'::jsonb FOR SHARE), 0) <> (v -> 'placing' ->> 'generation')::bigint THEN
     RAISE EXCEPTION 'stale';

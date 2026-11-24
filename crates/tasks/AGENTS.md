@@ -1,9 +1,8 @@
 # crates/tasks/
 
-The `symphony-board` crate (this folder) is the task board: its store over PostgreSQL, on which a
-new board is made, and over SurrealDB, which a board made before that keeps until it is moved
-(`server/backend.rs` selects one by the board's home), the database server it starts in
-`symphony/tasks/` in the git common dir, and the binaries `tasks`
+The `symphony-board` crate (this folder) is the task board: its store over PostgreSQL, the
+database server it starts on the board's data in `symphony/tasks/` in the git common dir (a home
+still on SurrealDB is refused, `server/backend.rs`), and the binaries `tasks`
 (`just tasks`), `agent-send` (`just agent-send`), `tasks-copy`, `tasks-reclaim` and `tasks-move`.
 The workspace, the Cargo wrapper and the toolchain pin are
 [the root guide's](../../AGENTS.md#rust).
@@ -24,7 +23,7 @@ targets are the folders of `tests/` with a `main.rs` that says what each holds (
   its own, its help in `cli/usage.rs`). `--json` prints `serde_json::Value`, its records' fields
   in `cli/shape.rs`. `cli/api.rs` is `tasks api`, `cli/agents.rs` the agents API, `cli/beat.rs`
   the heartbeat hook, `cli/attach/` the monitor and its event lines, `cli/pull.rs` the PULL
-  digest. `bin/tasks-move.rs` is a program apart, so `tasks` links no move.
+  digest. `bin/tasks-move.rs` is a program apart, so `tasks` links none of its restore.
 - **The recorder and the runs**: `cli/recorder.rs` (`tasks run`), `runs.rs`, `runs/`,
   `run_logs.rs`, `recording.rs`, `cli/machine_work/`
   ([MACHINE_WORK](../../docs/workflow/MACHINE_WORK.md), [RUNS](../../docs/workflow/RUNS.md)).
@@ -35,11 +34,12 @@ targets are the folders of `tests/` with a `main.rs` that says what each holds (
 - **The store**: `store/` is `Store` (`work/` the task writes, `messages.rs`, `asks.rs`,
   `sessions.rs`, `launches.rs`, `cap.rs`, `writers.rs`, `recovery.rs`, `copy.rs`, `opening.rs`,
   `transaction.rs`); `lib.rs`'s doc states the rule of every write. Its statements are
-  `store/surreal/` and `store/postgres/` ([below](#the-stores-statements-live-in-one-place)).
+  `store/postgres/`'s ([below](#the-stores-statements-live-in-one-place)).
   `schema.rs` is the tables, the indexes, the version and its steps; `live.rs` which builds may
-  move a live board; `rpc.rs`, `cbor.rs` and `pg.rs` the clients, and `db.rs` what both answer
-  in (`DbError`, `plain`). `store/reading.rs` holds the variables of a read of tasks, which each
-  engine's statements name alike.
+  move a live board; `pg.rs` the client, `db.rs` what it answers in (`DbError`, `plain`), and
+  `rpc.rs` and `cbor.rs` the SurrealDB client kept for consumers, whose `rpc::Client` names the
+  address a store opens ([its contracts](#its-contracts)).
+  `store/reading.rs` holds the variables of a read of tasks, which its statements name.
 - **Reaching a board**: `project.rs`, `git.rs`, `folders.rs` (the state folders, named once),
   `builds.rs`, `confine.rs` (where an unasked recipe's path may lead), `launch/bounds.rs`.
 - **Callbacks, delivery and PULL**: `store/callbacks.rs`, `store/dispatcher.rs`,
@@ -69,16 +69,16 @@ targets are the folders of `tests/` with a `main.rs` that says what each holds (
   ([the pipeline alarm](../../docs/workflow/TASKS.md#the-pipeline-alarm)), `health.rs`, `stages.rs`,
   `arm.rs`, `reports.rs`.
 - **The database server**: `server.rs` is `server::Home`, with its parts in `server/`:
-  `server/postgres.rs` and `server/postgres/lifecycle.rs` the board's PostgreSQL beside it
-  ([POSTGRESQL](../../docs/operations/POSTGRESQL.md)), `server/moving.rs` a board's move between the engines;
-  `board_health.rs` the query log. The owner's side is TASKS's
+  `server/postgres.rs` and `server/postgres/lifecycle.rs` the board's PostgreSQL
+  ([POSTGRESQL](../../docs/operations/POSTGRESQL.md)), `server/moving.rs` the switch of a home's data under a
+  journal, which a restore takes; `board_health.rs` the query log. The owner's side is TASKS's
   [stuck servers](../../docs/workflow/TASKS.md#stuck-servers) and
   [a board that went back](../../docs/workflow/TASKS.md#a-board-that-went-back).
 - **A hosted board**: `pg/external.rs` its settings, which every build reads, and `pg/hosted.rs`
   with `pg/hosted/` its client, compiled only with the `hosted-postgresql` feature
   ([a hosted board](../../docs/operations/POSTGRESQL.md#a-hosted-board)).
-- **Search**: `store/search.rs`, `cli/search.rs`, `store/postgres/search.rs`: by words alone, the
-  same on either engine (`tests/store/search.rs`).
+- **Search**: `store/search.rs`, `cli/search.rs`, `store/postgres/search.rs`: by words alone
+  (`tests/store/search.rs`).
 - **Children**: `sys.rs` and `sys/`, over the leaf `crates/process-cwd`.
 - **A poisoned lock**: `lock.rs`'s `Recovered`, the one recovery the library and the server take
   too, and the only one this crate's `clippy.toml` lets its code take.
@@ -113,7 +113,7 @@ a newer board, and a change keeps what it reads:
 
 - A new table, or a new field on one, is a step's; a closed table changes only by a breaking
   step. The open tables (`schema::OPEN`) are written by named fields, never replaced whole
-  (`store/surreal/fence_tests.rs`). Each row struct refuses a field it does not know, and the
+  (`tests/store/contract.rs`). Each row struct refuses a field it does not know, and the
   store's reader hands an open table's row only the fields it names (`rows::open_row`,
   `objects::read`), so an older build reads past a field an additive step adds; the whole-board
   dump alone reads exactly.
@@ -122,28 +122,26 @@ a newer board, and a change keeps what it reads:
 - A new meaning goes in a field older binaries ignore and keep, beside the old one, which keeps
   its meaning (an orchestrator's `seen`, `statuses` and PULL entries), and an old column keeps
   its old reading (a launch record's `claude_session` holds Claude ids as before, and Codex ids
-  prefixed `codex:`). Callback addresses, chat ownership,
-  delivery state and bindings live in the schemaless callback tables, not on `session`.
+  prefixed `codex:`). Callback addresses, chat ownership, delivery state and bindings live in the
+  open callback tables, each row whole in its `doc`, not on `session`.
 - With an older dispatcher interleaving, no entry an orchestrator hears is lost and no line is
   said twice (`store/pull_account.rs`; `tests/store/mixed_dispatchers.rs`,
   `pull_acknowledgements.rs`, `pending_pull.rs`); a new kind of line that names a task takes its
   test of whom to tell from `store/queued_lines.rs`.
 - An in-process binding never registers a callback or takes over a handle with a native
   registration.
-- A counter an older reader caches is retired where it refuses it, never removed
-  (`schema::BOARD_MARKER`). A table nothing writes any more keeps its definition, as removing one
-  is a schema move (the search-by-meaning tables,
-  [their card](../../docs/engineering/analysis/code-review-2026-11.md#board-search-by-meaning)).
-- The `writer` table stays schemaless with no event, its line written without the schema guard,
-  and the Symphony, which opens its board to read, stays uncounted (`store/writers.rs`;
-  `tests/store/writers.rs`).
-- Each schema's definitions are committed, one file per engine
-  (`tests/store/catalogue/ENGINE-VERSION.txt` and `.STEPS.txt`, written with
+- A counter an older reader caches is retired where it refuses it, never removed. A table nothing
+  writes any more keeps its definition, as removing one is a schema move.
+- The `writer` table stays open, each line whole in its `doc`, with no trigger, its line written
+  without the schema guard, and the Symphony, which opens its board to read, stays uncounted
+  (`store/writers.rs`; `tests/store/writers.rs`).
+- Each schema's definitions are committed
+  (`tests/store/catalogue/postgresql-VERSION.txt` and `.STEPS.txt`, written with
   `TASKS_CATALOGUE=write`), and `tests/store/catalogue.rs` holds a step to what it may add. Which
   store may take a board one ahead: `store/transaction.rs`'s `Run`,
   [CHECKS](../../docs/workflow/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing).
 - A table added to the board is placed as copied, carried or left in `store/copy.rs`, whose test
-  fails on one that is none, since a move would drop it.
+  fails on one that is none, since a copy or a restore would drop it.
 
 ### Its contracts
 
@@ -154,6 +152,14 @@ the calls a registered project's programs make; a call such a program starts mak
 there. The Rust names consumers call are held by `tests/consumer_api.rs` and change only by the
 [two-release rule](../../docs/workflow/CHECKS.md#consumer-api-changes), a rule apart from the `tasks api`
 version.
+
+A consuming project's code still names the SurrealDB client, so it stays until that code moves:
+`rpc::Client` (`rpc.rs`, `rpc/read.rs`, `rpc/descriptor.rs`, `cbor.rs`) and `rpc::healthy`,
+unchanged. `Store::open`, `Store::with`, `Store::opening` and `Store::reading` still take an
+`rpc::Client` as the board's address: a `postgresql:SOCKET` one opens the board, and a SurrealDB
+`HOST:PORT` is refused. `Store::client()` is kept and panics, as every board is on PostgreSQL;
+`cli::board_client`, `DbError`, `server::FOLDER`, `server::Running` and `server::Home::recovery`
+keep their names.
 
 ### A write decides on what it read
 
@@ -174,24 +180,21 @@ writes, and refuses a mismatch rather than read again; a store finds no authorit
 
 ### The store's statements live in one place
 
-The store's modules hold the rules; a statement's text is `store/surreal/`'s, under a name the
-store's module asks for whole, and its PostgreSQL twin `store/postgres/`'s by the same name: a
-call names both (`store/statement.rs`'s `both`), and one with no twin is refused on a PostgreSQL
-board before anything is sent. What a statement does is said, never read from either text: its
-call says whether it writes (`Store::transact` sends a write behind the guard, and a read says so),
-and the statement whether it posts a line and which additive step's tables it names; a debug build
-refuses, naming its line, one whose SurrealQL does otherwise (`store/statement.rs`). No SurrealQL
-is written anywhere else but in the files `store/surreal/fence_tests.rs` lists with their reasons.
-Nothing reaches a client but through `store/transaction.rs`, `store/raw.rs` and
-`store/database.rs`. A test that needs a row no command writes asks `Store::raw` by table, id and
-equal fields and writes no statement of its own; one that must is in the list `tests/raw_fence.rs`
-holds, which `just lint-rs` runs. A store test written once for both databases is `on_both!`'s
-(`tests/store/main.rs`).
+The store's modules hold the rules; a statement's text is `store/postgres/`'s, under a name the
+store's module asks for whole, and a call wraps it as a `Statement` (`store/statement.rs`,
+`Statement::from` a `Pg`). What a statement does is said, never read from its text: its call says
+whether it writes (`Store::transact` sends a write behind the guard, and a read says so), and the
+statement whether it posts a line (`posting`) and which additive step's tables it names
+(`naming`); a debug build refuses, naming its line, one whose text names other additive tables
+than it says (`Statement::disagreement`). Nothing reaches a client but through
+`store/transaction.rs`, `store/raw.rs` and `store/database.rs`. A test that needs a row no
+command writes asks `Store::raw` by table, id and equal fields and writes no statement of its
+own; one that must is in the list `tests/raw_fence.rs` holds, which `just lint-rs` runs.
 
 ### Delivery never loses a line
 
-A write is never sent to the database again; only a request whose text proves it a read goes once
-more (`rpc/read.rs`). A dispatcher whose lease was taken while it built sends nothing
+A request is never sent to the database again, a read no more than a write (`pg.rs`). A
+dispatcher whose lease was taken while it built sends nothing
 (`store/dispatcher.rs`; `tests/store/slow_builds.rs`); a recipient's observation is checkpointed
 with the events it queued, before anything is sent; a failed send is a retry, so a line may repeat
 but is never lost; a post under a key is made once (`Store::say_keyed`). Every event line is
@@ -220,12 +223,12 @@ crate's `clippy.toml`), and the release run's `tests/child_guard` tries the rule
 
 ### The database server is never killed
 
-Only `server::Home` starts the board's server, so every one runs under `server::Storage`. A stop
-sends one SIGTERM, once the server answered, and waits: never a second, which SurrealDB takes as
-an immediate shutdown, and never a signal to a server that has not answered, which is replaying;
-that call is the owner's. Every start, stop, hold, release and reclaim takes the starters' lock.
-Never set `SURREAL_SURREALKV_ENABLE_VLOG=false`: a store with values in its log then cannot read
-them (`server.rs` and `server/`; [TASKS](../../docs/workflow/TASKS.md#stuck-servers)).
+Only `server::Home` starts the board's server, under its supervisor (`server/postgres.rs`). A stop
+is PostgreSQL's fast shutdown, waited for by `pg_ctl`: one still stopping when the wait ends is
+left to finish and never sent a second signal, and a start whose server has not said it is ready
+leaves it running, never signalled; what follows is the owner's. Every start, stop, hold, release,
+snapshot, restore and reclaim takes the starters' lock (`server.rs` and `server/`;
+[TASKS](../../docs/workflow/TASKS.md#stuck-servers)).
 
 ### A terminal closes only on information
 
@@ -256,9 +259,9 @@ What a write, each recipient of its dispatch and each tick read goes through an 
 scan of message, delivery, role, session or callback_state (`schema.rs`'s doc lists them). The
 `perf` target plans every such statement: a new statement or a changed condition on those paths
 runs it ([below](#at-scale)). A transaction over many rows avoids what costs more than linearly on
-the engine: an index a copy inserts into, an event that UPSERTs. On PostgreSQL a new read of a
-list that grows with the board is written as `Pg::Listed` (`store/postgres/mod.rs`), a row an
-item, not one `jsonb_agg` value.
+the engine, an index a copy inserts into among them. A new read of a list that grows with the
+board is written as `Pg::Listed` (`store/postgres/mod.rs`), a row an item, not one `jsonb_agg`
+value.
 
 ### Time in tests
 
@@ -279,16 +282,14 @@ that database forward and never sweeps a repository.
 
 ### The servers
 
-The store's tests start one in-memory server per test binary and give each test a database of its
-own (`tests/store/common.rs`). The server is the pinned SurrealDB `tools/surreal.sh` fetches once
-per repository; `SYMPHONY_SURREAL` names another binary. A fixture board under the temporary
-folder or a checkout's `artifacts/` is a scratch place: its server ends with the process that
-started it, and a fixture repository there is its own project, whose first board command makes
-its board on PostgreSQL, as any project's does. A fixture whose subject is SurrealDB names it
-before that command (`Home::initialize_backend(Engine::SurrealDb)`) or starts SurrealDB itself
-(`Home::ensure`, which makes its store); either way it stops what it started. The PostgreSQL tests
-(`tests/server/postgres.rs`) and the hosted board's (`tests/hosted/`, `just hosted-check`) need
-what [the root guide](../../AGENTS.md#what-it-needs-installed) lists.
+The store's tests start one PostgreSQL server per test binary, a scratch board's under the
+temporary folder, and give each test a database of its own (`tests/store/common.rs`); each store
+test runs once, on it. A fixture board under the temporary folder or a checkout's `artifacts/` is
+a scratch place: its server ends with the process that started it, and a fixture repository there
+is its own project, whose first board command makes its board on PostgreSQL, as any project's
+does. The board's tests (`tests/server/postgres.rs` among them) and the hosted board's
+(`tests/hosted/`, `just hosted-check`) need what
+[the root guide](../../AGENTS.md#what-it-needs-installed) lists.
 
 ### The command line's tests
 

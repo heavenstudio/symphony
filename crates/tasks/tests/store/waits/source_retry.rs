@@ -1,183 +1,161 @@
-//! A modeled transaction conflict proves the guarded callback runs again with the original
-//! expected state. Only that one RPC reply is modeled; the retry reaches the actual scratch board.
+//! A transaction conflict proves the guarded callback runs again with the original expected state.
+//! The conflict is the server's own: a trigger of the test's raises `serialization_failure` at the
+//! guarded write's first update of the task, once, and the retry reaches the board as it is.
 
 use super::*;
-use serde_json::Value;
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
-use symphony_board::{Store, cbor, rpc::Client};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-struct Conflict {
-    addr: String,
-    stop: Arc<AtomicBool>,
-    seen: Arc<Mutex<Vec<Value>>>,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Conflict {
-    fn before_retry(server: &str, current: Arc<AtomicBool>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
-        let stop = Arc::new(AtomicBool::new(false));
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let (ended, sent, server) = (stop.clone(), seen.clone(), server.to_string());
-        let thread = std::thread::spawn(move || {
-            let mut conflict = true;
-            for caller in listener.incoming() {
-                let caller = caller.unwrap();
-                if ended.load(Ordering::SeqCst) {
-                    break;
-                }
-                let mut caller = BufReader::new(caller);
-                let mut upstream = BufReader::new(TcpStream::connect(&server).unwrap());
-                while let Some((raw, body)) = message(&mut caller) {
-                    let request = cbor::decode(&body).unwrap();
-                    let guarded = request["params"][0]
-                        .as_str()
-                        .is_some_and(|sql| sql.contains("$source_current"));
-                    if guarded {
-                        sent.lock().unwrap().push(request["params"][1].clone());
-                    }
-                    if guarded && conflict {
-                        conflict = false;
-                        current.store(false, Ordering::SeqCst);
-                        let body = cbor::encode(&json!({"id": request["id"], "result": [{
-                            "status": "ERR", "kind": "Query", "details": {"kind": "TransactionConflict"},
-                            "result": "Cannot COMMIT: Transaction conflict: Write conflict, retry the transaction.",
-                        }]}));
-                        write!(caller.get_mut(), "HTTP/1.1 200 OK\r\nContent-Type: application/cbor\r\nContent-Length: {}\r\n\r\n", body.len()).unwrap();
-                        caller.get_mut().write_all(&body).unwrap();
-                    } else {
-                        upstream.get_mut().write_all(&raw).unwrap();
-                        let (answer, _) = message(&mut upstream).expect("native board response");
-                        caller.get_mut().write_all(&answer).unwrap();
-                    }
-                }
-            }
-        });
-        Self {
-            addr,
-            stop,
-            seen,
-            thread: Some(thread),
-        }
-    }
-}
-
-impl Drop for Conflict {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        drop(TcpStream::connect(&self.addr));
-        self.thread.take().unwrap().join().unwrap();
-    }
-}
-
-fn message(stream: &mut impl BufRead) -> Option<(Vec<u8>, Vec<u8>)> {
-    let mut raw = Vec::new();
-    loop {
-        let start = raw.len();
-        if stream.read_until(b'\n', &mut raw).unwrap() == 0 {
-            return None;
-        }
-        if &raw[start..] == b"\r\n" {
-            break;
-        }
-    }
-    let head = String::from_utf8_lossy(&raw).to_ascii_lowercase();
-    let length: usize = head
-        .lines()
-        .find_map(|line| line.strip_prefix("content-length:"))
-        .expect("RPC fixture uses content length")
-        .trim()
-        .parse()
-        .unwrap();
-    let mut body = vec![0; length];
-    stream.read_exact(&mut body).unwrap();
-    raw.extend(&body);
-    Some((raw, body))
-}
-
-// On SurrealDB alone: a proxy stands before SurrealDB's server.
-// SurrealDB alone: the HTTP/CBOR relay injects one modeled conflict response.
-#[test]
-fn a_real_retry_reobserves_source_without_refreshing_the_frozen_task_fence() {
-    for known in [false, true] {
-        let f = Fixture::new(Seed::default().session(ACTOR));
-        f.task(SLUG);
-        let expected = f.store.assessment_state(SLUG).unwrap();
-        let original = known.then(|| {
-            f.store
-                .record_waits_checked(SLUG, RECORD, "original", ACTOR, &expected)
-                .unwrap()
-        });
-        if known {
-            let newer = f.store.assessment_state(SLUG).unwrap();
-            f.store
-                .record_waits_checked(SLUG, RECORD, "newer", ACTOR, &newer)
-                .unwrap();
-            f.store.leave(ACTOR).unwrap();
-        }
-        let before = f.store.get(SLUG).unwrap();
-        let lines = f.said(SLUG);
-        let current = Arc::new(AtomicBool::new(true));
-        let proxy = Conflict::before_retry(f.store.client().addr(), current.clone());
-        let store = Store::with(
-            Client::new(&proxy.addr, "sf", f.store.client().database()),
-            Box::new(|| crate::common::NOW),
-            Box::new(|_| false),
-            crate::common::HOST,
+/// The task's first update from now on fails as a conflict does; every later one goes through. The
+/// sequence counts the updates tried, as no rollback takes a sequence's value back.
+fn one_conflict(f: &Fixture) {
+    f.postgresql()
+        .simple(
+            "CREATE SEQUENCE fixture_conflicts; \
+             CREATE FUNCTION fixture_conflict() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN \
+                 IF nextval('fixture_conflicts') = 1 THEN \
+                     RAISE EXCEPTION USING ERRCODE = 'serialization_failure', \
+                         MESSAGE = 'a conflict of the test''s own'; \
+                 END IF; \
+                 RETURN NEW; \
+             END $$; \
+             CREATE TRIGGER fixture_conflict BEFORE UPDATE ON task \
+                 FOR EACH ROW EXECUTE FUNCTION fixture_conflict();",
         )
         .unwrap();
-        let mut observed = Vec::new();
-        let result =
-            store.record_waits_guarded(SLUG, RECORD, "original", ACTOR, &expected, &mut || {
-                let value = current.load(Ordering::SeqCst);
+}
+
+/// How many updates of the task the trigger has seen.
+fn updates_tried(f: &Fixture) -> i64 {
+    let answer = f
+        .postgresql()
+        .request(&[symphony_board::pg::Step::bare(
+            "SELECT CASE WHEN is_called THEN last_value ELSE 0 END::text FROM fixture_conflicts",
+        )])
+        .unwrap();
+    answer[0].value().unwrap().parse().unwrap()
+}
+
+/// An unknown pair: the first try observes its source current and meets the conflict at its
+/// update; the retry observes the source again, now changed, and is refused against the same
+/// expected state, writing nothing.
+#[test]
+fn a_real_retry_reobserves_source_without_refreshing_the_frozen_task_fence() {
+    let f = Fixture::new(Seed::default().session(ACTOR));
+    f.task(SLUG);
+    let expected = f.store.assessment_state(SLUG).unwrap();
+    let before = f.store.get(SLUG).unwrap();
+    let lines = f.said(SLUG);
+    one_conflict(&f);
+    let current = AtomicBool::new(true);
+    let mut observed = Vec::new();
+    let result =
+        f.store
+            .record_waits_guarded(SLUG, RECORD, "original", ACTOR, &expected, &mut || {
+                // The source changes once it has been observed.
+                let value = current.swap(false, Ordering::SeqCst);
                 observed.push(value);
-                if !value && known {
-                    Err(symphony_board::Error::Db(
-                        "source became unreadable before retry".into(),
-                    ))
-                } else {
-                    Ok(value)
-                }
+                Ok(value)
             });
-        assert_eq!(observed, [true, false], "known={known}: {result:?}");
-        let sent = proxy.seen.lock().unwrap().clone();
-        assert_eq!(sent.len(), 2, "known={known}: {sent:?}");
-        assert_eq!(
-            sent.iter()
-                .map(|vars| vars["source_current"].clone())
-                .collect::<Vec<_>>(),
-            [json!(true), json!(false)]
-        );
-        for vars in &sent {
-            assert_eq!(
-                vars["expected_status"], expected.status,
-                "known={known}: {vars}"
-            );
-            assert_eq!(
-                vars["expected_version"], expected.version,
-                "known={known}: {vars}"
-            );
-        }
-        if let Some(mut original) = original {
-            original.current = false;
-            assert_eq!(result, Ok(original));
-        } else {
-            assert!(
-                matches!(result, Err(symphony_board::Error::Refused(_))),
-                "{result:?}"
-            );
-        }
-        let after = f.store.get(SLUG).unwrap();
-        assert_eq!(after.fields, before.fields, "known={known}");
-        assert_eq!(after.updated, before.updated, "known={known}");
-        assert_eq!(f.said(SLUG), lines, "known={known}");
-        drop(store);
-        drop(proxy);
-    }
+    assert_eq!(observed, [true, false], "{result:?}");
+    assert_eq!(
+        updates_tried(&f),
+        1,
+        "the conflict was met once, at the first try"
+    );
+    assert_eq!(
+        refused(result),
+        "assessment source changed before publication"
+    );
+    let after = f.store.get(SLUG).unwrap();
+    assert_eq!(after.fields, before.fields);
+    assert_eq!(after.updated, before.updated);
+    assert_eq!(f.said(SLUG), lines);
+}
+
+/// The fence a retry is held to is the expected state its caller gave, frozen, not the task as it
+/// is by then: another writer moves the task between the conflict and the retry, the source still
+/// current, and the retry is refused against the state it was given, writing nothing of its own.
+/// A retry that read the fence anew would pass, and publish.
+#[test]
+fn a_retry_is_held_to_the_expected_state_it_was_given_not_the_task_as_it_is_by_then() {
+    let f = Fixture::new(Seed::default().session(ACTOR));
+    f.task(SLUG);
+    let expected = f.store.assessment_state(SLUG).unwrap();
+    let lines = f.said(SLUG);
+    one_conflict(&f);
+    let competitor = f.other();
+    let mut tries = 0;
+    let result =
+        f.store
+            .record_waits_guarded(SLUG, RECORD, "original", ACTOR, &expected, &mut || {
+                tries += 1;
+                // Between the conflict and the retry, another writer moves the task on.
+                if tries == 2 {
+                    competitor
+                        .set_field(SLUG, "game", "effort", &json!(7), ACTOR)
+                        .unwrap();
+                }
+                Ok(true)
+            });
+    assert_eq!(tries, 2, "{result:?}");
+    let why = refused(result);
+    assert!(why.contains("changed since its assessment"), "{why}");
+    assert_eq!(
+        updates_tried(&f),
+        2,
+        "the first try's update, refused as a conflict, and the competitor's"
+    );
+    let task = f.store.get(SLUG).unwrap();
+    assert_eq!(task.fields["game"]["effort"], json!(7));
+    assert!(
+        !task.fields.contains_key("_board"),
+        "the retry wrote nothing"
+    );
+    assert_eq!(
+        f.said(SLUG).len(),
+        lines.len() + 1,
+        "only the competitor wrote"
+    );
+    assert_eq!(
+        f.store.assessment_state(SLUG).unwrap().version,
+        expected.version + 1
+    );
+}
+
+/// A known committed pair returns its original receipt, the source unreadable and its actor gone,
+/// and writes nothing.
+#[test]
+fn a_known_pair_returns_its_original_receipt_whatever_its_source_says() {
+    let f = Fixture::new(Seed::default().session(ACTOR));
+    f.task(SLUG);
+    let expected = f.store.assessment_state(SLUG).unwrap();
+    let original = f
+        .store
+        .record_waits_checked(SLUG, RECORD, "original", ACTOR, &expected)
+        .unwrap();
+    let newer = f.store.assessment_state(SLUG).unwrap();
+    f.store
+        .record_waits_checked(SLUG, RECORD, "newer", ACTOR, &newer)
+        .unwrap();
+    f.store.leave(ACTOR).unwrap();
+    let before = f.store.get(SLUG).unwrap();
+    let lines = f.said(SLUG);
+    one_conflict(&f);
+    let mut observed = 0;
+    let result =
+        f.store
+            .record_waits_guarded(SLUG, RECORD, "original", ACTOR, &expected, &mut || {
+                observed += 1;
+                Err(symphony_board::Error::Db("source became unreadable".into()))
+            });
+    let mut kept = original;
+    kept.current = false;
+    assert_eq!(result, Ok(kept));
+    assert_eq!(observed, 1);
+    assert_eq!(updates_tried(&f), 0, "nothing was updated");
+    let after = f.store.get(SLUG).unwrap();
+    assert_eq!(after.fields, before.fields);
+    assert_eq!(after.updated, before.updated);
+    assert_eq!(f.said(SLUG), lines);
 }

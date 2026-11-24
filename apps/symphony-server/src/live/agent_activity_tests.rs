@@ -1141,7 +1141,7 @@ fn recording_makes_no_board_write_though_the_board_counts_writes() {
     let mut hub = Hub::new(&root, &root.join("build/client"));
     let moved = clock.clone();
     hub.clock = Box::new(move || moved.now());
-    let log = fixture.store.client().queries();
+    let log = fixture.store.database().queries();
     let writes = || log.report(symphony_board::sweep::trigger::now()).1.count;
     // Warm: the first reads may set the dispatch's own state up.
     hub.board_read(&fixture.store).unwrap();

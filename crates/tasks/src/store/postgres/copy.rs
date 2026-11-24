@@ -94,8 +94,8 @@ pub(in crate::store) const DUMPED: [(&str, &str, &str); 16] = [
     ("workflow", "workflow", "id"),
 ];
 
-/// Every row of the board, in the shape the copy reads, each table in the order of its key, as
-/// SurrealDB's [`DUMP`](crate::store::surreal::copy::DUMP) reads it: a task without its version.
+/// Every row of the board, in the shape the copy reads, each table in the order of its key: a task
+/// without its version, which a copy makes anew.
 pub(in crate::store) static DUMP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     let tables: Vec<String> = DUMPED
         .iter()
@@ -123,7 +123,7 @@ pub(in crate::store) static DUMP: std::sync::LazyLock<String> = std::sync::LazyL
 });
 
 /// The row `alias` of `table` read as [`row`] reads one, but for its objects and arrays, kept
-/// whole: a null inside one is a value SurrealDB keeps, where the read of a row's own unset fields
+/// whole: a null inside one is a value the row holds, where the read of a row's own unset fields
 /// would take it out.
 fn whole(alias: &str, table: &str) -> String {
     if schema::table(table).is_some_and(|table| table.columns.is_empty()) {

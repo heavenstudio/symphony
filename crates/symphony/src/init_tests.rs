@@ -1394,7 +1394,6 @@ fn left_beside(tree: &Tree, path: &str, beside: Option<&Path>) -> Vec<String> {
         &Machine {
             folder: Some(&folder),
             path: Some(&path),
-            surreal: None,
             beside,
         },
     )
@@ -1485,7 +1484,7 @@ fn a_checkout_is_told_to_make_its_board_until_its_store_is_there() {
     let tree = Tree::new();
     tree.write("Lamp Shop/.git/HEAD", "ref: refs/heads/main\n");
     // After the PostgreSQL a new board is made on, before the registration the Symphony reads it
-    // by; and no SurrealDB is asked for.
+    // by; and no move from SurrealDB is asked for.
     let steps = left(&tree, "");
     let at = |start: &str| {
         steps
@@ -1501,17 +1500,30 @@ fn a_checkout_is_told_to_make_its_board_until_its_store_is_there() {
         steps.iter().all(|step| !step.contains("SurrealDB")),
         "{steps:?}"
     );
-    // A store a server left: a board, as far as the folder tells with nothing running, on
-    // SurrealDB, whose server is asked for in place of PostgreSQL.
+    // A store an earlier release's SurrealDB left: a board, made, that this build serves no more,
+    // told how it moves in place of the PostgreSQL a board here runs on, and never to be made.
     tree.write("Lamp Shop/.git/symphony/tasks/data/manifest", "");
     let steps = left(&tree, "");
     assert!(!steps.contains(&MAKE_BOARD.to_string()), "{steps:?}");
+    let moves: Vec<&String> = (steps.iter())
+        .filter(|step| step.contains("SurrealDB"))
+        .collect();
+    assert_eq!(moves, [&surrealdb_step()], "{steps:?}");
     assert!(
-        steps.iter().any(|step| step.starts_with("fetch SurrealDB")),
-        "{steps:?}"
+        moves[0].starts_with(
+            "move the board to PostgreSQL, as it is still on SurrealDB, which this release \
+             serves no more: "
+        ),
+        "{moves:?}"
     );
     assert!(
-        steps.iter().all(|step| !step.contains("PostgreSQL")),
+        moves[0].ends_with(symphony_board::server::GONE),
+        "{moves:?}"
+    );
+    assert!(
+        steps
+            .iter()
+            .all(|step| !step.starts_with("have PostgreSQL")),
         "{steps:?}"
     );
     // A stopped PostgreSQL board is made too: its cluster is there, its server is not.
@@ -1532,8 +1544,8 @@ fn a_checkout_is_told_to_make_its_board_until_its_store_is_there() {
     );
     // Outside a checkout no board is asked for.
     let outside = Tree::new();
-    assert!(!unmade_board(&outside.root, None));
-    assert_eq!(board_engine(&outside.root, None), None);
+    assert!(!unmade_board(&outside.root));
+    assert_eq!(board_engine(&outside.root), None);
 }
 
 #[test]
@@ -1599,7 +1611,6 @@ fn a_machine_without_just_is_told_to_install_it() {
             &Machine {
                 folder: Some(&folder),
                 path: Some(path),
-                surreal: None,
                 beside: None,
             },
         )
@@ -1795,7 +1806,6 @@ fn a_linked_worktree_finds_its_main_checkouts_builds_as_the_hooks_do() {
             &Machine {
                 folder: None,
                 path: None,
-                surreal: Some(Path::new("/bin/sh")),
                 beside: None,
             },
         )
@@ -2250,7 +2260,6 @@ fn a_registry_that_cannot_be_read_holds_nothing_and_no_machine_folder_asks_nothi
         &Machine {
             folder: None,
             path: None,
-            surreal: None,
             beside: None,
         },
     );
@@ -2280,7 +2289,6 @@ fn no_root_or_a_relative_one_names_the_project_after_the_folder_it_resolves_to()
             &Machine {
                 folder: None,
                 path: None,
-                surreal: None,
                 beside: None,
             },
         );
@@ -2313,79 +2321,4 @@ fn the_binaries_init_looks_for_are_the_ones_the_installed_recipes_run() {
     let mut runs = RUNS.to_vec();
     runs.sort();
     assert_eq!(ran, runs);
-}
-
-#[test]
-fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
-    let tree = Tree::new();
-    tree.write("Lamp Shop/.git/HEAD", "ref: refs/heads/main\n");
-    // A board whose store is SurrealDB's, as a board made before PostgreSQL was a new board's.
-    tree.write("Lamp Shop/.git/symphony/tasks/data/manifest", "");
-    let root = tree.path("Lamp Shop");
-    let pinned = root
-        .canonicalize()
-        .unwrap()
-        .join(".git/symphony/surreal")
-        .join(symphony_board::server::SURREAL_VERSION)
-        .join("surreal");
-    let asked = |named: Option<&Path>| {
-        let found = steps(
-            &root,
-            &Machine {
-                folder: None,
-                path: None,
-                surreal: named,
-                beside: None,
-            },
-        );
-        let mut asked = found.into_iter().filter(|step| step.contains("SurrealDB"));
-        let step = asked.next();
-        assert_eq!(asked.next(), None);
-        step
-    };
-    let version = symphony_board::server::SURREAL_VERSION;
-    let fetch = symphony_board::server::surreal_fetch(
-        &pinned,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
-    .expect("a machine the tests run on has a pinned build");
-    let fetched = format!(
-        "fetch SurrealDB {version}, which the board's server runs from {}: `{fetch}` (or name \
-         another with SYMPHONY_SURREAL)",
-        pinned.display()
-    );
-    assert_eq!(asked(None), Some(fetched.clone()));
-    let named = tree.path("elsewhere/surreal");
-    assert_eq!(
-        asked(Some(&named)),
-        Some(format!(
-            "put SurrealDB {version} at {}, where SYMPHONY_SURREAL names it: the board's server \
-             runs it",
-            named.display()
-        ))
-    );
-    program(&tree, "elsewhere/surreal");
-    assert_eq!(asked(Some(&named)), None);
-    tree.write(
-        &format!("Lamp Shop/.git/symphony/surreal/{version}/surreal"),
-        "not runnable",
-    );
-    assert_eq!(asked(None), Some(fetched));
-    // A machine no build is pinned for is told to put one there.
-    assert_eq!(
-        surreal_step(&pinned, false, None),
-        format!(
-            "put SurrealDB {version}'s release binary for this machine at {}, where the board's \
-             server runs it, or name one with SYMPHONY_SURREAL",
-            pinned.display()
-        )
-    );
-    program(
-        &tree,
-        &format!("Lamp Shop/.git/symphony/surreal/{version}/surreal"),
-    );
-    assert_eq!(asked(None), None);
-    let outside = Tree::new();
-    assert_eq!(missing_surreal(&outside.root, None), None);
 }

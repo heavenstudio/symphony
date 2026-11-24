@@ -77,7 +77,7 @@ impl Checkout {
     }
 
     fn beat(&self, board: &Fixture, event: &Value) {
-        let client = board.other_client();
+        let client = board.other_database();
         let mut child = Command::new(env!("CARGO_BIN_EXE_symphony"))
             .args(["hook", "tasks-beat"])
             .current_dir(&self.top)

@@ -21,7 +21,7 @@ IF NOT FOUND THEN
     RAISE EXCEPTION 'stale';
 END IF;";
 
-/// The tasks `v ->> 'handle'` holds that another could take over (`super::super::surreal::CLAIMABLE`).
+/// The tasks `v ->> 'handle'` holds that another could take over.
 /// Needs `executing`.
 pub(in crate::store) const CLAIMABLE: &str =
     "coalesce((SELECT jsonb_agg(r.slug) FROM role r JOIN task t ON t.slug = r.slug

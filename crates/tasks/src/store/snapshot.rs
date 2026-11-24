@@ -3,8 +3,7 @@
 use crate::lock::Recovered as _;
 
 use super::postgres::snapshot as pg;
-use super::statement::both;
-use super::surreal::snapshot as sql;
+use super::statement::Statement;
 use super::{Board, Error, Snapshot, Store, View, Which, reading};
 use serde_json::json;
 
@@ -19,17 +18,16 @@ impl Store {
         {
             return Ok((Self::board_view(View::new(self, snapshot.clone())), marker));
         }
-        let (body, vars) = (sql::board(), reading::vars(&Which::All));
+        let vars = reading::vars(&Which::All);
         let snapshot: Snapshot =
-            self.retrying(|| self.read_together(both(&body, pg::board()), vars.clone()))?;
+            self.retrying(|| self.read_together(Statement::from(pg::board()), vars.clone()))?;
         let sequence = snapshot.callback_sequence;
         *cached = Some(snapshot.clone());
         Ok((Self::board_view(View::new(self, snapshot)), sequence))
     }
 
     pub(super) fn board_marker(&self) -> Result<u64, Error> {
-        let marker = sql::marker();
-        self.retrying(|| self.read(both(&marker, pg::marker()), json!({})))
+        self.retrying(|| self.read(Statement::from(pg::marker()), json!({})))
     }
 
     /// The board's marker: it moves with every commit a reader can see that changes what a board

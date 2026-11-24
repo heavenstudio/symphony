@@ -12,7 +12,7 @@ fn a_copy_cargo_runs_is_refused_the_live_board_before_its_server_is_started() {
     std::fs::create_dir_all(&cargo).unwrap();
     let under = [("CARGO_MANIFEST_DIR", cargo.to_str().unwrap())];
     let why = live.under_cargo(&cargo);
-    live.home().stop().unwrap();
+    live.home().stop_board().unwrap();
 
     for args in [&["--board"][..], &["--board", "--out"]] {
         let said = format!("❌ tasks-copy: {why}\n");
@@ -24,7 +24,7 @@ fn a_copy_cargo_runs_is_refused_the_live_board_before_its_server_is_started() {
             ran.out
         );
         assert!(
-            live.home().recorded().is_none(),
+            !live.serving(),
             "{COPY} {args:?} started the live board's server"
         );
     }

@@ -1,4 +1,4 @@
-//! Ranked task rows with an excerpt from the field SurrealDB actually matched.
+//! Ranked task rows with an excerpt from the field the board's search actually matched.
 
 use super::commands::{Context, Stop};
 use super::shape;

@@ -102,17 +102,12 @@ pub fn shortened(error: &str) -> String {
 }
 
 /// Whether `error`, why a board could not be reached or opened, says the project has no board to
-/// be unwell: its server answers and none is made yet ([`crate::schema`] refuses a reader one), or
-/// it has no store and the SurrealDB that would serve one is not on this machine
-/// ([`crate::server::ServerError::NoSurreal`]), or its folder is gone ([`crate::project::at`]).
-/// Whatever wraps the error keeps its words. A pass that fails so is not counted: there is no board
-/// to pass over. A board whose store is there and cannot be served
-/// ([`crate::server::ServerError::Unserved`]), whose server answers with an older schema, or does
-/// not answer, is there and unwell.
+/// be unwell: none is made yet ([`crate::schema`] refuses a reader one), or its folder is gone
+/// ([`crate::project::at`]). Whatever wraps the error keeps its words. A pass that fails so is not
+/// counted: there is no board to pass over. A board whose server answers with an older schema, or
+/// does not answer, or one still on SurrealDB ([`crate::server::GONE`]), is there and unwell.
 pub fn absent(error: &str) -> bool {
-    error.contains(crate::schema::NOT_MADE)
-        || error.contains(&crate::server::no_surreal())
-        || error.contains(crate::project::GONE)
+    error.contains(crate::schema::NOT_MADE) || error.contains(crate::project::GONE)
 }
 
 /// What the schema rule's refusal of a reader says after the board's schema ([`crate::schema`]):

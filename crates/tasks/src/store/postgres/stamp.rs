@@ -3,7 +3,7 @@
 use super::{Pg, row};
 
 /// The task `slug`'s row, its links, its roles, the branches its executors' sessions recorded,
-/// the tasks right under it and its thread's newest line (`super::super::surreal::stamp::READ`).
+/// the tasks right under it and its thread's newest line.
 pub(in crate::store) fn read() -> Pg<'static> {
     Pg::read(format!(
         "jsonb_build_object( \

@@ -3062,7 +3062,8 @@ mod tests {
     /// board, by the server a `TASKS_SERVER` names or by its folder, keeps its own waits, and so
     /// does one on the live database of a server named from where the board cannot tell whose it
     /// is (the server down, the run in another repository or in none), or one that reaches no
-    /// board; the same server's scratch database takes it.
+    /// board, a folder whose board is still on SurrealDB among them; the same server's scratch
+    /// database takes it.
     #[test]
     fn a_scale_is_never_taken_on_a_live_board_or_where_no_board_is_reached() {
         let scratch = Scratch::new("waits");
@@ -3096,9 +3097,10 @@ mod tests {
             assert_eq!(at(cwd, &[named, live_database]), Waits::OWN);
             assert_eq!(at(cwd, &[named, scratch_database]), Waits(20));
         }
-        // By its folder: the project's board, and a scratch database on its server.
+        // By its folder: a board still on SurrealDB is refused (`server::GONE`), so no board is
+        // reached, on its live database or a scratch one.
         assert_eq!(at(&live, &[]), Waits::OWN);
-        assert_eq!(at(&live, &[scratch_database]), Waits(20));
+        assert_eq!(at(&live, &[scratch_database]), Waits::OWN);
         // No board reached: no server recorded, or no repository at all.
         assert_eq!(at(&unserved, &[scratch_database]), Waits::OWN);
         assert_eq!(at(&scratch.0, &[scratch_database]), Waits::OWN);

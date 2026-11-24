@@ -10,10 +10,9 @@
 
 use super::{
     Decided, Error, Failure, Host, OperationRequest, Receipt, Refusal, RefusalCode, Store, admit,
-    applied, context, guarding, joins_said, pg, receipt_id, refusal, request_digest, sender, sql,
-    sql_cap, surreal,
+    applied, context, guarding, joins_said, pg, receipt_id, refusal, request_digest, sender,
 };
-use crate::store::statement::both;
+use crate::store::statement::Statement;
 use crate::workflow::effect::{self, Adapter, Bindings, Intent, Stage};
 use crate::workflow::{Active, TaskPosition, Transition};
 use serde::Deserialize;
@@ -41,7 +40,7 @@ pub struct Reviewed {
     pub at: f64,
 }
 
-/// What a dispatch or a finalize decides on ([`surreal::effects::STANDING`]).
+/// What a dispatch or a finalize decides on (`pg::effects::standing`).
 #[derive(Deserialize)]
 struct Standing {
     intent: Option<Intent>,
@@ -60,7 +59,7 @@ impl Store {
     pub fn effect_intent(&self, slug: &str, revision: u64) -> Result<Option<Intent>, Error> {
         let body: Value = self.retrying(|| {
             self.read(
-                both(surreal::effects::INTENT, pg::effects::intent()),
+                Statement::from(pg::effects::intent()),
                 json!({"slug": slug, "revision": revision}),
             )
         })?;
@@ -80,7 +79,7 @@ impl Store {
     ) -> Result<Option<Transition>, Error> {
         let body: Value = self.retrying(|| {
             self.read(
-                both(surreal::effects::TRANSITION, pg::effects::transition()),
+                Statement::from(pg::effects::transition()),
                 json!({"slug": slug, "revision": revision}),
             )
         })?;
@@ -220,12 +219,7 @@ impl Store {
             let (mut vars, _) = applied(self, &decided, &admitted, principal, request, &digest, at)?;
             vars["said"] = json!(said);
             vars["intent"] = json!(intent);
-            self.apply_with(
-                vars,
-                slug,
-                surreal::effects::PREPARED,
-                pg::effects::PREPARED,
-            )?;
+            self.apply_with(vars, slug, pg::effects::PREPARED)?;
             Ok(intent)
         })
     }
@@ -477,7 +471,7 @@ impl Store {
             vars["recipient"] = json!(recipient);
             vars["intent"] = json!(next);
             vars["stage_was"] = json!(stage_was.as_str());
-            self.apply_with(vars, slug, surreal::effects::SETTLED, pg::effects::SETTLED)?;
+            self.apply_with(vars, slug, pg::effects::SETTLED)?;
             Ok(Finalized {
                 transition: next.finalized.clone(),
                 intent: next,
@@ -575,7 +569,7 @@ impl Store {
 
     fn standing(&self, slug: &str, revision: u64) -> Result<Standing, Failure> {
         self.read_together(
-            both(surreal::effects::STANDING, pg::effects::standing()),
+            Statement::from(pg::effects::standing()),
             json!({"slug": slug, "revision": revision}),
         )
     }
@@ -591,18 +585,15 @@ impl Store {
         task: Option<&Stood>,
         line: Option<(&str, &str, Option<&str>)>,
     ) -> Result<(), Failure> {
-        let (surreal_line, pg_line) = match line {
-            Some(_) => (
-                surreal::logged("$slug", "$sender", "'system'", "$said", "$recipient"),
-                pg::logged(
-                    "v ->> 'slug'",
-                    "v ->> 'sender'",
-                    "'system'",
-                    "v ->> 'said'",
-                    "v ->> 'recipient'",
-                ),
+        let pg_line = match line {
+            Some(_) => pg::logged(
+                "v ->> 'slug'",
+                "v ->> 'sender'",
+                "'system'",
+                "v ->> 'said'",
+                "v ->> 'recipient'",
             ),
-            None => (String::new(), String::new()),
+            None => String::new(),
         };
         let (sender, said, recipient) = line.unwrap_or_default();
         let vars = json!({
@@ -618,27 +609,15 @@ impl Store {
             "now": self.now(),
         });
         self.transact::<Value>(
-            both(
-                surreal::effects::moved(&surreal_line),
-                pg::effects::moved(&pg_line),
-            )
-            .posting_when(line.is_some()),
+            Statement::from(pg::effects::moved(&pg_line)).posting_when(line.is_some()),
             vars,
         )
         .map(drop)
     }
 
-    /// `sql::APPLY` over `vars` with the intent's own statement after it, in one write.
-    fn apply_with(
-        &self,
-        vars: Value,
-        slug: &str,
-        surreal_intent: &str,
-        pg_intent: &str,
-    ) -> Result<(), Failure> {
+    /// `pg::workflow::apply` over `vars` with the intent's own statement after it, in one write.
+    fn apply_with(&self, vars: Value, slug: &str, pg_intent: &str) -> Result<(), Failure> {
         let guarded = !vars["slots"].as_array().is_none_or(Vec::is_empty);
-        let logged = surreal::logged("$slug", "$sender", "'system'", "$said", "$recipient");
-        let guard = if guarded { sql_cap::GUARD } else { "" };
         let pg_logged = pg::logged(
             "v ->> 'slug'",
             "v ->> 'sender'",
@@ -646,11 +625,11 @@ impl Store {
             "v ->> 'said'",
             "v ->> 'recipient'",
         );
-        let (joins, joins_pg) = joins_said(&vars);
-        let body = both(
-            format!("{}{surreal_intent}{logged}{joins}{guard}", sql::APPLY),
-            pg::workflow::apply(&format!("{pg_intent}\n    {pg_logged}{joins_pg}"), guarded),
-        )
+        let joins_pg = joins_said(&vars);
+        let body = Statement::from(pg::workflow::apply(
+            &format!("{pg_intent}\n    {pg_logged}{joins_pg}"),
+            guarded,
+        ))
         .posting();
         self.written(body, vars, slug).map(drop)
     }

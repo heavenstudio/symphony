@@ -19,10 +19,10 @@ fn a_store_the_symphony_keeps_holds_to_an_edit_of_the_limits_with_no_restart() {
     std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
     let file = root.join("symphony.toml");
     std::fs::write(&file, "[limits]\norchestrator_slots = 2\n").unwrap();
-    let client = fixture.other_client();
+    let client = fixture.other_database();
     let env = Env {
         vars: BTreeMap::from([
-            ("TASKS_SERVER".to_string(), client.addr().to_string()),
+            ("TASKS_SERVER".to_string(), client.addr()),
             ("TASKS_DATABASE".to_string(), client.database().to_string()),
         ]),
         cwd: root.clone(),

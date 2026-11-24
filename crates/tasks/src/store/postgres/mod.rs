@@ -1,21 +1,19 @@
-//! Every statement the store sends to a board on PostgreSQL: the twin of each SurrealQL statement
-//! of [`super::surreal`] that has one so far, by the same name in a module of the same name, and
-//! the board's tables ([`schema`]).
+//! Every statement the store sends to its board on PostgreSQL, each in the module named for the
+//! store's module that sends it where there is one, and the board's tables ([`schema`]).
 //!
 //! A statement here is one of the shapes of [`Pg`]. Its variables are the one `jsonb` the store
 //! hands it, `v` in its text, a field of it read as `v ->> 'name'` (text) or `v -> 'name'`
 //! (`jsonb`), and nothing a caller wrote is ever spliced into one. A read is an expression over
 //! `v`, its value the answer, or where that value would hold long lists, a statement for each
-//! list, an item a row ([`Pg::Listed`]). A write is a PL/pgSQL block that reads `v` the same way, after the
-//! schema's guard when it is one ([`GUARD`]), and gives its answer as `board_answer`, or is
-//! followed by the read whose value is the answer. A request's statements, and the guard before
+//! list, an item a row ([`Pg::Listed`]). A write is a PL/pgSQL block that reads `v` the same way,
+//! after the schema's guard when it is one ([`GUARD`]), and gives its answer as `board_answer`, or
+//! is followed by the read whose value is the answer. A request's statements, and the guard before
 //! them, run in one transaction on the client's connection ([`crate::pg`]), REPEATABLE READ: a
 //! write that meets another's committed since its snapshot fails at once, a conflict read and
-//! decided again as on SurrealDB. A block raises `stale` where SurrealQL throws it, and a refusal
-//! in its words where SurrealQL throws one.
+//! decided again. A block raises `stale` where what it decided on has moved, and a refusal in its
+//! words.
 //!
-//! The marker's triggers and each sender's last word are the schema's ([`schema`]), as SurrealDB's
-//! events are its schema's.
+//! The marker's triggers and each sender's last word are the schema's ([`schema`]).
 
 pub(in crate::store) mod artifacts;
 pub(in crate::store) mod asks;
@@ -61,8 +59,7 @@ pub(in crate::store) mod writers;
 use super::RuleParts;
 use std::borrow::Cow;
 
-/// The slugs of every task, or of those in `v ->> 'status'` when `by_status`
-/// (`super::surreal::task_slugs`).
+/// The slugs of every task, or of those in `v ->> 'status'` when `by_status`.
 pub(in crate::store) fn task_slugs(by_status: bool) -> Pg<'static> {
     Pg::read(if by_status {
         "coalesce((SELECT jsonb_agg(slug ORDER BY slug) FROM task WHERE status = v ->> 'status'), '[]')"
@@ -71,18 +68,17 @@ pub(in crate::store) fn task_slugs(by_status: bool) -> Pg<'static> {
     })
 }
 
-/// The tasks `v ->> 'handle'` holds that another could take over, as a read of its own
-/// (`super::surreal::claimable`).
+/// The tasks `v ->> 'handle'` holds that another could take over, as a read of its own.
 pub(in crate::store) fn claimable() -> Pg<'static> {
     Pg::read(sessions::CLAIMABLE)
 }
 
-/// A rule's write ([`write::write`]) with what its change adds, as `super::surreal::rule` adds
-/// it: what a block waited on removed by a change of status out of blocked, what it waits on
-/// written (`blocked`), the move's `reason` posted after its line, the task's `needs` and its
-/// `gates` written, its mark of an approve not landed set or lifted (`unlanded`), a change of
-/// status (`moved`, whether to cancelled) settling its hold and its dependants, and the slot
-/// counters it `holds` guarded ([`RuleParts`]).
+/// A rule's write ([`write::write`]), after a reopened task's placement (`placed`), with what its
+/// change adds after it, in this order: what a block waited on removed by a change of status out
+/// of blocked, what it waits on written (`blocked`), the move's `reason` posted after its line,
+/// the task's `needs` and its `gates` written, its mark of an approve not landed set or lifted
+/// (`unlanded`), a change of status (`moved`, whether to cancelled) settling its hold and its
+/// dependants, and the slot counters it `holds` guarded ([`RuleParts`]).
 pub(in crate::store) fn rule(parts: RuleParts) -> Pg<'static> {
     let RuleParts {
         placed,
@@ -94,7 +90,7 @@ pub(in crate::store) fn rule(parts: RuleParts) -> Pg<'static> {
         moved,
         holds,
     } = parts;
-    // Twin of `super::surreal::rule`'s placement first.
+    // A reopened task's placement first, before the write.
     let mut body = if placed {
         format!("{}\n", workflow::REOPEN_PLACED)
     } else {
@@ -136,8 +132,6 @@ pub(in crate::store) fn rule(parts: RuleParts) -> Pg<'static> {
 /// A statement on PostgreSQL.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::store) enum Pg<'a> {
-    /// Nothing to send: what SurrealDB needs that PostgreSQL does not (an analyzer).
-    Nothing,
     /// An expression over `v` whose value is the answer.
     Read(Cow<'a, str>),
     /// A read of long lists, each list a statement of its own that answers an item a row, all in
@@ -201,14 +195,13 @@ pub(in crate::store) enum Gives {
     },
 }
 
-/// The statements `statement` sends, behind the schema's guard when `guarded`; none for
-/// [`Pg::Nothing`].
+/// The statements `statement` sends, behind the schema's guard when `guarded`.
 ///
 /// A request carries its variables once, in its first statement, and only its last answers
 /// anything at length, or each statement of its lists: a read of one statement binds them, and
 /// any other request sets them first ([`VARS`], which answers nothing), where every statement
 /// after it reads them.
-pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request> {
+pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Request {
     let mut steps = Vec::new();
     let several = matches!(statement, Pg::Listed(listed) if listed.statements() > 1);
     let set = guarded || several || matches!(statement, Pg::Script(..) | Pg::Within(..));
@@ -220,8 +213,7 @@ pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request
     }
     let from = if set { SET } else { BOUND };
     match statement {
-        Pg::Nothing => return None,
-        Pg::Simple(sql) => return Some(Request::Simple(sql.to_string())),
+        Pg::Simple(sql) => return Request::Simple(sql.to_string()),
         Pg::Read(expression) => steps.push((answered(expression, from), !set)),
         Pg::Listed(listed) => {
             let mut lists = Vec::new();
@@ -234,7 +226,7 @@ pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request
                 steps.len() - 1
             });
             let answer = Gives::Lists { lists, rest };
-            return Some(Request::Steps { steps, answer });
+            return Request::Steps { steps, answer };
         }
         Pg::Within(millis, block) => {
             steps.push((within(*millis), false));
@@ -250,7 +242,7 @@ pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request
         }
     }
     let answer = Gives::Value(steps.len() - 1);
-    Some(Request::Steps { steps, answer })
+    Request::Steps { steps, answer }
 }
 
 /// The variables, set for the transaction, where every later statement reads them ([`SET`]): a
@@ -468,7 +460,7 @@ END
 $guard$";
 
 /// `handle` (a text expression) fenced: its session's revision written, so a write that decided on
-/// it meets every other that did ([`super::surreal::write`]).
+/// it meets every other that did.
 pub(in crate::store) fn fence(handle: &str) -> String {
     format!(
         "INSERT INTO session_revision (id, last, writes) VALUES (to_jsonb(({handle})::text), 0, 1)
@@ -502,8 +494,8 @@ UPDATE session SET last_seen = greatest(last_seen, (v ->> 'now')::double precisi
 }
 
 /// A line on a thread at `now`, each argument a text expression, numbered `sid_` and dated `ts_`
-/// by the message counter as [`super::surreal::logged`] numbers and dates it: never dated before
-/// the line numbered ahead of it when that one is less than a minute ahead.
+/// by the message counter: never dated before the line numbered ahead of it when that one is less
+/// than a minute ahead.
 pub(in crate::store) fn logged(
     slug: &str,
     sender: &str,
@@ -522,8 +514,8 @@ INSERT INTO message (id, sid, slug, sender, recipient, kind, text, ts)
     )
 }
 
-/// A row read as SurrealDB gives it, `row` a table's row or a query's: its unset columns and id
-/// left out. JSON values within a column keep their nulls.
+/// A row as the store reads it, `row` a table's row or a query's: its unset columns and id left
+/// out. JSON values within a column keep their nulls.
 pub(in crate::store) fn row(row: &str) -> String {
     format!(
         "(SELECT coalesce(jsonb_object_agg(key, value), '{{}}'::jsonb) \
@@ -558,16 +550,16 @@ mod tests {
     fn a_read_is_one_statement_and_a_write_sets_its_variables_runs_its_block_and_answers() {
         assert_eq!(
             request(&Pg::read("v -> 'a'"), false),
-            Some(Request::Steps {
+            Request::Steps {
                 steps: vec![(
                     "SELECT to_jsonb((v -> 'a'))::text FROM (SELECT $1::jsonb AS v) AS board_vars"
                         .into(),
                     true
                 )],
                 answer: Gives::Value(0)
-            })
+            }
         );
-        let Some(Request::Steps { steps, answer }) = request(&Pg::script("NULL;"), true) else {
+        let Request::Steps { steps, answer } = request(&Pg::script("NULL;"), true) else {
             panic!("a script is steps");
         };
         let kinds: Vec<(&str, bool)> = steps
@@ -588,7 +580,7 @@ mod tests {
         assert!(steps[2].0.contains("\nNULL;\n"), "{}", steps[2].0);
         assert_eq!(steps[3].0, ANSWER);
         assert_eq!(answer, Gives::Value(3));
-        let Some(Request::Steps { steps, answer }) = request(&Pg::script_then("NULL;", "v"), false)
+        let Request::Steps { steps, answer } = request(&Pg::script_then("NULL;", "v"), false)
         else {
             panic!("a script is steps");
         };
@@ -601,14 +593,13 @@ mod tests {
             "the read after the block takes the variables its first statement set"
         );
         assert_eq!(answer, Gives::Value(2));
-        let Some(Request::Steps { steps, .. }) = request(&Pg::read("v"), true) else {
+        let Request::Steps { steps, .. } = request(&Pg::read("v"), true) else {
             panic!("a read is steps");
         };
         assert_eq!(steps.len(), 3);
         assert_eq!(binding(&steps), [0], "a guarded read binds them once too");
         assert!(steps[2].0.contains(SET), "{}", steps[2].0);
-        let Some(Request::Steps { steps, answer }) =
-            request(&Pg::Within(270_000, "NULL;".into()), true)
+        let Request::Steps { steps, answer } = request(&Pg::Within(270_000, "NULL;".into()), true)
         else {
             panic!("a bounded block is steps");
         };
@@ -620,10 +611,9 @@ mod tests {
         );
         assert!(steps[3].0.contains("\nNULL;\n"), "{}", steps[3].0);
         assert_eq!((steps[4].0.as_str(), answer), (ANSWER, Gives::Value(4)));
-        assert_eq!(request(&Pg::Nothing, true), None);
         assert_eq!(
             request(&Pg::Simple("CREATE TABLE t ();".into()), false),
-            Some(Request::Simple("CREATE TABLE t ();".into()))
+            Request::Simple("CREATE TABLE t ();".into())
         );
     }
 
@@ -652,7 +642,7 @@ mod tests {
         assert_eq!(read.lists[0].item, row("t"));
         assert_eq!(
             request(&Pg::Listed(listing(&[""], None)), false),
-            Some(Request::Steps {
+            Request::Steps {
                 steps: vec![(
                     "SELECT n.item FROM (SELECT $1::jsonb AS v) AS board_vars, \
                      LATERAL (SELECT (to_jsonb(t))::text AS item, t.at AS place0, t.id AS place1 \
@@ -665,7 +655,7 @@ mod tests {
                     lists: vec![("", 0)],
                     rest: None
                 }
-            })
+            }
         );
     }
 
@@ -692,8 +682,7 @@ mod tests {
         let mut read = listing(&["tasks", "roles"], Some("'latest', 7"));
         read.with = "picked AS (SELECT 1)".into();
         for guarded in [false, true] {
-            let Some(Request::Steps { steps, answer }) =
-                request(&Pg::Listed(read.clone()), guarded)
+            let Request::Steps { steps, answer } = request(&Pg::Listed(read.clone()), guarded)
             else {
                 panic!("a read of lists is steps");
             };
@@ -807,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn a_rule_adds_to_its_write_each_part_its_change_asks_for_in_surrealqls_order() {
+    fn a_rule_adds_to_its_write_each_part_its_change_asks_for_in_order() {
         assert_eq!(ruled(false, false, false, None, false), write::write());
         let whole = ruled(true, true, true, Some(true), true);
         let parts = [

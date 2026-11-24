@@ -11,7 +11,7 @@ const TEST: &str =
 #[test]
 fn a_hub_whose_watcher_delivers_nothing_still_refreshes_within_a_period() {
     if std::env::var_os(CHILD).is_none() {
-        let board = board::client();
+        let board = board::database();
         crate::testing::child_on(&board, CHILD, TEST);
         return;
     }

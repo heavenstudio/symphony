@@ -3,7 +3,7 @@
 
 use super::Hub;
 use crate::front::{Shared, router};
-use crate::testing::{Tree, board::surreal, repository};
+use crate::testing::{Tree, repository};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
@@ -50,17 +50,12 @@ fn get(port: u16, path: &str) -> (u16, serde_json::Value) {
 async fn board_json_recovers_after_external_migration_at_the_existing_retry_deadline() {
     let tree = Tree::new();
     let root = repository(&tree);
-    let _board = Board(symphony_board::server::Home::in_common(
-        &root.join(".git"),
-        Some(&surreal()),
-    ));
+    let _board = Board(symphony_board::server::Home::in_common(&root.join(".git")));
     let env = Env {
-        vars: [("SYMPHONY_SURREAL".into(), surreal().display().to_string())].into(),
+        vars: Default::default(),
         cwd: root.clone(),
     };
-    // On SurrealDB, which the older writer's statements here are written for, named before its
-    // first reach: an installed writer's command makes the board, never the Symphony's read.
-    super::boards_tests::on_surreal(&root);
+    // An installed writer's command makes the board, on PostgreSQL, never the Symphony's read.
     let reached = symphony_board::cli::writable_board(&env).unwrap();
     // An installed writer two versions behind the already-running reader.
     let before = Schema::this_build().before().before();

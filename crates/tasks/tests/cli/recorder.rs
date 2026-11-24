@@ -19,10 +19,11 @@ use crate::{Case, git, repository, scratch};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read as _;
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::Shutdown;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use symphony_api::{End, RunLine};
@@ -48,7 +49,7 @@ pub(crate) const SCALE: &str = "20";
 /// A board that cannot be reached, which refuses at once, on a database of its own: a scratch
 /// board, for a test that has none to give its runs [`SCALE`].
 pub(crate) const UNREACHED: [(&str, &str); 2] = [
-    ("TASKS_SERVER", "127.0.0.1:1"),
+    ("TASKS_SERVER", crate::UNREACHED_SERVER),
     ("TASKS_DATABASE", "unreached"),
 ];
 
@@ -396,19 +397,36 @@ fn a_recorded_command_keeps_its_arguments_streams_session_and_status() {
 /// A board server that takes one connection and never answers it: once it took it, it makes the
 /// file `accepted`. It tells when it took it, then when its asker was let go: by
 /// [`Silent::release`], or by the asker's own wait, which runs a minute in these tests
-/// ([`ASKED`]), so that a loaded machine never lets it go first.
+/// ([`ASKED`]), so that a loaded machine never lets it go first. Its socket is PostgreSQL's in a
+/// folder of its own under `/tmp`, short enough for a socket's path, removed with it.
 struct Silent {
     address: String,
+    folder: PathBuf,
     heard: mpsc::Receiver<(f64, f64)>,
-    held: Arc<Mutex<Option<TcpStream>>>,
+    held: Arc<Mutex<Option<UnixStream>>>,
     /// Set once its asker was let go, before it reads the time it tells for that.
     let_go: Arc<AtomicBool>,
 }
 
+impl Drop for Silent {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.folder);
+    }
+}
+
 impl Silent {
     fn new(accepted: &Path) -> Silent {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap().to_string();
+        static MADE: AtomicUsize = AtomicUsize::new(0);
+        let folder = PathBuf::from(format!(
+            "/tmp/symphony-silent-{}-{}",
+            std::process::id(),
+            MADE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        let socket = folder.join(symphony_board::server::postgres::SOCKET_FILE);
+        let listener = UnixListener::bind(&socket).unwrap();
+        let address = format!("postgresql:{}", folder.display());
         let (tell, heard) = mpsc::channel();
         let held = Arc::new(Mutex::new(None));
         let holder = Arc::clone(&held);
@@ -427,6 +445,7 @@ impl Silent {
         });
         Silent {
             address,
+            folder,
             heard,
             held,
             let_go,
@@ -613,7 +632,7 @@ fn in_its_callers_process_the_command_keeps_its_callers_session_and_marks() {
     let heard = folders.dir.join("heard");
     let mut env = case.env.clone();
     for (name, value) in [
-        ("TASKS_SERVER", "127.0.0.1:1"),
+        ("TASKS_SERVER", crate::UNREACHED_SERVER),
         ("TASKS_SESSION", "worker"),
         ("TASKS_WORK", folders.work.to_str().unwrap()),
         ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
@@ -1582,7 +1601,7 @@ fn a_board_that_cannot_be_reached_or_a_test_board_with_no_work_folder_still_runs
     let mut case = Case::new();
     case.env
         .vars
-        .insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+        .insert("TASKS_SERVER".into(), crate::UNREACHED_SERVER.into());
     let folders = Folders::new("recorder-unreachable");
     let done = output(
         tasks(

@@ -10,7 +10,6 @@ use crate::server::{FileAuthority, Home};
 use crate::store::recovery::Authority as _;
 use crate::{DATABASE, Store};
 use std::io::Write;
-use std::path::Path;
 use std::sync::Arc;
 
 /// The word that runs it, read before the board's argument table.
@@ -90,10 +89,7 @@ fn authority(env: &Env, acts: bool) -> Result<(FileAuthority, String), String> {
             project.id
         )
     };
-    let home = Home::in_common(
-        &project.place.common,
-        env.read(symphony_env::SURREAL).map(Path::new),
-    );
+    let home = Home::in_common(&project.place.common);
     Ok((home.recovery(database), board))
 }
 

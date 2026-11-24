@@ -9,8 +9,7 @@
 //! fenced on it (`store/admission.rs`), so an observation and an admission never pass each other.
 
 use super::postgres::guard as pg;
-use super::surreal::guard as sql;
-use super::{Error, Failure, Store, statement::both};
+use super::{Error, Failure, Store, statement::Statement};
 use crate::store::admission::Admission;
 use crate::workflow::Active;
 use crate::workflow::guard::{self, Accepted, Attester, Binding, Checked, Guarding, Observed};
@@ -81,7 +80,7 @@ impl Store {
     /// The approval authorities the active activation commits, with the state the board accepted
     /// from each: none on a board with no workflow active or one that commits no authority.
     pub fn workflow_authorities(&self) -> Result<Authorities, Error> {
-        self.retrying(|| self.read(both(sql::AUTHORITIES, pg::authorities()), json!({})))
+        self.retrying(|| self.read(Statement::from(pg::authorities()), json!({})))
     }
 
     /// `signed`, an observation from one of the active activation's authorities, verified by the
@@ -95,7 +94,7 @@ impl Store {
             .map_err(|why| Error::Refused(format!("workflow: an observation: {why}")))?;
         self.retrying(|| {
             let read: AuthorityRead = self.read(
-                both(sql::AUTHORITY, pg::authority()),
+                Statement::from(pg::authority()),
                 json!({"adapter": adapter}),
             )?;
             let Some(generation) = read.generation else {
@@ -126,7 +125,7 @@ impl Store {
                 Observed::Conflict(next) => (Observing::Conflicted(next.clone()), next),
             };
             self.transact::<Value>(
-                both(sql::OBSERVE, pg::observe()),
+                Statement::from(pg::observe()),
                 json!({
                     "generation": generation,
                     "adapter": adapter,
@@ -148,7 +147,7 @@ impl Store {
     ) -> Result<Option<Admission>, Error> {
         let body: Value = self.retrying(|| {
             self.read(
-                both(sql::ADMISSION_RECORD, pg::admission_record()),
+                Statement::from(pg::admission_record()),
                 json!({"slug": slug, "revision": revision}),
             )
         })?;
@@ -328,7 +327,7 @@ impl Store {
     ) -> Result<Vec<Checked>, Error> {
         let read: DispatchRead = self.retrying(|| {
             self.read(
-                both(sql::DISPATCH, pg::dispatch()),
+                Statement::from(pg::dispatch()),
                 json!({"slug": slug, "revision": revision}),
             )
         })?;

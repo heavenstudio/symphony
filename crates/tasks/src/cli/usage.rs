@@ -266,7 +266,7 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "snapshot",
-                "clone the board's store while no server runs on it; --list",
+                "copy the board's data while its server is stopped; --list",
             ),
             (
                 "run",
@@ -325,8 +325,8 @@ pub fn top() -> String {
          first,\n                   before every other word, and sweeps no repository\n\
          \nenvironment:\n  TASKS_SESSION    the session handle --as defaults to\n  TASKS_DATABASE   \
          the board's database, as --database NAME names it\n  TASKS_SERVER     the board's \
-         server, HOST:PORT, in place of the one the\n                   repository's common dir \
-         records\n",
+         server, postgresql:SOCKET, in place of the\n                   one the repository's \
+         common dir records\n",
     );
     text
 }
@@ -1184,21 +1184,15 @@ options:
 "#,
         r#"usage: just tasks snapshot [-h] [--as ACTOR] [--list]
 
-take a snapshot of the board's store now: a copy-on-write clone of
-symphony/tasks/data in symphony/tasks/snapshots/, named by its UTC time. Taken
-only while no process serves the store, under the lock every start of its
-server takes and holding the store's own LOCK, never of files a server is
-writing: refused while any server has the store open. The launcher takes one
-before each start of the server too, outside a scratch place, and on every
-board before a replay of its log, which never runs without it, and
-tasks-reclaim one of the old store before its own servers start on it. A
-volume that cannot clone takes none, but before a replay or a reclaim a plain
-copy. One whose write-ahead log holds writes not yet in its tables (taken
-after an unclean end, before a replay, or of a store that went back) is kept
-until the owner removes it (rm -rf its folder); of the others the newest 3 are
-kept. Each grows towards the whole store's size as the store moves on, and the
-room a reclaim frees comes back only once the snapshots of the old store are
-removed: docs/operations/BOARD_OPERATIONS.md, The store and its server.
+take a snapshot of the board's PostgreSQL data now: its whole cluster,
+symphony/tasks/postgresql with its write-ahead log, copied into
+symphony/tasks/postgresql-snapshots/ and named by its UTC time. Taken only
+while its server is stopped (`just tasks database hold WHY` stops it), under
+the lock every start of its server takes: refused while it runs. A
+copy-on-write clone where the volume clones, else a plain copy, listed only
+once whole; each is kept until the owner removes it (rm -rf its folder).
+`tasks-move --restore SNAPSHOT` puts one back over the board. A board still
+on SurrealDB is refused, naming how it moves.
 
 options:
   -h, --help  show this help message and exit

@@ -1,5 +1,5 @@
 //! Sweep rules, and the land that ends with a sweep, tested in isolated repositories and a
-//! private SurrealDB server.
+//! private PostgreSQL server.
 //!
 //! Every test builds its own repository outside this one: nothing here reads or touches the
 //! worktrees of the checkout it runs in. The sweep is called as a function where the command line
@@ -371,11 +371,11 @@ impl Repo {
 
     /// The environment that reaches this board, its clock where the board's is.
     pub fn vars(&self) -> BTreeMap<String, String> {
-        let db = self.board.other_client();
+        let db = self.board.other_database();
         let mut vars: BTreeMap<String, String> = [
             ("PATH", std::env::var("PATH").unwrap()),
             ("HOME", self.dir.to_string_lossy().into_owned()),
-            ("TASKS_SERVER", db.addr().to_string()),
+            ("TASKS_SERVER", db.addr()),
             ("TASKS_DATABASE", db.database().to_string()),
             ("TASKS_NOW", self.board.now().to_string()),
         ]

@@ -19,7 +19,7 @@ authors.workspace = true
 symphony-api = { path = "../../crates/symphony-api" }
 # Headless Chrome for tests/browser/, shared with `symphony shot`.
 symphony-chrome = { path = "../../crates/chrome-devtools" }
-# The variables the tests read (the SurrealDB, a client build), by their own names first.
+# The variables the tests read (a client build), by their own names first.
 symphony-env = { path = "../../crates/symphony-env" }
 flate2 = "1"
 libc.workspace = true

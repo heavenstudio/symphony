@@ -1,6 +1,5 @@
 //! A session's web address: set and cleared by the session itself, kept beside its row in
 //! `callback_state`, gone when it leaves, and never mistaken for a callback.
-use crate::common::Backend;
 
 use crate::common::{Fixture, Seed, refused};
 use serde_json::json;
@@ -22,9 +21,9 @@ fn structure(f: &Fixture) -> u64 {
     serde_json::from_value(last).unwrap()
 }
 
-on_both! {
-fn a_session_sets_replaces_and_clears_its_own_address(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default().session("amber-heron").session("swift-hare"));
+#[test]
+fn a_session_sets_replaces_and_clears_its_own_address() {
+    let f = Fixture::new(Seed::default().session("amber-heron").session("swift-hare"));
     assert!(urls(&f).is_empty());
     assert_eq!(
         f.store.set_session_url("amber-heron", &format!("  {WEB} ")),
@@ -58,11 +57,10 @@ fn a_session_sets_replaces_and_clears_its_own_address(backend: Backend) {
     // Clearing one that has none is no refusal.
     assert_eq!(f.store.set_session_url("amber-heron", " "), Ok(None));
 }
-}
 
-on_both! {
-fn an_address_the_check_refuses_an_unknown_or_a_left_session_writes_nothing(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default().session("amber-heron").session("swift-hare"));
+#[test]
+fn an_address_the_check_refuses_an_unknown_or_a_left_session_writes_nothing() {
+    let f = Fixture::new(Seed::default().session("amber-heron").session("swift-hare"));
     f.store.set_session_url("amber-heron", WEB).unwrap();
     assert!(
         refused(
@@ -85,7 +83,6 @@ fn an_address_the_check_refuses_an_unknown_or_a_left_session_writes_nothing(back
         BTreeMap::from([("amber-heron".into(), WEB.into())])
     );
 }
-}
 
 /// Write `url` as `handle`'s address straight into its row, as a copied dump, a hand write or
 /// another build could, past the check a set makes.
@@ -96,8 +93,8 @@ fn written(f: &Fixture, handle: &str, url: serde_json::Value) {
         .unwrap();
 }
 
-on_both! {
-fn a_row_written_past_the_check_is_read_only_when_the_check_keeps_it(backend: Backend) {
+#[test]
+fn a_row_written_past_the_check_is_read_only_when_the_check_keeps_it() {
     let handles = [
         "amber-heron",
         "swift-hare",
@@ -111,7 +108,7 @@ fn a_row_written_past_the_check_is_read_only_when_the_check_keeps_it(backend: Ba
     for handle in handles {
         seed = seed.session(handle);
     }
-    let f = Fixture::on(backend, seed);
+    let f = Fixture::new(seed);
     f.store.set_session_url("amber-heron", WEB).unwrap();
     for (handle, url) in [
         ("swift-hare", json!("javascript:alert(document.cookie)")),
@@ -138,23 +135,28 @@ fn a_row_written_past_the_check_is_read_only_when_the_check_keeps_it(backend: Ba
         ])
     );
 }
-}
 
-on_both! {
-fn leaving_deletes_the_address_and_coming_back_does_not_restore_it(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default().session("amber-heron"));
+#[test]
+fn leaving_deletes_the_address_and_coming_back_does_not_restore_it() {
+    let f = Fixture::new(Seed::default().session("amber-heron"));
     f.store.set_session_url("amber-heron", WEB).unwrap();
     f.store.leave("amber-heron").unwrap();
     assert!(urls(&f).is_empty());
-    assert!(f.store.raw().row("callback_state", json!(["session_url", "amber-heron"])).get().unwrap().is_null());
+    assert!(
+        f.store
+            .raw()
+            .row("callback_state", json!(["session_url", "amber-heron"]))
+            .get()
+            .unwrap()
+            .is_null()
+    );
     f.store.revive("amber-heron").unwrap();
     assert!(urls(&f).is_empty());
 }
-}
 
-on_both! {
-fn an_address_is_no_callback_and_moves_no_board_marker(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default().session("amber-heron"));
+#[test]
+fn an_address_is_no_callback_and_moves_no_board_marker() {
+    let f = Fixture::new(Seed::default().session("amber-heron"));
     let before = structure(&f);
     f.store.set_session_url("amber-heron", WEB).unwrap();
     f.store.set_session_url("amber-heron", "").unwrap();
@@ -162,5 +164,4 @@ fn an_address_is_no_callback_and_moves_no_board_marker(backend: Backend) {
     assert_eq!(structure(&f), before);
     assert!(f.store.callbacks().unwrap().is_empty());
     assert_eq!(f.store.chat_recipient().unwrap(), None);
-}
 }

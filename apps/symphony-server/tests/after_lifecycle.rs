@@ -36,24 +36,6 @@ use std::time::Duration;
 use symphony_board::sys::{Command, Stdio};
 use symphony_server::home::{Home, ServerError};
 
-/// The pinned SurrealDB a case's own board runs on: `SYMPHONY_SURREAL`, else what
-/// `tools/surreal.sh` fetches.
-fn surreal() -> PathBuf {
-    symphony_env::SURREAL.os().map_or_else(
-        || {
-            let found = symphony_board::sys::output(
-                Command::new("bash")
-                    .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/surreal.sh"))
-                    .env_remove("BASH_ENV"),
-            )
-            .unwrap();
-            assert!(found.status.success(), "SurrealDB lookup: {found:?}");
-            PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
-        },
-        PathBuf::from,
-    )
-}
-
 #[test]
 fn bash_env_does_not_add_output_to_build_fixtures() {
     bash_env::run("bash_env_does_not_add_output_to_build_fixtures", || {

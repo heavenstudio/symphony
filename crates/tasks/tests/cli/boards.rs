@@ -1,23 +1,22 @@
-//! Two projects' boards side by side, each its own SurrealDB server in its repository's common dir
-//! in a temporary folder, named SurrealDB's and started by its project's first command (no
-//! `TASKS_SERVER`): each command
+//! Two projects' boards side by side, each its own PostgreSQL server in its repository's common dir
+//! in a temporary folder, made by its project's first command (no `TASKS_SERVER`): each command
 //! line reaches its own project's board, and its sessions, heartbeat keys and sweep state stay with
 //! that project; an older command line is refused a board a newer build migrated before any write,
 //! naming the project, while the other project's board goes on as it was.
 
-use crate::common::{NOW, surreal};
-use crate::{Ran, repository, run, scratch};
+use crate::common::NOW;
+use crate::{Ran, project_file, repository, run, scratch};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use symphony_board::cli::{Env, connect};
 use symphony_board::launch::reap::state_path;
-use symphony_board::rpc::Client;
 use symphony_board::server::Home;
 use symphony_board::{NewTask, Opening, Program, Schema, Store};
 
-/// Two fixture projects, `alpha` and `beta`, each a repository of its own outside this one: their
-/// boards' servers are stopped when the case ends, however it ends.
+/// Two fixture projects, `alpha` and `beta`, each a repository of its own outside this one, its
+/// project file naming the machine's PostgreSQL: their boards' servers are stopped when the case
+/// ends, however it ends.
 struct Two {
     alpha: PathBuf,
     beta: PathBuf,
@@ -28,16 +27,7 @@ impl Two {
         let dir = scratch(name);
         let project = |id: &str| {
             let root = repository(&dir.join(id));
-            std::fs::write(
-                root.join("symphony.toml"),
-                format!("[project]\nid = \"{id}\"\n"),
-            )
-            .unwrap();
-            // On SurrealDB, whose recorded servers and SurrealQL these cases read: named before
-            // the first command, which would otherwise make the board on PostgreSQL.
-            Two::home(&root)
-                .initialize_backend(symphony_board::server::Engine::SurrealDb)
-                .unwrap();
+            std::fs::write(root.join("symphony.toml"), project_file(id, "")).unwrap();
             root
         };
         Two {
@@ -49,7 +39,6 @@ impl Two {
     /// A run in `root`: no board named, so the project's own is reached, started if it is down.
     fn env(root: &Path) -> Env {
         let vars: BTreeMap<String, String> = [
-            ("SYMPHONY_SURREAL", surreal().display().to_string()),
             ("TASKS_NOW", NOW.to_string()),
             ("TASKS_SWEEP", "off".to_string()),
         ]
@@ -63,7 +52,15 @@ impl Two {
     }
 
     fn home(root: &Path) -> Home {
-        Home::in_common(&root.join(".git"), Some(&surreal()))
+        Home::in_common(&root.join(".git"))
+    }
+
+    /// The address of the server of `root`'s board, which is running.
+    fn addr(root: &Path) -> String {
+        Two::home(root)
+            .board_server(root, false)
+            .expect("the board's server")
+            .addr
     }
 
     fn ok(root: &Path, args: &[&str]) -> String {
@@ -76,7 +73,7 @@ impl Two {
 impl Drop for Two {
     fn drop(&mut self) {
         for root in [&self.alpha, &self.beta] {
-            let _ = Two::home(root).stop();
+            let _ = Two::home(root).stop_board();
         }
     }
 }
@@ -98,9 +95,9 @@ fn each_projects_command_line_reaches_its_own_board_with_its_own_sessions_keys_a
     let two = Two::new("boards-own");
     let a = Two::ok(&two.alpha, &["register", "--kind", "worker"]);
     let b = Two::ok(&two.beta, &["register", "--kind", "worker"]);
-    let alpha_server = Two::home(&two.alpha).recorded().expect("alpha's server");
-    let beta_server = Two::home(&two.beta).recorded().expect("beta's server");
-    assert_ne!(alpha_server.addr, beta_server.addr);
+    let (alpha_server, beta_server) = (Two::addr(&two.alpha), Two::addr(&two.beta));
+    assert!(alpha_server.starts_with("postgresql:"), "{alpha_server}");
+    assert_ne!(alpha_server, beta_server);
     assert_eq!(sessions(&two.alpha), std::slice::from_ref(&a));
     assert_eq!(sessions(&two.beta), std::slice::from_ref(&b));
 
@@ -143,13 +140,15 @@ fn an_older_command_line_is_refused_a_board_a_newer_build_migrated_before_any_wr
     let two = Two::new("boards-skew");
     let a = Two::ok(&two.alpha, &["register", "--kind", "worker"]);
     let b = Two::ok(&two.beta, &["register", "--kind", "worker"]);
-    let addr = Two::home(&two.alpha).recorded().unwrap().addr;
-    let newer = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
+    let addr = Two::addr(&two.alpha);
+    let newer = Schema::this_build()
+        .then_each("CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY);");
     // As the newer build's `tasks migrate --leave-behind` in alpha's main checkout moves alpha's
     // live board, which its server names whoever opens it: where the main checkout holds no board
     // source, nothing else does. This build's `tasks`, which wrote it, is left behind.
-    let migrated = Store::opening(
-        Client::new(&addr, "sf", "tasks"),
+    let socket = addr.strip_prefix("postgresql:").unwrap();
+    let migrated = Store::opening_on(
+        symphony_board::pg::Client::new(Path::new(socket), "tasks").into(),
         Box::new(|| NOW),
         Box::new(|_| false),
         "this-host",

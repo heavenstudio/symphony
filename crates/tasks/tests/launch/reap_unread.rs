@@ -5,9 +5,7 @@
 //! judge, so a record unreadable elsewhere still says its thread was launched.
 
 use crate::World;
-use crate::common::RawWrite as _;
 use crate::last_look::changes_at_get;
-use serde_json::json;
 use std::cell::Cell;
 use std::slice::from_ref;
 use std::time::Duration;
@@ -16,37 +14,35 @@ use symphony_board::launch::reap::{Kept, Sweep};
 /// What every reason a terminal stays on no information starts with.
 const NO_INFORMATION: &str = "never closed on no information: ";
 
-/// A launch record no reader decodes, on `slug`: a lookup that reads that task's launches fails.
+/// A launch record no reader decodes, on `slug`: its start a NaN, which the database holds and
+/// reads out as text, where a reader takes a number. A lookup that reads that task's launches
+/// fails.
 fn unreadable(slug: &str) -> String {
     format!(
-        "DEFINE FIELD OVERWRITE started ON task_session TYPE any;
-UPSERT task_session:['{slug}', 'nobody'] CONTENT {{ slug: '{slug}', handle: 'nobody',
-    role: 'executor', claude_session: '', worktree: '', branch: '', pane: '', model: '',
-    started: 'unreadable', closed: 1.0, closed_why: '', restore: '' }} RETURN NONE;"
+        "INSERT INTO task_session (id, slug, handle, role, claude_session, worktree, branch, \
+         pane, model, started, closed, closed_why, restore) VALUES ('[\"{slug}\", \"nobody\"]', \
+         '{slug}', 'nobody', 'executor', '', '', '', '', '', 'NaN', 1.0, '', '')"
     )
 }
 
 /// A closed launch record of `handle` on `slug` naming the Codex `thread`, which no reader of a
-/// whole record decodes: its `started` is not a number.
+/// whole record decodes: its start a NaN, as [`unreadable`]'s.
 fn unreadable_codex(slug: &str, handle: &str, thread: &str) -> String {
     format!(
-        "DEFINE FIELD OVERWRITE started ON task_session TYPE any;
-UPSERT task_session:['{slug}', '{handle}'] CONTENT {{ slug: '{slug}', handle: '{handle}',
-    role: 'executor', claude_session: 'codex:{thread}', worktree: '', branch: '', pane: 't-gone',
-    model: '', started: 'unreadable', closed: 1.0, closed_why: '', restore: '' }} RETURN NONE;"
+        "INSERT INTO task_session (id, slug, handle, role, claude_session, worktree, branch, \
+         pane, model, started, closed, closed_why, restore) VALUES ('[\"{slug}\", \"{handle}\"]', \
+         '{slug}', '{handle}', 'executor', 'codex:{thread}', '', '', 't-gone', '', 'NaN', 1.0, '', '')"
     )
 }
 
 /// The board's launches readable again, `slug`'s unreadable one gone.
 fn readable(slug: &str) -> String {
-    format!(
-        "DELETE task_session:['{slug}', 'nobody'] RETURN NONE;
-DEFINE FIELD OVERWRITE started ON task_session TYPE float;"
-    )
+    format!("DELETE FROM task_session WHERE id = '[\"{slug}\", \"nobody\"]'")
 }
 
 fn write(w: &World, sql: &str) {
-    w.f.other_client().write(sql, json!({})).unwrap();
+    let client = w.f.other_database().into_postgresql();
+    client.simple(sql).unwrap();
 }
 
 /// What `swept` said of `terminal`, which it kept: there must be one.

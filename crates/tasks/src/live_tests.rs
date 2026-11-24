@@ -156,17 +156,17 @@ fn a_postgresql_schema_move_requires_its_own_committed_definitions_too() {
         common: main.join(".git"),
     };
     assert_eq!(
-        may_move_postgresql(&live, true, false, Some(1), 2, SCRATCH_FLAG),
+        may_move(&live, true, false, Some(1), 2, SCRATCH_FLAG),
         Ok(())
     );
     fs::write(&pg, format!("{own}\n")).unwrap();
     // An uncommitted change is irrelevant.
     assert_eq!(
-        may_move_postgresql(&live, true, false, Some(1), 2, SCRATCH_FLAG),
+        may_move(&live, true, false, Some(1), 2, SCRATCH_FLAG),
         Ok(())
     );
     git(&main, &["commit", "-qam", "changed definitions"]);
-    let why = may_move_postgresql(&live, true, true, Some(1), 2, SCRATCH_FLAG).unwrap_err();
+    let why = may_move(&live, true, true, Some(1), 2, SCRATCH_FLAG).unwrap_err();
     assert!(why.contains(POSTGRES_SOURCE), "{why}");
     assert!(why.contains("nothing was written"), "{why}");
 }
@@ -650,14 +650,6 @@ fn a_default_branch_the_project_files_rule_refuses_moves_no_board() {
             );
         };
         said(may_move(
-            &live,
-            this_build,
-            migrating,
-            found,
-            16,
-            SCRATCH_FLAG,
-        ));
-        said(may_move_postgresql(
             &live,
             this_build,
             migrating,

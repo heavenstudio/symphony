@@ -5,8 +5,9 @@
 //! server waited for while it follows `current`. A writer behind the release holds its own board
 //! alone, the project's to finish, and never another board or `current`; a project naming a linked
 //! plugin holds the switch, and the release is installed and nothing more. No project's checkout is
-//! written. Every project is a scratch repository, its board a scratch database of the test's own,
-//! and the machine's server a stand-in on a private port.
+//! written. Every project is a scratch repository, its board on a PostgreSQL of its own that its
+//! test starts on the data in its common dir, and the machine's server a stand-in on a private
+//! port.
 
 use std::fs;
 use std::io::{Read, Write};
@@ -15,9 +16,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
-use symphony_board::rpc::Client;
-use symphony_board::server::{Home, Running};
-use symphony_board::{NewTask, Program, Raw};
+use symphony_board::server::{Engine, FOLDER, GONE, Home, Postgres, Running, postgres};
+use symphony_board::{DATABASE, Database, NewTask, Program, Raw, pg};
 
 use super::common::older_board;
 use super::consumers::{checkout, project, symphony_crate};
@@ -37,8 +37,8 @@ const BUILDER: &str = "SYMPHONY_RELEASE_BUILDER";
 /// ([`test_time::backstop`]).
 const FOLLOWED: &str = "360";
 
-/// The fixture with the refresh on and its Symphony a workspace pinning the board's SurrealDB, with
-/// a client's distribution, pushed: the commit.
+/// The fixture with the refresh on and its Symphony a workspace with a client's distribution,
+/// pushed: the commit.
 pub(super) fn refreshing() -> (Fixture, String) {
     let fixture = Fixture::new();
     fixture.write("symphony.toml", &Fixture::project_file("refresh = true\n"));
@@ -50,13 +50,6 @@ pub(super) fn refreshing() -> (Fixture, String) {
     fixture.write(
         "apps/symphony-server/client/public/index.html",
         "<html></html>\n",
-    );
-    fixture.write(
-        "crates/tasks/src/server.rs",
-        &format!(
-            "pub const SURREAL_VERSION: &str = \"{}\";\n",
-            symphony_board::server::SURREAL_VERSION
-        ),
     );
     let commit = fixture.land(
         "crates/core/notes.txt",
@@ -79,12 +72,21 @@ pub(super) fn executable(path: &Path, text: &str) {
 /// Its server and its board answer what the install asks at that schema, and its `tasks migrate`
 /// logs to `migrated.log` where it ran and how many snapshots every project there held then,
 /// fails while `migrate-red` is there, or `migrate-red-ID` for the project in the folder `ID`, and
-/// otherwise moves the board its checkout reaches to that schema: its path. Any other `tasks api`
-/// request goes to the board's own binary, on the scratch database `filed` of the server of the
-/// board its checkout reaches: what a refresh files on a project's board lands there.
+/// otherwise moves the board its checkout reaches to that schema, as the store keeps it (the
+/// `meta` row `"schema"`), by `psql` on the socket its PostgreSQL's record names: its path. Any
+/// other `tasks api` request goes to the board's own binary, on the scratch database `filed` of
+/// the PostgreSQL of the board its checkout reaches: what a refresh files on a project's board
+/// lands there.
 pub(super) fn builder(fixture: &Fixture, schema: i64) -> String {
     let root = fixture.root.display().to_string();
     let real = super::common::tasks_binary();
+    let psql = programs().join("psql").display().to_string();
+    // The running server's record, line 5 its socket's folder, as the board reads it.
+    let socket = format!(
+        "socket=$(sed -n 5p .git/{FOLDER}/{}/postmaster.pid)",
+        Engine::PostgreSql.data_folder()
+    );
+    let user = postgres::USER;
     fs::write(fixture.root.join("schema"), schema.to_string()).unwrap();
     let stand_in = fixture.root.join("stand-in");
     executable(
@@ -99,17 +101,16 @@ pub(super) fn builder(fixture: &Fixture, schema: i64) -> String {
              api) req=$(cat)\n\
              case \"$req\" in *'\"method\": \"version\"'*|*'\"method\":\"version\"'*)\n\
              echo '{{\"ok\": {{\"api\": {{\"major\": 1, \"minor\": 14}}, \"schema\": @SCHEMA@}}}}' ;;\n\
-             *) addr=$(sed -n 's/.*\"addr\": *\"\\([^\"]*\\)\".*/\\1/p' .git/symphony/tasks/server.json)\n\
-             printf '%s' \"$req\" | TASKS_SERVER=\"$addr\" TASKS_DATABASE=filed '{real}' api ;;\n\
+             *) {socket}\n\
+             printf '%s' \"$req\" | TASKS_SERVER=\"postgresql:$socket\" TASKS_DATABASE=filed '{real}' api ;;\n\
              esac ;;\n\
-             migrate) kept=$(ls '{root}'/*/.git/symphony/tasks/snapshots/*.surql 2>/dev/null | wc -l)\n\
+             migrate) kept=$(ls '{root}'/*/.git/{FOLDER}/snapshots/*.sql 2>/dev/null | wc -l)\n\
              echo \"tasks $* in $PWD, $(echo $kept) snapshots\" >> '{root}/migrated.log'\n\
              if [ -e '{root}/migrate-red' ] || [ -e \"{root}/migrate-red-${{PWD##*/}}\" ]; then \
              echo 'the migrate is red' >&2; exit 1; fi\n\
-             addr=$(sed -n 's/.*\"addr\": *\"\\([^\"]*\\)\".*/\\1/p' .git/symphony/tasks/server.json)\n\
-             curl -sf -X POST \"http://$addr/sql\" -H 'Accept: application/json' \
-             --data 'USE NS sf; USE DB tasks; UPSERT meta:schema SET version = @SCHEMA@;' \
-             > /dev/null ;;\n\
+             {socket}\n\
+             '{psql}' -X -q -v ON_ERROR_STOP=1 -h \"$socket\" -U {user} -d {DATABASE} \
+             -c \"UPDATE meta SET version = @SCHEMA@ WHERE id = '\\\"schema\\\"'\" > /dev/null ;;\n\
              *) exit 9 ;;\nesac\n"
         ),
     );
@@ -190,18 +191,41 @@ fn untouched(root: &Path) -> (String, String, String, Vec<(PathBuf, Vec<u8>)>) {
     )
 }
 
-/// A project's board whose SurrealDB server its test started, stopped when the test ends, however
-/// it ends: cleanly, through [`Home::stop`], so no later run's `lsof` reads it and none lives until
+/// The folder of the PostgreSQL programs the tests' boards run: the ones the store's test server
+/// runs, which a project naming none in its file finds on PATH as well.
+fn programs() -> PathBuf {
+    postgres::discover_programs(&super::board::project_root()).unwrap()
+}
+
+/// A project's board on the PostgreSQL its test started on the data in its common dir, stopped
+/// when the test ends, however it ends: cleanly, through [`Home::stop_board`], so none lives until
 /// the binary exits. A stop that fails fails the test, unless it is failing already.
-pub(super) struct Board(Home);
+pub(super) struct Board {
+    home: Home,
+    /// The project's main checkout, whose file names its PostgreSQL programs.
+    root: PathBuf,
+}
 
 impl Board {
-    /// The board in the project `project`'s common dir, its server started.
+    /// The board in the project `project`'s common dir, made on PostgreSQL and its server started,
+    /// as the project's first board command makes it.
     fn started(project: &Path) -> (Board, Running) {
-        let home = Home::in_common(&project.join(".git"), Some(&super::board::surreal()));
-        let board = Board(home.supervised(true));
-        let running = board.ensure().unwrap();
+        let board = Board {
+            home: Home::in_common(&project.join(".git")).supervised(true),
+            root: project.to_path_buf(),
+        };
+        let running = board.home.board_server(project, true).unwrap();
         (board, running)
+    }
+
+    /// Its PostgreSQL, by the programs its project names.
+    fn postgres(&self) -> Postgres {
+        self.home.project_postgresql(&self.root).unwrap()
+    }
+
+    /// The server that serves it now, started by nothing here.
+    fn running(&self) -> Running {
+        self.home.board_server(&self.root, false).unwrap()
     }
 }
 
@@ -209,55 +233,62 @@ impl std::ops::Deref for Board {
     type Target = Home;
 
     fn deref(&self) -> &Home {
-        &self.0
+        &self.home
     }
 }
 
 impl Drop for Board {
     fn drop(&mut self) {
-        if let Err(problem) = self.0.stop()
+        if let Err(problem) = self.home.stop_board()
             && !std::thread::panicking()
         {
             panic!(
                 "the board's server in {}: {problem}",
-                self.0.dir().display()
+                self.home.dir().display()
             );
         }
     }
 }
 
+/// The database `name` on the board's server `running`, at the socket its address names.
+fn database(running: &Running, name: &str) -> Database {
+    let socket = running.addr.strip_prefix("postgresql:").unwrap();
+    pg::Client::new(Path::new(socket), name).into()
+}
+
 /// The project's board, its server started on the data in its common dir, made by the build of
 /// schema `schema` with a task on it, its one writer this test on the host `this-host`: its board,
-/// which stops that server when it is dropped, the server that runs it and a client of it.
-pub(super) fn board_at(project: &Path, schema: i64) -> (Board, Running, Client) {
+/// which stops that server when it is dropped, the server that runs it and its database.
+pub(super) fn board_at(project: &Path, schema: i64) -> (Board, Running, Database) {
     let (board, running) = Board::started(project);
-    let client = Client::new(&running.addr, "sf", "tasks");
-    older_board(Client::new(&running.addr, "sf", "tasks"), schema, NOW)
+    let address = symphony_board::rpc::Client::new(&running.addr, "sf", DATABASE);
+    older_board(address, schema, NOW)
         .create(&NewTask::new(
             "sim/kept",
             "What the snapshot keeps",
             "owner",
         ))
         .unwrap();
-    (board, running, client)
+    let db = database(&running, DATABASE);
+    (board, running, db)
 }
 
-/// The writers' lines on the board `client` reaches moved back `by` seconds.
-fn aged(client: &Client, by: f64) {
-    Raw::on(client)
+/// The writers' lines on the board in `db` moved back `by` seconds.
+fn aged(db: &Database, by: f64) {
+    Raw::of(db)
         .table("writer")
         .matching(json!({"host": "this-host"}))
         .add("seen", -by)
         .unwrap();
 }
 
-/// A line on the board `client` reaches of `program` at `path` on this host at `schema`, seen now.
-fn writes(client: &Client, program: &str, path: &Path, schema: i64) {
-    wrote(client, program, path, schema, 0.0);
+/// A line on the board in `db` of `program` at `path` on this host at `schema`, seen now.
+fn writes(db: &Database, program: &str, path: &Path, schema: i64) {
+    wrote(db, program, path, schema, 0.0);
 }
 
 /// [`writes`], its line seen `ago` seconds before now.
-pub(super) fn wrote(client: &Client, program: &str, path: &Path, schema: i64, ago: f64) {
+pub(super) fn wrote(db: &Database, program: &str, path: &Path, schema: i64, ago: f64) {
     let host = symphony_board::sys::hostname();
     let path = path.to_string_lossy().into_owned();
     let seen = std::time::SystemTime::now()
@@ -265,7 +296,7 @@ pub(super) fn wrote(client: &Client, program: &str, path: &Path, schema: i64, ag
         .unwrap()
         .as_secs_f64()
         - ago;
-    Raw::on(client)
+    Raw::of(db)
         .row("writer", json!([host, path]))
         .put(
             json!({"program": program, "path": path, "host": host, "schema": schema, "seen": seen}),
@@ -373,7 +404,7 @@ fn project_server(fixture: &Fixture, root: &Path) -> u16 {
 /// The snapshot a move of `project`'s board to `schema` by `release` keeps.
 fn snapshot(project: &Path, schema: i64, release: &str) -> PathBuf {
     project.join(format!(
-        ".git/symphony/tasks/snapshots/before-schema-{schema}-{release}.surql"
+        ".git/{FOLDER}/snapshots/before-schema-{schema}-{release}.sql"
     ))
 }
 
@@ -396,20 +427,18 @@ fn a_refresh_installs_moves_the_boards_its_writers_allow_points_current_and_wait
         ],
     );
     // alpha's writers are a release's own: an older release's tasks on this machine, at 18.
-    let (alpha_board, alpha_running, alpha_client) = board_at(&alpha, 18);
-    Raw::on(&alpha_client).table("writer").delete().unwrap();
+    let (alpha_board, alpha_running, alpha_db) = board_at(&alpha, 18);
+    Raw::of(&alpha_db).table("writer").delete().unwrap();
     let older = machine(&fixture).join("releases/release-2026-11-01/bin/tasks");
-    writes(&alpha_client, "tasks", &older, 18);
+    writes(&alpha_db, "tasks", &older, 18);
     // beta's last writer behind was seen over a week ago; gamma keeps no board.
-    let (beta_board, _, beta_client) = board_at(&beta, 18);
-    aged(&beta_client, 8.0 * DAY);
+    let (beta_board, _, beta_db) = board_at(&beta, 18);
+    aged(&beta_db, 8.0 * DAY);
     let before = [untouched(&alpha), untouched(&beta), untouched(&gamma)];
     let port = release_server(&fixture, "release-2026-11-01", true);
     let builder = builder(&fixture, 19);
-    let surreal = super::board::surreal().to_string_lossy().into_owned();
     let extra = [
         (BUILDER, builder.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
         ("SYMPHONY_RELEASE_RELOAD_SECONDS", FOLLOWED),
     ];
 
@@ -490,7 +519,7 @@ fn a_refresh_installs_moves_the_boards_its_writers_allow_points_current_and_wait
         let kept = fs::read_to_string(snapshot(project, 19, RELEASE)).unwrap();
         assert!(kept.contains("sim/kept"), "{kept}");
     }
-    assert_eq!(alpha_board.recorded(), Some(alpha_running));
+    assert_eq!(alpha_board.running(), alpha_running, "never restarted");
     // No project's checkout gains a branch, a commit, a worktree or a moved pin.
     let after = [untouched(&alpha), untouched(&beta), untouched(&gamma)];
     assert_eq!(after, before);
@@ -557,16 +586,12 @@ fn a_lagging_writer_holds_its_own_board_alone_and_never_another_or_current() {
     // project behind holds it back no more than one at the release's schema would.
     let (ours_board, _, _) = board_at(&main, 20);
     // alpha's writer, this test's build at 18, was seen just now; beta's over a week ago.
-    let (alpha_board, _, alpha_client) = board_at(&alpha, 18);
-    let (beta_board, _, beta_client) = board_at(&beta, 18);
-    aged(&beta_client, 8.0 * DAY);
+    let (alpha_board, _, alpha_db) = board_at(&alpha, 18);
+    let (beta_board, _, beta_db) = board_at(&beta, 18);
+    aged(&beta_db, 8.0 * DAY);
     let port = project_server(&fixture, &alpha);
     let builder = builder(&fixture, 19);
-    let surreal = super::board::surreal().to_string_lossy().into_owned();
-    let extra = [
-        (BUILDER, builder.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
-    ];
+    let extra = [(BUILDER, builder.as_str())];
     let before = [untouched(&alpha), untouched(&beta)];
 
     let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
@@ -645,9 +670,9 @@ fn a_lagging_writer_holds_its_own_board_alone_and_never_another_or_current() {
     );
 
     // The writer rebuilt at the release's schema and run once: alpha's board moves too.
-    Raw::on(&alpha_client).table("writer").delete().unwrap();
+    Raw::of(&alpha_db).table("writer").delete().unwrap();
     writes(
-        &alpha_client,
+        &alpha_db,
         "tasks",
         Path::new("/work/alpha/.target/release/tasks"),
         19,
@@ -683,17 +708,17 @@ fn a_build_its_project_no_longer_runs_holds_no_board_and_the_one_it_runs_does() 
     let host = symphony_board::sys::hostname();
     // alpha's writers behind: a superseded build named by its hash, still in its cache, unseen for
     // two days; and the build its link names now, which wrote three days ago.
-    let (alpha_board, _, alpha_client) = board_at(&alpha, 18);
-    Raw::on(&alpha_client).table("writer").delete().unwrap();
+    let (alpha_board, _, alpha_db) = board_at(&alpha, 18);
+    Raw::of(&alpha_db).table("writer").delete().unwrap();
     let superseded = fixture.root.join("builds-of/alpha/bin/tasks-0a1b2c");
     executable(&superseded, "#!/bin/sh\nexit 9\n");
-    wrote(&alpha_client, "tasks-0a1b2c", &superseded, 18, 2.0 * DAY);
+    wrote(&alpha_db, "tasks-0a1b2c", &superseded, 18, 2.0 * DAY);
     // beta's: the same, its link naming the newer build.
-    let (beta_board, _, beta_client) = board_at(&beta, 18);
-    Raw::on(&beta_client).table("writer").delete().unwrap();
+    let (beta_board, _, beta_db) = board_at(&beta, 18);
+    Raw::of(&beta_db).table("writer").delete().unwrap();
     let linked = fixture.root.join("builds-of/beta/bin/tasks-3d4e5f");
     executable(&linked, "#!/bin/sh\nexit 9\n");
-    wrote(&beta_client, "tasks-3d4e5f", &linked, 18, 3.0 * DAY);
+    wrote(&beta_db, "tasks-3d4e5f", &linked, 18, 3.0 * DAY);
     fs::create_dir_all(beta.join(".target/bin")).unwrap();
     std::os::unix::fs::symlink(&linked, beta.join(".target/bin/tasks")).unwrap();
     // Built before they wrote, so neither is gone from its path.
@@ -705,11 +730,7 @@ fn a_build_its_project_no_longer_runs_holds_no_board_and_the_one_it_runs_does() 
         .unwrap();
     }
     let builder = builder(&fixture, 19);
-    let surreal = super::board::surreal().to_string_lossy().into_owned();
-    let extra = [
-        (BUILDER, builder.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
-    ];
+    let extra = [(BUILDER, builder.as_str())];
 
     let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
     assert_eq!(code, 0, "{out}{err}");
@@ -773,25 +794,21 @@ fn a_writer_gone_from_its_path_is_said_and_holds_no_board_and_one_still_there_do
     let host = symphony_board::sys::hostname();
     // alpha's writers behind: a build named by its hash, superseded and removed, and a build
     // rebuilt at its path since it last wrote there, two hours ago.
-    let (alpha_board, _, alpha_client) = board_at(&alpha, 18);
-    Raw::on(&alpha_client).table("writer").delete().unwrap();
+    let (alpha_board, _, alpha_db) = board_at(&alpha, 18);
+    Raw::of(&alpha_db).table("writer").delete().unwrap();
     let removed = fixture.root.join("builds-of/alpha/bin/tasks-0a1b2c");
     let rebuilt = fixture.root.join("builds-of/alpha/rs-bin/agent-send");
     executable(&rebuilt, "#!/bin/sh\nexit 9\n");
-    wrote(&alpha_client, "tasks-0a1b2c", &removed, 18, DAY);
-    wrote(&alpha_client, "agent-send", &rebuilt, 18, 2.0 * 3600.0);
+    wrote(&alpha_db, "tasks-0a1b2c", &removed, 18, DAY);
+    wrote(&alpha_db, "agent-send", &rebuilt, 18, 2.0 * 3600.0);
     // beta's writer behind is the build that wrote just now, where it was.
-    let (beta_board, _, beta_client) = board_at(&beta, 18);
-    Raw::on(&beta_client).table("writer").delete().unwrap();
+    let (beta_board, _, beta_db) = board_at(&beta, 18);
+    Raw::of(&beta_db).table("writer").delete().unwrap();
     let standing = fixture.root.join("builds-of/beta/bin/tasks");
     executable(&standing, "#!/bin/sh\nexit 9\n");
-    writes(&beta_client, "tasks", &standing, 18);
+    writes(&beta_db, "tasks", &standing, 18);
     let builder = builder(&fixture, 19);
-    let surreal = super::board::surreal().to_string_lossy().into_owned();
-    let extra = [
-        (BUILDER, builder.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
-    ];
+    let extra = [(BUILDER, builder.as_str())];
 
     let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
     assert_eq!(code, 0, "{out}{err}");
@@ -864,8 +881,8 @@ fn each_board_is_snapshotted_before_its_own_move_and_one_that_fails_holds_no_oth
     let boards: Vec<Board> = [&alpha, &beta, &gamma]
         .into_iter()
         .map(|project| {
-            let (board, _, client) = board_at(project, 18);
-            aged(&client, 8.0 * DAY);
+            let (board, _, db) = board_at(project, 18);
+            aged(&db, 8.0 * DAY);
             board
         })
         .collect();
@@ -875,11 +892,7 @@ fn each_board_is_snapshotted_before_its_own_move_and_one_that_fails_holds_no_oth
             .collect()
     };
     let builder = builder(&fixture, 19);
-    let surreal = super::board::surreal().to_string_lossy().into_owned();
-    let extra = [
-        (BUILDER, builder.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
-    ];
+    let extra = [(BUILDER, builder.as_str())];
 
     // gamma's snapshot cannot be written: its board alone is not moved, and current is pointed.
     let blocked = gamma.join(".git/symphony/tasks/snapshots");
@@ -1028,20 +1041,16 @@ fn what_cannot_be_judged_is_left_out_and_each_board_that_lags_is_named_and_holds
     // fresh's database runs and holds no board yet; alpha has two writers behind, beta one, and
     // gamma's last was seen over a week ago.
     let _fresh_board = Board::started(&fresh);
-    let (_alpha_board, _, alpha_client) = board_at(&alpha, 18);
+    let (_alpha_board, _, alpha_db) = board_at(&alpha, 18);
     // A program of the project's own, where it wrote from: a path with nothing at it holds none.
     let gate = &fixture.root.join("builds-of/alpha/debug/gate-review");
     executable(gate, "#!/bin/sh\nexit 9\n");
-    writes(&alpha_client, "gate-review", gate, 18);
+    writes(&alpha_db, "gate-review", gate, 18);
     let _beta_board = board_at(&beta, 18);
-    let (gamma_board, _, gamma_client) = board_at(&gamma, 18);
-    aged(&gamma_client, 8.0 * DAY);
+    let (gamma_board, _, gamma_db) = board_at(&gamma, 18);
+    aged(&gamma_db, 8.0 * DAY);
     let builder = builder(&fixture, 19);
-    let surreal = super::board::surreal().to_string_lossy().into_owned();
-    let extra = [
-        (BUILDER, builder.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
-    ];
+    let extra = [(BUILDER, builder.as_str())];
 
     let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
     assert_eq!(code, 0, "{out}{err}");
@@ -1108,14 +1117,10 @@ fn a_project_naming_a_linked_plugin_holds_the_switch_the_release_installed_and_c
     let (fixture, _) = refreshing();
     let shelf = a_project(&fixture, "shelf", &["shelf-plugin"]);
     registered(&fixture, &[("shelf", &shelf, &["shelf-plugin"])]);
-    let (board, _, client) = board_at(&shelf, 18);
-    aged(&client, 8.0 * DAY);
+    let (board, _, db) = board_at(&shelf, 18);
+    aged(&db, 8.0 * DAY);
     let builder = builder(&fixture, 19);
-    let surreal = super::board::surreal().to_string_lossy().into_owned();
-    let extra = [
-        (BUILDER, builder.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
-    ];
+    let extra = [(BUILDER, builder.as_str())];
     let before = untouched(&shelf);
     let held = format!(
         "shelf names the linked plugin shelf-plugin, and a release's server serves a plugin only \
@@ -1189,15 +1194,11 @@ fn a_failed_move_is_its_boards_red_alone_and_current_is_pointed_all_the_same() {
     let (fixture, _) = refreshing();
     let alpha = a_project(&fixture, "alpha", &[]);
     registered(&fixture, &[("alpha", &alpha, &[])]);
-    let (board, running, client) = board_at(&alpha, 18);
-    aged(&client, 8.0 * DAY);
-    let surreal = super::board::surreal().to_string_lossy().into_owned();
+    let (board, running, db) = board_at(&alpha, 18);
+    aged(&db, 8.0 * DAY);
     // The first release, at the board's schema: nothing to move, and current names it.
     let at_18 = builder(&fixture, 18);
-    let extra = [
-        (BUILDER, at_18.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
-    ];
+    let extra = [(BUILDER, at_18.as_str())];
     let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
@@ -1217,7 +1218,6 @@ fn a_failed_move_is_its_boards_red_alone_and_current_is_pointed_all_the_same() {
     fs::write(fixture.root.join("migrate-red"), "").unwrap();
     let extra = [
         (BUILDER, at_19.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
         ("SYMPHONY_RELEASE_RELOAD_SECONDS", "1"),
     ];
     let (code, out, err) = fixture.release_with(NOW + DAY, &["--check", CHECK], &extra);
@@ -1310,8 +1310,8 @@ fn a_failed_move_is_its_boards_red_alone_and_current_is_pointed_all_the_same() {
     assert!(symphony_board::red::open(&fixture.reds()[slug].status));
     assert_eq!(board.schema("tasks").unwrap(), Some(19));
     assert_eq!(
-        board.recorded(),
-        Some(running),
+        board.running(),
+        running,
         "the same database, never restarted"
     );
 
@@ -1378,37 +1378,35 @@ fn a_board_not_running_is_red_alone_and_one_from_before_the_writer_record_is_its
             ("fresh", &fresh, &[]),
         ],
     );
-    // alpha's board is there (its store, as a board from before the identity keeps it), its
-    // database not running; old's from schema 17, before writers; fresh's folder holds what a
-    // session's heartbeat wrote before any board was made there, and no board.
+    // alpha's board is made, its database stopped; old's from schema 17, before writers; fresh's
+    // folder holds what a session's heartbeat wrote before any board was made there, and no board.
     let common = alpha.join(".git");
-    fs::create_dir_all(common.join("symphony/tasks/data")).unwrap();
+    let (alpha_board, _, _) = board_at(&alpha, 18);
+    alpha_board.postgres().stop().unwrap();
     fs::create_dir_all(fresh.join(".git/symphony/tasks/keys")).unwrap();
     let (old_board, _, _) = board_at(&old, 17);
     let builder = builder(&fixture, 19);
-    let surreal = super::board::surreal().to_string_lossy().into_owned();
-    let extra = [
-        (BUILDER, builder.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
-    ];
+    let extra = [(BUILDER, builder.as_str())];
 
     let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "release: refresh: alpha: red: the board's database in {} is not running (no address \
-             is recorded): nothing is read or exported, and nothing is started: its schema and \
-             writers were not read, and nothing was moved; once it runs (any `just tasks` in {} \
-             starts it), an orchestrator's `just release --refresh` moves it\n",
-            common.join("symphony/tasks").display(),
+            "release: refresh: alpha: red: the board's PostgreSQL in {} is not running: nothing \
+             is read or exported, and nothing is started: its schema and writers were not read, \
+             and nothing was moved; once it runs (any `just tasks` in {} starts it), an \
+             orchestrator's `just release --refresh` moves it\n",
+            common.join(FOLDER).display(),
             alpha.display()
         )),
         "{out}"
     );
-    assert!(
-        !common.join("symphony/tasks/server.json").exists(),
+    assert_eq!(
+        alpha_board.postgres().current(),
+        Ok(None),
         "nothing started it"
     );
+    assert!(!common.join(FOLDER).join("snapshots").exists());
     // A board not made yet is no database down: nothing to move, and no update fails for it.
     assert!(
         out.contains("release: refresh: fresh: its board is not made yet: nothing to move\n"),
@@ -1444,7 +1442,7 @@ fn a_board_not_running_is_red_alone_and_one_from_before_the_writer_record_is_its
         "tests/release-red-update-old-19",
     );
     assert!(
-        out.contains("release: refresh: updates: alpha@19 failed: the board's database in ")
+        out.contains("release: refresh: updates: alpha@19 failed: the board's PostgreSQL in ")
             && out.contains(&format!("; filed {alpha_red} on this repository's board\n"))
             && out.contains("release: refresh: updates: old@19 failed: its board is at schema 17")
             && out.contains(&format!("; filed {old_red} on this repository's board\n")),
@@ -1484,67 +1482,116 @@ fn a_board_not_running_is_red_alone_and_one_from_before_the_writer_record_is_its
     assert!(migrated(&fixture).is_empty());
 }
 
+/// A registered project whose board is still on SurrealDB, as an earlier release kept it, is red,
+/// naming how it moves, and its home is left as it was: nothing is started, made, moved or
+/// snapshotted for it, and `current` is pointed all the same.
 #[test]
-fn a_board_whose_move_could_replace_its_database_is_left_running_and_unmoved() {
+fn a_board_still_on_surrealdb_is_red_naming_how_it_moves_and_nothing_of_it_is_touched() {
     let (fixture, _) = refreshing();
-    // The release pins a SurrealDB newer than the one the board runs.
-    fixture.land(
-        "crates/tasks/src/server.rs",
-        Some("pub const SURREAL_VERSION: &str = \"99.0.0\";\n"),
-        "a newer SurrealDB",
-    );
     let alpha = a_project(&fixture, "alpha", &[]);
     registered(&fixture, &[("alpha", &alpha, &[])]);
-    let (board, running, client) = board_at(&alpha, 18);
-    aged(&client, 8.0 * DAY);
+    // Its home holds a SurrealDB store and names no engine, as a board from before the move does.
+    let folder = alpha.join(".git").join(FOLDER);
+    fs::create_dir_all(folder.join("data")).unwrap();
+    fs::write(folder.join("data/CURRENT"), "MANIFEST-000001\n").unwrap();
+    let before = Fixture::files(&folder);
     let builder = builder(&fixture, 19);
-    let surreal = super::board::surreal().to_string_lossy().into_owned();
-    let extra = [
-        (BUILDER, builder.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
-    ];
+    let extra = [(BUILDER, builder.as_str())];
+
     let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
     assert_eq!(code, 1, "{out}{err}");
+    let said: Vec<&str> = (out.lines())
+        .filter(|line| line.starts_with("release: refresh: alpha: "))
+        .collect();
     assert!(
-        out.contains(&format!(
-            "release: refresh: alpha: red: its board's database runs SurrealDB {} and {RELEASE} \
-             pins 99.0.0: moving its schema would replace that server, and the refresh stops no \
-             board's database, so nothing was moved\n",
-            running.version
-        )),
+        said.len() == 1
+            && said[0].starts_with("release: refresh: alpha: red: ")
+            && said[0].contains(GONE),
         "{out}"
     );
-    // One whose record names no version fails closed the same way.
-    fixture.land("crates/tasks/src/server.rs", None, "no pinned SurrealDB");
+    assert!(out.contains("release: refresh-alpha red ("), "{out}");
+    // Read and nothing more: no PostgreSQL made or named for it, nothing moved or snapshotted.
+    assert_eq!(Fixture::files(&folder), before, "{out}");
+    assert!(migrated(&fixture).is_empty(), "no migrate ran");
+    assert_eq!(
+        current(&fixture).as_deref(),
+        Some(RELEASE),
+        "a board's red holds no current"
+    );
+    // Its update failed, filed on this repository's board: no release here writes that board.
+    let slug = "tests/release-red-update-alpha-19";
+    assert!(
+        out.contains("release: refresh: updates: alpha@19 failed: ")
+            && out.contains(&format!("; filed {slug} on this repository's board\n")),
+        "{out}"
+    );
+    assert_eq!(fixture.reds().keys().collect::<Vec<_>>(), [slug], "{out}");
+}
+
+/// A release that keeps the board schema the release `current` names serves still judges a board
+/// still on SurrealDB, which every release before this build served: the first refresh to a build
+/// that refuses it says it red and files its update, though no board moves, and touches nothing of
+/// it.
+#[test]
+fn a_board_still_on_surrealdb_is_red_too_on_a_release_that_keeps_the_schema_current_serves() {
+    let (fixture, _) = refreshing();
+    registered(&fixture, &[]);
+    let builder = builder(&fixture, 19);
+    let extra = [(BUILDER, builder.as_str())];
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(current(&fixture).as_deref(), Some(RELEASE), "{out}");
+
+    // A project registered since, its home holding a SurrealDB store and naming no engine, as a
+    // board an earlier release kept does.
+    let alpha = a_project(&fixture, "alpha", &[]);
+    registered(&fixture, &[("alpha", &alpha, &[])]);
+    let folder = alpha.join(".git").join(FOLDER);
+    fs::create_dir_all(folder.join("data")).unwrap();
+    fs::write(folder.join("data/CURRENT"), "MANIFEST-000001\n").unwrap();
+    let before = Fixture::files(&folder);
+    fixture.land("crates/core/notes.txt", Some("b\n"), "a landing after it");
+
     let (code, out, err) = fixture.release_with(NOW + DAY, &["--check", CHECK], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "release: refresh: alpha: red: the SurrealDB {NEXT} pins cannot be read \
-             (crates/tasks/src/server.rs there names no SURREAL_VERSION)"
+            "release: refresh: {NEXT} serves board schema 19, as the release current names serves \
+             19: only a board left behind it moves\n"
         )),
         "{out}"
     );
-    assert!(migrated(&fixture).is_empty(), "no migrate ran");
-    assert!(!alpha.join(".git/symphony/tasks/snapshots").exists());
-    assert_eq!(board.schema("tasks").unwrap(), Some(18));
-    assert_eq!(
-        board.recorded(),
-        Some(running),
-        "the same database, never restarted"
+    let said: Vec<&str> = (out.lines())
+        .filter(|line| line.starts_with("release: refresh: alpha: "))
+        .collect();
+    assert!(
+        said.len() == 1
+            && said[0].starts_with("release: refresh: alpha: red: ")
+            && said[0].contains(GONE),
+        "{out}"
     );
+    assert!(out.contains("release: refresh-alpha red ("), "{out}");
+    assert_eq!(Fixture::files(&folder), before, "{out}");
+    assert!(migrated(&fixture).is_empty(), "no migrate ran");
     assert_eq!(
         current(&fixture).as_deref(),
         Some(NEXT),
         "a board's red holds no current"
     );
+    let slug = "tests/release-red-update-alpha-19";
+    assert!(
+        out.contains("release: refresh: updates: alpha@19 failed: ")
+            && out.contains(&format!("; filed {slug} on this repository's board\n")),
+        "{out}"
+    );
+    assert_eq!(fixture.reds().keys().collect::<Vec<_>>(), [slug], "{out}");
 }
 
-/// The scratch database `filed` on the board server at `addr`, where the stand-in's own board
+/// The scratch database `filed` on the board's server `running`, where the stand-in's own board
 /// binary files what a refresh files on that project's board.
-fn filed(addr: &str) -> symphony_board::Store {
-    symphony_board::Store::with(
-        Client::new(addr, "sf", "filed"),
+fn filed(running: &Running) -> symphony_board::Store {
+    symphony_board::Store::opening_on(
+        database(running, "filed"),
         Box::new(|| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1553,6 +1600,7 @@ fn filed(addr: &str) -> symphony_board::Store {
         }),
         Box::new(|_| false),
         "this-host",
+        &symphony_board::Opening::write(),
     )
     .unwrap()
 }
@@ -1657,16 +1705,14 @@ fn a_board_left_behind_holds_no_current_and_its_failed_update_is_one_task_until_
         ],
     );
     let (ours_board, _, _) = board_at(&main, 19);
-    let (alpha_board, alpha_running, alpha_client) = board_at(&alpha, 18);
-    let (beta_board, _, beta_client) = board_at(&beta, 18);
-    aged(&beta_client, 8.0 * DAY);
-    aged(&alpha_client, 8.0 * DAY);
+    let (alpha_board, alpha_running, alpha_db) = board_at(&alpha, 18);
+    let (beta_board, _, beta_db) = board_at(&beta, 18);
+    aged(&beta_db, 8.0 * DAY);
+    aged(&alpha_db, 8.0 * DAY);
     release_server(&fixture, "release-0", true);
-    let surreal = super::board::surreal().to_string_lossy().into_owned();
     let builder = builder(&fixture, 18);
     let extra = [
         (BUILDER, builder.as_str()),
-        ("SYMPHONY_SURREAL", surreal.as_str()),
         ("SYMPHONY_RELEASE_RELOAD_SECONDS", FOLLOWED),
     ];
 
@@ -1696,7 +1742,7 @@ fn a_board_left_behind_holds_no_current_and_its_failed_update_is_one_task_until_
     // Alpha's own build at 18 has just run, and is where it ran from.
     let own_build = fixture.root.join("builds-of/alpha/release/tasks");
     executable(&own_build, "#!/bin/sh\nexit 9\n");
-    writes(&alpha_client, "tasks", &own_build, 18);
+    writes(&alpha_db, "tasks", &own_build, 18);
     fs::write(fixture.root.join("schema"), "19").unwrap();
     fixture.land("crates/core/next.txt", Some("b\n"), "the next release");
     let (code, out, err) = fixture.release_with(NOW + DAY, &["--check", CHECK], &extra);
@@ -1737,7 +1783,7 @@ fn a_board_left_behind_holds_no_current_and_its_failed_update_is_one_task_until_
         fixture.reds().is_empty(),
         "nothing on this repository's board: {out}"
     );
-    let theirs = filed(&alpha_running.addr);
+    let theirs = filed(&alpha_running);
     let task = theirs.get(slug).unwrap();
     assert_eq!(task.priority, 0);
     assert!(task.red(), "red work, staffed as a red is");
@@ -1814,9 +1860,9 @@ fn a_board_left_behind_holds_no_current_and_its_failed_update_is_one_task_until_
 
     // Alpha's writer rebuilt at 19: the next refresh moves its board, the update is served and its
     // task closed; the ledger keeps every update with its failures.
-    Raw::on(&alpha_client).table("writer").delete().unwrap();
+    Raw::of(&alpha_db).table("writer").delete().unwrap();
     writes(
-        &alpha_client,
+        &alpha_db,
         "tasks",
         Path::new("/work/alpha/.target/release/tasks"),
         19,

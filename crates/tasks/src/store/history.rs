@@ -4,8 +4,7 @@
 //! when it last went into review.
 
 use super::postgres::{Pg, history as pg};
-use super::statement::both;
-use super::surreal::history as sql;
+use super::statement::Statement;
 use super::{Error, Store};
 use crate::alarm::{self, ARROW, CLAIMED, Line, MOVED, Step, UNDER, WAITS_SET};
 use crate::json_object::object;
@@ -16,7 +15,7 @@ use std::collections::HashMap;
 /// How many lines one read of a thread takes ([`Store::newest`]).
 pub(super) const PAGE: usize = 4;
 
-/// What [`sql::STATUS_LINES`], [`sql::steps_before`] and [`sql::waits_before`] match a line by,
+/// What [`pg::status_lines`], [`pg::steps_before`] and [`pg::waits_before`] match a line by,
 /// from `since`.
 fn status_vars(since: f64) -> Value {
     object(vec![
@@ -35,7 +34,7 @@ impl Store {
     /// Match the standing text as well, so malformed or unrelated evidence supplies no identity.
     pub(crate) fn waits_record(&self, task: &crate::Task) -> Result<Option<Line>, Error> {
         let vars = status_vars(f64::MAX);
-        let query = (sql::waits_before(), pg::waits_before());
+        let query = pg::waits_before();
         let mut records = self.newest(&[&task.slug], &query, &vars, |line| {
             alarm::waits_set(line).is_some()
         })?;
@@ -72,7 +71,7 @@ impl Store {
         }
         let vars = json!({ "slug": task.slug, "at": record.at, "waits": WAITS_SET });
         let lines: Vec<Line> =
-            self.retrying(|| self.read(both(sql::WAITS_AT, pg::waits_at()), vars.clone()))?;
+            self.retrying(|| self.read(Statement::from(pg::waits_at()), vars.clone()))?;
         let records: Vec<_> = lines
             .iter()
             .filter_map(alarm::Recorded::of)
@@ -86,7 +85,7 @@ impl Store {
     pub fn status_lines(&self, since: f64) -> Result<Vec<Line>, Error> {
         let vars = status_vars(since);
         let mut lines: Vec<Line> =
-            self.retrying(|| self.read(both(sql::STATUS_LINES, pg::status_lines()), vars.clone()))?;
+            self.retrying(|| self.read(Statement::from(pg::status_lines()), vars.clone()))?;
         crate::order::sort_by(&mut lines, &|a, b| (&a.slug, a.sid).cmp(&(&b.slug, b.sid)));
         Ok(lines)
     }
@@ -101,10 +100,10 @@ impl Store {
     ) -> Result<HashMap<String, Vec<Line>>, Error> {
         let vars = status_vars(since);
         let changed = |line: &Line| alarm::step(line) != Step::Unchanged;
-        let steps = (sql::steps_before(), pg::steps_before());
+        let steps = pg::steps_before();
         let steps = self.newest(slugs, &steps, &vars, changed)?;
         let recorded = |line: &Line| alarm::waits_set(line).is_some();
-        let records = (sql::waits_before(), pg::waits_before());
+        let records = pg::waits_before();
         let records = self.newest(slugs, &records, &vars, recorded)?;
         let mut said: HashMap<String, Vec<Line>> = HashMap::new();
         let both = steps.into_iter().chain(records);
@@ -126,21 +125,20 @@ impl Store {
             "back_in": format!("{BACK_TO}review"),
         });
         let into = |line: &Line| matches!(alarm::step(line), Step::Between(_, "review"));
-        let found = self.newest(slugs, &(sql::into_review(), pg::into_review()), &vars, into)?;
+        let found = self.newest(slugs, &pg::into_review(), &vars, into)?;
         Ok((found.into_iter())
             .map(|(slug, line)| (slug, line.ts))
             .collect())
     }
 
-    /// Of each of `slugs`' threads, its newest line `query`'s filter matches (with `vars`; its
-    /// SurrealQL and its PostgreSQL twin) that
+    /// Of each of `slugs`' threads, its newest line `query`'s filter matches (with `vars`) that
     /// `said` takes, read back from its newest [`PAGE`] lines at a time, so that lines the filter
     /// lets through and `said` refuses (a field's text that reads like a line of the board's) hide
     /// none older; one with none is left out.
     fn newest(
         &self,
         slugs: &[&str],
-        query: &(String, Pg<'static>),
+        query: &Pg<'static>,
         vars: &Value,
         said: fn(&Line) -> bool,
     ) -> Result<HashMap<String, Line>, Error> {
@@ -157,9 +155,8 @@ impl Store {
                 .collect();
             let mut vars = vars.clone();
             vars["from"] = Value::Array(from);
-            let (surreal, postgres) = query;
-            let pages: Vec<Vec<Line>> = self
-                .retrying(|| self.read(both(surreal.as_str(), postgres.clone()), vars.clone()))?;
+            let pages: Vec<Vec<Line>> =
+                self.retrying(|| self.read(Statement::from(query.clone()), vars.clone()))?;
             let mut further = Vec::new();
             let paged = reading.into_iter().zip(pages);
             for ((slug, _), page) in paged {

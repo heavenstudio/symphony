@@ -107,6 +107,33 @@ of its own, and each board moves by itself.
 5. **SurrealDB stays in the code** until a later decision removes it. That is what keeps the way
    back open.
 
+- [x] **surrealdb-leaves-the-code** — SurrealDB is still in the Symphony's code because two other projects' boards still run on it and this repository's board can still be moved back to it. Once both boards have moved to PostgreSQL and the way back closes, the code can go. On 2026-11-22 you said: "move the remaining queue tasks to ready. The surrealdb one should be done with everything else". How soon do the two boards move, and when does the way back close? A: now, and the code goes once both have moved. B: at the plan's pace, a few days between moves, and the code goes about a week later. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/board-pg-cutover#The order]]
+  [2026-11-22 19:40] agent — Posted for the board task `tools/surrealdb-code-removed`, which removes nothing until you answer.
+
+    **Where things stand**, read 2026-11-22:
+    - This repository's board has been on PostgreSQL since 2026-11-21. Its way back is to move it to SurrealDB again.
+    - The project on the installed release, which runs that release's programs, has a 50 MB board on SurrealDB, about the size of this one. Nothing in that project is pinned to an older build. The installed release (`release-2026-11-22.3`) ships the move command, so the move can run now.
+    - The pinned project has a 5.3 GB board on SurrealDB. Its pin is older than the first release that reads both stores, so it takes a newer release by its own landing first. Its store is about 120 times this one's, so its move is first rehearsed on a copy, to time the hold.
+
+    **A. Now (recommended).**
+    - The board of the project on the installed release moves now. It cannot be written for about a minute, as this board's 74 s.
+    - The pinned project moves its pin, then its board, as soon as its own landing allows.
+    - Once both have moved, the way back closes for all three boards and SurrealDB's code goes.
+    - The cost: this board runs about a day on PostgreSQL before the next one moves, not the plan's few days. The last board to move has no window to go back in.
+
+    **B. The plan's pace.**
+    - The board of the project on the installed release moves after 2026-11-24, and the pinned project's after its pin.
+    - Each board runs a few days before the next one moves. The code goes a few days after the last move.
+    - Each board keeps its way back for its own few days. SurrealDB stays in the code about a week longer, and every change to the board's store is written for both engines until then.
+
+    **Under either.**
+    - Nothing is deleted: each board's old SurrealDB store and its export stay in its `moved/` folder until you say otherwise.
+    - Once the code goes, no later release can move a board back to SurrealDB.
+    - A board that breaks on PostgreSQL can still be put back from one of its own snapshots (`tasks-move --restore`).
+
+    **Earlier verdicts checked.** [`board-pg-cutover`](#board-pg-cutover) (B) decided when a live board may first move. The order posted with it said this board "runs a few days" before the next, and A shortens that, so it is asked. Neither that card nor your words of 2026-11-22 say when SurrealDB leaves the code, which step 5 above keeps for a later decision.
+  [2026-11-22 19:55] owner · approved — A
+
 ## One board's move
 
 `tasks-move postgresql --as HANDLE` does all of it, and `tasks-move surrealdb` is the same move

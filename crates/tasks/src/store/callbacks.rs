@@ -19,8 +19,7 @@ use super::launches::held;
 use super::postgres::callbacks as pg;
 use super::pull_account::{Account, PullPlan};
 use super::queued_lines::{Hearing, Queued, Rescoped};
-use super::statement::both;
-use super::surreal::callbacks as sql;
+use super::statement::Statement;
 use super::transaction::unshaped;
 use super::{Error, Store, refused};
 use crate::cli::agents::{Answer, Pane};
@@ -365,7 +364,7 @@ impl Store {
         let text = format!("AGENT from {sender} to {handle} — {text}");
         let board_command = self.board_command();
         let key: String = self.retrying(|| self.transact(
-            both(sql::send_agent(), pg::send_agent()),
+            Statement::from(pg::send_agent()),
             self.acting(sender, self.now(), json!({"handle":handle, "text":text,
                 "no_channel":format!("refused: {handle} has no native channel; have it run {board_command} callback --as {handle}, or send on a task with {board_command} say SLUG TEXT --to {handle} (it can read {board_command} inbox --as {handle})") })),
         ))?;
@@ -378,7 +377,7 @@ impl Store {
         // Delivered rows may already have been pruned by another dispatcher or the sweep.
         self.retrying(|| {
             self.read_together(
-                both(sql::AGENT_DELIVERED, pg::agent_delivered()),
+                Statement::from(pg::agent_delivered()),
                 json!({"handle":handle, "key":key}),
             )
         })
@@ -440,10 +439,9 @@ impl Store {
                 }
             }
         }
-        let body = sql::register();
         self.retrying(|| {
             self.transact::<Value>(
-                both(&body, pg::register()),
+                Statement::from(pg::register()),
                 self.acting(
                     handle,
                     self.now(),
@@ -478,12 +476,8 @@ impl Store {
     /// handle. A waiter that stops waiting holds it while it stays live, so what the owner says
     /// waits for its next read rather than for nobody.
     fn waiting_orchestrator(&self) -> Result<Option<String>, Error> {
-        let waiting: Vec<crate::rows::SessionRow> = self.retrying(|| {
-            self.read(
-                both(sql::WAITING_ORCHESTRATORS, pg::waiting_orchestrators()),
-                json!({}),
-            )
-        })?;
+        let waiting: Vec<crate::rows::SessionRow> =
+            self.retrying(|| self.read(Statement::from(pg::waiting_orchestrators()), json!({})))?;
         let live = |s: &&crate::rows::SessionRow| {
             crate::health::health(s, self.now(), &self.host, &*self.pid_alive, false)
                 == crate::Health::Live
@@ -505,7 +499,7 @@ impl Store {
     fn session_kind(&self, handle: &str) -> Result<Option<String>, Error> {
         self.retrying(|| {
             self.read(
-                both(sql::SESSION_KIND, pg::session_kind()),
+                Statement::from(pg::session_kind()),
                 json!({"handle":handle}),
             )
         })
@@ -525,7 +519,7 @@ impl Store {
             text: String,
         }
         let chat: Vec<Chat> =
-            self.retrying(|| self.read(both(sql::UNHEARD_CHAT, pg::unheard_chat()), json!({})))?;
+            self.retrying(|| self.read(Statement::from(pg::unheard_chat()), json!({})))?;
         Ok(chat
             .into_iter()
             .map(|c| (format!("chat-{}", c.key), c.text))
@@ -545,12 +539,7 @@ impl Store {
     }
 
     fn stored_callbacks(&self) -> Result<Vec<Callback>, Error> {
-        let read = || {
-            super::statement::both(
-                sql::REGISTRATIONS,
-                super::postgres::callbacks::registrations(),
-            )
-        };
+        let read = || Statement::from(super::postgres::callbacks::registrations());
         self.retrying(|| self.read(read(), json!({})))
     }
 
@@ -588,7 +577,7 @@ impl Store {
 
     /// [`Store::clear_callback`] by the close holding the handle's session as `hold`
     /// ([`Store::take_session`]): refused, retiring nothing, once the hold is another's
-    /// ([`super::surreal::launches::HOLDS`]).
+    /// (`postgres::launches::HOLDS`).
     pub(crate) fn clear_callback_held(
         &self,
         callback: &Callback,
@@ -612,9 +601,8 @@ impl Store {
         if let Some(hold) = hold {
             held(&mut vars, &callback.handle, hold);
         }
-        let body = sql::retire(hold.is_some());
         let retired = self.retrying(|| {
-            self.transact::<bool>(both(&body, pg::retire(hold.is_some())), vars.clone())
+            self.transact::<bool>(Statement::from(pg::retire(hold.is_some())), vars.clone())
         })?;
         if retired {
             eprintln!(
@@ -715,7 +703,7 @@ impl Store {
     }
 
     fn prune_callbacks(&self) -> Result<(), Error> {
-        self.retrying(|| self.transact::<Value>(both(sql::PRUNE, pg::prune()), json!({})))
+        self.retrying(|| self.transact::<Value>(Statement::from(pg::prune()), json!({})))
             .map(|_| ())
     }
 
@@ -723,7 +711,7 @@ impl Store {
     // own. Keep that event's attempt budget even if another message later blocks the listener.
     fn callback_seen(&self, callback: &Callback) -> Result<bool, Error> {
         self.retrying(|| self.transact(
-            both(sql::SEEN, pg::seen()),
+            Statement::from(pg::seen()),
             json!({"handle":callback.handle, "address":callback.address, "owner":callback.owner, "now":self.now(),
                 "until":self.now() + crate::launch::reap::REAP_SECONDS + crate::health::LIVE_SECONDS}),
         ))
@@ -732,7 +720,7 @@ impl Store {
     fn callback_blocked(&self, callback: &Callback) -> Result<(), Error> {
         self.retrying(|| {
             self.transact::<Value>(
-            both(sql::BLOCKED, pg::blocked()),
+            Statement::from(pg::blocked()),
             json!({"handle":callback.handle, "address":callback.address, "owner":callback.owner}),
         )
         })
@@ -746,7 +734,7 @@ impl Store {
         let chat = self.reads_chat(handle)?;
         let events: Vec<Event> = self.retrying(|| {
             self.read_together(
-                both(sql::INBOX, pg::inbox()),
+                Statement::from(pg::inbox()),
                 json!({"handle":handle, "chat":chat}),
             )
         })?;
@@ -770,7 +758,7 @@ impl Store {
             .collect();
         self.retrying(|| {
             self.transact::<Value>(
-                both(sql::ack(), pg::ack()),
+                Statement::from(pg::ack()),
                 self.acting(handle, self.now(), json!({"keys":keys, "chats":chats})),
             )
         })
@@ -803,14 +791,13 @@ impl Store {
             waiting: bool,
         }
         // A read, once the reader has its state row and is on the chat seat's waiting list.
-        let read =
-            || self.read::<Reader>(both(sql::READER, pg::reader()), json!({"handle":handle}));
+        let read = || self.read::<Reader>(Statement::from(pg::reader()), json!({"handle":handle}));
         let mut reader = self.retrying(read)?;
         let here = reader.session.as_ref().is_some_and(|s| s.left_at.is_none());
         let unaddressed = reader.state.as_ref().is_none_or(|s| s.address.is_none());
         if here && unaddressed && (reader.state.is_none() || !reader.waiting) {
             self.retrying(|| {
-                self.transact::<Value>(both(sql::WAIT, pg::wait()), json!({"handle":handle}))
+                self.transact::<Value>(Statement::from(pg::wait()), json!({"handle":handle}))
             })?;
             reader = self.retrying(read)?;
         }
@@ -886,7 +873,7 @@ impl Store {
     }
 
     /// [`Store::owner_callback`], and in the same write the ask the save opens or joins
-    /// ([`super::surreal::asks::OWNER_SAVE`]): once per key, so a save handed over again changes nothing. A
+    /// (`postgres::asks::owner_save`): once per key, so a save handed over again changes nothing. A
     /// save with no words to deliver (empty `text`: a rejection with no note) delivers no event and
     /// only opens its ask.
     pub fn owner_save(
@@ -904,10 +891,7 @@ impl Store {
         vars["asking"] = ask.is_some().into();
         self.retrying(|| {
             self.transact::<Value>(
-                super::statement::both(
-                    super::surreal::asks::OWNER_SAVE.as_str(),
-                    super::postgres::asks::owner_save(),
-                ),
+                Statement::from(super::postgres::asks::owner_save()),
                 vars.clone(),
             )
         })?;
@@ -1142,7 +1126,7 @@ impl Store {
         // from here, before a digest that may take longer than the lease to build.
         let acquired: Option<u64> = self.retrying(|| {
                 self.transact(
-                    both(sql::TAKE_LEASE, pg::take_lease()),
+                    Statement::from(pg::take_lease()),
                     json!({"handle":handle, "now":self.now(), "lease_seconds":CALLBACK_LEASE_SECONDS, "collect":collect}),
                 )
         })?;
@@ -1152,7 +1136,7 @@ impl Store {
         let delivered = send(revision);
         let released = self.retrying(|| {
             self.transact::<Value>(
-                both(sql::RELEASE_LEASE, pg::release_lease()),
+                Statement::from(pg::release_lease()),
                 json!({"handle":handle, "revision":revision}),
             )
         });
@@ -1265,7 +1249,7 @@ impl Store {
                 // entry. Its scheduling checkpoint belongs to the small lease, not Seen.
                 self.retrying(|| {
                     self.transact::<Value>(
-                        both(sql::PULL_CHECKED, pg::pull_checked()),
+                        Statement::from(pg::pull_checked()),
                         json!({"handle":handle, "revision":lease, "now":self.now()}),
                     )
                 })?;
@@ -1299,7 +1283,7 @@ impl Store {
             .map(|line| line.key.as_str())
             .collect();
         let accounted = self.retrying(|| self.transact::<Accounted>(
-            both(sql::account(), pg::account()),
+            Statement::from(pg::account()),
             json!({"handle":handle, "waiting":waiting, "events":events, "seen":stored_seen, "narrowing":look.narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":look.statuses, "revision":lease,
                 "pull":if look.due {self.now()} else {state.pull}, "legacy_upgrade":look.legacy_upgrade,
                 "pull_queued":account.map_or(&state.pull_queued, |a| &a.queued),
@@ -1610,7 +1594,7 @@ impl Store {
             }
             let chat: Vec<Chat> = self.retrying(|| {
                 self.read(
-                    both(sql::UNQUEUED_CHAT, pg::unqueued_chat()),
+                    Statement::from(pg::unqueued_chat()),
                     json!({"handle":handle}),
                 )
             })?;
@@ -1748,8 +1732,8 @@ impl Store {
         }
         let answer: Value = self.retrying(|| {
             let statement = match due {
-                true => both(sql::STORED_DUE.as_str(), pg::stored_due()),
-                false => both(sql::STORED.as_str(), pg::stored()),
+                true => Statement::from(pg::stored_due()),
+                false => Statement::from(pg::stored()),
             };
             self.read(statement, vars.clone())
         })?;
@@ -1772,7 +1756,7 @@ impl Store {
         }
         let vars = json!({"recipients": addressed(recipients), "now": self.now()});
         let answer: Value =
-            self.retrying(|| self.read(both(sql::PENDING.as_str(), pg::pending()), vars.clone()))?;
+            self.retrying(|| self.read(Statement::from(pg::pending()), vars.clone()))?;
         let due = recipient_rows(&answer, "struct Due", |row| row.field::<bool>("pending"))?;
         Ok((due.into_iter())
             .filter(|(_, pending)| *pending)
@@ -1800,7 +1784,7 @@ impl Store {
     ) -> Result<bool, Error> {
         let now = self.now();
         let pending: Option<Vec<Event>> = self.retrying(|| self.transact(
-            both(sql::DUE, pg::due()),
+            Statement::from(pg::due()),
             json!({"handle":handle, "chat":callback.chat, "now":now, "revision":revision, "lease_seconds":CALLBACK_LEASE_SECONDS}),
         ))?;
         let Some(pending) = pending else {
@@ -1855,7 +1839,7 @@ impl Store {
             .rev()
             .find(|event| event.pull_entries.is_some());
         let moved = self.retrying(|| self.transact::<Moved>(
-            both(sql::record_delivery(), pg::record_delivery()),
+            Statement::from(pg::record_delivery()),
             json!({"handle":handle, "keys":keys, "messages":messages, "chat":chat_keys, "success":success, "now":self.now(),
                 "capacity":capacity, "pull":pull}),
         ))?;
@@ -1876,17 +1860,16 @@ impl Store {
                 // orchestrator fallback can take over; otherwise the app explicitly says queued.
                 self.retrying(|| {
                     self.transact::<Value>(
-                    both(sql::YIELD_CHAT_SEAT, pg::yield_chat_seat()),
+                    Statement::from(pg::yield_chat_seat()),
                     json!({"handle":handle, "address":callback.address, "owner":callback.owner}),
                 )
                 })?;
             }
             for event in pending.iter().filter(|event| event.attempts == 2) {
                 if let Some(slug) = &event.slug {
-                    let body = sql::failure_logged();
                     // No reentrant dispatch from a delivery diagnostic.
                     self.retrying(|| {
-                        self.run_transaction::<Value>(both(&body, pg::failure_logged()).posting(), json!({
+                        self.run_transaction::<Value>(Statement::from(pg::failure_logged()).posting(), json!({
                             "slug":slug, "now":self.now(), "text":format!("CALLBACK {handle} failed after 3 attempts: {why}; retained in inbox ({command} inbox --as {handle})"),
                         }), super::transaction::Run::Guarded { dispatch: false })?;
                         Ok(())

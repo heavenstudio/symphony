@@ -1,15 +1,14 @@
 //! Durable PULL delivery and unanswered-post identity across fresh dispatchers.
-use crate::common::Backend;
 
 use super::*;
 
 #[path = "pull_recovery.rs"]
 mod recovery;
 
-on_both! {
-fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty(backend: Backend) {
+#[test]
+fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty() {
     for existing_gap in [false, true] {
-        let f = Fixture::on(backend, crate::common::Seed::default());
+        let f = Fixture::new(crate::common::Seed::default());
         let orch = f.session("orchestrator");
         let sender = f.session("worker");
         if existing_gap {
@@ -51,11 +50,10 @@ fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty(backend: Backe
         assert!(o.drain(&f, &sender, &orch).is_empty());
     }
 }
-}
 
-on_both! {
-fn native_unanswered_lines_survive_fresh_dispatchers_without_repeating_a_post(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn native_unanswered_lines_survive_fresh_dispatchers_without_repeating_a_post() {
+    let f = Fixture::new(crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     let barrier = f.session("worker");
@@ -118,119 +116,4 @@ fn native_unanswered_lines_survive_fresh_dispatchers_without_repeating_a_post(ba
         .collect();
     assert_eq!(pending.len(), 1, "{received:?}");
     assert!(pending[0].contains(&format!("post #{} —", next.id)));
-}
-}
-
-/// A launch record no reader decodes, on the task the scan asks about, which fails the scan's read
-/// of that task's thread and launches.
-const UNREADABLE_LAUNCH: &str = "DEFINE FIELD OVERWRITE started ON task_session TYPE any;
-UPSERT task_session:['tools/unanswered', 'nobody'] CONTENT { slug: 'tools/unanswered',
-    handle: 'nobody', role: 'executor', claude_session: '', worktree: '', branch: '', pane: '',
-    model: '', started: 'unreadable', closed: 1.0, closed_why: '', restore: '' } RETURN NONE;";
-const READABLE_LAUNCHES: &str = "DELETE task_session:['tools/unanswered', 'nobody'] RETURN NONE;
-DEFINE FIELD OVERWRITE started ON task_session TYPE float;";
-
-// SurrealDB alone: injects a failed scan through a SurrealDB field definition and HTTP gate.
-#[test]
-fn a_failed_unanswered_scan_delivers_the_rest_and_never_repeats_a_told_post() {
-    use crate::common::{HOST, RawWrite as _};
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    let f = Fixture::empty();
-    let orch = f.session("orchestrator");
-    let worker = f.session("worker");
-    let barrier = f.session("worker");
-    f.task("tools/unanswered");
-    f.store.claim("tools/unanswered", &worker).unwrap();
-    let listener = listen_orchestrator(&f, &orch, BUSY_PULL);
-    let post = f
-        .store
-        .say("tools/unanswered", "owner", "continue", Some("@executor"))
-        .unwrap();
-    listener.drain(&f, &barrier, &orch);
-    f.advance(31.0 * 60.0);
-    f.other().dispatch_callbacks().unwrap();
-    let told = |lines: &[String]| {
-        (lines.iter())
-            .filter(|line| line.starts_with("unanswered "))
-            .count()
-    };
-    let header = |lines: &[String]| {
-        let pull = lines.iter().find(|line| line.starts_with("PULL "));
-        pull.unwrap_or_else(|| panic!("no PULL: {lines:?}")).clone()
-    };
-    let naming = |lines: &[String], slug: &str| {
-        (lines.iter()).any(|line| line.starts_with(&format!("ready_unstaffed p2 {slug} ")))
-    };
-    let first = listener.drain(&f, &barrier, &orch);
-    assert_eq!(told(&first), 1, "{first:?}");
-    assert!(header(&first).contains(" unanswered=1 "), "{first:?}");
-    assert!(
-        first
-            .iter()
-            .any(|line| line.contains(&format!("post #{} —", post.id))),
-        "{first:?}"
-    );
-
-    // A dispatcher whose scan alone fails: the launch records are unreadable from the digest's
-    // read just before the scan until the request after the scan's own read of them, so the
-    // agents view earlier in the same pass, and all that follows, read the board as it is.
-    let (writer, skips) = (f.other_client(), Arc::new(AtomicUsize::new(0)));
-    let (counted, mut unreadable, mut scanned) = (Arc::clone(&skips), false, false);
-    let relay = crate::relay::Relay::with_before(
-        f.store.client().addr(),
-        0,
-        Some(Box::new(move |sql| {
-            if sql.contains("'landed ' + slug + ' on main'") {
-                writer.write(UNREADABLE_LAUNCH, json!({})).unwrap();
-                (unreadable, scanned) = (true, false);
-            } else if unreadable && sql.contains("launches: array::flatten($launched") {
-                counted.fetch_add(1, Ordering::SeqCst);
-                scanned = true;
-            } else if unreadable && scanned {
-                writer.write(READABLE_LAUNCHES, json!({})).unwrap();
-                unreadable = false;
-            }
-        })),
-    );
-    let now = f.now();
-    let scanless = symphony_board::Store::with(
-        relay.client("sf", f.store.database().database()),
-        Box::new(move || now),
-        Box::new(|_| true),
-        HOST,
-    )
-    .unwrap();
-    f.elsewhere()
-        .create(&NewTask::new("tools/gap-while-skipped", "Gap", "owner"))
-        .unwrap();
-    scanless.dispatch_callbacks().unwrap();
-    assert!(
-        skips.load(Ordering::SeqCst) > 0,
-        "the scan was never failed"
-    );
-    drop(scanless);
-    drop(relay);
-    f.store
-        .client()
-        .write(READABLE_LAUNCHES, json!({}))
-        .unwrap();
-    // The barrier's own dispatch scans again: the post is back in the digest and is not told again.
-    let skipped = listener.drain(&f, &barrier, &orch);
-    assert!(naming(&skipped, "tools/gap-while-skipped"), "{skipped:?}");
-    assert!(!header(&skipped).contains("unanswered="), "{skipped:?}");
-    assert_eq!(told(&skipped), 0, "{skipped:?}");
-    f.other().dispatch_callbacks().unwrap();
-    assert!(listener.drain(&f, &barrier, &orch).is_empty());
-
-    // A PULL another entry causes counts the post and still does not tell it twice.
-    f.elsewhere()
-        .create(&NewTask::new("tools/gap-after", "Gap", "owner"))
-        .unwrap();
-    f.other().dispatch_callbacks().unwrap();
-    let back = listener.drain(&f, &barrier, &orch);
-    assert!(naming(&back, "tools/gap-after"), "{back:?}");
-    assert!(header(&back).contains(" unanswered=1 "), "{back:?}");
-    assert_eq!(told(&back), 0, "{back:?}");
 }

@@ -1,7 +1,7 @@
 //! An execution attempt's ending proposed to the workflow that holds its task (docs/workflow/WORKFLOW.md,
 //! "Attempts"), decided by [`crate::workflow::recover::observed`] on admission's one read and
 //! written as the board's recovery service: an automatic edge through the one admission
-//! ([`Store::apply_operation`]'s), any other answer as a holder's recovery is written (`sql::APPLY`).
+//! ([`Store::apply_operation`]'s), any other answer as a holder's recovery is written (`pg::workflow::apply`).
 //!
 //! The ending is the attempt's own record, written under its worker's lease
 //! (`crate::execution::Coordinator`), and it moves the task only from where the task stood when

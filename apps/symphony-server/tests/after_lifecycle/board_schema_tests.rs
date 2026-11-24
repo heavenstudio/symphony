@@ -1,26 +1,23 @@
 //! A preview server of its own (`just symphony --port 0`) in a linked worktree whose build's board
-//! schema is newer than the main checkout's: it reads the main checkout's board, the one its record
-//! in the common dir names, and never moves it forward. Its pages say why they read nothing, naming
+//! schema is newer than the main checkout's: it reads the main checkout's board, the one in the
+//! repository's common dir, and never moves it forward. Its pages say why they read nothing, naming
 //! what does, and the main checkout's build reads and writes the board as it left it.
 
 use super::*;
-use symphony_board::rpc::Client;
 use symphony_board::server::Home;
-use symphony_board::{NewTask, Opening, Schema, Store};
+use symphony_board::{Database, NewTask, Opening, Schema, Store, pg};
 
-/// The main checkout's board: its server in the common dir, stopped when the test ends.
+/// The main checkout's board: its PostgreSQL in the common dir, stopped when the test ends.
 struct Board {
     home: Home,
+    main: PathBuf,
 }
 
 impl Board {
     /// The board of the checkout at `main`, made by a build one schema version behind this one
     /// (the main checkout's, while this build's schema has not landed), holding one task.
     fn older(main: &Path) -> Board {
-        let board = Board {
-            home: Home::in_common(&main.join(".git"), Some(&surreal())),
-        };
-        board.home.ensure().unwrap();
+        let board = Board::of(main);
         board
             .older_build()
             .create(&NewTask::new("main/one", "Made by main's build", "owner"))
@@ -28,24 +25,30 @@ impl Board {
         board
     }
 
-    fn client(&self) -> Client {
-        Client::new(&self.home.recorded().unwrap().addr, "sf", "tasks")
-    }
-
     /// The board of the checkout at `main`, made by a build one schema version ahead of this one
     /// (main's, while the release this build stands for has not caught up), holding one task.
     fn newer(main: &Path) -> Board {
-        let board = Board {
-            home: Home::in_common(&main.join(".git"), Some(&surreal())),
-        };
-        board.home.ensure().unwrap();
+        let board = Board::of(main);
         board
-            .opened(
-                Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;"),
-            )
+            .opened(Schema::this_build().then_each(NEXT))
             .create(&NewTask::new("main/one", "Made by main's build", "owner"))
             .unwrap();
         board
+    }
+
+    fn of(main: &Path) -> Board {
+        Board {
+            home: Home::in_common(&main.join(".git")),
+            main: main.to_path_buf(),
+        }
+    }
+
+    /// The board's database on its server, which `start` starts, and makes, when it is not
+    /// running.
+    fn database(&self, start: bool) -> Database {
+        let running = self.home.board_server(&self.main, start).unwrap();
+        let socket = running.addr.strip_prefix("postgresql:").unwrap();
+        pg::Client::new(Path::new(socket), symphony_board::DATABASE).into()
     }
 
     /// The board as the main checkout's build opens it to write.
@@ -55,8 +58,8 @@ impl Board {
 
     /// The board as a build of `schema` opens it to write.
     fn opened(&self, schema: Schema) -> Store {
-        Store::opening(
-            self.client(),
+        Store::opening_on(
+            self.database(true),
             Box::new(|| 1_000_000.0),
             Box::new(|_| false),
             "this-host",
@@ -65,9 +68,9 @@ impl Board {
         .unwrap()
     }
 
-    /// The schema version the board records.
+    /// The schema version the board records, read on its running server.
     fn version(&self) -> Option<i64> {
-        symphony_board::Raw::on(&self.client())
+        symphony_board::Raw::of(&self.database(false))
             .row("meta", "schema")
             .field("version")
             .unwrap()
@@ -77,9 +80,12 @@ impl Board {
 
 impl Drop for Board {
     fn drop(&mut self) {
-        let _ = self.home.stop();
+        let _ = self.home.stop_board();
     }
 }
+
+/// The step of the build one schema version ahead of this one.
+const NEXT: &str = "CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY);";
 
 #[test]
 fn a_preview_in_a_worktree_of_a_newer_build_never_moves_the_main_checkouts_board_forward() {
@@ -90,19 +96,9 @@ fn a_preview_in_a_worktree_of_a_newer_build_never_moves_the_main_checkouts_board
         Schema::this_build().version(),
     );
     let mut command = repo.command(&repo.tree);
-    // The preview reaches the board its repository's common dir records, as a worktree's does,
-    // and checks with `lsof` (in /usr/sbin on macOS) that the recorded server listens there.
-    let (_, path) = repo
-        .environment()
-        .into_iter()
-        .find(|(name, _)| *name == "PATH")
-        .unwrap();
-    let mut path = path.into_string().unwrap();
-    path.push_str(":/usr/sbin:/sbin");
+    // The preview reaches the board in its repository's common dir, as a worktree's does.
     command
         .env_remove("TASKS_DATABASE")
-        .env("SYMPHONY_SURREAL", surreal())
-        .env("PATH", path)
         .args(["--port", "0", "--host", "127.0.0.1"]);
     let mut server = repo.run(command);
     let actual = server.ready();
@@ -150,24 +146,14 @@ fn a_release_reads_a_board_one_schema_ahead_writes_nothing_and_its_pages_say_so(
     let board = Board::newer(&repo.main);
     let ahead = Schema::this_build().version() + 1;
     let server = super::release_tests::installed(&repo, "release-1", "first", None);
-    let main = board
-        .opened(Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;"));
+    let main = board.opened(Schema::this_build().then_each(NEXT));
     let lines = main.thread("main/one").unwrap().len();
-    let (_, path) = repo
-        .environment()
-        .into_iter()
-        .find(|(name, _)| *name == "PATH")
-        .unwrap();
-    let mut path = path.into_string().unwrap();
-    path.push_str(":/usr/sbin:/sbin");
     let mut command = Command::new(&server);
     command
         .current_dir(&repo.main)
         .env_clear()
         .envs(repo.environment())
         .env_remove("TASKS_DATABASE")
-        .env("SYMPHONY_SURREAL", surreal())
-        .env("PATH", path)
         .stdin(Stdio::null())
         .args(["--root", repo.main.to_str().unwrap()])
         .args(["--port", "0", "--host", "127.0.0.1"]);

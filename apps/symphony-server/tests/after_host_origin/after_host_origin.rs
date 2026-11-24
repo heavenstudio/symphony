@@ -4,14 +4,12 @@
 pub mod approving;
 
 use serde_json::{Value, json};
-use std::convert::Infallible;
 use std::io::{BufRead, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use symphony_board::port::Start;
 use symphony_board::sys::{Child, Command, Spawning as _};
 use symphony_server::front::{Shared, router};
 use symphony_server::gate::Gate;
@@ -58,7 +56,6 @@ struct OwnedChild(Child);
 
 impl Drop for OwnedChild {
     fn drop(&mut self) {
-        crate::leashed_surreal::release(&mut self.0);
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -239,121 +236,17 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         .unwrap();
         std::os::unix::fs::symlink("/bin/bash", lookup.join("tailscale")).unwrap();
 
-        let surreal = crate::leashed_surreal::binary();
-        // SurrealDB 3.3 prints the configured address (including :0), rather than its socket's
-        // actual local address. It is told a reserved scratch board port, and started again on
-        // another when that port was taken before it bound it (symphony_board::port), every start
-        // within the one readiness backstop, [`BACKSTOP`]. This exact child's announcement, and a
-        // health answer once it itself listens on that port, are required before creating the
-        // board. The announcement alone can precede listening under load. The Symphony listener
-        // below stays bound continuously from port-zero allocation through shutdown.
-        let log = root.join("surreal.log");
-        let errors_log = root.join("surreal-stderr.log");
-        let ready_by = Instant::now() + BACKSTOP;
-        let database = symphony_board::port::start_on_free_port(
-            symphony_board::port::ATTEMPTS,
-            ready_by,
-            |board_address| {
-                assert_ne!(board_address.port(), 8765);
-                // Leashed: it ends with this test process, however that ends.
-                let mut database = OwnedChild(
-                    symphony_board::sys::spawn_piped(&mut crate::leashed_surreal::memory(
-                        &surreal,
-                        &board_address.to_string(),
-                    ))
-                    .unwrap(),
-                );
-                let (send, receive) = std::sync::mpsc::channel();
-                let (send_pid, receive_pid) = std::sync::mpsc::channel();
-                let reader = std::thread::spawn({
-                    let stdout = database.0.stdout.take().unwrap();
-                    let log = log.clone();
-                    move || {
-                        let mut log = std::fs::File::create(log).unwrap();
-                        for line in std::io::BufReader::new(stdout).lines() {
-                            let line = line.unwrap();
-                            writeln!(log, "{line}").unwrap();
-                            if let Some(pid) = crate::leashed_surreal::pid_of(&line) {
-                                let _ = send_pid.send(pid);
-                            } else if let Some((_, address)) =
-                                line.split_once("Started web server on ")
-                            {
-                                // Read once, while its start waits; a later line has no reader.
-                                let _ = send.send(address.trim().parse::<SocketAddr>().unwrap());
-                            }
-                        }
-                    }
-                });
-                let stderr = database.0.stderr.take().unwrap();
-                let errors = std::thread::spawn({
-                    let log = errors_log.clone();
-                    move || {
-                        std::io::copy(
-                            &mut std::io::BufReader::new(stderr),
-                            &mut std::fs::File::create(log).unwrap(),
-                        )
-                        .unwrap()
-                    }
-                });
-                // Everything an ended child said, once both its streams have closed.
-                let said = |reader: std::thread::JoinHandle<()>,
-                            errors: std::thread::JoinHandle<u64>| {
-                    reader.join().unwrap();
-                    errors.join().unwrap();
-                    format!(
-                        "{}{}",
-                        std::fs::read_to_string(&log).unwrap(),
-                        std::fs::read_to_string(&errors_log).unwrap()
-                    )
-                };
-                let address = match receive
-                    .recv_timeout(ready_by.saturating_duration_since(Instant::now()))
-                {
-                    Ok(address) => address,
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                        return Ok::<_, Infallible>(Start::Ended(said(reader, errors)));
-                    }
-                    Err(_) => panic!(
-                        "{}",
-                        stalled(format!("SurrealDB listener readiness ({log:?})"))
-                    ),
-                };
-                assert_ne!(address.port(), 8765);
-                assert_eq!(address, board_address);
-                // Said before the announcement, on the same stream.
-                let server = receive_pid.try_recv().expect("the database's pid");
-                // Up once it answers health on the port it listens on; ended once it exits first.
-                let up = test_time::until(
-                    format!("SurrealDB health readiness ({log:?})"),
-                    ready_by.saturating_duration_since(Instant::now()),
-                    || {
-                        if database.0.try_wait().unwrap().is_some() {
-                            return Some(false);
-                        }
-                        (symphony_board::rpc::healthy(&address.to_string())
-                            && symphony_board::port::listens(
-                                server,
-                                board_address,
-                                symphony_board::sys::output,
-                            )
-                            .unwrap())
-                        .then_some(true)
-                    },
-                )
-                .unwrap_or_else(|stall| panic!("{stall}"));
-                Ok(if up {
-                    Start::Up((database, reader, errors))
-                } else {
-                    Start::Ended(said(reader, errors))
-                })
-            },
-        );
-        let ((database, reader, errors), address) = database.unwrap_or_else(|why| {
-            panic!("SurrealDB ended before its health answer ({log:?}): {why}")
-        });
-        let address_text = address.to_string();
-        let client = symphony_board::rpc::Client::new(&address_text, "sf", "after_host_origin");
-        let store = symphony_board::Store::open(client).unwrap();
+        // A database of its own on the test binary's PostgreSQL, which ends with this process
+        // however it ends.
+        let board = crate::board::postgresql();
+        let store = symphony_board::Store::opening_on(
+            board.another().into(),
+            Box::new(symphony_board::sweep::trigger::now),
+            Box::new(symphony_board::sys::pid_alive),
+            &symphony_board::sys::hostname(),
+            &symphony_board::Opening::write(),
+        )
+        .unwrap();
         store
             .create(&symphony_board::NewTask::new(
                 "fixture/host-origin",
@@ -377,8 +270,8 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                 root.join("lookup.calls"),
             )
             .env("ASKS_DB", root.join("asks.db"))
-            .env("TASKS_SERVER", address.to_string())
-            .env("TASKS_DATABASE", "after_host_origin")
+            .env("TASKS_SERVER", board.addr())
+            .env("TASKS_DATABASE", board.database())
             .env("PATH", path)
             .env("TASKS_SWEEP", if finishing { "on" } else { "off" })
             .env_remove("BASH_ENV")
@@ -411,9 +304,6 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         }
         let mut child = OwnedChild(command.spawn().unwrap());
         let status = child.0.wait().unwrap();
-        drop(database);
-        reader.join().unwrap();
-        errors.join().unwrap();
         let output = std::fs::read_to_string(root.join("http.log")).unwrap();
         let error = std::fs::read_to_string(root.join("http-stderr.log")).unwrap();
         println!(

@@ -1772,7 +1772,7 @@ impl Refreshing<'_> {
             }
         };
         match self.install(id, tag, commit, &machine, out) {
-            Some(installed) => self.refresh(id, tag, commit, &machine, installed, out),
+            Some(installed) => self.refresh(id, tag, &machine, installed, out),
             None => record::Refresh {
                 release: tag.to_string(),
                 ..record::Refresh::default()
@@ -1785,7 +1785,6 @@ impl Refreshing<'_> {
         &self,
         id: &str,
         tag: &str,
-        commit: &str,
         machine: &Path,
         installed: install::Installed,
         out: &mut dyn Write,
@@ -1793,19 +1792,13 @@ impl Refreshing<'_> {
         self.hold_for(REFRESH);
         let until = Bound::hearing(Instant::now() + REFRESH, self.heard);
         let logs = record::logs(self.folder, id);
-        let surreal = symphony_board::server::Home::in_common(&self.repo.common, None)
-            .surreal()
-            .to_path_buf();
         let against = refresh::Against {
             run: id,
             main: &self.repo.main,
-            root: &self.repo.root,
             ours: &self.repo.common,
             machine,
             tag,
-            commit,
             logs: &logs,
-            surreal: Some(&surreal),
             until,
         };
         refresh::release(&against, installed, out)

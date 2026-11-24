@@ -1,13 +1,11 @@
-//! A whole-board copy through a reader's store is held to the store's own schema at its swap as
-//! at its staging: staged at the reader's schema, its swap is refused on a board a migration moved
-//! one schema on meanwhile, though that step keeps the reader writing, and the board, its rows and
-//! its recovery generation are as they were. On SurrealDB, whose copy is staged across requests;
-//! PostgreSQL's is one request, held as staging is. On PostgreSQL a copy held past its limit is
-//! ended by the server and leaves the board as it was.
+//! A whole-board copy through a reader's store is held to the store's own schema: on a board a
+//! migration moved one schema on meanwhile, though that step keeps the reader writing, it is
+//! refused, and the board, its rows and its recovery generation are as they were. A copy held past
+//! its limit is ended by the server and leaves the board as it was.
 
 use super::*;
-use crate::store_fixture::{Backend, Fixture, HOST, NOW, Seed};
-use crate::{Database, NewTask, Opening, Schema, Standing};
+use crate::store_fixture::{Fixture, HOST, NOW, Seed, database};
+use crate::{NewTask, Opening, Schema, Standing};
 
 /// A copy still running at its limit is ended by the server, in the server's own words, and does
 /// not replace the board once nothing holds it: it is held at its first insert by a lock the test
@@ -20,10 +18,8 @@ fn a_postgresql_copy_held_past_its_limit_is_ended_by_the_server_and_leaves_the_b
         .session("amber-heron")
         .task("sim/jump", "ready")
         .task("sim/land", "review");
-    let f = Fixture::on(Backend::PostgreSql, seed.clone());
-    let Database::PostgreSql(holder) = f.other_database() else {
-        panic!("this board is on PostgreSQL");
-    };
+    let f = Fixture::new(seed.clone());
+    let holder = f.postgresql();
     holder
         .simple(
             "CREATE FUNCTION fixture_held() RETURNS trigger LANGUAGE plpgsql AS $$ \
@@ -55,8 +51,8 @@ fn a_postgresql_copy_held_past_its_limit_is_ended_by_the_server_and_leaves_the_b
 }
 
 #[test]
-fn a_readers_copy_staged_at_its_schema_is_refused_its_swap_on_a_board_a_declared_step_moved_on() {
-    let db = Backend::SurrealDb.database();
+fn a_readers_copy_is_refused_on_a_board_a_declared_step_moved_on() {
+    let db = database();
     let opened = |how: &Opening| {
         Store::opening_on(
             db.another(),
@@ -81,16 +77,12 @@ fn a_readers_copy_staged_at_its_schema_is_refused_its_swap_on_a_board_a_declared
     .unwrap();
     let generation = || (writer.raw().row("recovery", "board").field("generation")).unwrap();
     let before = generation();
-    // The copy, staged through the reader at its own schema: the board's one task, retitled, keyed
-    // as the copy keys a task.
-    let mut task = values(&writer.dump().unwrap().tasks).remove(0);
-    task["sid"] = task["id"].clone();
-    task["id"] = task["slug"].clone();
-    task["title"] = json!("From the copy");
-    let tables = [("task", vec![task])];
-    reader.stage("copy_held", &tables).unwrap();
+    // The copy, made by the reader at its own schema: the board's one task, retitled.
+    let mut copied = writer.dump().unwrap();
+    copied.tasks[0].title = "From the copy".into();
     // A newer build moves the board one schema on, its step declared to keep the reader writing.
-    let next = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
+    let next = Schema::this_build()
+        .then_each("CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY);");
     let newer = opened(&Opening::write().at(next.keeping_writes()));
     let ahead = crate::schema::VERSION + 1;
     assert_eq!(
@@ -101,10 +93,9 @@ fn a_readers_copy_staged_at_its_schema_is_refused_its_swap_on_a_board_a_declared
         }
     );
 
-    let counters = json!({"last": 0, "last_task": 1, "last_ask": 0});
-    let why = match reader.swap_staged("copy_held", &tables, counters) {
+    let why = match reader.copy(&copied) {
         Err(Error::Refused(why)) => why,
-        other => panic!("the swap ran on the board one schema ahead: {other:?}"),
+        other => panic!("the copy ran on the board one schema ahead: {other:?}"),
     };
     assert!(why.contains(&format!("at schema {ahead}")), "{why}");
     assert_eq!(
@@ -117,7 +108,7 @@ fn a_readers_copy_staged_at_its_schema_is_refused_its_swap_on_a_board_a_declared
         before,
         "the recovery generation is the board's own"
     );
-    // The hold is the swap's: the reader's ordinary write takes the board.
+    // The hold is the copy's: the reader's ordinary write takes the board.
     reader
         .say("old/one", "owner", "one schema ahead", None)
         .unwrap();

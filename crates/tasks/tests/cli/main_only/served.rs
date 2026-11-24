@@ -1,7 +1,7 @@
 //! The live board is known by its server, never by the caller's folder: a `TASKS_SERVER` or an
 //! address from a folder outside any repository with an empty registry, and from a copy of the
-//! repository that keeps the original's server record, reaches the original's board, judged by the
-//! original's default branch.
+//! repository that keeps a copy of the original's PostgreSQL data, reaches the original's board,
+//! judged by the original's default branch.
 
 use super::{COPY, Held, Live, OWN, TASKS, as_copy, before, refused};
 use crate::children::Child as _;
@@ -38,8 +38,9 @@ fn an_address_reaches_the_board_its_server_serves_from_any_folder() {
         ),
     );
 
-    // A copy of the repository, its server record the original's, its default branch committing
-    // this build's source: the board is the original's, judged by the original's default branch.
+    // A copy of the repository, its board's data a copy of the original's, its default branch
+    // committing this build's source: the board is the original's, judged by the original's
+    // default branch.
     let copy = live.base.join("copy");
     let done = std::process::Command::of("cp")
         .arg("-R")
@@ -48,7 +49,10 @@ fn an_address_reaches_the_board_its_server_serves_from_any_folder() {
         .status()
         .unwrap();
     assert!(done.success());
-    assert!(copy.join(".git/symphony/tasks/server.json").is_file());
+    assert!(
+        copy.join(".git/symphony/tasks/postgresql/PG_VERSION")
+            .is_file()
+    );
     std::fs::write(copy.join(SOURCE), OWN).unwrap();
     git(&copy, &["commit", "-qam", "this build's source"]);
     refused(&from(&copy, TASKS, &["list"], ""), &why);

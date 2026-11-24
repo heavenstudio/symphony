@@ -4,6 +4,9 @@
 use super::*;
 use serde_json::json;
 
+/// A newer build's breaking step, as the cases take one.
+const LATER: &str = "CREATE TABLE IF NOT EXISTS later (id jsonb PRIMARY KEY);";
+
 /// The program the cases open boards as.
 fn program() -> Program {
     Program::named("gate-review", "/work/alpha/.target/debug/gate-review")
@@ -197,11 +200,6 @@ fn the_guard_takes_a_writes_own_variables_and_adds_its_own() {
     assert_eq!(none["board_schema"], 11);
     assert_eq!(none["board_schema_ahead"], true);
     assert_eq!(none["board_additions_least"], 0);
-    assert!(GUARD.contains("$board_schema_found != $board_schema"));
-    assert!(GUARD.contains("$board_schema_ahead = true"));
-    assert!(GUARD.contains("type::is_int($board_schema_from)"));
-    // The steps are judged on a board of the store's own contract alone.
-    assert!(GUARD.contains("IF $board_schema_found = $board_schema AND ($board_additions_found"));
     // A copy's: exactly its own.
     let exactly = Steps::exactly(3, "this board", 11);
     assert_eq!((exactly.least, exactly.most), (3, 3));
@@ -217,26 +215,38 @@ fn a_statement_needs_the_highest_step_whose_table_it_names_in_any_quoting() {
         ("other".to_string(), 3),
     ];
     let needs = |sql: &str| super::needs(sql, &added);
-    assert_eq!(needs("CREATE note:1 SET a = 1;"), Some(("note", 1)));
     assert_eq!(
-        needs("UPSERT type::record('note_tag', [$a]) SET b = 2;"),
+        needs("INSERT INTO note (id, doc) VALUES ('1', '{}');"),
+        Some(("note", 1))
+    );
+    assert_eq!(
+        needs("UPDATE note_tag SET doc = doc || v -> 'b' WHERE id = v -> 'a';"),
         Some(("note_tag", 2))
     );
-    assert_eq!(needs("CREATE `note` SET a = 1;"), Some(("note", 1)));
-    assert_eq!(needs("CREATE ⟨note⟩:x SET a = 1;"), Some(("note", 1)));
     assert_eq!(
-        needs("CREATE NOTE:1;"),
+        needs("INSERT INTO \"note\" (id) VALUES ('1');"),
+        Some(("note", 1))
+    );
+    assert_eq!(needs("SELECT to_regclass('note');"), Some(("note", 1)));
+    assert_eq!(
+        needs("INSERT INTO NOTE (id) VALUES ('1');"),
         Some(("note", 1)),
         "case is not looked at"
     );
     // Nested, in a subquery or a block: the highest step named anywhere.
     assert_eq!(
-        needs("LET $x = (SELECT * FROM note); IF true { FOR $o IN [1] { CREATE other:1; }; };"),
+        needs(
+            "DO $b$ BEGIN PERFORM (SELECT count(*) FROM note); IF true THEN INSERT INTO other \
+             (id) VALUES ('1'); END IF; END $b$;"
+        ),
         Some(("other", 3))
     );
     assert_eq!(needs("UPDATE task SET notes = 1, note_tags = 2;"), None);
     assert_eq!(needs("UPDATE task SET title = 'a';"), None);
-    assert_eq!(super::needs("CREATE note:1;", &[]), None);
+    assert_eq!(
+        super::needs("INSERT INTO note (id) VALUES ('1');", &[]),
+        None
+    );
 }
 
 /// The guard's rule, as a reader asks it before it writes: its own schema always, one ahead only
@@ -288,15 +298,15 @@ fn a_schema_names_the_oldest_symphony_that_may_write_the_board_it_moved() {
         this.writable_from(),
         VERSION - i64::from(keeps_writes(VERSION))
     );
-    let next = this.then("DEFINE TABLE IF NOT EXISTS later SCHEMALESS;");
+    let next = this.then_each(LATER);
     assert_eq!(next.writable_from(), VERSION + 1);
     let keeping = next.clone().keeping_writes();
     assert_eq!(keeping.writable_from(), VERSION);
     assert_eq!(keeping.version(), next.version());
-    assert_eq!(keeping.steps(), next.steps());
+    assert_eq!(keeping.postgres_steps(), next.postgres_steps());
     assert_ne!(keeping, next, "the declaration is part of the schema");
     // A step after a declared one declares nothing of its own.
-    let after = keeping.then_each("DEFINE TABLE IF NOT EXISTS later2 SCHEMALESS;", "");
+    let after = keeping.then_each("CREATE TABLE IF NOT EXISTS later2 (id jsonb PRIMARY KEY);");
     assert_eq!(after.writable_from(), VERSION + 2);
     assert_eq!(after.clone().keeping_writes().writable_from(), VERSION + 1);
     // An older build's declaration is not known here: it lets only its own schema write.
@@ -322,32 +332,27 @@ fn the_compatible_versions_are_each_listed_once_with_a_reason_and_none_ahead_of_
         assert!(keeps_writes(*version));
     }
     assert!(!keeps_writes(VERSION + 1));
-    assert!(DEFINE.contains("DEFINE FIELD IF NOT EXISTS writable_from ON meta TYPE option<int>;"));
 }
 
 #[test]
 fn a_statement_that_changes_the_database_makes_a_write_in_any_case_and_a_read_never() {
     for write in [
-        "UPDATE task SET x = 1",
-        "LET $m = (CREATE message SET a = 1);",
-        "upsert counter:board SET last = 1",
-        "DELETE task_chunk RETURN NONE;",
-        "INSERT INTO t $rows",
-        "RELATE a->b->c",
-        "DEFINE TABLE x SCHEMALESS;",
-        "REMOVE TABLE IF EXISTS copy_1;",
-        "ALTER TABLE x COMMENT 'y'",
-        "REBUILD INDEX i ON t",
-        "IF $x { UPDATE counter:board SET last = 1 }",
+        "UPDATE task SET version = 1",
+        "WITH m AS (INSERT INTO message (id) VALUES ('1') RETURNING id) SELECT * FROM m",
+        "delete from task_chunk",
+        "INSERT INTO t SELECT * FROM jsonb_array_elements(v -> 'rows')",
+        "CREATE TABLE IF NOT EXISTS x (id jsonb PRIMARY KEY)",
+        "ALTER TABLE x ADD COLUMN IF NOT EXISTS y text",
+        "DO $b$ BEGIN IF true THEN UPDATE counter SET last = 1; END IF; END $b$",
     ] {
         assert!(mutates(write), "{write}");
     }
     for read in [
-        "RETURN (SELECT * FROM task WHERE updated > $since);",
-        "LET $created = (SELECT VALUE created FROM ONLY task:x); RETURN $created;",
-        "RETURN IF (INFO FOR DB).tables.meta = NONE { NONE } ELSE { 1 };",
-        "SELECT * FROM message WHERE kind IN ['system', 'msg'] ORDER BY sid",
-        "RETURN { removed: $removed_at, inserted_by: $who };",
+        "SELECT * FROM task WHERE updated > (v ->> 'since')::float8",
+        "SELECT doc ->> 'created' FROM task WHERE slug = 'x'",
+        "SELECT to_regclass('meta') IS NULL",
+        "SELECT * FROM message WHERE kind IN ('system', 'msg') ORDER BY sid",
+        "SELECT jsonb_build_object('removed', removed_at, 'inserted_by', who) FROM task",
     ] {
         assert!(!mutates(read), "{read}");
     }
@@ -357,30 +362,24 @@ fn a_statement_that_changes_the_database_makes_a_write_in_any_case_and_a_read_ne
 fn this_builds_schema_is_the_version_and_its_neighbours_one_either_side() {
     let schema = Schema::this_build();
     assert_eq!(schema.version(), VERSION);
-    // The contract's own steps, then each additive step this build has on it, in order.
-    assert_eq!(Schema::of_this_contract(0).steps(), DEFINE);
+    // Nothing after the contract's own tables, then each additive step this build has on it, in
+    // order.
+    assert_eq!(Schema::of_this_contract(0).postgres_steps(), "");
     let added: String = ADDED
         .iter()
-        .map(|step| format!("\n{}", step.surreal))
+        .map(|step| format!("\n{}", step.postgres))
         .collect();
-    assert_eq!(schema.steps(), format!("{DEFINE}{added}"));
+    assert_eq!(schema.postgres_steps(), added);
     assert_eq!(schema.additions(), ADDITIONS);
-    let next = schema.then("DEFINE TABLE IF NOT EXISTS later SCHEMALESS;");
+    let next = schema.then_each(LATER);
     assert_eq!(next.version(), VERSION + 1);
-    assert!(next.steps().starts_with(DEFINE));
-    assert!(
-        next.steps()
-            .ends_with("DEFINE TABLE IF NOT EXISTS later SCHEMALESS;")
+    assert_eq!(
+        next.additions(),
+        0,
+        "a breaking step starts its contract's steps anew"
     );
+    assert_eq!(next.postgres_steps(), format!("{added}\n{LATER}"));
     let before = schema.before();
     assert_eq!(before.version(), VERSION - 1);
-    assert_eq!(before.steps(), schema.steps());
-}
-
-/// The writers' table arrives with its own schema raise, schemaless and with no event, so builds
-/// of other schemas write their line and a line written moves no marker.
-#[test]
-fn the_writers_table_is_schemaless_with_no_event() {
-    assert!(DEFINE.contains("DEFINE TABLE IF NOT EXISTS writer SCHEMALESS;"));
-    assert!(!DEFINE.contains(" ON writer"), "an event or a field on it");
+    assert_eq!(before.postgres_steps(), schema.postgres_steps());
 }

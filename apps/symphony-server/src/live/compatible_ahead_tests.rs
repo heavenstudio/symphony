@@ -20,7 +20,6 @@ use axum::http::Request;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use symphony_board::rpc::Client;
 use symphony_board::sys::Command;
 use symphony_board::{Opening, Schema, Store};
 
@@ -72,7 +71,7 @@ fn a_board_one_ahead_is_written_by_the_tick_and_a_save_only_when_its_step_keeps_
                 register("  [2026-10-06 10:30] agent — Paler now.\n"),
             )
             .unwrap();
-            let held = fixture.store.client();
+            let held = fixture.store.database();
             let mut child = Command::new(std::env::current_exe().unwrap());
             child
                 .args(["--exact", TEST, "--nocapture"])
@@ -98,13 +97,7 @@ fn a_board_one_ahead_is_written_by_the_tick_and_a_save_only_when_its_step_keeps_
     };
     let listed = mode == "listed";
     let root = std::env::current_dir().unwrap();
-    let client = || {
-        Client::new(
-            &std::env::var("TASKS_SERVER").unwrap(),
-            "sf",
-            &std::env::var("TASKS_DATABASE").unwrap(),
-        )
-    };
+    let named = crate::testing::named_board();
     let mut hub = Hub::new(&root, &root.join("build/client"));
     *hub.callbacks.get_mut().unwrap() = Some(symphony::callbacks::Flusher::new(&root));
     *hub.owner_asks.get_mut().unwrap() = Some(Kept::default());
@@ -114,10 +107,18 @@ fn a_board_one_ahead_is_written_by_the_tick_and_a_save_only_when_its_step_keeps_
     let tick = symphony::taskview::connect(&root).unwrap();
     // A newer build moves the board one schema on, its step declared to keep this build writing
     // or not.
-    let next = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
+    let next = Schema::this_build()
+        .then_each("CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY);");
     let next = if listed { next.keeping_writes() } else { next };
     let at = |how: &Opening| {
-        Store::opening(client(), Box::new(|| NOW), Box::new(|_| false), HOST, how).unwrap()
+        Store::opening_on(
+            named.another(),
+            Box::new(|| NOW),
+            Box::new(|_| false),
+            HOST,
+            how,
+        )
+        .unwrap()
     };
     at(&Opening::write().at(next));
     let board = at(&Opening::read());
@@ -142,7 +143,7 @@ fn a_board_one_ahead_is_written_by_the_tick_and_a_save_only_when_its_step_keeps_
         }
     };
     let posted = || {
-        symphony_board::Raw::on(&client())
+        symphony_board::Raw::of(&named)
             .table("chat_event")
             .fields(&["text"])
             .unwrap()
