@@ -452,8 +452,9 @@ Kept once, with the server, and written by the person
 - **The server keeps one profile for each person**: in the machine folder on a machine, in the
   platform's own store on a hosted board. The person at the machine writes any profile. A person
   writes their own display name and git handles. A board's admin makes a profile only for
-  someone who has none, and an existing profile's sign-ins are the person at the machine's
-  alone, as a sign-in says who a visitor is on every board of the machine
+  someone who has none, with no sign-in: every sign-in is the person at the machine's alone to
+  give, as a sign-in says who a visitor is on every board of the machine holding the name, now or
+  later, so one an admin gave could take a name another board holds or will
   ([TASKS](../../workflow/TASKS.md#the-people-page)).
 - **A board keeps only that person's groups and powers**, and refers to the profile. Who someone
   is, is kept apart from what they may do, as signing in is.
