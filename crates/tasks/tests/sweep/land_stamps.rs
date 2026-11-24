@@ -517,6 +517,71 @@ fn a_task_needing_the_owner_lands_on_the_machines_persons_approve_under_their_na
     assert_landed(&r, slug, &tip, result);
 }
 
+/// Where a task's deciders are those of its owner, the person at the machine under the name they
+/// gave themselves still decides every task: their approve stands on a task whose group holds
+/// nobody who decides, while one who decides elsewhere on the board does not count.
+#[test]
+fn the_machines_person_under_their_name_decides_a_task_its_group_decides_nothing_of() {
+    use symphony_board::people::ownership::Place;
+    use symphony_board::people::{Power, Profile, Profiles};
+    let r = Repo::new();
+    manifest(&r, "");
+    let slug = "ui/their-page";
+    let (staff, tip) = in_review(&r, slug, &[("ui/page.gd", "extends Node\n")]);
+    assess(&r, slug, &staff.assessor, &["tests", "owner"], &tip);
+    green(&r, slug, &tip);
+    let store = &r.board.store;
+    store
+        .add_person("ana", &[], &[Power::Speak, Power::Decide], &staff.orch)
+        .unwrap();
+    store.add_group("design", &[], &staff.orch).unwrap();
+    store
+        .map_place(&Place::Area("ui".into()), "design", &staff.orch)
+        .unwrap();
+    (r.board.other().for_person("ana"))
+        .say(slug, "ana", &format!("approve {tip}"), None)
+        .unwrap();
+    let machine = r.dir.join("machine");
+    Profiles {
+        people: vec![Profile {
+            name: "stefano".into(),
+            ..Profile::default()
+        }],
+        machine: Some("stefano".into()),
+    }
+    .write(&machine)
+    .unwrap();
+    let land = || {
+        let mut env = r.env(&r.root);
+        env.vars
+            .insert(FOLDER_VAR.into(), work(&r).to_string_lossy().into_owned());
+        env.vars.insert(
+            "SYMPHONY_MACHINE_DIR".into(),
+            machine.to_string_lossy().into_owned(),
+        );
+        let mut out = Vec::new();
+        let result = land(&r.board.store, &env, slug, &staff.orch, None, &mut out);
+        (String::from_utf8(out).unwrap(), result.map_err(refusal))
+    };
+    let before = head(&r.root, "main");
+    // Nobody else decides the task, so it waits on theirs by name.
+    let refused = land().1.unwrap_err();
+    assert!(
+        refused.contains(&format!(
+            "owner (Waits on stefano's approve of {})",
+            &tip[..7]
+        )),
+        "ana decides elsewhere, not the task: {refused}"
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    (r.board.other().for_machine("stefano"))
+        .say(slug, "stefano", &format!("approve {tip}"), None)
+        .unwrap();
+    let (said, result) = land();
+    assert!(said.contains("owner: Approved by stefano at "), "{said}");
+    assert_landed(&r, slug, &tip, result);
+}
+
 /// A task needing no review whose one missing stamp is the owner's is held blocked, keeping its
 /// slot, and lands from blocked once the owner approves its tip.
 #[test]
