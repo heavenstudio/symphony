@@ -3,10 +3,11 @@
 //! to the binary; without it only board commands reach the beat path.
 //! The beats cases pin binding behaviour and session-liveness duration.
 
-use crate::{BEAT_WAIT_VAR, env, run};
+use crate::{env, run};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
+use symphony_board::BEAT_WAIT_VAR;
 use symphony_board::cli::Env;
 
 /// A keys' folder of its own, not there yet.
