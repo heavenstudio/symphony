@@ -35,6 +35,12 @@ mod children;
 #[path = "../tests/support/stand_ins.rs"]
 mod stand_ins;
 
+// The library's tests make their channels through it, std's; the library itself through `channel`
+// alone (clippy.toml).
+#[cfg(test)]
+#[path = "../tests/support/test_channel.rs"]
+mod test_channel;
+
 pub mod alarm;
 pub mod arm;
 

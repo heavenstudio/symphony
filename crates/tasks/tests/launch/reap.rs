@@ -302,7 +302,7 @@ fn failed_or_unanswered_presence_rounds_hold_work_until_the_cap_and_confirmation
     // The server says nothing until the round is over, or until the backstop of the 5 s the round
     // once had has passed, when it closes the connection: a round that waited for it says the
     // server closed, not that it is slow.
-    let (release, held) = std::sync::mpsc::channel::<()>();
+    let (release, held) = crate::test_channel::channel::<()>();
     let server = std::thread::spawn(move || {
         let (_stream, _) = listener.accept().unwrap();
         let _ = held.recv_timeout(test_time::backstop(Duration::from_secs(5)));

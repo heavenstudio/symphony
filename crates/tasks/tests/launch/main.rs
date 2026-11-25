@@ -5,6 +5,10 @@
 #[path = "../support/children.rs"]
 mod children;
 
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "../support/test_channel.rs"]
+mod test_channel;
+
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
 mod common;
