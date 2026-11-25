@@ -87,6 +87,12 @@ pub fn env() -> Env {
             symphony_board::UNANSWERED_WAIT_VAR,
             common::LOOKUP_BACKSTOP.to_string(),
         ),
+        // The beat hook's own two seconds, which a loaded machine's server can take to start a
+        // connection, after which the hook gives up without a word.
+        (
+            symphony_board::BEAT_WAIT_VAR,
+            common::LOOKUP_BACKSTOP.to_string(),
+        ),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))

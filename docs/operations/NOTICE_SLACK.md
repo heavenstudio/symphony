@@ -88,6 +88,7 @@ with the notice's link:
 | `card` | A card waits on you in *symphony*. Open it |
 | `question` | An agent's question waits on you in *symphony*. Open it |
 | `verdict` | A reviewer gave a verdict in *symphony*. Open it |
+| `held` | A person's words wait on you to pass on in *symphony*. Open it |
 | one this build does not know | Something on the Symphony waits on you in *symphony*. Open it |
 
 "Open it" is the link. No link is unfurled, so Slack never fetches the page.

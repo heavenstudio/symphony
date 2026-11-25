@@ -55,6 +55,8 @@ pub enum Kind {
     Question,
     /// A reviewer gave a verdict.
     Verdict,
+    /// A person's words held on a task wait on them to pass on.
+    Held,
     /// A kind this build does not know, from a newer server: sent as a notice that something on the
     /// Symphony waits on them, at its link. Never made: [`Notice::new`] refuses it.
     Other,
@@ -67,16 +69,19 @@ impl Kind {
             "card" => Kind::Card,
             "question" => Kind::Question,
             "verdict" => Kind::Verdict,
+            "held" => Kind::Held,
             _ => Kind::Other,
         }
     }
 
-    /// How the message writes it: `card`, `question`, `verdict`; `other` for [`Kind::Other`].
+    /// How the message writes it: `card`, `question`, `verdict`, `held`; `other` for
+    /// [`Kind::Other`].
     pub fn word(self) -> &'static str {
         match self {
             Kind::Card => "card",
             Kind::Question => "question",
             Kind::Verdict => "verdict",
+            Kind::Held => "held",
             Kind::Other => "other",
         }
     }

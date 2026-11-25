@@ -2383,22 +2383,23 @@ it on every board, named or not, and they keep every power
 - **Where a notice reaches a person** is their profile's: `emails`, the first the one a notice by
   mail goes to; `chat`, their Slack member id under `slack` and their WhatsApp number under
   `whatsapp`; and `preferences`, the way each kind of notice goes by (`card`, `question` or
-  `verdict` to `email`, `slack` or `whatsapp`). A kind with no way goes by none, as the page and
-  the Mac app show every notice. Each address is held to the rule its notice plugin sends by
-  ([NOTICES](../engineering/NOTICES.md#ways-and-addresses)), a WhatsApp number kept as `+` and its
-  digits, and a refusal says the rule, never the address. `chat` and `preferences` read any JSON, so
-  a file written before they had a meaning reads as it did: a value is an address or a way only
-  where it is text its rule takes. `Profiles::reach` is the server's read of where one notice of
-  theirs goes, the way and the address, which nothing prints: `list` shows no address and no way,
-  and no agent or project plugin is handed one. A git handle is not one person's alone: a person
-  writes their own, and nothing checks that no other profile holds it, so nothing decides by a git
-  handle alone whose commit or write something is (a plugin is told them as the sender's, never as
-  proof). A board and its copies hold none of it. The board's log and the server's log lines name
-  the short name, never a sign-in's subject or an email. A `people.json` that does not parse is said
-  by its line and column, the field (`people[0].signins`, a profile's own names alone) and the kind
-  of fault, never a value found in it, and none of its profiles is read or written over. An add
-  holds the lock from its check of the sign-ins through the board's change and the profile's write,
-  so of two adds of one sign-in at once the second is refused, with nothing written.
+  `verdict` to `email`, `slack` or `whatsapp`, a held message by the question's). A kind with no way
+  goes by none, as the page and the Mac app show every notice. Each address is held to the rule its
+  notice plugin sends by ([NOTICES](../engineering/NOTICES.md#ways-and-addresses)), a WhatsApp
+  number kept as `+` and its digits, and a refusal says the rule, never the address. `chat` and
+  `preferences` read any JSON, so a file written before they had a meaning reads as it did: a value
+  is an address or a way only where it is text its rule takes. `Profiles::reach` is the server's
+  read of where one notice of theirs goes, the way and the address, which nothing prints: `list`
+  shows no address and no way, and no agent or project plugin is handed one. A git handle is not one
+  person's alone: a person writes their own, and nothing checks that no other profile holds it, so
+  nothing decides by a git handle alone whose commit or write something is (a plugin is told them as
+  the sender's, never as proof). A board and its copies hold none of it. The board's log and the
+  server's log lines name the short name, never a sign-in's subject or an email. A `people.json`
+  that does not parse is said by its line and column, the field (`people[0].signins`, a profile's
+  own names alone) and the kind of fault, never a value found in it, and none of its profiles is
+  read or written over. An add holds the lock from its check of the sign-ins through the board's
+  change and the profile's write, so of two adds of one sign-in at once the second is refused, with
+  nothing written.
 - **Who reaches a board.** A visitor under another Tailscale login is the profile holding that
   `tailscale` sign-in, on each board that gives its short name a power, as that name
   ([the server guide](../../apps/symphony-server/README.md#who-a-request-is-from)).
@@ -2413,18 +2414,31 @@ it on every board, named or not, and they keep every power
   being on the board; anything else is the person at the machine's alone. A refusal is a
   403 naming the power, `Forbidden: ana may not decide on this board`, and nothing is written.
 - **Deciding a thing is its owner's** ([below](#which-group-a-thing-belongs-to)): a card's
-  verdict, a task's priority, field, cancel, action and workflow edge, and a setting (the Settings
+  verdict and its Later (with its Undo, and the visit that clears its mark), a task's priority,
+  field, cancel, action and workflow edge, and a setting (the Settings
   page's owner) are a person's while they hold `decide` and are a member of its group or the
   person it is written for, and always the person at the machine's. Anyone else is refused once
   the body is read, a 403 in the board's words with nothing written: `Forbidden: bo is no member
   of the group design, whose it is, so may not decide it: nothing was written`. On a board that
   names people and maps no group a thing keeps, it is the person at the machine's, and the refusal
   says which group to map: `… so ana may not decide it until an admin maps one (just tasks-people
-  map PLACE GROUP)`. A page draws the deciding controls (a card's verdicts, a task's priority,
-  cancel and approve, the Settings page's writes) for those who decide the thing alone, with the
-  wire's `decides` on its owner; a card's message, Later and a hand-over stay as they were. A
+  map PLACE GROUP)`. A page draws the deciding controls (a card's verdicts and Later, a task's
+  priority, cancel and approve, the Settings page's writes) for those who decide the thing alone,
+  with the wire's `decides` on its owner; a card's message and a hand-over stay as they were. A
   custom workflow's `owner` capability on a task is held by those who decide it, as by the person
   at the machine.
+- **What waits on each person** is the cards they decide: the queue's cards and spot-checks, the
+  board's first cards and counts (`/api/board`, Home), the postponed list, the pending list, a
+  folder's count and a project's row in the machine's list hold those alone, on main's page and a
+  branch's, and the feed sends a person no other card's key, words, count or place. Who decides
+  each card is read as its verdict and a notice of it read it, a name written on it included: a
+  branch's proposal from its worktree's file, any other card from main's with the saves still
+  waiting merged. It is read on the people and map the board's last look read, so a person put
+  in a group, a place mapped or a card handed over reaches each reader's queue within that look,
+  as one event. What is postponed is one order, the
+  board's, each person shown their cards of it. The person at the machine, a hosted page's
+  visitor and every reader of a board that names nobody are shown every card, as before, and
+  their feed carries nothing more.
 - **The `owner` stamp** is met by the approve of the owner or of anyone who decides the task (who
   holds `decide` and is of its group or the person it is written for), on the thread or on the
   cards, named as theirs: `Approved by ana at 1a2b3c4`. The person at the machine's approve
@@ -2529,18 +2543,21 @@ them.
   and `direct_agents`, no one else. The feed brings it to an open page as any line.
 - **A pass** (`just tasks pass SLUG N --as HANDLE`, or Pass on, `/api/task-pass`) writes her words
   on the thread under her name, marked a person's, to whom she wrote them, with the passer first:
-  `[passed on by bo] …`. From then they read as any person's message: they reach the task's
-  agents, once, and open or join its ask. The held row is marked passed, by whom and as which
-  line, and the page draws the held line `passed on by bo`, her words the new line's. A second
-  pass is refused naming who passed it, and a number no message held on the task has is refused,
-  each with nothing written. A session's pass is the person at the machine's, as every board
-  command is.
-- **Who is told** of a held message is whom the board's line for it reaches: the person at the
-  machine, on whom it waits, and each member of the task's group, its author too when one of
-  them, whom the machine's server tells as of any question to the person at the machine, by the
-  way they chose, a link alone ([NOTICES](../engineering/NOTICES.md#the-servers-part)). Its pass
-  is a person's line and tells no one. A board with nobody named holds nothing, and every line
-  reads as before.
+  `[passed on by bo] …`. From then they read as any person's message: they reach the task's agents,
+  once, open or join its ask, and, written to its executor where none reads them, tell
+  `@orchestrator` so, as a post does. The held row is marked passed, by whom and as which line, and
+  the page draws the held line `passed on by bo`, her words the new line's. A second pass is refused
+  naming who passed it, and a number no message held on the task has is refused, each with nothing
+  written. A session's pass is the person at the machine's, as every board command is.
+- **Who is told** of a held message is the person at the machine, on whom the board's line for it
+  waits, and those who may pass it on, never its author. They are the members of the task's
+  group, or the person it is written to, who hold `speak` and `direct_agents`. Where none of them
+  does, they are every person of the board who holds both. Where nobody does, the person at the
+  machine alone is told. The machine's server tells them a `held` notice by the way each chose
+  for questions, a link alone to the message on the task page
+  ([NOTICES](../engineering/NOTICES.md#the-servers-part)). A message passed on before its line
+  is told of tells no one, and its pass is a person's line, which tells no one either. A board
+  with nobody named holds nothing, and every line reads as before.
 - **A build and a board a step apart** follow [the additive step rule](RELEASES.md): a build
   without the step never reads or writes the table, so it serves no agent the words, the board's
   line reads as any line, and it refuses a person without `direct_agents` a task's message, as
@@ -2554,39 +2571,39 @@ powers they hold, their own told apart from their groups' by a word as well as a
 groups, the services they sign in by and their git handles; its groups; and its log, newest first.
 It shows no sign-in's subject to anyone. A person's addresses (the email a notice goes to, their
 Slack member id and WhatsApp number) are shown to them, to the person at the machine and to the
-board's admins, and the way each kind of notice goes by to them and the person at the machine
-alone: anyone else's answer carries neither, on the wire as on the page. Their card's Notices,
-beside its Profile, sets both. Its controls are drawn for
-whoever holds `administer`, as the person at the machine always does: someone else added with a
-display name, git handles, powers and groups (and sign-ins, by the person at the machine alone,
-where the server knows a sign-in's service, as on a tailnet), put in a group or taken out of one,
-given a power or one taken back, taken off the board; a group made, given a power or removed,
-direct agents as any other. Each field has a visible label, `(optional)` where it may be left
-empty. Taking a person off the board and removing a group, which a press
-cannot take back, ask first as a task's Cancel does: a named confirmation, then Confirm removal or
-Keep. Each change is one change of the log, the command's own, named as the actor who made it
-(`owner` for the person at the machine, or the short name they gave themselves). `administer` is read from the board as the change arrives,
-so one from someone without it is a 403, `Forbidden: ana may not administer on this board`, with
-nothing written. The page is the project's own board's: a worktree's server and a hosted visitor are
-refused it ([the server guide](../../apps/symphony-server/README.md)).
+board's admins, and the way each kind of notice goes by to them and the person at the machine alone:
+anyone else's answer carries neither, on the wire as on the page. Their card's Notices, beside its
+Profile, sets both. Its controls are drawn for whoever holds `administer`, as the person at the
+machine always does: someone else added with a display name, git handles, powers and groups (and
+sign-ins, by the person at the machine alone, where the server knows a sign-in's service, as on a
+tailnet), put in a group or taken out of one, given a power or one taken back, taken off the board;
+a group made, given a power or removed, direct agents as any other. Each field has a visible label,
+`(optional)` where it may be left empty. Taking a person off the board and removing a group, which a
+press cannot take back, ask first as a task's Cancel does: a named confirmation, then Confirm
+removal or Keep. Each change is one change of the log, the command's own, named as the actor who
+made it (`owner` for the person at the machine, or the short name they gave themselves).
+`administer` is read from the board as the change arrives, so one from someone without it is a 403,
+`Forbidden: ana may not administer on this board`, with nothing written. The page is the project's
+own board's: a worktree's server and a hosted visitor are refused it
+([the server guide](../../apps/symphony-server/README.md)).
 
 The person at the machine sees their own section first, You, from this Mac or from a device under
 the machine's own Tailscale login. Until they give themselves a name it holds the form that gives
-one: a short name, and a display name and git handles, both optional. Keep asks once more, `Write
-as stefano on every board? A short name is never changed once given.`, and Confirm the name sends
-the profile's write with `machine: true`. A profile of that name holding no sign-in is taken as
-theirs, with what it holds, so one they added to a board before naming themselves is theirs. A
-name someone signs in as, a group's, a person's that a board holds with no profile here, a second
-name or a sign-in is refused in words saying what to choose instead, with nothing written. Once
-named, the section shows how they read and a form for their display name and git handles, and
-their profile takes no sign-in from any write: they are known by where they are, and a login
-under their name would write as them with another's powers. A card a board holds of their name
-draws no sign-in field, and the server admits no login by that profile. Nobody else sees it, and the write from anyone else is a 403, `Forbidden: only the person at the machine
-gives themselves its name`. The header shows the reader by how they are shown (`owner` until the
-person at the machine names themselves) and links to the You section, or to a person's own card.
-The pages draw a line written as `owner`, or under that short name, with the name the person at the
-machine is shown by, the stored word on hover; the line's text and the stamp's name stay as
-written.
+one: a short name, and a display name and git handles, both optional. Keep asks once more, `Write as
+stefano on every board? A short name is never changed once given.`, and Confirm the name sends the
+profile's write with `machine: true`. A profile of that name holding no sign-in is taken as theirs,
+with what it holds, so one they added to a board before naming themselves is theirs. A name someone
+signs in as, a group's, a person's that a board holds with no profile here, a second name or a
+sign-in is refused in words saying what to choose instead, with nothing written. Once named, the
+section shows how they read and a form for their display name and git handles, and their profile
+takes no sign-in from any write: they are known by where they are, and a login under their name
+would write as them with another's powers. A card a board holds of their name draws no sign-in
+field, and the server admits no login by that profile. Nobody else sees it, and the write from
+anyone else is a 403, `Forbidden: only the person at the machine gives themselves its name`. The
+header shows the reader by how they are shown (`owner` until the person at the machine names
+themselves) and links to the You section, or to a person's own card. The pages draw a line written
+as `owner`, or under that short name, with the name the person at the machine is shown by, the
+stored word on hover; the line's text and the stamp's name stay as written.
 
 Who writes a profile:
 

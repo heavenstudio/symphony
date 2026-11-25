@@ -27,6 +27,8 @@ mod sweep;
 pub(crate) mod text;
 mod usage;
 
+pub use beat::WAIT_VAR as BEAT_WAIT_VAR;
+
 use crate::lock::Recovered as _;
 use crate::maps::Collect as _;
 use crate::rpc::Client;

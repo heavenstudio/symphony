@@ -680,7 +680,7 @@ fn a_document_or_folder_read_takes_its_tasks_from_the_board_the_hub_holds_and_re
     let sections = hub
         .document_sections("", "docs/README.md", &["intro".into()])
         .unwrap();
-    let folder = hub.folder("", "docs").unwrap();
+    let folder = hub.folder("", "docs", None).unwrap();
     assert_eq!(
         requests(&f.store),
         before,

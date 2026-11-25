@@ -431,6 +431,7 @@ fn json_preserves_the_reference_record_values() {
         vec![
             ("task", py::task(&board.get("sim/a").unwrap(), 1)),
             ("thread", py::list(thread, 1)),
+            ("held", board.held_count("sim/a").unwrap().to_string()),
             ("children", py::list(children, 1)),
             ("stages", stages(&orch)),
             ("tokens", no_tokens()),

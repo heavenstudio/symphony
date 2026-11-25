@@ -304,7 +304,7 @@ export interface EditorProps {
   /** The card's Later: beside its verdicts, alone where none is drawn. */
   later?: ReactNode;
   /** Whether the one reading decides the card (owner.tsx's `decides`): its verdicts, Dismiss
-   * and Reset are drawn for them alone; its message and Later, a move in the queue, for
+   * and Reset are drawn for them alone, as its page passes Later for them alone; its message for
    * everyone. */
   decides?: boolean;
 }

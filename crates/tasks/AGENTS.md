@@ -267,8 +267,9 @@ value.
 
 A product deadline a test would trip on a loaded machine is a setting read only when set, never
 raised for anyone else (`Env::seconds`: `TASKS_RECORDER_PROBE_WAIT`, `TASKS_ON_LAND_SAYS`,
-`TASKS_HC_ENDING`, `TASKS_CODEX_WAIT`, `TASKS_UNANSWERED_WAIT`; `TASKS_RUN_WAIT_SCALE` on a
-scratch board alone). A test of the deadline sets it short; every other test gives it a backstop.
+`TASKS_HC_ENDING`, `TASKS_CODEX_WAIT`, `TASKS_UNANSWERED_WAIT`, `TASKS_BEAT_WAIT`;
+`TASKS_RUN_WAIT_SCALE` on a scratch board alone). A test of the deadline sets it short; every
+other test gives it a backstop.
 The rule is RULES.md `tests/no-test-fails-on-load`; the helpers `crates/test-time`
 ([CHECKS](../../docs/workflow/CHECKS.md#time-in-tests)).
 

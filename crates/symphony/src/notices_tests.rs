@@ -155,10 +155,43 @@ fn a_way_or_a_program_by_another_rule_is_refused_by_its_key() {
 
 #[test]
 fn a_kind_is_its_word() {
-    for kind in [Kind::Card, Kind::Question, Kind::Verdict] {
+    for kind in [Kind::Card, Kind::Question, Kind::Verdict, Kind::Held] {
         assert_eq!(Kind::of(kind.word()), Some(kind));
     }
     assert_eq!(Kind::of("poll"), None);
+    assert_eq!(Kind::of("other"), None);
+}
+
+#[test]
+fn a_kind_goes_by_the_way_chosen_for_it_and_a_held_message_by_a_questions() {
+    for kind in [Kind::Card, Kind::Question, Kind::Verdict] {
+        assert_eq!(kind.chosen_as(), kind.word());
+    }
+    assert_eq!(Kind::Held.chosen_as(), "question");
+}
+
+/// The server's line of a held message is format 1 with its kind's word alone new: the notice
+/// crate reads it as held, link and all, and a reader that knows no `held` (a plugin built before
+/// it) reads the rest of it as a question's (`symphony_notice`'s tests send that as other).
+#[test]
+fn a_held_line_is_a_questions_but_for_its_kinds_word_which_the_notice_crate_reads_as_held() {
+    let link = "http://studio.tailnet.ts.net:8765/symphony/task/app/x#message-12";
+    let held = line("n-1", Kind::Held, "symphony", link, "slack", "U024BE7LH");
+    let read = symphony_notice::Notice::read(&held).unwrap();
+    assert_eq!(read.kind(), symphony_notice::Kind::Held);
+    assert_eq!(read.link(), link);
+    let question = line(
+        "n-1",
+        Kind::Question,
+        "symphony",
+        link,
+        "slack",
+        "U024BE7LH",
+    );
+    assert_eq!(
+        held.replace("\"kind\":\"held\"", "\"kind\":\"question\""),
+        question
+    );
 }
 
 #[test]
@@ -188,10 +221,11 @@ fn the_message_is_one_line_the_notice_crate_reads_as_written() {
         (read.to().way(), read.to().address()),
         ("slack", "U024BE7LH")
     );
-    for kind in [Kind::Card, Kind::Question, Kind::Verdict] {
+    for kind in [Kind::Card, Kind::Question, Kind::Verdict, Kind::Held] {
         let line = super::line("n-1", kind, "p", "https://h/", "email", "ana@example.com");
         let read = symphony_notice::Notice::read(&line).unwrap();
         assert_eq!(read.kind(), symphony_notice::Kind::of(kind.word()));
+        assert_ne!(read.kind(), symphony_notice::Kind::Other, "{}", kind.word());
     }
 }
 

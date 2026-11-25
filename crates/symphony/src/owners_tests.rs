@@ -365,6 +365,70 @@ fn the_waiting_cards_are_owned_as_mains_file_holds_them_each_document_read_once(
         &[card("docs/design/palette.md", "new-type")],
     );
     assert_eq!(nobody[0].kind, Kind::Machine);
-    assert_eq!(main_route("/@scope/docs/a.md"), "docs/a.md");
-    assert_eq!(main_route("docs/a.md"), "docs/a.md");
+    assert_eq!(split_route("/@scope/docs/a.md"), ("scope", "docs/a.md"));
+    assert_eq!(split_route("docs/a.md"), ("", "docs/a.md"));
+}
+
+#[test]
+fn a_branchs_proposal_is_owned_as_its_worktrees_file_holds_it_its_written_name_read() {
+    use crate::test_layouts::git;
+    let tree = crate::test_tree::Tree::new();
+    let main = tree.path("main");
+    let register = |cards: &str| {
+        format!(
+            "# Palette\n\n<!-- register:start -->\n- [ ] **new-palette** — Which palette?\n\
+             {cards}<!-- register:end -->\n"
+        )
+    };
+    tree.write("main/docs/design/palette.md", &register(""));
+    git(&main, &["init", "-q"]);
+    git(&main, &["add", "."]);
+    git(&main, &["commit", "-qm", "main"]);
+    let proposal = tree.path("proposal");
+    let branch = proposal.to_str().unwrap();
+    git(
+        &main,
+        &["worktree", "add", "-q", "-b", "design/policy", branch],
+    );
+    // Written for engineering by its author, handed to bo (its line rewritten so), and one with
+    // no name: each in design's folder.
+    tree.write(
+        "proposal/docs/design/palette.md",
+        &register(
+            "- [ ] **written** — *For:* engineering. Which build tool?\n\
+             - [ ] **handed** — *For:* bo. Which typeface?\n\
+             - [ ] **plain** — Which colour?\n",
+        ),
+    );
+    let people = people();
+    let map = map(&[("folder:docs/design", "design"), ("default", "engineering")]);
+    let card = |doc: &str, slug: &str| (doc.to_string(), slug.to_string());
+    let proposed = "@design~policy/docs/design/palette.md";
+    let owners = waiting(
+        &people,
+        &map,
+        &main,
+        &[
+            card(proposed, "written"),
+            card(proposed, "handed"),
+            card(proposed, "plain"),
+            // A proposal of main's card its worktree does not hold: as main's file holds it.
+            card(proposed, "new-palette"),
+            // A branch with no worktree: main's file, then the card's places.
+            card("@gone~branch/docs/design/palette.md", "written"),
+        ],
+    );
+    let said: Vec<(&str, Kind, By)> = (owners.iter())
+        .map(|owning| (owning.name.as_str(), owning.kind, owning.by))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            ("engineering", Kind::Group, By::Named),
+            ("bo", Kind::Person, By::Named),
+            ("design", Kind::Group, By::Map),
+            ("design", Kind::Group, By::Map),
+            ("design", Kind::Group, By::Map),
+        ]
+    );
 }

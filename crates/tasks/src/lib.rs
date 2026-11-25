@@ -104,6 +104,7 @@ pub mod workflow;
 
 #[path = "cli/api/assessment/publication.rs"]
 pub mod assessment_publication;
+pub use cli::BEAT_WAIT_VAR;
 pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::recovery;
