@@ -2639,6 +2639,7 @@ pub(crate) mod agent_activity;
 mod asks;
 mod board_status;
 mod health;
+mod held;
 mod machine_work;
 mod notices;
 

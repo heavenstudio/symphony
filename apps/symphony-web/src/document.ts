@@ -378,9 +378,9 @@ export function collapse(text: string): string {
 }
 
 /** What the editor says once the server has `action` (a verdict, `message` or `comment`). */
-export function savedText(action: string): string {
-  if (action === "message") return "Message sent";
-  if (action === "comment") return "Comment saved";
+export function savedText(action: string, kept = false): string {
+  if (action === "message") return kept ? "Message held" : "Message sent";
+  if (action === "comment") return kept ? "Comment held" : "Comment saved";
   return `Verdict saved: ${action}`;
 }
 
@@ -399,9 +399,10 @@ export interface Ending {
  * (null when the page cannot tell), against `last`, the words last sent under it, and `boxed`,
  * what the box holds now. Only words the server holds are cleared or said to be saved. Words sent
  * and not held stay as the card's draft with the form closed, the save being answered; words the
- * owner has written since sending stay as they are, the form open.
+ * owner has written since sending stay as they are, the form open. A comment or a message the
+ * board `kept` for people says so.
  */
-export function ending(heldWords: Words | null, last: Words, boxed: string): Ending {
+export function ending(heldWords: Words | null, last: Words, boxed: string, kept = false): Ending {
   const unchanged = boxed === last.note;
   if (heldWords === null) {
     return {
@@ -410,7 +411,7 @@ export function ending(heldWords: Words | null, last: Words, boxed: string): End
       close: unchanged,
     };
   }
-  const saved = savedText(heldWords.action);
+  const saved = savedText(heldWords.action, kept);
   if (unchanged && sameWords(heldWords, last)) return { status: saved, clear: true, close: true };
   return {
     status: unchanged ? `${saved}; your change was not sent: send it again to add it` : saved,

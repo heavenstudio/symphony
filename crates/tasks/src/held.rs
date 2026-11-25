@@ -14,6 +14,13 @@
 //! its words on the thread under its author's name, marked a person's, to whom it was written,
 //! opening or joining the task's ask, as a person's message does: the passer goes first in its
 //! text ([`passed_text`]), so the line carries both names and its first word is never `approve`.
+//!
+//! A comment of theirs on a document ([`OnDocument`]) is a row of the same table with no task:
+//! where it was left (a callout after a block, a message on a card), numbered by a counter of its
+//! own and keyed `["document", N]`, so it never meets a task's key. Nothing is written into the
+//! document's file, no line goes on any thread and no ask is opened. Its pass writes the file
+//! through the same save as the owner's comment, the passer first in its words, and then marks the
+//! row passed ([`crate::Store::pass_on_document`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +56,71 @@ pub struct Passed {
     pub at: f64,
     /// The number of the line its words became.
     pub line: i64,
+}
+
+/// A comment on a document held for people: a callout left after a block, or a message on a card.
+/// Its row is the table's as a task's held message is, with no `slug`, so no read of a task's held
+/// messages finds it; its words are written into the document's file only by its pass, which the
+/// Symphony's save makes ([`crate::Store::pass_on_document`] records it).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OnDocument {
+    /// Its number among the comments held on documents, its key.
+    pub id: i64,
+    /// Where it was left.
+    pub document: Place,
+    /// The person who wrote it, by their short name.
+    pub author: String,
+    /// Their words as typed: a callout's title is its first line.
+    pub text: String,
+    pub at: f64,
+    /// Who passed it on, and when: none while it is held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passed: Option<PassedOn>,
+}
+
+/// Where on a document a comment was left.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Place {
+    /// The document's route (`docs/…/X.md`).
+    pub path: String,
+    /// The checkout's scope the page was of (a worktree's id), none for the project's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// A callout's kind (`comment`, `question`, `decision`), or [`MESSAGE`] for a card's message.
+    pub kind: String,
+    /// The card, for a message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<String>,
+    /// The block a callout was left after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<Block>,
+}
+
+/// The kind of a held message on a card.
+pub const MESSAGE: &str = "message";
+
+/// The block of a document a callout was left after, as the file held it then: what its pass finds
+/// again once the file moved.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Block {
+    /// Its key, `section:ANCHOR:N`: the heading it sits under and its place there.
+    pub key: String,
+    /// Its last line then (1-based), which the callout went after.
+    pub line: i64,
+    /// Its lines then.
+    pub text: String,
+}
+
+/// A held comment on a document passed on.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PassedOn {
+    /// Who passed it: the owner, or a person a board named.
+    pub by: String,
+    pub at: f64,
 }
 
 /// What a person's message on a task's thread became (`Store::say_or_hold_as`).

@@ -26,14 +26,38 @@ pub(crate) fn again_after(hands: u32) -> f64 {
     doubled.min(LONGEST_AGAIN)
 }
 
-/// A card waiting now, as a look sees it.
+/// A thing waiting now, as a look sees it: a card waiting on its group, or a comment held on a
+/// document waiting for someone to pass it on.
 #[derive(Clone, Debug)]
 pub(crate) struct Waiting {
-    /// `DOC#SLUG`, as the record keeps it.
+    /// `DOC#SLUG` for a card, `held:N` for a held comment, as the record keeps it.
     pub key: String,
-    /// Its page under the project, `/DOC#SLUG`.
+    /// Its page under the project: `/DOC#SLUG`, a held comment's `/DOC#held-N`.
     pub page: String,
     pub owning: Owning,
+    /// [`Kind::Card`], or [`Kind::Held`].
+    pub kind: Kind,
+    /// Who is told of it where that is not whose it is ([`told`]): of a held comment, those who
+    /// may pass it on.
+    pub told: Option<Vec<String>>,
+}
+
+impl Waiting {
+    /// The card `key` waiting on its group, `owning`, at `page`.
+    pub(crate) fn card(key: String, page: String, owning: Owning) -> Waiting {
+        Waiting {
+            key,
+            page,
+            owning,
+            kind: Kind::Card,
+            told: None,
+        }
+    }
+
+    /// Who on `people` is told of it.
+    fn told(&self, people: &People) -> Vec<String> {
+        (self.told.clone()).unwrap_or_else(|| told(people, &self.owning))
+    }
 }
 
 /// A board line after the record's that tells: an agent's question to the person at the machine,
@@ -155,8 +179,10 @@ impl Runner {
                 line: look.latest,
                 cards: (cards.iter())
                     .map(|card| {
-                        let told = told(look.people, &card.owning).into_iter().collect();
-                        (card.key.clone(), told)
+                        (
+                            card.key.clone(),
+                            card.told(look.people).into_iter().collect(),
+                        )
                     })
                     .collect(),
                 pending: Vec::new(),
@@ -201,9 +227,9 @@ impl Runner {
             let mut spells = std::collections::BTreeMap::new();
             for card in cards {
                 let mut spell = record.cards.remove(&card.key).unwrap_or_default();
-                for person in told(look.people, &card.owning) {
+                for person in card.told(look.people) {
                     if spell.insert(person.clone()) {
-                        make(&mut record, &person, Kind::Card, &card.page);
+                        make(&mut record, &person, card.kind, &card.page);
                     }
                 }
                 spells.insert(card.key.clone(), spell);

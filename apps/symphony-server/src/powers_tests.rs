@@ -47,13 +47,12 @@ fn deciding_speaking_to_agents_uploading_and_directing_attempts_need_what_the_ru
         assert_eq!(needs(route), Needs::Powers(&[Power::Decide]), "{route}");
     }
     for route in [
-        "/api/comment",
-        "/api/message",
         "/api/ask",
         "/api/ask-reply",
         "/api/quick-chat",
         "/api/quick-task",
         symphony_api::TASK_PASS_ROUTE,
+        symphony_api::DOCUMENT_PASS_ROUTE,
     ] {
         assert_eq!(
             needs(route),
@@ -61,9 +60,14 @@ fn deciding_speaking_to_agents_uploading_and_directing_attempts_need_what_the_ru
             "{route}"
         );
     }
-    // A task's message is speaking alone: the board holds it when its writer may not direct
-    // agents.
-    for route in ["/api/task-message", symphony_api::UPLOAD_PATH] {
+    // A task's message, a document's comment and a card's message are speaking alone: the board
+    // holds them when their writer may not direct agents.
+    for route in [
+        "/api/task-message",
+        "/api/comment",
+        "/api/message",
+        symphony_api::UPLOAD_PATH,
+    ] {
         assert_eq!(needs(route), Needs::Powers(&[Power::Speak]), "{route}");
     }
     // A hand-over needs only being on the board: the board refuses one by a non-member.
@@ -97,19 +101,24 @@ fn a_refusal_names_the_person_and_the_first_power_they_lack() {
         refused("ana", &speaks, needs("/api/decision")).as_deref(),
         Some("Forbidden: ana may not decide on this board")
     );
-    assert_eq!(
-        refused("ana", &speaks, needs("/api/comment")).as_deref(),
-        Some("Forbidden: ana may not direct agents on this board")
-    );
-    assert_eq!(
-        refused("ana", &speaks, needs("/api/task-message")),
-        None,
-        "her message is held"
-    );
-    assert_eq!(
-        refused("ana", &speaks, needs(symphony_api::TASK_PASS_ROUTE)).as_deref(),
-        Some("Forbidden: ana may not direct agents on this board")
-    );
+    for route in ["/api/task-message", "/api/comment", "/api/message"] {
+        assert_eq!(
+            refused("ana", &speaks, needs(route)),
+            None,
+            "{route}: her words are held"
+        );
+    }
+    for route in [
+        "/api/ask",
+        symphony_api::TASK_PASS_ROUTE,
+        symphony_api::DOCUMENT_PASS_ROUTE,
+    ] {
+        assert_eq!(
+            refused("ana", &speaks, needs(route)).as_deref(),
+            Some("Forbidden: ana may not direct agents on this board"),
+            "{route}"
+        );
+    }
     assert_eq!(
         refused("ana", &Powers::default(), needs("/api/comment")).as_deref(),
         Some("Forbidden: ana may not speak on this board")
