@@ -567,6 +567,53 @@ async fn a_pass_counts_no_line_another_file_holds_so_a_refused_mark_writes_once(
     assert_eq!(written(&root)[2], 1);
 }
 
+/// Her message typed on a branch's page on the card the branch posted, passed onto the branch's
+/// card, which the branch commits. The branch lands and its worktree is swept, and her same words
+/// typed on main's page are passed: main's card holds them twice, the landed line counted as the
+/// pass that wrote it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pass_onto_mains_card_counts_the_line_a_landed_branch_brought() {
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", DOC, PAGE);
+    let worktree = tree.path("wt");
+    let wt = worktree.to_str().unwrap();
+    git(&root, &["worktree", "add", "-q", "-b", "pic/x", wt]);
+    let posted = PAGE.replace(
+        "proposal.\n",
+        "proposal.\n  [2026-11-25 10:00] owner — Look again.\n",
+    );
+    std::fs::write(worktree.join(DOC), posted).unwrap();
+    git(
+        &worktree,
+        &["commit", "-qam", "the branch posts on the card"],
+    );
+    let _board = named(&root);
+    let ana = with_hub(as_person(&root, "ana"), &root);
+    ana.api.get().unwrap().refresh_docs(None).unwrap();
+    let id = |answer: Value| answer["held"].clone();
+    let on_branch = id(ok(
+        post(&ana, LAPTOP, "/@pic~x/api/message", message()).await
+    ));
+    let stefano = as_person(&root, "stefano");
+    let pass = |held: Value| json!({"id": held});
+    ok(post(&stefano, MACHINE, "/api/document-pass", pass(on_branch)).await);
+    assert_eq!(written(&worktree)[2], 1, "on the branch's card");
+    git(
+        &worktree,
+        &["commit", "-qam", "the branch carries her line"],
+    );
+    git(&root, &["merge", "-q", "pic/x"]);
+    assert_eq!(written(&root)[2], 1, "landed");
+    // Clean and landed, its worktree is swept, and its passed row kept under main's.
+    git(&root, &["worktree", "remove", wt]);
+    assert_eq!(Board::store(&root).held_landed("pic~x").unwrap(), 1);
+    let on_main = id(ok(post(&ana, LAPTOP, "/api/message", message()).await));
+    ana.saves.get().unwrap().close();
+    ok(post(&stefano, MACHINE, "/api/document-pass", pass(on_main)).await);
+    stefano.saves.get().unwrap().close();
+    assert_eq!(written(&root)[2], 2);
+}
+
 /// The held comment `from` of the board at `root` kept under the key of `to`: its number finds it,
 /// and the mark of its pass is refused, as a board that fails at the mark leaves it.
 fn rekey(root: &Path, from: i64, to: i64) {

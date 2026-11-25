@@ -126,8 +126,10 @@ fn heading(key: &str) -> &str {
 
 /// Whether what a pass of `held` writes stands in `text`, the document as its page shows it, more
 /// often than the rows passed into that file already (`passed`, those kept under its checkout,
-/// where a pass keeps the row it wrote: `Store::pass_on_document_into`) put there: a pass whose
-/// words went in and whose mark did not, so the next press writes nothing again and marks the row.
+/// where a pass keeps the row it wrote, `Store::pass_on_document_into`, and where a sweep moves a
+/// landed worktree's, `Store::held_landed`) put there: a pass whose words went in and whose mark
+/// did not, so the next press writes nothing again and marks the row (what it misses: the save's
+/// comment where it is called).
 /// Only what a pass writes counts, its author's words with a passer first
 /// ([`symphony_board::held::passed_text`]), whoever passed them: a callout of its kind and author
 /// whose title and body are those words, a message of its author on its card. The author's own
