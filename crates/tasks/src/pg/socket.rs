@@ -202,7 +202,9 @@ mod tests {
             peer.read_to_end(&mut all).map(|_| all)
         });
         let written = bounded("a megabyte written as the peer reads it", move || {
-            (&socket).write_all(&out)
+            (&socket).write_all(&out)?;
+            // Nothing is buffered here: what was written is the socket's.
+            (&socket).flush()
         });
         written.unwrap();
         assert_eq!(read.join().unwrap().unwrap(), vec![b'y'; 1 << 20]);
