@@ -172,3 +172,29 @@ pub(in crate::store) fn comment() -> Pg<'static> {
 pub(in crate::store) fn unpassed() -> Pg<'static> {
     on_documents("NOT doc ? 'passed'")
 }
+
+/// The condition on `doc` of a comment on a document passed into the checkout `v ->> 'scope'`.
+const PASSED_INTO: &str =
+    "doc ? 'document' AND doc ? 'passed' AND doc #>> '{document,scope}' = v ->> 'scope'";
+
+/// How many comments on documents were passed into the checkout `v ->> 'scope'`: none on a board
+/// without the step.
+pub(in crate::store) fn passed_into() -> Pg<'static> {
+    Pg::script(format!(
+        "board_answer := '0'::jsonb;
+IF to_regclass('held_message') IS NOT NULL THEN
+    board_answer := to_jsonb((SELECT count(*) FROM held_message WHERE {PASSED_INTO}));
+END IF;"
+    ))
+}
+
+/// The comments on documents passed into the checkout `v ->> 'scope'` kept under the project's own
+/// from now on, their scope dropped: how many, its answer.
+pub(in crate::store) fn passed_into_main() -> Pg<'static> {
+    Pg::script(format!(
+        "UPDATE held_message SET doc = jsonb_set(doc, '{{document}}', (doc -> 'document') - 'scope')
+    WHERE {PASSED_INTO};
+GET DIAGNOSTICS sid_ = ROW_COUNT;
+board_answer := to_jsonb(sid_);"
+    ))
+}

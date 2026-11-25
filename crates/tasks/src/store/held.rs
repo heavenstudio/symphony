@@ -1,9 +1,9 @@
 //! Words held for people ([`crate::held`]): a person's message held with the board's line that says
 //! so, a held message passed on, and the reads of a task's held messages, in the table of
 //! [`crate::schema::HELD`]; and beside them a person's comment on a document held, marked passed
-//! once its words are in the file, and the reads of a document's. A board without the step holds
-//! nothing: its reads find none, and a hold or a pass there is refused by the schema's guard
-//! before anything is written.
+//! once its words are in the file, kept under main's once the worktree it was passed into is swept,
+//! and the reads of a document's. A board without the step holds nothing: its reads find none, and
+//! a hold or a pass there is refused by the schema's guard before anything is written.
 
 use super::messages::{BOARD, Poster};
 use super::postgres::held as pg;
@@ -314,6 +314,27 @@ impl Store {
     /// The comments held on documents and not passed on, oldest first: what is told of them.
     pub fn held_on_documents(&self) -> Result<Vec<OnDocument>, Error> {
         self.held_documents(pg::unpassed(), json!({}))
+    }
+
+    /// The comments on documents passed into the checkout `scope` (a worktree's id) kept under the
+    /// project's own from now on, once a sweep removed its worktree (`crate::sweep`): it removes
+    /// one only when its HEAD is in main and it holds nothing that did not land, so every line a
+    /// pass wrote into its files is in main's, where the count of a later pass reads its row
+    /// (`crates/symphony/src/save/held.rs`). One still held stays where its page drew it. How many
+    /// moved: none, with nothing written, where none was passed into it, as on a board without the
+    /// step.
+    pub fn held_landed(&self, scope: &str) -> Result<u64, Error> {
+        let vars = json!({ "scope": scope });
+        let passed = self.retrying(|| {
+            let answer = self.request(Statement::from(pg::passed_into()), vars.clone());
+            let answer = answer.map_err(Failure::from)?;
+            Ok(answer.last().and_then(Value::as_u64).unwrap_or(0))
+        })?;
+        if passed == 0 {
+            return Ok(0);
+        }
+        let body = || Statement::from(pg::passed_into_main()).naming(&pg::TABLES);
+        self.retrying(|| self.transact(body(), vars.clone()))
     }
 
     /// The held comments the read `statement` answers with `vars`.

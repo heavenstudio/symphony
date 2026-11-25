@@ -876,7 +876,26 @@ impl Saves {
         // A pass whose words the document holds already, written by a press whose mark or commit
         // did not follow: nothing is written again, and the row is marked, its ask and callback
         // following now, as that press's never did. The rows counted are those kept under the
-        // checkout it writes to: each one passed wrote into this file, from whichever page.
+        // checkout it writes to: each one passed wrote into this file, from whichever page, and a
+        // worktree's are main's once a sweep removed it, all it held landed
+        // (`Store::held_landed`). Until then, or for a branch merged by hand whose worktree is
+        // never swept, the line a landed branch brought is no row of main's: a later pass of the
+        // same words onto main's card is marked without its own line, once too few.
+        //
+        // Three cases are left, each needing a press whose words went in and whose mark was
+        // refused, then another press of that comment; each leaves her words twice on one card:
+        // - typed on a branch's page that drew main's card, the first press wrote it there; the
+        //   branch then posts on the card, which its page draws as its own, and the next press
+        //   writes it on the branch's card: once on each, twice on main's once the branch lands;
+        // - typed on a branch's page that drew its own card, the first press wrote it there; main
+        //   then closes its copy after every line of the branch's (`branches::mains_card`), and
+        //   the next press writes it on main's card: twice once the branch lands (the branch
+        //   landing or going between the presses instead, it is found, or written once);
+        // - a pass of the same words wrote into a branch that went unlanded, and a branch of its
+        //   name is made again: that row counts against the new branch's file, so the press after
+        //   one into it writes them twice there. The product never deletes a branch that did not
+        //   land (a land deletes the one it landed, a sweep only landed ones), and a branch is
+        //   named for its task's slug, which one task holds: only a hand meets it.
         if let Some((store, passed, into)) = &passing {
             let rows = store.held_on_document(&rel, *into)?;
             if held::written_already(&original, passed, &rows) {
