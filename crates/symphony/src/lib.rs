@@ -27,6 +27,7 @@ pub mod branches;
 pub mod builds;
 pub mod callbacks;
 pub mod callouts;
+mod channel;
 pub mod children;
 pub mod cli;
 pub mod clock;

@@ -14,7 +14,6 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use symphony_api::{EntryNeed, EntryState, Setting, SettingClass, SettingScope, SettingsEntry};
@@ -106,7 +105,7 @@ pub fn program(machine: &Machine, main: &Path, program: &Program) -> SettingsEnt
 fn run(command: &mut sys::Command, asked: &str, within: Duration) -> Result<Vec<u8>, String> {
     let child = sys::spawn_output(command).map_err(|e| format!("{asked} did not start: {e}"))?;
     let pid = i64::from(child.id());
-    let (send, receive) = mpsc::channel();
+    let (send, receive) = crate::channel::channel();
     std::thread::spawn(move || {
         let _ = send.send(sys::wait_output(child));
     });
