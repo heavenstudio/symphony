@@ -274,27 +274,31 @@ impl Store {
         );
         let row: MessageRow = self.retrying(|| self.transact(body(), vars.clone()))?;
         // Told of the line's recipient, not this call's: a post repeated under a key, or one that
-        // took a line made under no key, answers that line, and says once that no executor reads
-        // it when nothing said so yet (the board's notice goes under the line's own key,
-        // `unread:<id>`, which takes a notice of the line said under no key, so it is said once
-        // per line, whichever post says it).
-        let unread = format!("unread:{}", row.id);
-        match row.recipient.as_deref() {
-            Some("@executor") => self.tell_if_unread(
-                slug,
-                None,
-                &format!("#{} from {} to @executor", row.id, row.sender),
-                Some(&unread),
-            ),
-            Some(to) if to != OWNER && !to.starts_with('@') => self.tell_if_unread(
-                slug,
-                Some(to),
-                &format!("#{} from {} to {to}", row.id, row.sender),
-                Some(&unread),
-            ),
-            _ => {}
-        }
+        // took a line made under no key, answers that line.
+        self.tell_line_if_unread(slug, row.id, &row.sender, row.recipient.as_deref());
         Ok(message(row))
+    }
+
+    /// The line `id` on `slug`'s thread, `sender`'s to `recipient`, has no executor to read it
+    /// ([`Store::tell_if_unread`]): told where it is written to `@executor`, or to a handle that
+    /// executes the task; a line to nobody, to `owner`, to another role or to another handle tells
+    /// no one. Said once per line, whichever write says it: under the line's own key,
+    /// `unread:<id>`, which takes a notice of the line said under no key. A post and a held
+    /// message passed on ([`Store::pass`]) tell by it alike.
+    pub(super) fn tell_line_if_unread(
+        &self,
+        slug: &str,
+        id: i64,
+        sender: &str,
+        recipient: Option<&str>,
+    ) {
+        let (to, only) = match recipient {
+            Some(to @ "@executor") => (to, None),
+            Some(to) if to != OWNER && !to.starts_with('@') => (to, Some(to)),
+            _ => return,
+        };
+        let what = format!("#{id} from {sender} to {to}");
+        self.tell_if_unread(slug, only, &what, Some(&format!("unread:{id}")));
     }
 
     /// `said`, a record line `sender` puts on `slug`'s thread, to no one, once per `key`: a later

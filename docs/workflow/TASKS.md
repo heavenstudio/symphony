@@ -2376,22 +2376,23 @@ as it did before. That person stays `owner`, with every power, once others are n
 - **Where a notice reaches a person** is their profile's: `emails`, the first the one a notice by
   mail goes to; `chat`, their Slack member id under `slack` and their WhatsApp number under
   `whatsapp`; and `preferences`, the way each kind of notice goes by (`card`, `question` or
-  `verdict` to `email`, `slack` or `whatsapp`, a held message by the question's). A kind with no
-  way goes by none, as the page and the Mac app show every notice. Each address is held to the
-  rule its notice plugin sends by ([NOTICES](../engineering/NOTICES.md#ways-and-addresses)), a
-  WhatsApp number kept as `+` and its digits, and a refusal says the rule, never the address. `chat` and `preferences` read any JSON, so
-  a file written before they had a meaning reads as it did: a value is an address or a way only
-  where it is text its rule takes. `Profiles::reach` is the server's read of where one notice of
-  theirs goes, the way and the address, which nothing prints: `list` shows no address and no way,
-  and no agent or project plugin is handed one. A git handle is not one person's alone: a person
-  writes their own, and nothing checks that no other profile holds it, so nothing decides by a git
-  handle alone whose commit or write something is (a plugin is told them as the sender's, never as
-  proof). A board and its copies hold none of it. The board's log and the server's log lines name
-  the short name, never a sign-in's subject or an email. A `people.json` that does not parse is said
-  by its line and column, the field (`people[0].signins`, a profile's own names alone) and the kind
-  of fault, never a value found in it, and none of its profiles is read or written over. An add
-  holds the lock from its check of the sign-ins through the board's change and the profile's write,
-  so of two adds of one sign-in at once the second is refused, with nothing written.
+  `verdict` to `email`, `slack` or `whatsapp`, a held message by the question's). A kind with no way
+  goes by none, as the page and the Mac app show every notice. Each address is held to the rule its
+  notice plugin sends by ([NOTICES](../engineering/NOTICES.md#ways-and-addresses)), a WhatsApp
+  number kept as `+` and its digits, and a refusal says the rule, never the address. `chat` and
+  `preferences` read any JSON, so a file written before they had a meaning reads as it did: a value
+  is an address or a way only where it is text its rule takes. `Profiles::reach` is the server's
+  read of where one notice of theirs goes, the way and the address, which nothing prints: `list`
+  shows no address and no way, and no agent or project plugin is handed one. A git handle is not one
+  person's alone: a person writes their own, and nothing checks that no other profile holds it, so
+  nothing decides by a git handle alone whose commit or write something is (a plugin is told them as
+  the sender's, never as proof). A board and its copies hold none of it. The board's log and the
+  server's log lines name the short name, never a sign-in's subject or an email. A `people.json`
+  that does not parse is said by its line and column, the field (`people[0].signins`, a profile's
+  own names alone) and the kind of fault, never a value found in it, and none of its profiles is
+  read or written over. An add holds the lock from its check of the sign-ins through the board's
+  change and the profile's write, so of two adds of one sign-in at once the second is refused, with
+  nothing written.
 - **Who reaches a board.** A visitor under another Tailscale login is the profile holding that
   `tailscale` sign-in, on each board that gives its short name a power, as that name
   ([the server guide](../../apps/symphony-server/README.md#who-a-request-is-from)).
@@ -2532,12 +2533,12 @@ them.
   and `direct_agents`, no one else. The feed brings it to an open page as any line.
 - **A pass** (`just tasks pass SLUG N --as HANDLE`, or Pass on, `/api/task-pass`) writes her words
   on the thread under her name, marked a person's, to whom she wrote them, with the passer first:
-  `[passed on by bo] …`. From then they read as any person's message: they reach the task's
-  agents, once, and open or join its ask. The held row is marked passed, by whom and as which
-  line, and the page draws the held line `passed on by bo`, her words the new line's. A second
-  pass is refused naming who passed it, and a number no message held on the task has is refused,
-  each with nothing written. A session's pass is the person at the machine's, as every board
-  command is.
+  `[passed on by bo] …`. From then they read as any person's message: they reach the task's agents,
+  once, open or join its ask, and, written to its executor where none reads them, tell
+  `@orchestrator` so, as a post does. The held row is marked passed, by whom and as which line, and
+  the page draws the held line `passed on by bo`, her words the new line's. A second pass is refused
+  naming who passed it, and a number no message held on the task has is refused, each with nothing
+  written. A session's pass is the person at the machine's, as every board command is.
 - **Who is told** of a held message is the person at the machine, on whom the board's line for it
   waits, and those who may pass it on, never its author. They are the members of the task's
   group, or the person it is written to, who hold `speak` and `direct_agents`. Where none of them
@@ -2560,19 +2561,19 @@ powers they hold, their own told apart from their groups' by a word as well as a
 groups, the services they sign in by and their git handles; its groups; and its log, newest first.
 It shows no sign-in's subject to anyone. A person's addresses (the email a notice goes to, their
 Slack member id and WhatsApp number) are shown to them, to the person at the machine and to the
-board's admins, and the way each kind of notice goes by to them and the person at the machine
-alone: anyone else's answer carries neither, on the wire as on the page. Their card's Notices,
-beside its Profile, sets both. Its controls are drawn for
-whoever holds `administer`, as the person at the machine always does: a person added with a display
-name, git handles, powers and groups (and sign-ins, by the person at the machine alone), put in a
-group or taken out of one, given a power or one taken back, taken off the board; a group made, given
-a power or removed, direct agents as any other. Taking a person off the board and removing a group, which a press
-cannot take back, ask first as a task's Cancel does: a named confirmation, then Confirm removal or
-Keep. Each change is one change of the log, the command's own, named as the actor who made it
-(`owner` for the person at the machine). `administer` is read from the board as the change arrives,
-so one from someone without it is a 403, `Forbidden: ana may not administer on this board`, with
-nothing written. The page is the project's own board's: a worktree's server and a hosted visitor are
-refused it ([the server guide](../../apps/symphony-server/README.md)).
+board's admins, and the way each kind of notice goes by to them and the person at the machine alone:
+anyone else's answer carries neither, on the wire as on the page. Their card's Notices, beside its
+Profile, sets both. Its controls are drawn for whoever holds `administer`, as the person at the
+machine always does: a person added with a display name, git handles, powers and groups (and
+sign-ins, by the person at the machine alone), put in a group or taken out of one, given a power or
+one taken back, taken off the board; a group made, given a power or removed, direct agents as any
+other. Taking a person off the board and removing a group, which a press cannot take back, ask first
+as a task's Cancel does: a named confirmation, then Confirm removal or Keep. Each change is one
+change of the log, the command's own, named as the actor who made it (`owner` for the person at the
+machine). `administer` is read from the board as the change arrives, so one from someone without it
+is a 403, `Forbidden: ana may not administer on this board`, with nothing written. The page is the
+project's own board's: a worktree's server and a hosted visitor are refused it
+([the server guide](../../apps/symphony-server/README.md)).
 
 Who writes a profile:
 

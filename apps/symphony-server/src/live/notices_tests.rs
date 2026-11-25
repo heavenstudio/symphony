@@ -2,8 +2,9 @@
 //! `notices/programs.toml` names a fake program: a card that starts waiting, an agent's question to
 //! the person at the machine and a reviewer's verdict reach each member of the thing's group once,
 //! by their way, and nobody else; a held message's line tells who may pass it on, of the task's
-//! group else of the board, never its author, and its pass, a person's line, tells no one; a board
-//! that names nobody tells no one; and the worker hands what a wake finds and ends at the stop.
+//! group else of the board, never its author, and its pass, a person's line, tells no one, and a
+//! look that cannot read its held row tells it at the next that can; a board that names nobody
+//! tells no one; and the worker hands what a wake finds and ends at the stop.
 
 use super::super::Hub;
 use super::{Said, Turns};
@@ -396,6 +397,41 @@ fn a_held_message_no_one_of_its_group_may_pass_tells_the_board_who_may_else_no_o
     assert_eq!(told_after(&telling, 1), [notice("held", "email", BO_EMAIL)]);
 }
 
+/// A look whose read of a task's held messages fails takes no line and moves no cursor, and says
+/// so once: the next look reads the same lines again, though nothing moved, and tells the held
+/// message then.
+#[test]
+fn a_held_message_whose_row_does_not_read_is_told_at_the_next_look_that_reads_it() {
+    let telling = Telling::new(false);
+    telling.direct_agents(&["bo"]);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let before = passes.cursor();
+    assert!(before.is_some(), "the first look");
+    let (held, link) = telling.hold("Cut the header");
+    // A field no build knows: the task's held rows do not read.
+    let row = || telling.f.store.raw().row("held_message", held);
+    row().set(json!({"stray": true})).unwrap();
+    for _ in 0..2 {
+        passes.pass(&telling.hub);
+        assert!(telling.told().is_empty(), "{:?}", telling.told());
+        assert_eq!(passes.cursor(), before, "no line taken");
+    }
+    let said = passes.said.0.get("lines").cloned().unwrap_or_default();
+    assert!(
+        said.starts_with("the board's lines: ") && said.contains("the held messages"),
+        "{said}"
+    );
+    row().set(json!({"stray": null})).unwrap();
+    passes.pass(&telling.hub);
+    assert_eq!(
+        telling.told(),
+        [("held".into(), "email".into(), BO_EMAIL.into(), link)]
+    );
+    assert!(passes.cursor() > before, "{:?}", passes.cursor());
+    assert!(!passes.said.0.contains_key("lines"), "the fault cleared");
+}
+
 /// Who of a board is told of a held message, by whose its task is: of a group, its members who may
 /// pass it on; of a person, they where they may; of the person at the machine, or where none of
 /// its owner may, every person of the board who may; never its author; none where nobody but its
@@ -451,6 +487,11 @@ fn who_is_told_of_a_held_message_is_who_may_pass_it_of_its_owner_else_of_the_boa
     assert_eq!(
         passers(&people, &owning("dee", Kind::Person), "bo"),
         ["dee"]
+    );
+    assert_eq!(
+        passers(&people, &owning("dee", Kind::Person), "dee"),
+        ["ana", "cy"],
+        "its owner wrote it: the board's"
     );
     assert_eq!(
         passers(&people, &owning("bo", Kind::Person), "dee"),
