@@ -809,7 +809,9 @@ impl Saves {
                 if let Some(refused) = held::not_held(passed.id, now.as_ref()) {
                     return Err(refused);
                 }
-                Some((store, passed))
+                // Marked, it is kept under the checkout it is written to: a later pass counts it.
+                let (into, _) = self.named(scope, string(payload, "path"))?;
+                Some((store, passed, Some(into).filter(|into| !into.is_empty())))
             }
             None => None,
         };
@@ -873,19 +875,12 @@ impl Saves {
         };
         // A pass whose words the document holds already, written by a press whose mark or commit
         // did not follow: nothing is written again, and the row is marked, its ask and callback
-        // following now, as that press's never did.
-        if let Some((store, passed)) = &passing {
-            let place = &passed.document;
-            let mut rows = store.held_on_document(&place.path, place.scope.as_deref())?;
-            // A card's message typed on a branch's page and written on main's card: main's rows
-            // count too.
-            let (written, _) = self.named(scope, string(payload, "path"))?;
-            if place.scope.as_deref().unwrap_or("") != written {
-                let written = Some(written).filter(|written| !written.is_empty());
-                rows.extend(store.held_on_document(&rel, written)?);
-            }
+        // following now, as that press's never did. The rows counted are those kept under the
+        // checkout it writes to: each one passed wrote into this file, from whichever page.
+        if let Some((store, passed, into)) = &passing {
+            let rows = store.held_on_document(&rel, *into)?;
             if held::written_already(&original, passed, &rows) {
-                store.pass_on_document(passed.id, actor.name())?;
+                store.pass_on_document_into(passed.id, actor.name(), *into)?;
                 let ask =
                     self.document_ask(route, payload, &root, &rel, &original, comment.as_ref());
                 let value = if pending {
@@ -1031,8 +1026,8 @@ impl Saves {
                 .map_err(|error| if pending { take_back(error) } else { error })?;
         }
         // Its words are in the file, or kept for its delivery: the board marks it passed.
-        if let Some((store, passed)) = &passing {
-            store.pass_on_document(passed.id, actor.name())?;
+        if let Some((store, passed, into)) = &passing {
+            store.pass_on_document_into(passed.id, actor.name(), *into)?;
         }
         if !tap.is_empty() {
             taps.push_back((

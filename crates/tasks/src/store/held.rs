@@ -254,7 +254,30 @@ impl Store {
     /// who passed it), and a board without the step. Whether `by` may direct agents is its caller's
     /// to have checked, as every power is (`apps/symphony-server/src/powers.rs`).
     pub fn pass_on_document(&self, id: i64, by: &str) -> Result<OnDocument, Error> {
-        let vars = self.acting(
+        self.mark_on_document(id, by, None)
+    }
+
+    /// [`Store::pass_on_document`], the row then kept under the checkout `scope` its pass wrote to
+    /// (none: the project's own) in place of its page's: a message typed on a branch's page and
+    /// written on main's card is main's file's, where the count of a later pass reads it
+    /// (`crates/symphony/src/save/held.rs`). No page draws a passed comment, so it moves none.
+    pub fn pass_on_document_into(
+        &self,
+        id: i64,
+        by: &str,
+        scope: Option<&str>,
+    ) -> Result<OnDocument, Error> {
+        self.mark_on_document(id, by, Some(scope))
+    }
+
+    /// The pass of the held comment `id` by `by` recorded, its scope moved `into` the one given.
+    fn mark_on_document(
+        &self,
+        id: i64,
+        by: &str,
+        into: Option<Option<&str>>,
+    ) -> Result<OnDocument, Error> {
+        let mut vars = self.acting(
             by,
             self.now(),
             json!({
@@ -265,6 +288,10 @@ impl Store {
                 ),
             }),
         );
+        // An object, as a null variable is dropped: `{}` for the project's own checkout.
+        if let Some(scope) = into {
+            vars["into"] = json!({ "scope": scope });
+        }
         let body = || Statement::from(pg::pass_on_document()).naming(&pg::TABLES);
         self.retrying(|| self.transact(body(), vars.clone()))
     }

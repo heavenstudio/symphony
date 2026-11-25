@@ -119,7 +119,9 @@ board_answer := (SELECT doc FROM held_message WHERE id = {key});"
 }
 
 /// The held comment `v ->> 'id'`, passed on by `v ->> 'by'`: refused where none is held by it or it
-/// was passed already, naming who passed it; else the row marked passed, its answer.
+/// was passed already, naming who passed it; else the row marked passed, its answer, and kept
+/// under the checkout `v -> 'into'` names (`{"scope": SCOPE}`, `{}` the project's own) where `v`
+/// has one.
 pub(in crate::store) fn pass_on_document() -> Pg<'static> {
     let key = document_key("v ->> 'id'");
     Pg::script(format!(
@@ -129,7 +131,10 @@ IF held_ IS NULL THEN RAISE EXCEPTION '%', v ->> 'none_held'; END IF;
 IF held_ ? 'passed' THEN
     RAISE EXCEPTION '%', format(v ->> 'passed_already', held_ #>> '{{passed,by}}');
 END IF;
-UPDATE held_message SET doc = doc || jsonb_build_object('passed',
+IF v ? 'into' THEN
+    held_ := jsonb_set(held_, '{{document}}', (held_ -> 'document') - 'scope' || (v -> 'into'));
+END IF;
+UPDATE held_message SET doc = held_ || jsonb_build_object('passed',
         jsonb_build_object('by', v ->> 'by', 'at', (v ->> 'now')::double precision))
     WHERE id = {key};
 board_answer := (SELECT doc FROM held_message WHERE id = {key});

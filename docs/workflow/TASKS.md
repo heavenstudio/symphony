@@ -2554,7 +2554,8 @@ and asks, as a card's note is; on a task she may not decide it is held.
   with nobody named holds nothing, and every line reads as before.
 - **On a document** a callout or a card's message from such a person is held the same way, in a
   row of the same table that names its document (its path, and the checkout of the page it was
-  typed on, a branch's page that draws main's card among them), its kind, its card, or
+  typed on, a branch's page that draws main's card among them, or once passed the checkout its
+  pass wrote to), its kind, its card, or
   the block a callout was left after by its section's key, its last line and its lines then; no
   task's read, thread or ask carries it. Nothing of it reaches a clone: no file is written, no
   commit or delivery made, no ask opened and no callback sent, and an agent is told nothing of it.
@@ -2569,8 +2570,9 @@ and asks, as a card's note is; on a task she may not decide it is held.
   message goes where her own line would go then: on main's card where the branch's page it was
   typed on draws main's. A second pass is refused naming who passed it. A press after one whose
   words went in and whose mark did not writes nothing again and marks it: the document holds what
-  a pass writes, her words with a passer first, more often than its rows passed already put
-  there, while her own words written as hers never count. Those who may pass it on, of its
+  a pass writes, her words with a passer first, more often than the rows passed into that file
+  already put there, from whichever page each was typed on, while her own words written as hers
+  never count. Those who may pass it on, of its
   card's or its document's group else of the board, are told a `held` notice linking
   `DOC#held-N`, none of its words; a look whose read of them fails says so once and tells the
   rest, cards and lines and the notices due, and what was told of them stands. The
