@@ -135,7 +135,7 @@ pub fn spread(mut values: Vec<f64>) -> Option<Spread> {
     if values.is_empty() {
         return None;
     }
-    values.sort_unstable_by(f64::total_cmp);
+    crate::order::sort_by(&mut values, &f64::total_cmp);
     Some(Spread {
         n: values.len(),
         median: quantile(&values, 0.5),

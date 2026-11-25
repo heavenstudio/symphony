@@ -428,7 +428,7 @@ impl Store {
         let mut slugs: Vec<String> = self.retrying(|| {
             self.read_together(read(), json!({"handle": handle, "executing": EXECUTING}))
         })?;
-        slugs.sort_unstable();
+        crate::order::sort_by(&mut slugs, &Ord::cmp);
         slugs.dedup();
         Ok(slugs)
     }

@@ -142,7 +142,7 @@ pub fn slot_runs(dir: &Path) -> Answer<Vec<Run>> {
         .map_err(|e| e.to_string())?
         .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
         .collect();
-    names.sort_unstable();
+    crate::order::sort_by(&mut names, &Ord::cmp);
     for (pool, prefix) in POOLS {
         for name in names
             .iter()

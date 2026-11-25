@@ -106,7 +106,7 @@ impl Observation {
             }
         }
         for held in orchestrators.values_mut().chain(executors.values_mut()) {
-            held.sort_unstable();
+            crate::order::sort_by(held, &Ord::cmp);
             held.dedup();
         }
         let tasks = self.rows.values().map(|row| Entry {
