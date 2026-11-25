@@ -1094,7 +1094,8 @@ fn card_for(way: &str, address: &str) -> (String, String, String) {
 
 /// While the board's tick cannot read the board, a pass tells by no look: a person removed
 /// meanwhile is told nothing of a card that starts waiting by a document's edit alone, and the
-/// failure is said once, in the first failure's words, whatever words the next failures carry.
+/// failure is said once, in the first failure's words, whatever words the next failures carry, of
+/// the board (a slow one's) or of its people.
 /// The next tick that reads looks again and wakes a pass, which tells the card once, to those that
 /// look names. Before, the pass told it to bo by the look taken before the failure.
 #[test]
@@ -1113,18 +1114,28 @@ fn a_failed_board_read_holds_the_look_until_a_tick_reads_the_people_again() {
     telling.card_waits();
     passes.pass(&telling.hub);
     assert!(telling.told().is_empty(), "{:?}", telling.told());
-    let said = passes.said.0.get("board").cloned().unwrap_or_default();
-    assert!(
-        said.starts_with("the board's people: ") && said.contains("session_revision"),
-        "{said}"
-    );
-    // A slow board's words next: the first failure's stand, so nothing is said again.
+    let first = telling.hub.people_looked().unwrap_err();
+    assert!(first.contains("session_revision"), "{first}");
+    let said = format!("the board's people: {first}");
+    assert_eq!(passes.said.0.get("board"), Some(&said));
+    // A slow board's words next, then a people read that fails on a field no build knows, then
+    // the tick's own failure again: the first failure's words stand, so nothing is said again.
     let slow = "the board's database: request 7 is slow: no answer within 5 s".to_string();
     telling.hub.board_error(slow);
+    let row = || telling.f.store.raw().row("people", "ana");
+    row().set(json!({"stray": true})).unwrap();
+    telling.hub.people_read(&telling.f.store);
+    row().set(json!({"stray": null})).unwrap();
+    let mut after = vec![telling.hub.people_looked().unwrap_err()];
+    passes.pass(&telling.hub);
+    let mut told = vec![passes.said.0["board"].clone()];
     telling.retry_due();
     telling.tick(&mut board);
+    after.push(telling.hub.people_looked().unwrap_err());
     passes.pass(&telling.hub);
-    assert_eq!(passes.said.0["board"], said);
+    told.push(passes.said.0["board"].clone());
+    assert_eq!(after, [first.clone(), first]);
+    assert_eq!(told, [said.clone(), said]);
     assert!(telling.told().is_empty(), "{:?}", telling.told());
     // The board reads again: the tick looks and wakes, and ana alone is told, once.
     telling.marker_table(false);
