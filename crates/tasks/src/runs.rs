@@ -388,7 +388,7 @@ fn said_by(command: &mut sys::Command, deadline: Instant) -> Option<Vec<u8>> {
         .stderr(sys::Stdio::Null)
         .spawn()
         .ok()?;
-    let (tell, said) = std::sync::mpsc::channel();
+    let (tell, said) = crate::channel::channel();
     if let Some(mut out) = child.stdout.take() {
         std::thread::spawn(move || {
             let mut bytes = Vec::new();

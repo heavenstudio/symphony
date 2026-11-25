@@ -7,6 +7,7 @@
 //! their lock ([`prune`]); [`read`] answers part of one for the Symphony's read
 //! ([`symphony_api::RUN_LOG_PATH`]).
 
+use crate::channel;
 use crate::cli::machine_work::recorded;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read as _, Write as _};
@@ -14,7 +15,6 @@ use std::os::fd::AsRawFd as _;
 use std::os::unix::fs::{FileExt as _, OpenOptionsExt as _};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use symphony_api::{RUN_LOG_MOST, RunLog, run_day};
@@ -119,7 +119,7 @@ pub struct Stream {
 #[derive(Debug)]
 pub struct Copying {
     written: Arc<AtomicU64>,
-    ended: mpsc::Receiver<()>,
+    ended: channel::Receiver<()>,
     thread: std::thread::JoinHandle<()>,
 }
 
@@ -130,7 +130,7 @@ impl Copying {
     /// have; its log is still written while the others run.
     pub fn start(streams: Vec<Stream>, log: File) -> io::Result<Copying> {
         let written = Arc::new(AtomicU64::new(0));
-        let (end, ended) = mpsc::channel();
+        let (end, ended) = channel::channel();
         let counted = Arc::clone(&written);
         let thread = std::thread::Builder::new()
             .name("run-log".into())

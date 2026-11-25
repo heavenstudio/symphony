@@ -49,6 +49,7 @@ mod store_fixture;
 pub mod board_health;
 pub mod builds;
 pub mod cbor;
+mod channel;
 pub mod cli;
 pub mod codex_queue;
 pub mod confine;

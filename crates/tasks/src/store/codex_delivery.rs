@@ -4,10 +4,10 @@
 //! path.
 
 use super::DeliveryError;
+use crate::channel::{Receiver, Sender, channel};
 use crate::sys::{self, Child, Stdio};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Instant;
 
 struct Proxy {
@@ -30,8 +30,8 @@ impl Proxy {
             .stderr(Stdio::null())
             .spawn()
             .map_err(DeliveryError::retry)?;
-        let (send, responses) = mpsc::channel();
-        let (writes, written) = mpsc::channel::<Vec<u8>>();
+        let (send, responses) = channel();
+        let (writes, written) = channel::<Vec<u8>>();
         let failed = send.clone();
         // A proxy can leave a descendant holding either pipe. Detach the IO workers: the shared
         // response deadline bounds the caller, and teardown must not wait for inherited pipe EOF.
@@ -71,7 +71,7 @@ impl Proxy {
             .as_ref()
             .expect("proxy input is open")
             .send(bytes)
-            .map_err(DeliveryError::retry)
+            .map_err(|_| DeliveryError::retry("sending on a closed channel"))
     }
 
     fn request(&mut self, id: u64, method: &str, params: Value) -> Result<Value, DeliveryError> {
