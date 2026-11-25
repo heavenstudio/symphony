@@ -28,7 +28,10 @@
 //! `Vec` and sorts them with std's stable sort, compiled for each element type. Those crates build
 //! one by `extend` on an empty one instead, which inserts each item through the `insert` its type
 //! compiles anyway and keeps a repeated key's last value, as `collect` does. No lint can name that
-//! collect (it is `Iterator::collect`), so review holds it.
+//! collect (it is `Iterator::collect`), so review holds it. A B-tree built from an array
+//! (`BTreeMap::from([..])`, `BTreeSet::from([..])`) sorts it with std's stable sort as well, which
+//! a release build compiles whole only past 20 elements (up to 20 it is an insertion sort inlined
+//! at the call): those crates' code builds one only of a single element, their tests of more.
 
 use std::cmp::Ordering;
 

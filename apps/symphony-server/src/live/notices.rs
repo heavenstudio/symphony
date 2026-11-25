@@ -71,6 +71,13 @@ struct Read {
 struct Said(BTreeMap<&'static str, String>, #[cfg(test)] Vec<String>);
 
 impl Said {
+    /// Says `why` under `place`, unless `place` already stands on those words or another place
+    /// does; `place` keeps them either way, until its own [`Said::clear`].
+    ///
+    /// One recurrence goes unsaid this way. A record that cannot be written stands under `look`
+    /// and `record` alike. A look that returns early (the board's people unread, no reader)
+    /// clears neither, so a hand that then writes the record clears `record` alone. If the record
+    /// fails again with the same words, `look` still stands on them, and nothing is said.
     fn once(&mut self, project: &str, place: &'static str, why: String) {
         if self.0.get(place) == Some(&why) {
             return;
