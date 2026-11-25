@@ -20,13 +20,13 @@ fn paragraph(words: &str) -> Value {
 /// stefano's question about the lamps, answered.
 fn thread() -> Value {
     json!({"id": 7, "path": "docs/PROBE.md", "anchor": "lamps", "quote": "Keep all 141 lamps",
-        "question": "Why ninety?", "asked": 1.0, "updated": 2.0, "answers": [], "status": "answered",
-        "messages": [
-            {"seq": 1, "kind": "question", "by": "stefano", "text": "", "at": 1.0,
-             "blocks": [paragraph("Why ninety and not a hundred?")]},
-            {"seq": 2, "kind": "answer", "by": "teal-lynx", "text": "", "at": 2.0,
-             "blocks": [paragraph("Ninety covers every finish the catalogue still sells.")]},
-        ]})
+    "question": "Why ninety?", "asked": 1.0, "updated": 2.0, "answers": [], "status": "answered",
+    "messages": [
+        {"seq": 1, "kind": "question", "by": "stefano", "text": "", "at": 1.0,
+         "blocks": [paragraph("Why ninety and not a hundred?")]},
+        {"seq": 2, "kind": "answer", "by": "teal-lynx", "text": "", "at": 2.0,
+         "blocks": [paragraph("Ninety covers every finish the catalogue still sells.")]},
+    ]})
 }
 
 /// The probe's document, its asks read `asks`, the reader asking where `may_ask`.
@@ -151,7 +151,11 @@ fn a_document_offers_its_questions_controls_to_one_who_may_ask_and_its_threads_a
         // No questions: nothing, and no room kept for them.
         let site = served(&[], false);
         page.open(&site.url(PAGE));
-        assert_eq!(read(&mut page, &[], false), json!({"section": null, "room": 0}), "{width}");
+        assert_eq!(
+            read(&mut page, &[], false),
+            json!({"section": null, "room": 0}),
+            "{width}"
+        );
         assert_eq!(site.posts(), [], "{width}: nothing sent");
     }
 }

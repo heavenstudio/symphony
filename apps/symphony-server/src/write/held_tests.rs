@@ -724,7 +724,8 @@ async fn the_asks_read_says_whether_its_reader_may_ask_as_the_board_reads_it_the
     let root = repository_holding(&tree, "main", DOC, PAGE);
     let _board = named(&root);
     let may_ask = async |shared: &std::sync::Arc<crate::front::Shared>, client: &str| {
-        let (status, read) = read(shared, client, "/api/asks?format=blocks&path=docs/TOPIC.md").await;
+        let (status, read) =
+            read(shared, client, "/api/asks?format=blocks&path=docs/TOPIC.md").await;
         assert_eq!(status, StatusCode::OK, "{read}");
         assert_eq!(read["asks"], json!([]), "{read}");
         read["may_ask"].clone()
@@ -734,7 +735,12 @@ async fn the_asks_read_says_whether_its_reader_may_ask_as_the_board_reads_it_the
     let stefano = as_person(&root, "stefano");
     assert_eq!(may_ask(&stefano, LAPTOP).await, true);
     assert_eq!(may_ask(&stefano, MACHINE).await, true);
-    (Board::store(&root).revoke(Holder::Person("stefano"), &[Power::DirectAgents], "owner")).unwrap();
+    (Board::store(&root).revoke(Holder::Person("stefano"), &[Power::DirectAgents], "owner"))
+        .unwrap();
     assert_eq!(may_ask(&stefano, LAPTOP).await, false);
-    assert_eq!(may_ask(&stefano, MACHINE).await, true, "the person at the machine always may");
+    assert_eq!(
+        may_ask(&stefano, MACHINE).await,
+        true,
+        "the person at the machine always may"
+    );
 }
