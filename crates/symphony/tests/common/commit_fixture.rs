@@ -329,11 +329,31 @@ impl Fixture {
     fn main(&self, rel: &str) -> String {
         git(&self.root(), &["show", &format!("main:{rel}")]) + "\n"
     }
+    /// The case's board as its server reaches it (`symphony::taskview::connect`): opened to read
+    /// by the schema rule, as its project's board, held to the project's cap. But its client
+    /// waits the board's own wait, not the server's 3 s on each request, which is the server's
+    /// promise to a page and no case's here: a loaded machine met it at a connection's startup.
     fn store(&self) -> symphony_board::Store {
         stage("connecting to private board");
-        let store = symphony::taskview::connect(&self.root()).unwrap();
+        let mut env = symphony_board::cli::Env::of_process();
+        env.cwd = self.root();
+        env.vars.remove("TASKS_SESSION");
+        let reached = symphony_board::cli::held_board(&env, None).unwrap();
+        let store = symphony_board::Store::reading_on(
+            reached.database().unwrap(),
+            Box::new(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs_f64()
+            }),
+            Box::new(symphony_board::sys::pid_alive),
+            &symphony_board::sys::hostname(),
+            &reached.opening(symphony_board::Opening::read()),
+        )
+        .unwrap();
         stage("connected to private board");
-        store
+        symphony_board::cli::capped(store, &env)
     }
     fn generate(&self) {
         script(

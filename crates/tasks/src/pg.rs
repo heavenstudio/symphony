@@ -8,7 +8,8 @@
 //! A client makes its connection at its first request and keeps it for its life, so a command,
 //! one process, is one connection. On macOS no child of the process copies its socket; elsewhere
 //! it is std's, close-on-exec, which a child spawned or forked beside it holds until its exec
-//! ([`unshared`]).
+//! ([`unshared`]). It never waits in the socket itself, only in `poll` ([`socket`]), so a socket
+//! macOS has drained, which fails every such wait with EBADF, still serves it.
 //! Its startup names the user [`USER`], its database, UTF-8, and REPEATABLE READ for every
 //! transaction: a snapshot from a transaction's first statement, and a write that meets a row
 //! another committed since then fails at once, which is the board's rule of a write that met
@@ -29,10 +30,12 @@
 //! client's wait ([`Client::waiting`]), or a startup it did not answer in that time, says the
 //! server is slow in the words [`crate::rpc::slow`] knows, as the `rpc` client consumers keep says
 //! it: a server that is there and late, never one that cannot be reached. The system says such a wait
-//! run out as its bare error, `EAGAIN`, "Resource temporarily unavailable", which names no wait.
+//! run out as its bare error, `EAGAIN`, "Resource temporarily unavailable", which names no wait,
+//! as a blocking socket's timeout does.
 
 use crate::db::DbError;
 use crate::lock::Recovered as _;
+use socket::Socket;
 use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
@@ -44,6 +47,7 @@ use std::time::{Duration, Instant};
 pub mod external;
 #[cfg(feature = "hosted-postgresql")]
 pub mod hosted;
+mod socket;
 mod wire;
 
 #[cfg(test)]
@@ -120,11 +124,11 @@ pub struct Client {
 }
 
 /// One connection: the socket its answers are read from, and the same socket a request is written
-/// to ([`Connection::exchange`]).
+/// to ([`Connection::exchange`]), each a descriptor of its own that waits the client's wait.
 #[derive(Debug)]
 struct Connection {
-    stream: BufReader<UnixStream>,
-    writer: UnixStream,
+    stream: BufReader<Socket>,
+    writer: Socket,
 }
 
 impl Client {
@@ -310,15 +314,9 @@ impl Client {
             ))
         };
         let (stream, writer) = unshared(&path).map_err(unreachable)?;
-        stream
-            .set_read_timeout(Some(self.timeout))
-            .map_err(unreachable)?;
-        stream
-            .set_write_timeout(Some(self.timeout))
-            .map_err(unreachable)?;
         let mut connection = Connection {
-            stream: BufReader::new(stream),
-            writer,
+            stream: BufReader::new(Socket::waiting(stream, self.timeout).map_err(unreachable)?),
+            writer: Socket::waiting(writer, self.timeout).map_err(unreachable)?,
         };
         let startup = wire::startup(&[
             ("user", USER),
@@ -346,13 +344,14 @@ impl Client {
 
 /// A connection to the socket at `path`, as its reader and its writer: two descriptors of one
 /// socket, which no spawn or fork copies on macOS. std's socket is close-on-exec only, and every
-/// spawn or fork copies such a descriptor into its child until that child's exec. macOS marks a
-/// socket draining when a descriptor of it is closed while another process reads that descriptor
-/// (`lsof`), and a draining socket fails every later wait for data with EBADF: a child closing its
-/// copy did that to a board's connection, as `process_cwd::spawn::connect` says of its TCP twin.
-/// So the socket is connected under [`crate::sys::spawning`], which every helper spawn takes, and
-/// each of its two descriptors is a reopening of it close-on-exec and close-on-fork
-/// ([`unshared_copy`]); the first descriptor is closed before the lock goes.
+/// spawn or fork copies such a descriptor into its child until that child's exec, whose close of
+/// its copy is one more a drain can meet ([`socket`]). So the socket is connected under
+/// [`crate::sys::spawning`], which every helper spawn takes, and each of its two descriptors is a
+/// reopening of it close-on-exec and close-on-fork ([`unshared_copy`]); the first descriptor is
+/// closed before the lock goes. That close is itself one an `lsof` reading the descriptor drains
+/// the socket at, and nothing on macOS makes a socket close-on-fork without it (`F_SETFD` keeps no
+/// `FD_CLOFORK`, `F_DUPFD_CLOFORK` answers EBADF, measured on macOS 26): the connection waits in
+/// `poll` alone, which a drain leaves as it was.
 #[cfg(target_vendor = "apple")]
 fn unshared(path: &Path) -> std::io::Result<(UnixStream, UnixStream)> {
     let _spawning = crate::sys::spawning();
@@ -389,7 +388,7 @@ impl Drop for Client {
         if let Some(connection) = held.as_mut() {
             let mut out = Vec::new();
             wire::terminate(&mut out);
-            let _ = connection.writer.write_all(&out);
+            let _ = (&connection.writer).write_all(&out);
         }
     }
 }
@@ -404,7 +403,7 @@ impl Connection {
     /// The startup sent, and the server's answers read up to its first ReadyForQuery: refused
     /// unless it trusts the connection, since the client has no password to give.
     fn started(&mut self, startup: &[u8]) -> Result<(), Started> {
-        self.writer.write_all(startup).map_err(Started::Broken)?;
+        (&self.writer).write_all(startup).map_err(Started::Broken)?;
         loop {
             let message = wire::read(&mut self.stream).map_err(Started::Broken)?;
             match message.kind {
@@ -466,13 +465,13 @@ impl Connection {
         }
         let ended = AtomicBool::new(false);
         // The connection ended for both sides, and whether this was the first to end it.
-        let end = |stream: &UnixStream| {
+        let end = |stream: &Socket| {
             let first = !ended.swap(true, Ordering::SeqCst);
             let _ = stream.shutdown(Shutdown::Both);
             first
         };
         let Connection { stream, writer } = self;
-        let writer: &UnixStream = writer;
+        let writer: &Socket = writer;
         std::thread::scope(|scope| {
             let sending = std::thread::Builder::new()
                 .name("board-pg-send".into())
@@ -492,27 +491,8 @@ impl Connection {
     }
 
     /// As much of `out` as the socket takes now, written without waiting: how many bytes that was.
-    /// The socket waits again afterwards, also when the write failed.
     fn taken(&self, out: &[u8]) -> std::io::Result<usize> {
-        self.writer.set_nonblocking(true)?;
-        let mut to = &self.writer;
-        let mut taken = 0;
-        let wrote = loop {
-            if taken == out.len() {
-                break Ok(taken);
-            }
-            match to.write(&out[taken..]) {
-                Ok(0) => break Err(std::io::ErrorKind::WriteZero.into()),
-                Ok(more) => taken += more,
-                Err(why) if why.kind() == std::io::ErrorKind::WouldBlock => break Ok(taken),
-                Err(why) if why.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(why) => break Err(why),
-            }
-        };
-        let waiting = self.writer.set_nonblocking(false);
-        let taken = wrote?;
-        waiting?;
-        Ok(taken)
+        self.writer.write_now(out)
     }
 
     /// The server's messages on `stream` up to its next ReadyForQuery, and the transaction status
@@ -569,8 +549,8 @@ fn given<T>(
 }
 
 /// Whether `why`, a write's or a read's failure on a connection, is the client's wait run out
-/// ([`Client::waiting`]): a socket's timeout on a blocking write or read is `EAGAIN` (`EWOULDBLOCK`),
-/// on macOS as on Linux, and `ETIMEDOUT` where a system says that instead.
+/// ([`Client::waiting`]): `EAGAIN` (`EWOULDBLOCK`), as a connection's [`Socket`] says it and a
+/// blocking socket's timeout does, on macOS as on Linux, and `ETIMEDOUT` where a system says that.
 fn waited_out(why: &std::io::Error) -> bool {
     matches!(
         why.kind(),
