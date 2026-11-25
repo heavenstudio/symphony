@@ -87,6 +87,10 @@ impl Checkout {
             .env("TASKS_SERVER", client.addr())
             .env("TASKS_DATABASE", client.database())
             .env("TASKS_NOW", board.now().to_string())
+            // And the board's beat waits a day for each answer, never its own two seconds, which
+            // a loaded machine's server can take to start a connection: the beat would give up on
+            // it without a word.
+            .env("TASKS_BEAT_WAIT", "86400")
             // A clock that never passes: the beat ends when the board's binary does, never at the
             // hook's limit on a loaded machine's clock.
             .env(

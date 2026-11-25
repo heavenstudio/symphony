@@ -3,7 +3,8 @@
 //! runs this binary's `beat` directly, not through `just`, so unmarked: `just tasks beat` binds
 //! nothing, as [`beat_event`] says). It runs around
 //! every tool call of every session in the repository, so it prints nothing, never fails, never
-//! starts the board's server and waits on it at most `WAIT`: any trouble, and the call goes on.
+//! starts the board's server and waits on it at most [`WAIT`] for each answer, or what
+//! [`WAIT_VAR`] sets: any trouble, and the call goes on.
 //! Each beat hands the board the tokens the session's own transcript gained since the key's last
 //! beat ([`crate::usage::transcript`]), read only for the hook's own event.
 
@@ -24,6 +25,9 @@ pub const BASH_TIMEOUT: f64 = 120.0;
 pub const BASH_TIMEOUT_MAX: f64 = 600.0;
 /// How long a beat waits on the board before it gives up.
 pub const WAIT: Duration = Duration::from_secs(2);
+/// Names the seconds a beat waits on the board in place of [`WAIT`], read only when set: a test's,
+/// whose beat must take on a loaded machine or must run out at once, and no session's.
+pub const WAIT_VAR: &str = "TASKS_BEAT_WAIT";
 
 /// What separates commands on a line, as `shlex` with `punctuation_chars` reads them.
 const PUNCTUATION: &str = "();<>|&";
@@ -472,7 +476,7 @@ pub fn run(input: &mut dyn std::io::Read, env: &Env, program: Option<&Path>) -> 
             .map_or_else(|| env.cwd.clone(), PathBuf::from);
         let reached = super::reach(env, &cwd, false).ok()?;
         let reached = super::Reached {
-            client: reached.client.waiting(WAIT),
+            client: reached.client.waiting(env.seconds(WAIT_VAR, WAIT)),
             ..reached
         };
         let store = super::open_beating(reached, &super::Clock::of(env).ok()?).ok()?;
