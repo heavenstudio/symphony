@@ -5,7 +5,10 @@
 //! takes the board's people and map as the tick's last look read them ([`Hub::people_read`]), so
 //! it reads them no second time, and reads the board's lines after the record's and the cards
 //! waiting from the main page's queue, again only when the board's newest line, the page, the
-//! people or the map moved; then it hands what is due.
+//! people or the map moved; then it hands what is due. While the board's last read failed it looks
+//! at nothing ([`Hub::people_looked`]), so nobody the board no longer names is told by an older
+//! look, and still hands what is due; a pass that can hand nothing waits for a wake, never for a
+//! notice it cannot hand.
 //!
 //! It tells only while its server generation's recording gate stands open
 //! ([`symphony_board::recording`]), as the board's recorders record: a reload's replacement,
@@ -153,6 +156,8 @@ impl Hub {
 
     /// Wake the notices' worker, where the hub has one: something it reads may have moved.
     pub(crate) fn wake_notices(&self) {
+        #[cfg(test)]
+        woken::found(self.people_looked());
         if let Some(worker) = self.notice_worker.get() {
             let _ = worker.wake.try_send(());
         }
@@ -202,40 +207,31 @@ impl Hub {
     /// One turn of the worker: a pass of the project's runner while its server generation's gate
     /// stands open, the runner opened (its record read) as the gate opens; none while it is held
     /// or closed, or before it is given, and the runner let go, so the record is read again when
-    /// it opens.
-    fn notice_turn(&self, turns: &mut Turns) {
+    /// it opens. Whether its pass handed what was due ([`Hub::notice_pass`]).
+    fn notice_turn(&self, turns: &mut Turns) -> bool {
         let open = (self.recording_gate.get())
             .is_some_and(|gate| matches!(gate.stands(), State::Open { .. }));
         if !open {
             turns.runner = None;
             turns.last = None;
-            return;
+            return false;
         }
         if turns.runner.is_none() {
             turns.runner = self.open_notices(&turns.project, &mut turns.said);
             turns.last = None;
         }
-        self.notice_pass(turns);
+        self.notice_pass(turns)
     }
 
-    /// One pass of the turns' runner: a look, where what it reads moved since the last, then the
-    /// hand of what is due. A machine folder, a board or profiles that cannot be read leaves the
-    /// record as it was, said once; programs that are refused send nothing, said once, and the
-    /// look goes on; comments held on documents that cannot be read are left out of it, said
-    /// once, and what stands of them stands, while the rest is told and handed.
-    fn notice_pass(&self, turns: &mut Turns) {
-        let Turns {
-            project,
-            bounds,
-            origin,
-            running,
-            runner,
-            last,
-            said,
-        } = turns;
-        let (Some(runner), Some(machine)) = (runner.as_mut(), self.machine.as_deref()) else {
-            return;
+    /// One pass of the turns' runner: a look ([`Hub::notice_look`]), then the hand of what is due,
+    /// whether it looked or not. Programs that are refused send nothing, said once, and the look
+    /// goes on. Whether it handed what was due: not where the profiles do not read or the record
+    /// cannot be written, said once, and the worker then waits for a wake ([`turn_until`]).
+    fn notice_pass(&self, turns: &mut Turns) -> bool {
+        let Some(machine) = (self.machine.as_deref()).filter(|_| turns.runner.is_some()) else {
+            return false;
         };
+        let (project, said) = (&turns.project, &mut turns.said);
         let programs = match Programs::read(machine) {
             Ok(programs) => {
                 said.clear("programs");
@@ -251,7 +247,58 @@ impl Hub {
                 said.clear("profiles");
                 profiles
             }
-            Err(why) => return said.once(project, "profiles", why),
+            Err(why) => {
+                said.once(project, "profiles", why);
+                return false;
+            }
+        };
+        self.notice_look(turns, &profiles, &programs);
+        let Turns {
+            project,
+            bounds,
+            running,
+            runner,
+            said,
+            ..
+        } = turns;
+        let Some(runner) = runner.as_mut() else {
+            return false;
+        };
+        let clock = || (self.clock)();
+        let ends = |pid: u32, within: Duration| symphony_board::sys::gone(i64::from(pid), within);
+        let mut handing = |program: &std::path::Path, line: &str, hidden: &[&str]| {
+            hand::hand(program, line, hidden, running, &ends, *bounds)
+        };
+        let mut log = |line: String| eprintln!("{line}");
+        match runner.hand_due(&profiles, &programs, &clock, &mut handing, &mut log) {
+            Ok(()) => {
+                said.clear("record");
+                true
+            }
+            Err(why) => {
+                said.once(project, "record", why);
+                false
+            }
+        }
+    }
+
+    /// The look of a pass, where what it reads moved since the last: none before the tick's first
+    /// look at the board's people, nor where the board or its people did not read since, said
+    /// once ([`Hub::people_looked`]); a board whose lines cannot be read, or a record that cannot
+    /// be written, leaves the record as it was, said once; comments held on documents that cannot
+    /// be read are left out of it, said once, and what stands of them stands, while the rest is
+    /// told.
+    fn notice_look(&self, turns: &mut Turns, profiles: &Profiles, programs: &Programs) {
+        let Turns {
+            project,
+            origin,
+            runner,
+            last,
+            said,
+            ..
+        } = turns;
+        let Some(runner) = runner.as_mut() else {
+            return;
         };
         let Some(latest) = *self.latest_message.lock().recover() else {
             return;
@@ -337,20 +384,14 @@ impl Hub {
                 lines,
                 latest,
             };
-            match runner.look(&look, &profiles, &programs, now, &mut **origin) {
-                Ok(()) => *last = Some(read),
-                Err(why) => return said.once(project, "record", why),
+            // Its own place, as the hand that follows clears the record's.
+            match runner.look(&look, profiles, programs, now, &mut **origin) {
+                Ok(()) => {
+                    said.clear("look");
+                    *last = Some(read);
+                }
+                Err(why) => said.once(project, "look", why),
             }
-        }
-        let clock = || (self.clock)();
-        let ends = |pid: u32, within: Duration| symphony_board::sys::gone(i64::from(pid), within);
-        let mut handing = |program: &std::path::Path, line: &str, hidden: &[&str]| {
-            hand::hand(program, line, hidden, running, &ends, *bounds)
-        };
-        let mut log = |line: String| eprintln!("{line}");
-        match runner.hand_due(&profiles, &programs, &clock, &mut handing, &mut log) {
-            Ok(()) => said.clear("record"),
-            Err(why) => said.once(project, "record", why),
         }
     }
 }
@@ -476,29 +517,68 @@ fn held_waiting(
 /// The worker: a pass at each wake, and when the next notice is due, until the server stops or the
 /// hub is gone.
 fn work(hub: &Weak<Hub>, woken: &mpsc::Receiver<()>, mut turns: Turns) {
+    // Until a wake, or until the next notice is due: a retry's backoff, its deadline the record's
+    // own (RULES.md `code/no-timed-waits`).
+    turn_until(hub, &mut turns, |within| match within {
+        None => woken.recv().is_ok(),
+        Some(within) => !matches!(
+            woken.recv_timeout(within),
+            Err(RecvTimeoutError::Disconnected)
+        ),
+    });
+}
+
+/// The worker's turns of `turns` until the server stops, the hub is gone or `wait` ends them:
+/// after each, `wait` waits for a wake, at most until the next notice is due (none: for a wake
+/// alone), and says whether to turn again. A turn that could not hand what was due waits for a
+/// wake alone, so a notice it cannot hand never turns it again at once.
+fn turn_until(hub: &Weak<Hub>, turns: &mut Turns, mut wait: impl FnMut(Option<Duration>) -> bool) {
     loop {
         if turns.running.stopping() {
             return;
         }
-        let now = {
+        let (handed, now) = {
             let Some(hub) = hub.upgrade() else {
                 return;
             };
-            hub.notice_turn(&mut turns);
-            (hub.clock)()
+            let handed = hub.notice_turn(turns);
+            (handed, (hub.clock)())
         };
-        // Until a wake, or until the next notice is due: a retry's backoff, its deadline the
-        // record's own (RULES.md `code/no-timed-waits`).
-        let woke = match turns.runner.as_ref().and_then(Runner::next_due) {
-            None => woken.recv().is_ok(),
-            Some(due) => !matches!(
-                woken.recv_timeout(Duration::from_secs_f64((due - now).max(0.0))),
-                Err(RecvTimeoutError::Disconnected)
-            ),
-        };
-        if !woke {
+        let due = (turns.runner.as_ref())
+            .and_then(Runner::next_due)
+            .filter(|_| handed);
+        if !wait(due.map(|due| Duration::from_secs_f64((due - now).max(0.0)))) {
             return;
         }
+    }
+}
+
+/// What the wakes of the notices on this thread found of the tick's look at the board's people
+/// ([`Hub::people_looked`]), for a test of the order of a tick's look and its wake.
+#[cfg(test)]
+pub(crate) mod woken {
+    use std::cell::RefCell;
+    use std::sync::Arc;
+    use symphony_board::people::People;
+    use symphony_board::people::ownership::Map;
+
+    /// What one wake found.
+    type Found = Result<Option<Arc<(People, Map)>>, String>;
+
+    thread_local! {
+        static WOKEN: RefCell<(usize, Option<Found>)> = const { RefCell::new((0, None)) };
+    }
+
+    pub(crate) fn found(look: Found) {
+        WOKEN.with_borrow_mut(|(wakes, last)| {
+            *wakes += 1;
+            *last = Some(look);
+        });
+    }
+
+    /// How many wakes this thread made since the last take, and what the last of them found.
+    pub(crate) fn take() -> (usize, Option<Found>) {
+        WOKEN.with_borrow_mut(std::mem::take)
     }
 }
 

@@ -79,7 +79,7 @@ impl FileAuthority {
                 self.path.display()
             ))
         };
-        let bound: Bound = serde_json::from_str(&text).map_err(|why| unknown(&why))?;
+        let bound: Bound = serde_json::from_slice(text.as_bytes()).map_err(|why| unknown(&why))?;
         if bound.format != 1 {
             return Err(unknown(&format_args!("format {}", bound.format)));
         }

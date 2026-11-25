@@ -28,6 +28,6 @@ pub fn get(port: u16, path: &str, timeout: Duration) -> Option<(u16, String)> {
 pub fn front(port: u16, timeout: Duration) -> Option<symphony_api::Front> {
     let (status, body) = get(port, symphony_api::FRONT_PATH, timeout)?;
     (status == 200)
-        .then(|| serde_json::from_str(&body).ok())
+        .then(|| serde_json::from_slice(body.as_bytes()).ok())
         .flatten()
 }

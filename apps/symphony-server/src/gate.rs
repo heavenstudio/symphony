@@ -362,7 +362,7 @@ fn verdict(whois: Result<Option<String>, String>) -> Option<Option<Peer>> {
 /// The node a whois answer names, with the login its `UserProfile` names unless the node is
 /// tagged; none when it names no node. A user is named by a non-zero id and a login name.
 fn peer_in(answer: &str) -> Option<Peer> {
-    let body: serde_json::Value = serde_json::from_str(answer).ok()?;
+    let body: serde_json::Value = serde_json::from_slice(answer.as_bytes()).ok()?;
     let node = body.get("Node").filter(|node| node.is_object())?;
     let profile = &body["UserProfile"];
     let login = profile["ID"]
@@ -405,7 +405,7 @@ fn own_in(status: &str) -> Option<Own> {
     if names.is_empty() {
         return None;
     }
-    let status: serde_json::Value = serde_json::from_str(status).ok()?;
+    let status: serde_json::Value = serde_json::from_slice(status.as_bytes()).ok()?;
     let me = &status["Self"];
     let user = me["UserID"].as_u64().filter(|id| *id != 0 && !tagged(me));
     Some(Own { names, user })
@@ -415,7 +415,7 @@ fn own_in(status: &str) -> Option<Own> {
 /// trailing dot, and its tailnet addresses, all lowercase. Garbage gives none, as does an empty
 /// name.
 fn names_in(status: &str) -> BTreeSet<String> {
-    let Ok(status) = serde_json::from_str::<serde_json::Value>(status) else {
+    let Ok(status) = serde_json::from_slice::<serde_json::Value>(status.as_bytes()) else {
         return BTreeSet::new();
     };
     let addresses = |list: &serde_json::Value| {
@@ -507,7 +507,8 @@ fn tailscale_status() -> Result<String, String> {
 
 /// This machine's MagicDNS name, without the trailing dot, when `tailscale status` gives one.
 pub fn magicdns_name() -> Option<String> {
-    let status: serde_json::Value = serde_json::from_str(&tailscale_status().ok()?).ok()?;
+    let status: serde_json::Value =
+        serde_json::from_slice(tailscale_status().ok()?.as_bytes()).ok()?;
     let name = status
         .get("Self")?
         .get("DNSName")?

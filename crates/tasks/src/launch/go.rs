@@ -82,7 +82,7 @@ pub fn screen(hc: &dyn Hc, terminal: &str) -> Result<String, LaunchError> {
 /// whatever its exit code.
 fn shown(hc: &dyn Hc, command: &str, terminal: &str) -> Result<(), LaunchError> {
     let out = hc.app(&["do", command, "--terminal", terminal])?;
-    match serde_json::from_str::<Value>(out.trim()) {
+    match serde_json::from_slice::<Value>(out.trim().as_bytes()) {
         Ok(Value::Object(said)) if said.get("error").is_some() => Err(LaunchError(format!(
             "herdr-app do {command}: {}",
             text(said.get("error"))

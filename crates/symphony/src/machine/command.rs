@@ -223,10 +223,10 @@ pub(crate) fn running_within(
         }
         Err(_) => return None,
     };
-    let record: Record = serde_json::from_str(&text).ok()?;
+    let record: Record = serde_json::from_slice(text.as_bytes()).ok()?;
     let (status, body) = get(record.port, symphony_api::FRONT_PATH, look).ok()?;
     (status == 200)
-        .then(|| serde_json::from_str(&body).ok())
+        .then(|| serde_json::from_slice(body.as_bytes()).ok())
         .flatten()
 }
 
@@ -242,12 +242,12 @@ pub fn writes(machine: &Path) -> Option<Vec<(String, Option<bool>)>> {
         port: u16,
     }
     let text = std::fs::read_to_string(machine.join(RECORD)).ok()?;
-    let record: Record = serde_json::from_str(&text).ok()?;
+    let record: Record = serde_json::from_slice(text.as_bytes()).ok()?;
     let (status, body) = get(record.port, symphony_api::listing::PROJECTS_PATH, LOOK).ok()?;
     if status != 200 {
         return None;
     }
-    let list: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let list: serde_json::Value = serde_json::from_slice(body.as_bytes()).ok()?;
     let projects = list.get("projects")?.as_array()?;
     Some(
         (projects.iter())
@@ -270,13 +270,13 @@ pub(crate) fn board_readiness_within(
     let url = format!("http://127.0.0.1:{}{path}", front.port);
     let checked = get(front.port, &path, look).and_then(|(status, body)| {
         if status != 200 {
-            let why = serde_json::from_str::<serde_json::Value>(&body)
+            let why = serde_json::from_slice::<serde_json::Value>(body.as_bytes())
                 .ok()
                 .and_then(|value| value["error"].as_str().map(str::to_string))
                 .unwrap_or_else(|| "no board JSON answer".into());
             return Err(format!("HTTP {status}: {why}"));
         }
-        serde_json::from_str::<symphony_api::TaskListing>(&body)
+        serde_json::from_slice::<symphony_api::TaskListing>(body.as_bytes())
             .map(|_| ())
             .map_err(|_| "HTTP 200 did not contain task-board JSON".to_string())
     });

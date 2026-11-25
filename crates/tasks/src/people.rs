@@ -571,7 +571,7 @@ impl Profiles {
 
 /// `people.json`'s text as profiles; else the field it does not parse at ([`field`]) and why.
 fn parse(text: &str) -> Result<Profiles, (String, serde_json::Error)> {
-    serde_json::from_str(text).map_err(|e| (field(&fault::steps(text, &e)), e))
+    serde_json::from_slice(text.as_bytes()).map_err(|e| (field(&fault::steps(text, &e)), e))
 }
 
 /// The names a profile's fields have in `people.json`, the only keys said of a fault in it.

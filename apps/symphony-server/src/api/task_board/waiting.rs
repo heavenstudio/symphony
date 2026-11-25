@@ -159,7 +159,7 @@ pub(super) fn project(
         return error(StatusCode::BAD_REQUEST, why);
     }
     let cursor = match query(request, "cursor")
-        .map(|text| serde_json::from_str::<Key>(&text))
+        .map(|text| serde_json::from_slice::<Key>(text.as_bytes()))
         .transpose()
     {
         Ok(cursor) if cursor.as_ref().is_none_or(|key| key.3.is_finite()) => cursor,

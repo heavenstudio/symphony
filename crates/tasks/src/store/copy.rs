@@ -111,7 +111,7 @@ impl Store {
         let (mut dump, copied): (Dump, Vec<(String, String, Value)>) =
             read_strictly(self.retrying(|| self.read_together(dump(), json!({})))?)?;
         for (slug, original, normalized) in copied {
-            let original: Value = serde_json::from_str(&original)
+            let original: Value = serde_json::from_slice(original.as_bytes())
                 .map_err(|e| Error::Db(format!("copied fields: {e}")))?;
             if let Some(task) = dump.tasks.iter_mut().find(|task| task.slug == slug) {
                 for (namespace, fields) in &mut task.fields {
