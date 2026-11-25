@@ -174,6 +174,16 @@ fn day_text(day: &Path) -> String {
     }
 }
 
+#[test]
+fn a_day_file_gone_since_it_was_listed_reads_as_a_day_with_no_lines() {
+    let dir = scratch("recorder-day-text");
+    let day = dir.join("2000-01-01.jsonl");
+    fs::write(&day, "{}\n").unwrap();
+    assert_eq!(day_text(&day), "{}\n");
+    fs::remove_file(&day).unwrap();
+    assert_eq!(day_text(&day), "");
+}
+
 /// The backstop of the tests' own waits for what a run records: the 30 s they once gave it, as
 /// `test_time::backstop` makes it (RULES.md `tests/no-test-fails-on-load`).
 pub(crate) fn patience() -> Duration {
