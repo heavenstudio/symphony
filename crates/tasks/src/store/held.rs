@@ -101,14 +101,15 @@ impl Store {
     }
 
     /// The held message `id` on `slug`'s thread, passed on by `by`: the owner or the person this
-    /// store writes for, or a session, which is the person at the machine's own agent. In one
-    /// write its words go on the thread under its author's name, marked a person's, to whom they
-    /// were written, with the passer first ([`passed_text`]), opening or joining the task's ask as
-    /// a person's message does, and the row is marked passed with that line's number. Refused, with
-    /// nothing written: no such message held on the task, one passed already (naming who passed
-    /// it), a session that is not on the board, and a board without the step. Whether `by` may
-    /// direct agents is its caller's to have checked, as every power is
-    /// (`apps/symphony-server/src/powers.rs`).
+    /// store writes for, or a session, which is the person at the machine's own agent. In one write
+    /// its words go on the thread under its author's name, marked a person's, to whom they were
+    /// written, with the passer first ([`passed_text`]), opening or joining the task's ask as a
+    /// person's message does, and the row is marked passed with that line's number. The line then
+    /// tells as a post's does: written to the task's executor where none reads it, the task's
+    /// orchestrators are told so once. Refused, with nothing written: no such message held on the
+    /// task, one passed already (naming who passed it), a session that is not on the board, and a
+    /// board without the step. Whether `by` may direct agents is its caller's to have checked, as
+    /// every power is (`apps/symphony-server/src/powers.rs`).
     pub fn pass(&self, slug: &str, id: i64, by: &str) -> Result<Held, Error> {
         let held = (self.held_on(slug)?.into_iter())
             .find(|held| held.id == id)
@@ -142,7 +143,12 @@ impl Store {
                 .posting()
                 .naming(&pg::TABLES)
         };
-        self.retrying(|| self.transact(body(), vars.clone()))
+        let passed: Held = self.retrying(|| self.transact(body(), vars.clone()))?;
+        // Its line tells as a post's does: once, where no executor reads it.
+        if let Some(line) = &passed.passed {
+            self.tell_line_if_unread(slug, line.line, &passed.author, passed.to.as_deref());
+        }
+        Ok(passed)
     }
 
     /// The messages held on `slug`, passed on or not, oldest first: none on a board without the

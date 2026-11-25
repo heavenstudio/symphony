@@ -76,9 +76,6 @@ pub struct Ran {
     pub err: String,
 }
 
-/// The seconds a beat waits on the board in place of its own (`symphony_board`'s `cli::beat`).
-pub const BEAT_WAIT_VAR: &str = "TASKS_BEAT_WAIT";
-
 /// An environment reaching a database of its own on the tests' server, its clock at `common::NOW`.
 pub fn env() -> Env {
     let db = common::postgresql();
@@ -92,7 +89,10 @@ pub fn env() -> Env {
         ),
         // The beat hook's own two seconds, which a loaded machine's server can take to start a
         // connection, after which the hook gives up without a word.
-        (BEAT_WAIT_VAR, common::LOOKUP_BACKSTOP.to_string()),
+        (
+            symphony_board::BEAT_WAIT_VAR,
+            common::LOOKUP_BACKSTOP.to_string(),
+        ),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
