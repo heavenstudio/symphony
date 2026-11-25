@@ -558,6 +558,8 @@ mod tests {
 
     /// Clippy reads the nearest clippy.toml alone: the crate's, which refuses a child made past
     /// [`command`] and [`command_with`], must hold the workspace's settings whole before its own.
+    /// symphony-app's lib tests hold every crate's to that (crates/symphony/src/channel_tests.rs);
+    /// this holds the board's in the board's own run, which an edit to it alone is tested by.
     #[test]
     fn the_crates_clippy_settings_start_with_the_workspaces() {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));

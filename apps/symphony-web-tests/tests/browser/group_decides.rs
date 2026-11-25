@@ -140,12 +140,16 @@ fn a_tasks_deciding_controls_are_drawn_for_one_who_decides_it_and_its_priority_a
                     "the approve is offered to one who decides it"
                 );
             } else {
-                // The offer is read; drawn for no one who does not decide it.
-                assert!(chrome.wait_for(
-                    "performance.getEntriesByType('resource').some(e => e.name.includes('/api/task-offer'))",
-                    SHOWN
-                ));
-                chrome.frames_with_fonts();
+                // The offer is read, and drawn for no one who does not decide it. The page's store
+                // marks a part's first answer once it has given it to the page (parts.ts), which
+                // draws again in that task's microtasks, before the look below.
+                assert!(
+                    chrome.wait_for(
+                        "performance.getEntriesByName('part offer visual/in-progress').length > 0",
+                        SHOWN
+                    ),
+                    "the page reads the offer"
+                );
             }
             let drawn = task_drawn(&mut chrome);
             let expected = if decides {

@@ -57,8 +57,8 @@ path = "tokio::time::interval_at"
 reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
 
 # The server's own, below the workspace's settings above. Clippy reads the nearest clippy.toml alone,
-# so this crate's starts with the workspace's whole (crates/symphony/src/channel_tests.rs holds every
-# crate's own to that).
+# so this crate's starts with the workspace's whole (src/wake.rs's tests hold it to that, and
+# crates/symphony/src/channel_tests.rs every crate's own).
 #
 # A channel the server's code makes is `crate::wake`'s (src/wake.rs), of `()` alone: std's is
 # compiled whole for each item type it carries, 5 to 16 KB of a binary a type, and the server's code

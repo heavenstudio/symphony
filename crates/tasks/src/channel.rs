@@ -190,9 +190,11 @@ mod tests {
 
     /// This module compiled by the build's own rustc as a crate of its own, after it a receiver of
     /// `General` (a fn type) returned as one of `received` (line 6) and a sender of `Static` (a fn
-    /// type `General` is a subtype of) as one of `sent` (line 7): whether it compiled, and each
-    /// error the compiler pointed at a line, by its code and that line.
-    fn compiled(name: &str, received: &str, sent: &str) -> (bool, Vec<(String, u64)>) {
+    /// type `General` is a subtype of) as one of `sent` (line 7), in `ends.rs`: whether it
+    /// compiled, and each error the compiler pointed at a line, by its code, that line's file
+    /// (`ends.rs`, or the whole path of a file outside the scratch folder) and the line. The
+    /// scratch folder goes whether rustc started or not.
+    fn compiled(name: &str, received: &str, sent: &str) -> (bool, Vec<(String, String, u64)>) {
         use crate::children::Child as _;
         let dir =
             std::env::temp_dir().join(format!("symphony-channel-{name}-{}", std::process::id()));
@@ -208,7 +210,7 @@ mod tests {
         );
         std::fs::write(&ends, source).unwrap();
         let rustc = std::path::Path::new(env!("CARGO")).with_file_name("rustc");
-        let output = std::process::Command::of(rustc)
+        let output = std::process::Command::of(&rustc)
             .args([
                 "--edition",
                 "2024",
@@ -227,9 +229,9 @@ mod tests {
             ])
             .arg("--out-dir")
             .args([&dir, &ends])
-            .output()
-            .unwrap();
+            .output();
         std::fs::remove_dir_all(&dir).unwrap();
+        let output = output.unwrap_or_else(|error| panic!("{}: {error}", rustc.display()));
         let errors = String::from_utf8_lossy(&output.stderr)
             .lines()
             .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
@@ -241,7 +243,13 @@ mod tests {
                     .as_str()
                     .unwrap_or_default()
                     .to_string();
-                Some((code, primary["line_start"].as_u64()?))
+                let file = std::path::Path::new(primary["file_name"].as_str()?);
+                let file = file
+                    .strip_prefix(&dir)
+                    .unwrap_or(file)
+                    .display()
+                    .to_string();
+                Some((code, file, primary["line_start"].as_u64()?))
             })
             .collect();
         (output.status.success(), errors)
@@ -252,7 +260,7 @@ mod tests {
         // Each end at its own type compiles: the module is read whole, so what is refused below is
         // the other type alone.
         assert_eq!(compiled("own", "General", "Static"), (true, vec![]));
-        let mismatched = |line| ("E0308".to_string(), line);
+        let mismatched = |line| ("E0308".to_string(), "ends.rs".to_string(), line);
         assert_eq!(
             compiled("other", "Static", "General"),
             (false, vec![mismatched(6), mismatched(7)]),
