@@ -10,7 +10,6 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
-use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
 use symphony_api::workflow::{GuardRefusal, GuardWhy, OperationRequest, RefusalCode, Signed};
@@ -20,6 +19,7 @@ use symphony_plugin::authority::{Operation, Snapshot};
 use symphony_plugin::execution::Principal;
 
 use super::{Failure, Refused};
+use crate::channel::{self, RecvTimeoutError};
 use crate::plugins::Plugins;
 
 /// How long an authority is given to answer: as long as any plugin's call
@@ -160,7 +160,7 @@ fn answer(
     operation: Operation,
     within: Duration,
 ) -> Result<symphony_plugin::authority::Signed, String> {
-    let (said, heard) = mpsc::channel();
+    let (said, heard) = channel::channel();
     let root = root.to_path_buf();
     std::thread::Builder::new()
         .name(format!("authority {}", authority.adapter()))

@@ -2,14 +2,15 @@
 //! more, never one each, for the wakes sent while a pass is pending or running.
 
 use super::passes;
+use crate::channel::channel;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 #[test]
 fn refreshes_in_a_row_while_a_pass_runs_ask_for_one_more_pass() {
-    let (wake, messages) = mpsc::channel::<Option<u32>>();
-    let (release, held) = mpsc::channel::<()>();
+    let (wake, messages) = channel::<Option<u32>>();
+    let (release, held) = channel::<()>();
     let began = Arc::new(AtomicUsize::new(0));
     let worker = std::thread::spawn({
         let began = began.clone();
@@ -47,7 +48,7 @@ fn refreshes_in_a_row_while_a_pass_runs_ask_for_one_more_pass() {
 
 #[test]
 fn a_pending_pass_takes_every_job_sent_before_it_in_order() {
-    let (send, messages) = mpsc::channel();
+    let (send, messages) = channel();
     for message in [Some(1), None, Some(2), None, None, Some(3)] {
         send.send(message).unwrap();
     }
@@ -59,7 +60,7 @@ fn a_pending_pass_takes_every_job_sent_before_it_in_order() {
 
 #[test]
 fn no_message_runs_no_pass() {
-    let (send, messages) = mpsc::channel::<Option<u32>>();
+    let (send, messages) = channel::<Option<u32>>();
     drop(send);
     passes(&messages, |jobs| panic!("a pass with no message: {jobs:?}"));
 }
