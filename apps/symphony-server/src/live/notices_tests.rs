@@ -482,6 +482,60 @@ fn a_comment_held_on_a_document_whose_row_does_not_read_is_told_at_the_next_look
     assert!(!passes.said.0.contains_key("held"), "the fault cleared");
 }
 
+/// A look whose read of the comments held on documents fails leaves them out alone: it says so
+/// once, and the card that started waiting, the question and the verdict are told and handed;
+/// what was told of a held comment stands, so once they read again it is told no one again, while
+/// one held meanwhile is told then.
+#[test]
+fn a_held_comment_that_does_not_read_leaves_out_the_held_part_of_a_look_alone() {
+    use symphony_board::held::Place as Left;
+    let telling = Telling::new(false);
+    telling.direct_agents(&["bo"]);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let ana = telling.f.other().for_person("ana");
+    let message = Left {
+        path: DOC.into(),
+        scope: None,
+        kind: "message".into(),
+        card: Some("old-grid".into()),
+        block: None,
+    };
+    let told_of = (ana.hold_on_document("ana", "Why grey?", &message)).unwrap();
+    passes.pass(&telling.hub);
+    let link = |id: i64| format!("{ORIGIN}/symphony/{DOC}#held-{id}");
+    let held = |id: i64| ("held".into(), "email".into(), BO_EMAIL.into(), link(id));
+    assert_eq!(telling.told(), [held(told_of.id)]);
+    let meanwhile = (ana.hold_on_document("ana", "And the reds?", &message)).unwrap();
+    let row = || (telling.f.store.raw()).row("held_message", json!(["document", meanwhile.id]));
+    row().set(json!({"stray": true})).unwrap();
+    ask_everything(&telling);
+    passes.pass(&telling.hub);
+    let kinds: Vec<String> = (telling.told().into_iter()).map(|told| told.0).collect();
+    assert_eq!(
+        kinds,
+        [
+            "held", "question", "question", "verdict", "verdict", "card", "card"
+        ],
+        "the rest told and handed"
+    );
+    let said = passes.said.0.get("held").cloned().unwrap_or_default();
+    assert!(
+        said.starts_with("the comments held on documents: "),
+        "{said}"
+    );
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 7);
+    row().set(json!({"stray": null})).unwrap();
+    passes.pass(&telling.hub);
+    assert_eq!(
+        telling.told()[7..],
+        [held(meanwhile.id)],
+        "the one held meanwhile alone"
+    );
+    assert!(!passes.said.0.contains_key("held"), "the fault cleared");
+}
+
 /// With nobody of the task's group able to pass it on but its author, every person of the board
 /// who may is told; with nobody but its author on the whole board, no one is, as the person at the
 /// machine is told by the page.

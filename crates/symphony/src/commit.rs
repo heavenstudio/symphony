@@ -9,11 +9,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use symphony_board::lock::Recovered as _;
 
+use crate::channel;
 use crate::children::command;
 use crate::landing::{PrivateWorktree, generators};
 use crate::plugins::Plugins;
@@ -2596,7 +2597,7 @@ fn publication_pass(
 /// message and of every one sent before the pass began, until every sender is gone. A message is
 /// a job, or a wake with none (`None`); a burst of wakes sent while a pass is pending or running
 /// asks for one more pass, never one each.
-fn passes<T>(messages: &mpsc::Receiver<Option<T>>, mut pass: impl FnMut(Vec<T>)) {
+fn passes<T: 'static>(messages: &channel::Receiver<Option<T>>, mut pass: impl FnMut(Vec<T>)) {
     while let Ok(first) = messages.recv() {
         pass(
             first
@@ -2610,18 +2611,18 @@ fn passes<T>(messages: &mpsc::Receiver<Option<T>>, mut pass: impl FnMut(Vec<T>))
 /// A fast commit worker and an output worker; saves only enqueue their immutable before/after edit.
 /// Same-file edits wait behind any generated branch they were written against.
 pub struct Committer {
-    send: Mutex<Option<mpsc::Sender<QueuedJob>>>,
+    send: Mutex<Option<channel::Sender<QueuedJob>>>,
     waiting: Waiting,
     workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
     root: PathBuf,
     /// What wakes the output worker for a pass with no new save ([`Committer::wake`]).
-    wake: Mutex<Option<mpsc::Sender<Option<QueuedJob>>>>,
+    wake: Mutex<Option<channel::Sender<Option<QueuedJob>>>>,
 }
 impl Committer {
     pub fn start(root: &Path, writes: Arc<Mutex<()>>) -> Self {
         let source = root.to_path_buf();
-        let (send, recv) = mpsc::channel::<QueuedJob>();
-        let (jobs, output_jobs) = mpsc::channel::<Option<QueuedJob>>();
+        let (send, recv) = channel::channel::<QueuedJob>();
+        let (jobs, output_jobs) = channel::channel::<Option<QueuedJob>>();
         let wake = jobs.clone();
         let waiting: Waiting = Arc::default();
         let ahead = Arc::new(Mutex::new(BTreeMap::<String, usize>::new()));

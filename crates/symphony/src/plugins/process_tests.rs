@@ -1247,7 +1247,7 @@ fn an_answer_after_its_call_was_given_up_is_logged_and_dropped_and_the_process_k
     let wait = Duration::from_secs(1);
     // The first render is answered only once the test lets it, after its call was given up; the
     // others at once, an answer to no call before each.
-    let (let_go, held) = mpsc::channel::<()>();
+    let (let_go, held) = std::sync::mpsc::channel::<()>();
     let held = Mutex::new(Some(held));
     let respond: Respond = Arc::new(move |id, _| {
         if let Some(held) = held.lock().recover().take() {
@@ -3098,7 +3098,7 @@ fn a_gates_answer_given_up_holds_its_turn_until_its_late_answer_comes() {
     let seen = Seen::default();
     // Its gates answer runs on until the test lets it go, past its cancel, as the SDK's worker
     // runs one on.
-    let (let_go, held) = mpsc::channel::<()>();
+    let (let_go, held) = std::sync::mpsc::channel::<()>();
     let held = Mutex::new(held);
     let respond: Respond = Arc::new(move |id, _| {
         let _ = held.lock().recover().recv();

@@ -848,6 +848,32 @@ and may not direct agents. A person who may direct agents writes as the owner do
   as that person's own are: written into the file or shown on the thread, and an ask an agent
   answers. The line carries both names, whose words they are and who passed them on.
 
+- [ ] **held-callout-block-changed** — A held comment is written after the block it was left on when it is passed on. Once that block's words change, or the block is gone, every Pass on is refused and nobody can withdraw the comment, so it stays on the page for good. What should happen to it? A: its author may withdraw it. B: whoever passes it on places it at the end of its section. C: it lapses and leaves the page. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+  [2026-11-25 01:19] agent — Posted for the board task `app/held-on-documents-follow-ups`, a question the pass leaves open once a document moves. Nothing that depends on it is built.
+
+    **Base (today).** A pass finds the block again by its words: under its own heading, else anywhere it stands once. Where they changed or are gone, the pass is refused with "the block this comment was left after has changed or is gone: nothing was written". The comment stays held, drawn where its block was, with a Pass on that is refused every time.
+
+    **A, its author withdraws it.**
+    - Its author sees Withdraw on it, and the board marks it withdrawn. It leaves the page and is told of no more.
+    - She may write it again where it belongs now.
+    - Until she does, it waits, and so does whoever was told of it.
+
+    **B, placed at its section's end.**
+    - Whoever may pass it on sees Pass on at the end of its section. That puts it after the last block under the heading it was left under, or at the document's end where that heading is gone, under both names as any pass is.
+    - The person deciding whether an agent reads it also decides that it still applies.
+
+    **C, it lapses.**
+    - Once its block is not found, it leaves the page and is told of no more. The board keeps the row.
+    - Nobody is asked, and its author is not told.
+
+    **Why B.** The words still say what she meant, and someone who may pass them on is the one told of them. B keeps them and needs nobody to come back. A waits on its author, who may never return, and C loses words without telling anyone.
+
+    **Earlier verdicts checked.**
+    - **words-without-agent-reach** (A) says a pass writes the words into the file. It does not say where once their block is gone.
+    - **held-on-document-waits-where** (open) asks where a held comment waits. It does not ask what happens once its block is gone.
+
+    Neither decides this.
+
 What follows:
 
 - **The board holds two kinds of words** where it held one: those in the record, which every
