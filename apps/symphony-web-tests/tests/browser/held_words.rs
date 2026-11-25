@@ -144,8 +144,18 @@ fn passed_on(width: u32, height: u32, mobile: bool) {
         ),
         "Pass on stays pressed until the feed brings the pass"
     );
+    // The button disables as it is pressed, before its post may have arrived: waited for.
+    let posted = test_time::until("Pass on's post arriving", super::STALL, || {
+        let posts = site.posts();
+        if posts.is_empty() {
+            page.pump(std::time::Duration::from_millis(25));
+            return None;
+        }
+        Some(posts)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
     assert_eq!(
-        site.posts(),
+        posted,
         [(
             symphony_api::TASK_PASS_ROUTE.to_string(),
             json!({"slug": SLUG, "id": 4})
