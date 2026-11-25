@@ -120,7 +120,7 @@ fn a_held_comment_is_a_row_of_its_own_no_thread_ask_or_tasks_read_carries() {
         f.store
             .held_on_document("docs/a.md", Some("feat~x"))
             .unwrap(),
-        [branch.clone()]
+        std::slice::from_ref(&branch)
     );
     assert_eq!(f.store.held_on_document("docs/a.md", None).unwrap(), both);
     assert_eq!(f.store.held_comment(held.id).unwrap(), Some(held.clone()));
@@ -147,7 +147,10 @@ fn a_task_message_and_a_document_comment_held_side_by_side_never_meet() {
         );
     }
     assert!(comments.iter().any(|comment| comment.id == on_task.id));
-    assert_eq!(f.store.held_on("tools/x").unwrap(), [on_task.clone()]);
+    assert_eq!(
+        f.store.held_on("tools/x").unwrap(),
+        std::slice::from_ref(&on_task)
+    );
     assert_eq!(
         f.store.held_on_documents().unwrap().len(),
         comments.len(),
@@ -179,7 +182,7 @@ fn a_pass_marks_the_comment_passed_once_and_names_who_passed_it() {
     assert_eq!(f.store.held_on_documents().unwrap(), []);
     assert_eq!(
         f.store.held_on_document("docs/a.md", None).unwrap(),
-        [passed.clone()]
+        std::slice::from_ref(&passed)
     );
     assert_eq!(
         refused(f.store.pass_on_document(held.id, "owner")),
