@@ -22,15 +22,19 @@ use symphony_board::people::ownership::Place;
 use symphony_plugin::{Actor, Sender};
 use tower::ServiceExt;
 
-const HOST: &str = "127.0.0.1:8123";
+pub(super) const HOST: &str = "127.0.0.1:8123";
 /// The person at the machine, as the gate admits loopback.
-const MACHINE: &str = "127.0.0.1:5000";
+pub(super) const MACHINE: &str = "127.0.0.1:5000";
 const DOC: &str = "docs/TOPIC.md";
 const PAGE: &str = "# Topic\n\n<!-- register:start -->\n- [ ] **one** — proposal.\n- [ ] **two** — \
                     another.\n<!-- register:end -->\n";
 
 /// What `request` is answered through the router of `shared` from `client`: its status and body.
-async fn sent(shared: &Arc<Shared>, client: &str, request: Request<Body>) -> (StatusCode, String) {
+pub(super) async fn sent(
+    shared: &Arc<Shared>,
+    client: &str,
+    request: Request<Body>,
+) -> (StatusCode, String) {
     let app = router(shared.clone()).layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()));
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
@@ -41,7 +45,7 @@ async fn sent(shared: &Arc<Shared>, client: &str, request: Request<Body>) -> (St
 }
 
 /// A read of `uri` from `client`, its body as JSON where it is.
-async fn read(shared: &Arc<Shared>, client: &str, uri: &str) -> (StatusCode, Value) {
+pub(super) async fn read(shared: &Arc<Shared>, client: &str, uri: &str) -> (StatusCode, Value) {
     let request = Request::get(uri)
         .header(header::HOST, HOST)
         .body(Body::empty())
@@ -54,7 +58,7 @@ async fn read(shared: &Arc<Shared>, client: &str, uri: &str) -> (StatusCode, Val
 }
 
 /// A save of `body` to `route` from `client`.
-async fn post(
+pub(super) async fn post(
     shared: &Arc<Shared>,
     client: &str,
     route: &str,
@@ -99,7 +103,7 @@ fn designs() -> Vec<Place> {
 
 /// The server of the project at `root`, whose gate admits the laptop's login as `name`, and
 /// loopback as the person at the machine.
-fn as_person(root: &Path, name: &str) -> Arc<Shared> {
+pub(super) fn as_person(root: &Path, name: &str) -> Arc<Shared> {
     let (at, person) = (
         root.to_path_buf(),
         Actor::new(
@@ -114,7 +118,7 @@ fn as_person(root: &Path, name: &str) -> Arc<Shared> {
 }
 
 /// `shared` with the hub its reads of a project's pages go through.
-fn with_hub(shared: Arc<Shared>, root: &Path) -> Arc<Shared> {
+pub(super) fn with_hub(shared: Arc<Shared>, root: &Path) -> Arc<Shared> {
     let hub = crate::live::Hub::new(root, &root.join("build/client"));
     assert!(shared.api.set(Arc::new(hub)).is_ok());
     shared

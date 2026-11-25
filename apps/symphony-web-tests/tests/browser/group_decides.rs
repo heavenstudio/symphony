@@ -2,8 +2,8 @@
 //! (docs/workflow/TASKS.md, "People"), the release client against the stand-in server answering
 //! with the owner the server says to each (`Owner.decides`): on a desk and a phone, a task's
 //! priority, cancel and approve drawn for one who decides it, and for one who does not its
-//! priority alone, as text; a card's verdicts and Dismiss for one who decides it, and for
-//! one who does not its message and Later alone; the Settings page's controls for one of its
+//! priority alone, as text; a card's verdicts, Dismiss and Later for one who decides it, and for
+//! one who does not its message alone; the Settings page's controls for one of its
 //! group, and its values alone for anyone else, whose read carries no preference to write.
 //!
 //! With `SYMPHONY_DECIDES_SHOTS` naming a folder, each page is saved there, whole, at each width
@@ -187,7 +187,7 @@ fn card_drawn(chrome: &mut Chrome) -> Value {
 }
 
 #[test]
-fn a_cards_verdicts_are_drawn_for_one_who_decides_it_and_its_message_and_later_alone_else() {
+fn a_cards_verdicts_and_later_are_drawn_for_one_who_decides_it_and_its_message_alone_else() {
     let Some(mut chrome) = chrome() else { return };
     for decides in [false, true] {
         let site = document_cards::probe_site();
@@ -216,7 +216,7 @@ fn a_cards_verdicts_are_drawn_for_one_who_decides_it_and_its_message_and_later_a
                 json!({"opener":"Close","verdicts":true,"dismiss":true,"later":true,
                        "send":true,"label":"Message or verdict note","within":true,"fault":false})
             } else {
-                json!({"opener":"Close","verdicts":false,"dismiss":false,"later":true,
+                json!({"opener":"Close","verdicts":false,"dismiss":false,"later":false,
                        "send":true,"label":"Message","within":true,"fault":false})
             };
             assert_eq!(drawn, expected, "{width}, decides {decides}");
@@ -227,13 +227,17 @@ fn a_cards_verdicts_are_drawn_for_one_who_decides_it_and_its_message_and_later_a
             };
             shot(&mut chrome, name, at);
         }
-        // Opening its editor marks the card seen in the queue, as for everyone; nothing else.
+        // Opening its editor marks the card seen in the queue of one who decides it; nothing else,
+        // and nothing for anyone else, whose queue it is not in.
         let posts = site.posts();
         assert!(
             (posts.iter())
                 .all(|(route, body)| route == "/api/postpone" && body["action"] == "seen"),
             "{posts:?}"
         );
+        if !decides {
+            assert_eq!(posts, [], "no visit of a card not theirs");
+        }
     }
 }
 

@@ -163,7 +163,7 @@ fn documents_that_arrive_after_the_start_are_read_within_a_period() {
     )
     .unwrap();
     assert_eq!(
-        hub.folder("", "docs/").unwrap().docs,
+        hub.folder("", "docs/", None).unwrap().docs,
         1,
         "the docs page lists them"
     );

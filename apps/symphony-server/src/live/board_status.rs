@@ -30,6 +30,7 @@ impl Hub {
                     *board = None;
                     return Err(());
                 }
+                super::measured("people tick", || self.people_read(store));
                 Ok(())
             },
         );
