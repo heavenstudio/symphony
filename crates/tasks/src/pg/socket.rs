@@ -134,16 +134,6 @@ impl Write for &Socket {
     }
 }
 
-impl Write for Socket {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        (&*self).write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::Socket;
@@ -234,6 +224,12 @@ mod tests {
         });
         assert!((1..(1 << 20)).contains(&taken.0), "{taken:?}");
         assert_eq!(taken.1, 0, "a full socket takes nothing more");
+
+        let (ours, gone) = UnixStream::pair().unwrap();
+        drop(gone);
+        let socket = Socket::waiting(ours, LONG).unwrap();
+        let why = socket.write_now(b"to no one").unwrap_err();
+        assert_eq!(why.kind(), io::ErrorKind::BrokenPipe, "{why}");
     }
 
     #[test]
