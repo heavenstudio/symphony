@@ -1323,6 +1323,31 @@ people on a board there are two kinds:
 On one machine with one person every agent is both at once: started by them, on their machine,
 directed by them. Nothing changes there.
 
+- [ ] **machine-agents-whose** — On a board that names other people, every agent on it still runs on your machine, on your credits: each is yours, and those holding a task's role are the board's shared agents too. What is left is whose words reach your agents there. A: every session on your machine is both, so anyone the board lets direct agents reaches any of them, as today. B: only a session holding a role on a task (its orchestrator, executor or reviewer) is shared; any other session is yours alone, and someone else's words to it come to you, not to the agent. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Agents beside people]]
+  [2026-11-24 21:45] agent — Posted for the board task `app/personal-agents`, step 5's last part. A concept: nothing is built by this card.
+
+    **Base (today).** Every agent that reaches a board runs on that board's machine: the board's commands write its database there, and no command reaches a hosted board yet. So every session is yours. Someone the board named who may speak and direct agents (`bo`) reaches every session as you do: on a task's thread, by an ask or a comment, and through the quick chat, which goes to whoever holds the chat.
+
+    **A, every session is both.**
+    - Your agents work for anyone the board lets direct agents, as they do today.
+    - "Their words reach its person, not the agent" first matters for an agent from another machine, once one can show a board whose it is (a later round).
+    - Nothing to build.
+
+    **B, only a session holding a task's role is shared.**
+    - Its orchestrator, executor or reviewer is the board's. Any other session is yours alone.
+    - bo's message to such a session, and bo's quick chat while the chat's session holds no task's role, come to you, and no agent is handed them until you pass them on.
+
+    **Under both** a session never decides a card or gives the `owner` stamp, and its own words are never held: it stands where you stand.
+
+    **Why A.** Giving bo the power to direct agents already lets bo set your machine's agents to work on your credits. B keeps the sessions you run for yourself to yourself, at the cost of a second rule for whose words reach a session, and of bo's quick chat coming to you instead of an agent.
+
+    **Earlier verdicts checked.**
+    - **review-not-own-agent** (A) has a personal agent stand where its person stands, and any fresh session review. It does not say which of your machine's sessions are personal and which shared.
+    - **task-acts-who** (A) says starting an agent on a task needs the power to direct agents. It does not say whose words reach an agent already running.
+    - **words-without-agent-reach** (A) holds the words of someone who may not direct agents. It is about whose words are held, not which agents the words of someone who may reach.
+
+    None of them decides this.
+
 Left for a later round: who hosts a board's shared agents and what a host may limit, beside the
 proposed execution providers, where a project's provider owns its runtime identity and
 credentials ([its analysis](../../engineering/analysis/remote-execution-attempts.md)); and how an
@@ -1434,8 +1459,35 @@ Each step can ship alone, and a machine with one person sees none of them.
    told to the members of the task's group as step 4 tells a question, an agent's read saying only
    how many are held; passed on with one press or `just tasks pass`, under both names, as an ask;
    and direct agents given and taken as any power
-   ([TASKS](../../workflow/TASKS.md#words-held-for-people)). Not yet: held comments on documents,
-   the verdict's note and personal agents.
+   ([TASKS](../../workflow/TASKS.md#words-held-for-people)). Not yet: held comments on documents
+   and the verdict's note.
+   Personal agents, as far as any agent reaches a board: every session that reaches one runs on
+   its machine, under its account and on its credits, since the board's commands write its
+   database there and none reaches a hosted board yet
+   ([POSTGRESQL](../../operations/POSTGRESQL.md#a-hosted-board)). So each is the person at the
+   machine's personal agent, and a shared agent too where it holds a task's role, and it stands
+   where they stand, each part held by a test:
+   - its words are never held, and a pass of held words by it is theirs
+     (`crates/tasks/tests/store/held_words.rs`:
+     `who_may_direct_agents_writes_as_the_owner_does_and_only_a_persons_words_are_held`,
+     `passed_on_the_words_reach_the_tasks_agents_once_under_both_names_and_ask`);
+   - it never writes as a person, so its approve is no `owner` stamp: the command line refuses
+     `owner` as its actor (`crates/tasks/tests/cli/commands.rs`:
+     `owner_actors_are_refused_by_flag_and_environment_without_changing_the_board`), no session
+     is given a person's name (`crates/tasks/tests/store/board_people.rs`:
+     `no_person_is_named_as_a_handle_and_no_session_is_given_a_persons_or_a_groups_name`), and a
+     session's approve meets no stamp (`crates/tasks/src/stamps/read/tests.rs`:
+     `the_owners_stamp_is_the_owners_approve_naming_the_tip_and_stale_at_a_later_commit`);
+   - it reviews by today's fresh-session rule (`crates/tasks/tests/store/verdict.rs`:
+     `whoever_orchestrates_orchestrated_or_filed_the_task_is_refused_its_review_at_once`,
+     `a_session_that_executed_the_task_gives_it_no_verdict_whatever_role_it_holds_now`).
+
+   Two things wait. On a board that names others, which of the machine's sessions are its
+   person's alone, whose words no one else's reach, is [an open card](#machine-agents-whose).
+   Another person's personal agent needs an agent on another machine to reach a board and prove
+   its handle and whose it is, a [later round's](#later-rounds), after step 7's agent
+   credentials: until then no record ties a session to a person, as one claimed by hand would say
+   what no session on the machine is.
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
    saves through the same writes as local ones. Then the Symphony's own sign-in service, a
    separate program in front.
