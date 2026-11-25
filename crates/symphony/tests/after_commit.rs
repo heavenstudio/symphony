@@ -2,6 +2,10 @@
 include!("common/commit_fixture.rs");
 use symphony_board::{rpc, sys};
 
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "common/test_channel.rs"]
+mod test_channel;
+
 #[path = "after_commit/delivery.rs"]
 mod delivery;
 #[path = "after_commit/publication_reports.rs"]
@@ -166,7 +170,7 @@ fn child_stages_are_forwarded_before_the_child_closes_its_output() {
     }
     // A pipe no git another test spawns meanwhile can keep: the relay's end comes with `child`'s.
     let (reader, mut child) = sys::pipe().unwrap();
-    let (send, receive) = std::sync::mpsc::channel();
+    let (send, receive) = crate::test_channel::channel();
     let forwarding = std::thread::spawn(move || {
         let mut saved = Vec::new();
         relay_output(

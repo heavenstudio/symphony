@@ -179,10 +179,10 @@ fn leaving_the_server_scope_joins_its_owned_workers() {
         )
     };
     std::thread::scope(|scope| {
-        let (entered, stopping) = std::sync::mpsc::channel();
-        let (release, finish) = std::sync::mpsc::channel();
-        let (finished, completed) = std::sync::mpsc::channel();
-        let (returned, stopped) = std::sync::mpsc::channel();
+        let (entered, stopping) = crate::test_channel::channel();
+        let (release, finish) = crate::test_channel::channel();
+        let (finished, completed) = crate::test_channel::channel();
+        let (returned, stopped) = crate::test_channel::channel();
         let working = shared.clone();
         let worker = std::thread::spawn(move || {
             // Only the stop wakes it.

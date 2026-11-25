@@ -241,7 +241,7 @@ fn the_machines_updates_lock_is_one_holder_at_a_time_and_never_makes_the_folder(
     let held = try_lock(&machine).unwrap().expect("free");
     assert!(try_lock(&machine).unwrap().is_none(), "held");
     // A second holder waits for the first: its wait ends with the first's drop.
-    let (sent, taken) = std::sync::mpsc::channel();
+    let (sent, taken) = crate::test_channel::channel();
     let waiting = {
         let machine = machine.clone();
         std::thread::spawn(move || {

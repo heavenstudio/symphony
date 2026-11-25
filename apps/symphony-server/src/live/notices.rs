@@ -134,7 +134,7 @@ impl Hub {
         origin: Origin,
     ) {
         self.notice_worker.get_or_init(|| {
-            let (wake, woken) = mpsc::sync_channel(1);
+            let (wake, woken) = crate::wake::sync_channel(1);
             let running = Arc::new(Running::default());
             let turns = Turns::new(project, bounds, origin, running.clone());
             let weak = Arc::downgrade(self);
