@@ -84,7 +84,10 @@ fn the_names_consumers_call_keep_their_shapes() {
     // The store, opened on a client, and what consumers ask of it.
     let _: fn(&str, &str, &str) -> Client = Client::new;
     let _: fn(Client) -> Result<Store> = Store::open;
-    let _ = |client: Client| Store::with(client, Box::new(|| 0.0), Box::new(|_| false), "host");
+    // Its return held as well: a consumer goes on with the store it opened.
+    let _ = |client: Client| -> Result<Store> {
+        Store::with(client, Box::new(|| 0.0), Box::new(|_| false), "host")
+    };
     // A consumer's fixture opens the store on a PostgreSQL client of its own, at this build's
     // schema to write, and asks that client its address and another of its databases.
     let _: fn(
@@ -446,7 +449,8 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: Option<&server::Running> = None;
     // A PostgreSQL of a consumer's fixture's own on a home of its own: the engine it makes the
     // home for, the server it ensures and stops, where its programs are and the socket's file.
-    let _ = |home: server::Home| home.telling(|_| {});
+    // Its return held, as a consumer chains `.postgresql(&programs)` on it.
+    let _ = |home: server::Home| -> server::Home { home.telling(|_| {}) };
     let _: fn(&server::Home, server::Engine) -> std::result::Result<(), server::ServerError> =
         server::Home::initialize_backend;
     let _: fn(&server::Home, &Path) -> server::Postgres = server::Home::postgresql;
