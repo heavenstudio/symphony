@@ -2213,7 +2213,7 @@ impl OutputJob {
                 Err(error) => report_journal_error(root, &folder, &error.to_string()),
             }
         }
-        paths.sort();
+        symphony_board::order::sort_by(&mut paths, &Ord::cmp);
         let mut found = Vec::new();
         for path in paths {
             if path.extension().is_none_or(|extension| extension != "json") {
