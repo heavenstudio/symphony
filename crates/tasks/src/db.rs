@@ -1,6 +1,5 @@
-//! What every database the board runs on shares: why a query gave no results ([`DbError`]) and
-//! the names that need no quoting ([`plain`]). Each client answers in these, SurrealDB's
-//! ([`crate::rpc`]) and PostgreSQL's ([`crate::pg`]) alike.
+//! Why a query gave no results ([`DbError`]), in which the board's PostgreSQL clients answer
+//! ([`crate::pg`]), and the names that need no quoting ([`plain`]).
 
 use std::fmt;
 
@@ -10,8 +9,8 @@ pub enum DbError {
     /// Another transaction committed a write to what this one wrote first, and the database says
     /// the transaction can be retried.
     Conflict,
-    /// The statement's own refusal, with its message: a `THROW` in SurrealDB's query, or a `RAISE`
-    /// in PostgreSQL's (SQLSTATE `P0001`).
+    /// The statement's own refusal, with its message: a `RAISE` in PostgreSQL's (SQLSTATE
+    /// `P0001`).
     Thrown(String),
     /// Anything else, in the server's words (or why it could not be reached).
     Failed(String),

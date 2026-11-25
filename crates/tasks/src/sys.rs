@@ -288,7 +288,7 @@ pub fn terminate(pid: i64, hard: bool) -> bool {
 
 /// Whether a child std forks beside this process's connections holds `fd` before its exec, as
 /// the child's own table says: the probe of a connection no spawn copies (the board's PostgreSQL
-/// socket, the `rpc` client's kept connection), against std's socket as the control.
+/// socket), against std's socket as the control.
 #[cfg(all(test, target_vendor = "apple"))]
 pub(crate) fn a_forked_child_holds(fd: std::os::fd::RawFd) -> bool {
     use crate::children::Child as _;
