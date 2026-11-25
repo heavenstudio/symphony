@@ -886,14 +886,9 @@ impl Saves {
                 handing = Some(hand);
                 text
             }
-            "/api/message" => edit::add_message_by(
-                &original,
-                slug,
-                string(payload, "text"),
-                &now,
-                name,
-                None,
-            )?,
+            "/api/message" => {
+                edit::add_message_by(&original, slug, string(payload, "text"), &now, name, None)?
+            }
             "/api/comment" => {
                 let (title, body) = comment.as_ref().expect("a comment's words were read");
                 let line = match pass.and_then(|held| held.document.block.as_ref()) {
@@ -1040,7 +1035,8 @@ impl Saves {
         actor: &Actor,
         payload: &Value,
     ) -> Result<(Value, Option<NewAsk>, Told), Failure> {
-        let id = (payload["id"].as_i64()).ok_or("id must be a held comment's number".to_string())?;
+        let id =
+            (payload["id"].as_i64()).ok_or("id must be a held comment's number".to_string())?;
         let found = self.store_by(actor.name())?.held_comment(id)?;
         if let Some(refused) = held::not_held(id, found.as_ref()) {
             return Err(refused);

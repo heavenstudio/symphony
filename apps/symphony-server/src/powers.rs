@@ -48,9 +48,7 @@ pub(crate) fn needs(route: &str) -> Needs {
         | "/api/quick-task"
         | symphony_api::TASK_PASS_ROUTE
         | symphony_api::DOCUMENT_PASS_ROUTE => SPEAK_TO_AGENTS,
-        "/api/task-message" | "/api/comment" | "/api/message" | symphony_api::UPLOAD_PATH => {
-            SPEAK
-        }
+        "/api/task-message" | "/api/comment" | "/api/message" | symphony_api::UPLOAD_PATH => SPEAK,
         symphony_api::ATTEMPT_CONTROL_ROUTE | symphony_api::ATTEMPT_VIEW_ROUTE => DIRECT_ATTEMPTS,
         symphony_api::PEOPLE_CHANGE_PATH => ADMINISTER,
         symphony_api::PROFILE_PATH

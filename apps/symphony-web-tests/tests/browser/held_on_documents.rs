@@ -78,7 +78,11 @@ fn shown(page: &mut Chrome, count: usize) -> Value {
 
 /// ana's callout and message as drawn, Pass on with them where `passes`.
 fn both(passes: bool) -> Value {
-    let buttons = if passes { json!(["Pass on"]) } else { json!([]) };
+    let buttons = if passes {
+        json!(["Pass on"])
+    } else {
+        json!([])
+    };
     json!([
         {"id": "held-4", "under": "intro", "author": "ana", "kind": "question", "mark": "held",
          "words": WORDS, "buttons": buttons, "within": true},
@@ -124,7 +128,10 @@ fn a_comment_held_for_one_who_may_not_direct_agents_is_drawn_where_it_was_left_w
         page.eval(&format!("document.querySelector({}).click()", json!(add)));
         let text = "[data-doc-key=\"intro\"] form.comment textarea";
         assert!(page.wait_for(
-            &format!("document.activeElement === document.querySelector({})", json!(text)),
+            &format!(
+                "document.activeElement === document.querySelector({})",
+                json!(text)
+            ),
             SHOWN
         ));
         page.call("Input.insertText", json!({"text": WORDS}));
@@ -140,7 +147,11 @@ fn a_comment_held_for_one_who_may_not_direct_agents_is_drawn_where_it_was_left_w
         let posts = site.posts();
         assert_eq!(posts.len(), 1, "{posts:?}");
         assert_eq!(posts[0].0, "/api/comment");
-        assert_eq!(drawn(&mut page), json!([]), "nothing until the feed says so");
+        assert_eq!(
+            drawn(&mut page),
+            json!([]),
+            "nothing until the feed says so"
+        );
         holding(&site, &[callout(), message()], false);
         // The page opens its feed again naming its sections: an event pushed before that is lost.
         test_time::until_true("the page's feed following the intro", super::STALL, || {

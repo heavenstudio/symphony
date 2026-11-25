@@ -315,11 +315,12 @@ impl Hub {
                     .map(|(doc, slug, _)| (doc.clone(), slug.clone()))
                     .collect();
                 let owners = symphony::owners::waiting(&people, &map, &self.root, &named);
-                let cards = (cards.into_iter().zip(owners))
-                    .map(|((doc, slug, href), owning)| {
-                        Waiting::card(format!("{doc}#{slug}"), href, owning)
-                    });
-                cards.chain(held_waiting(&people, &map, &self.root, &held)).collect()
+                let cards = (cards.into_iter().zip(owners)).map(|((doc, slug, href), owning)| {
+                    Waiting::card(format!("{doc}#{slug}"), href, owning)
+                });
+                cards
+                    .chain(held_waiting(&people, &map, &self.root, &held))
+                    .collect()
             });
             let look = Look {
                 people: &people,

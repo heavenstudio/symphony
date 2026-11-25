@@ -149,7 +149,9 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
         // A comment held, or one passed on: open document pages read theirs again, and those
         // who may pass a held one on are told.
         let held = matches!(route.as_str(), "/api/comment" | "/api/message")
-            && result.as_ref().is_ok_and(|value| value.get("held").is_some());
+            && result
+                .as_ref()
+                .is_ok_and(|value| value.get("held").is_some());
         if (held || (result.is_ok() && route == symphony_api::DOCUMENT_PASS_ROUTE))
             && let Some(hub) = shared.api.get()
         {

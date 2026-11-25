@@ -198,13 +198,23 @@ mod tests {
         );
         assert!(comment(kind.clone(), 0).is_err() && comment(kind, 99).is_err());
         let placed = ok(comment(json!({"kind": "decision"}), 9));
-        assert_eq!((placed.kind.as_str(), placed.card, placed.scope), ("decision", None, None));
+        assert_eq!(
+            (placed.kind.as_str(), placed.card, placed.scope),
+            ("decision", None, None)
+        );
     }
 
     #[test]
     fn a_message_is_left_on_its_card_and_a_branchs_page_keeps_its_scope() {
         let payload = json!({"slug": "one", "text": "And why?"});
-        let placed = ok(place("/api/message", "feat~x", "docs/a.md", PAGE, &payload, 0));
+        let placed = ok(place(
+            "/api/message",
+            "feat~x",
+            "docs/a.md",
+            PAGE,
+            &payload,
+            0,
+        ));
         assert_eq!(
             placed,
             Place {
@@ -232,9 +242,16 @@ mod tests {
         assert!(moved.error.contains("several places"), "{}", moved.error);
         // Lines that stand once are found by them alone, whatever the key.
         let other = block("section:gone:1", 9, "Other prose.");
-        assert_eq!(ok(found_again(&grown, &other)), 11, "the one block holding them");
+        assert_eq!(
+            ok(found_again(&grown, &other)),
+            11,
+            "the one block holding them"
+        );
         // Its lines changed, or stand twice under no block of its key: refused.
-        let changed = refused(found_again(PAGE, &block("section:topic:1", 3, "Some proze.")));
+        let changed = refused(found_again(
+            PAGE,
+            &block("section:topic:1", 3, "Some proze."),
+        ));
         assert_eq!(
             (changed.status, changed.error.as_str()),
             (
@@ -257,7 +274,10 @@ mod tests {
         assert_eq!(words("/api/message", &json!({"text": "Hi"})), "Hi");
         let parts = json!({"title": "Title", "body": "Body"});
         assert_eq!(words("/api/comment", &parts), "Title\nBody");
-        assert_eq!(words("/api/comment", &json!({"title": "T", "body": " "})), "T");
+        assert_eq!(
+            words("/api/comment", &json!({"title": "T", "body": " "})),
+            "T"
+        );
     }
 
     fn held(card: Option<&str>, passed: Option<&str>) -> OnDocument {
@@ -268,7 +288,9 @@ mod tests {
                 scope: None,
                 kind: if card.is_some() { MESSAGE } else { "comment" }.into(),
                 card: card.map(String::from),
-                block: card.is_none().then(|| block("section:topic:1", 3, "Some prose.")),
+                block: card
+                    .is_none()
+                    .then(|| block("section:topic:1", 3, "Some prose.")),
             },
             author: "ana".into(),
             text: "Lamps\nToo many".into(),
@@ -305,12 +327,18 @@ mod tests {
         let none = not_held(9, None).unwrap();
         assert_eq!(
             (none.status, none.error.as_str()),
-            (404, "no comment #9 is held on a document: nothing was written")
+            (
+                404,
+                "no comment #9 is held on a document: nothing was written"
+            )
         );
         let passed = not_held(4, Some(&held(None, Some("bo")))).unwrap();
         assert_eq!(
             (passed.status, passed.error.as_str()),
-            (409, "comment #4 was passed on already, by bo: nothing was written")
+            (
+                409,
+                "comment #4 was passed on already, by bo: nothing was written"
+            )
         );
         assert!(not_held(4, Some(&held(None, None))).is_none());
     }

@@ -178,7 +178,12 @@ impl Runner {
             let record = Record {
                 line: look.latest,
                 cards: (cards.iter())
-                    .map(|card| (card.key.clone(), card.told(look.people).into_iter().collect()))
+                    .map(|card| {
+                        (
+                            card.key.clone(),
+                            card.told(look.people).into_iter().collect(),
+                        )
+                    })
                     .collect(),
                 pending: Vec::new(),
             };

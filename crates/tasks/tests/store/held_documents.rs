@@ -10,12 +10,12 @@
 //! written with its note, not held.
 
 use super::common::{Fixture, NOW, Seed, refused};
+use symphony_board::Store;
 use symphony_board::held::{Block, MESSAGE, OnDocument, PassedOn, Place, Said};
 use symphony_board::people::ownership::Place as Mapped;
 use symphony_board::people::{Holder, Power};
 use symphony_board::schema::{ADDED, HELD};
 use symphony_board::stamps::read::reads_as_approve;
-use symphony_board::Store;
 
 /// The words every case holds, which no agent's read may carry.
 const WORDS: &str = "141 lamps\nFar too many to validate.";
@@ -108,14 +108,18 @@ fn a_held_comment_is_a_row_of_its_own_no_thread_ask_or_tasks_read_carries() {
     assert_eq!(f.store.held_on_document("docs/a.md", None).unwrap(), both);
     assert_eq!(f.store.held_on_document("docs/b.md", None).unwrap(), []);
     assert_eq!(
-        f.store.held_on_document("docs/a.md", Some("feat~x")).unwrap(),
+        f.store
+            .held_on_document("docs/a.md", Some("feat~x"))
+            .unwrap(),
         []
     );
     let branch = ana
         .hold_on_document("ana", WORDS, &callout("docs/a.md", Some("feat~x"), "k"))
         .unwrap();
     assert_eq!(
-        f.store.held_on_document("docs/a.md", Some("feat~x")).unwrap(),
+        f.store
+            .held_on_document("docs/a.md", Some("feat~x"))
+            .unwrap(),
         [branch.clone()]
     );
     assert_eq!(f.store.held_on_document("docs/a.md", None).unwrap(), both);
@@ -295,7 +299,9 @@ fn an_approve_with_its_note_by_one_who_may_decide_and_not_direct_agents_is_writt
     assert!(reads_as_approve(&line.text));
     let asks = f.store.asks(None).unwrap();
     assert_eq!(
-        asks.iter().map(|ask| ask.task.as_deref()).collect::<Vec<_>>(),
+        asks.iter()
+            .map(|ask| ask.task.as_deref())
+            .collect::<Vec<_>>(),
         [Some("tools/x")],
         "her note waits on an agent's answer"
     );
