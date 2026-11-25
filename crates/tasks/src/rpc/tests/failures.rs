@@ -55,7 +55,7 @@ fn a_client_waits_on_a_silent_server_no_longer_than_it_was_told() {
 fn a_request_a_kept_connection_took_and_never_answered_is_not_sent_again() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap().to_string();
-    let (queried, query_ended) = std::sync::mpsc::channel::<()>();
+    let (queried, query_ended) = crate::test_channel::channel::<()>();
     let served = std::thread::spawn(move || {
         let (mut kept, _) = listener.accept().unwrap();
         for _ in 0..3 {

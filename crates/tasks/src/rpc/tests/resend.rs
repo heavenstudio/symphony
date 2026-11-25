@@ -8,7 +8,7 @@ use serde_json::json;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// The client's wait in these tests, which a held answer runs out.
@@ -258,7 +258,7 @@ fn a_reply_trickling_in_past_the_wait_is_late_and_its_read_gives_up_long_before_
 fn a_late_read_whose_resend_is_refused_says_the_server_did_not_answer() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap().to_string();
-    let (gone, went) = mpsc::channel();
+    let (gone, went) = crate::test_channel::channel();
     let held = std::thread::spawn(move || {
         let (mut taken, _) = listener.accept().unwrap();
         read_request(&mut taken);
