@@ -293,6 +293,18 @@
   > :is(p, ul, ol, h2, h3, h4, blockquote) {
   max-width: var(--measure);
 }
+/* So is a held callout under a section, whose prose keeps the measure. */
+.doc-section:where(:not(.doc-card):has(> .held-comments)) {
+  box-sizing: border-box;
+  max-width: calc(var(--measure) + 12ch);
+  padding-right: 0;
+}
+.doc-section:where(:not(.doc-card):has(> .held-comments)) > .section-prose {
+  max-width: var(--measure);
+}
+.doc-section:where(:not(.doc-card):has(> .section-prose > .callout)) > .section-prose {
+  max-width: none;
+}
 /* The section's "+ comment" (.add) sits over its first callout's top right corner: that callout's
  * title stops its first line short of the button, with room for its longer "Close comment". */
 .doc-section:where(:has(> .section-prose > .callout))

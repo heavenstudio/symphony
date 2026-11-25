@@ -246,7 +246,7 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
   }, [scope, refreshed, orders]);
   const state = page.state;
   const owners = useCardOwners(path, scope, state?.latest ?? null, refreshed);
-  const held = useHeld(path, scope, state?.shown.sections ?? null, page.held, refreshed);
+  const held = useHeld(path, scope, state?.shown.sections ?? null, page.heldMoves, refreshed);
   const device = shown(page.freshness);
   const trouble = page.trouble;
   // An intro the server no longer has follows no feed: the folder's next read drops it.
@@ -330,26 +330,26 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
     <PageContext.Provider value={page}>
       <CardOwnersContext.Provider value={owners}>
         <HeldContext.Provider value={held}>
-        <div
-          className="document-page"
-          data-ready={ready}
-          data-feed={page.stale ? "stale" : "live"}
-          data-cache={device ? "device" : undefined}
-          aria-busy={`${state === null && trouble === null && !missing}`}
-        >
-          {body}
-          {/* Until the document is shown, what kept it away is the block above's to say, once. */}
-          {!embedded && (
-            <PageNotices
-              reconnecting={page.stale && state !== null}
-              reconnect={RECONNECT}
-              error={state !== null ? (trouble ?? "") : ""}
-              documentRemoved={removed}
-              device={device}
-              composer
-            />
-          )}
-        </div>
+          <div
+            className="document-page"
+            data-ready={ready}
+            data-feed={page.stale ? "stale" : "live"}
+            data-cache={device ? "device" : undefined}
+            aria-busy={`${state === null && trouble === null && !missing}`}
+          >
+            {body}
+            {/* Until the document is shown, what kept it away is the block above's to say, once. */}
+            {!embedded && (
+              <PageNotices
+                reconnecting={page.stale && state !== null}
+                reconnect={RECONNECT}
+                error={state !== null ? (trouble ?? "") : ""}
+                documentRemoved={removed}
+                device={device}
+                composer
+              />
+            )}
+          </div>
         </HeldContext.Provider>
       </CardOwnersContext.Provider>
     </PageContext.Provider>

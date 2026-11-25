@@ -402,12 +402,7 @@ export interface Ending {
  * owner has written since sending stay as they are, the form open. A comment or a message the
  * board `kept` for people says so.
  */
-export function ending(
-  heldWords: Words | null,
-  last: Words,
-  boxed: string,
-  kept = false,
-): Ending {
+export function ending(heldWords: Words | null, last: Words, boxed: string, kept = false): Ending {
   const unchanged = boxed === last.note;
   if (heldWords === null) {
     return {

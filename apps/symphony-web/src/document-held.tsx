@@ -151,6 +151,19 @@ export function HeldUnder({ sectionKey }: { sectionKey: string }) {
   );
 }
 
+/**
+ * Pass the held comment `id` on with `pass`: what its box says then, nothing once passed (the next
+ * read leaves it out and it is drawn no more), else the refusal in the server's words.
+ */
+export async function passOn(id: number, pass: (id: number) => Promise<void>): Promise<string> {
+  try {
+    await pass(id);
+    return "";
+  } catch (error) {
+    return said(error);
+  }
+}
+
 /** One held comment: who wrote it, its kind, "held", its words, and Pass on where it may be. */
 export function HeldOne({
   comment,
@@ -171,15 +184,11 @@ export function HeldOne({
     working.current = true;
     setBusy(true);
     setTold("");
-    try {
-      // Passed, the next read leaves it out and it is drawn no more.
-      await pass(comment.id);
-    } catch (error) {
-      if (mount.aborted) return;
-      setTold(said(error));
-      working.current = false;
-      setBusy(false);
-    }
+    const refused = await passOn(comment.id, pass);
+    if (mount.aborted || refused === "") return;
+    setTold(refused);
+    working.current = false;
+    setBusy(false);
   };
   return (
     <div className="held-comment" id={`held-${comment.id}`} data-kind={comment.kind}>
