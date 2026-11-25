@@ -318,8 +318,9 @@ impl Store {
 
     /// The comments on documents passed into the checkout `scope` (a worktree's id) kept under the
     /// project's own from now on, once a sweep removed its worktree (`crate::sweep`): it removes
-    /// one only when its HEAD is in main and it holds nothing that did not land, so every line a
-    /// pass wrote into its files is in main's, where the count of a later pass reads its row
+    /// one only when its HEAD is in main and it holds nothing that did not land, and moves its
+    /// rows only once no other worktree holds its branch, so every line a pass wrote into its
+    /// files is in main's, where the count of a later pass reads its row
     /// (`crates/symphony/src/save/held.rs`). One still held stays where its page drew it. How many
     /// moved: none, with nothing written, where none was passed into it, as on a board without the
     /// step.

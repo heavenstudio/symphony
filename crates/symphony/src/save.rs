@@ -880,7 +880,8 @@ impl Saves {
         // worktree's are main's once a sweep removed it, all it held landed
         // (`Store::held_landed`). Until then, or for a branch merged by hand whose worktree is
         // never swept, the line a landed branch brought is no row of main's: a later pass of the
-        // same words onto main's card is marked without its own line, once too few.
+        // same words onto main's card is marked without its own line, once too few. So is one in
+        // a landed branch reopened in a new worktree, whose rows went to main's with the old one.
         //
         // Three cases are left, each needing a press whose words went in and whose mark was
         // refused, then another press of that comment; each leaves her words twice on one card:
@@ -896,6 +897,13 @@ impl Saves {
         //   one into it writes them twice there. The product never deletes a branch that did not
         //   land (a land deletes the one it landed, a sweep only landed ones), and a branch is
         //   named for its task's slug, which one task holds: only a hand meets it.
+        //
+        // A hand also makes a moved row count a line main lacks, so that the press after one whose
+        // mark was refused writes the words twice on main's card: the pass's line discarded while
+        // uncommitted, or dropped by a reset or a rebase of the branch, before the sweep removes
+        // the clean tree. Two worktrees on one branch (`git worktree add --force`), the pass
+        // writing into the one that stays, would be another, but the sweep moves no row while
+        // another worktree holds the branch.
         if let Some((store, passed, into)) = &passing {
             let rows = store.held_on_document(&rel, *into)?;
             if held::written_already(&original, passed, &rows) {
