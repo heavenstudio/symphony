@@ -2398,10 +2398,11 @@ as it did before. That person stays `owner`, with every power, once others are n
   ([the server guide](../../apps/symphony-server/README.md#who-a-request-is-from)).
 - **What each write needs**, read from the board as the write arrives, so a revoke holds from the
   next one: a card's verdict and its note, Later, a task's priority, field, cancel and action (the
-  approve that is the `owner` stamp among them), a workflow's edge and a setting need `decide`; a
-  comment, a message, an ask, its reply, the quick chat, a quick task and passing a held message on
-  (`/api/task-pass`) need `speak` and `direct_agents`; a task's message needs `speak`, held for
-  people where its writer lacks `direct_agents`; an upload needs `speak`; an attempt's controls
+  approve that is the `owner` stamp among them), a workflow's edge and a setting need `decide`; an
+  ask, its reply, the quick chat, a quick task and passing a held message or a held comment on
+  (`/api/task-pass`, `/api/document-pass`) need `speak` and `direct_agents`; a task's message, a
+  document's comment and a card's message need `speak`, held for people where their writer lacks
+  `direct_agents`; an upload needs `speak`; an attempt's controls
   need `decide` and `direct_agents`; a change of the board's people needs `administer`, and a
   profile's write from the People page and a hand-over ([below](#which-group-a-thing-belongs-to))
   being on the board; anything else is the person at the machine's alone. A refusal is a
@@ -2548,6 +2549,21 @@ them.
   ([NOTICES](../engineering/NOTICES.md#the-servers-part)). A message passed on before its line
   is told of tells no one, and its pass is a person's line, which tells no one either. A board
   with nobody named holds nothing, and every line reads as before.
+- **On a document** a callout or a card's message from such a person is held the same way, in a
+  row of the same table that names its document (its path and checkout), its kind, its card, or
+  the block a callout was left after by its section's key, its last line and its lines then; no
+  task's read, thread or ask carries it. Nothing of it reaches a clone: no file is written, no
+  commit or delivery made, no ask opened and no callback sent, and an agent is told nothing of it.
+  The document's page draws each where it was left (`/api/document-held?path=DOC`), a callout under
+  its section and a message in its card, with her name, its kind, the state `held` and her words,
+  and Pass on for those who may pass a held message on. A pass (`/api/document-pass`) writes it
+  into the file as her own save would, her name on it and the passer first in its words, then
+  opens or joins its ask and tells the chat, as hers; a callout goes after its block found again
+  in the file as it is now, the block of its key holding the same lines, else the one block
+  anywhere that does, and is refused with nothing written where none or several do. A second pass
+  is refused naming who passed it. Those who may pass it on, of its card's or its document's
+  group else of the board, are told a `held` notice linking `DOC#held-N`, none of its words. The
+  note beside a verdict is no message: one who may decide a card writes it with the verdict.
 - **A build and a board a step apart** follow [the additive step rule](RELEASES.md): a build
   without the step never reads or writes the table, so it serves no agent the words, the board's
   line reads as any line, and it refuses a person without `direct_agents` a task's message, as

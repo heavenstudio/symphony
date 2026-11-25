@@ -1505,8 +1505,13 @@ Each step can ship alone, and a machine with one person sees none of them.
    told to the members of the task's group as step 4 tells a question, an agent's read saying only
    how many are held; passed on with one press or `just tasks pass`, under both names, as an ask;
    and direct agents given and taken as any power
-   ([TASKS](../../workflow/TASKS.md#words-held-for-people)). Not yet: held comments on documents
-   and the verdict's note.
+   ([TASKS](../../workflow/TASKS.md#words-held-for-people)). On a document, such a person's
+   callout or card message held the same way, reaching no clone, no ask and no agent, drawn where
+   it was left on the document's page and told to those who may pass it on, and passed on with one
+   press under both names, as an ask, after its block found again or refused with nothing written;
+   and the note beside a verdict written with it, by one who may decide and not direct agents.
+   Not yet: a held ask, and the two cards above on what an agent is told of a document's held
+   comments and where they wait.
    Personal agents, as far as any agent reaches a board: every session that reaches one runs on
    its machine, under its account and on its credits, since the board's commands write its
    database there and none reaches a hosted board yet
