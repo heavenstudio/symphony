@@ -52,6 +52,10 @@ use symphony_board::server::{Home, Running, scratch};
 use symphony_board::sys;
 use symphony_board::{DATABASE, NewSession, NewTask, Opening, Store};
 
+// How it makes a channel ([`test_channel::channel`]): std's, as the board's tests do.
+#[path = "../tests/support/test_channel.rs"]
+mod test_channel;
+
 type Failed = Box<dyn std::error::Error>;
 
 /// The board commands a tool call runs, each with its share in a hundred: what agents ran on the
@@ -756,7 +760,7 @@ fn measure(
     let (bytes_before, opened) = (bytes_under(dir), Reading::of(server));
     let opening = server_cpu(server).ok_or_else(unread)?;
     let count = AtomicUsize::new(0);
-    let (due, asked) = mpsc::channel();
+    let (due, asked) = crate::test_channel::channel();
     let barrier = Barrier::new(sessions);
     let began = Instant::now();
     let (ran, wall, samples) = std::thread::scope(|scope| {
@@ -1228,7 +1232,7 @@ Shared_Clean:      12000 kB
     #[test]
     fn a_count_asks_for_a_reading_once_in_sample_every_commands_and_asks_taken_meanwhile_are_one() {
         let count = AtomicUsize::new(0);
-        let (due, asked) = mpsc::channel();
+        let (due, asked) = crate::test_channel::channel();
         let ended = Ended {
             count: &count,
             due: due.clone(),
@@ -1244,7 +1248,7 @@ Shared_Clean:      12000 kB
             "at the 1st, the 17th and the 33rd"
         );
         // Three asked before the sampler looked: one reading; none asked, none.
-        let (due, asked) = mpsc::channel();
+        let (due, asked) = crate::test_channel::channel();
         for _ in 0..3 {
             due.send(()).unwrap();
         }
@@ -1257,7 +1261,7 @@ Shared_Clean:      12000 kB
             }),
             [1]
         );
-        let (due, asked) = mpsc::channel::<()>();
+        let (due, asked) = crate::test_channel::channel::<()>();
         drop(due);
         assert_eq!(sample(&asked, || 0), Vec::<i32>::new());
     }

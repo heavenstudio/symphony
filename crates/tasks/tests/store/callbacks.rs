@@ -29,8 +29,8 @@ impl Listener {
         ));
         let listener = UnixListener::bind(&path).unwrap();
         listener.set_nonblocking(true).unwrap();
-        let (send, messages) = mpsc::channel();
-        let (stop, stopped) = mpsc::channel();
+        let (send, messages) = crate::test_channel::channel();
+        let (stop, stopped) = crate::test_channel::channel();
         let thread = std::thread::spawn(move || {
             loop {
                 match listener.accept() {

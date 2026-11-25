@@ -19,7 +19,7 @@ const PAGE: &str =
     "# Topic\n\n<!-- register:start -->\n- [ ] **one** — proposal.\n<!-- register:end -->\n";
 
 /// A repository that delivers by pull request, one page with one card committed.
-fn delivering(tree: &Tree) -> PathBuf {
+pub(super) fn delivering(tree: &Tree) -> PathBuf {
     let root = repository_holding(tree, "main", "docs/TOPIC.md", PAGE);
     tree.write(
         "main/symphony.toml",
@@ -36,7 +36,7 @@ fn serving(root: &Path) -> Arc<Shared> {
 }
 
 /// The commit `name` names in the repository at `root`, empty where it names none.
-fn tip(root: &Path, name: &str) -> String {
+pub(super) fn tip(root: &Path, name: &str) -> String {
     symphony_board::sys::output(
         symphony_board::sys::Command::new("git")
             .args(["rev-parse", "--verify", "-q", name])

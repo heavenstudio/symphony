@@ -6,8 +6,17 @@
 //! unbounded and the rendezvous) with their sends, receives and drops, as a receive picks the kind
 //! at run time: 5 to 16 KB of a binary for every type. `tasks` linked ten (a child's output, a
 //! recorder's sightings, a slot's lock, a proxy's lines, an attempt's calls and more), some 110 KB
-//! of it. Carried boxed, every channel of the board shares one, and a type costs its box and its
-//! unboxing alone.
+//! of it. Carried boxed, every channel the board's own code makes shares one, and a type costs its
+//! box and its unboxing alone: the crate's clippy.toml refuses std's `channel` and `sync_channel`
+//! anywhere else. What remains is not the board's code: the two channels the published
+//! `process_cwd` crate makes for itself, and a test's or a load example's, std's
+//! (tests/support/test_channel.rs), as neither holds a size line.
+//!
+//! Each end is invariant in its type. Were a [`Receiver`] covariant or a [`Sender`]
+//! contravariant, a channel of a type with a more general subtype, such as `fn(&'static str)` of
+//! `for<'a> fn(&'a str)`, could be taken as a channel of the other, and a receive would find an item
+//! of a type its end was not made for. Invariant, the compiler refuses that view (the tests compile
+//! it to see).
 //!
 //! Everything else is std's: an item sent is received once, in the order sent; a receive waits
 //! until an item comes, every sender has gone ([`RecvError`], [`RecvTimeoutError::Disconnected`])
@@ -21,17 +30,21 @@ use std::time::Duration;
 
 pub(crate) use std::sync::mpsc::{RecvError, RecvTimeoutError};
 
-/// What every channel of the board carries.
+/// What a channel made here carries, whatever the type of its ends.
 type Boxed = Box<dyn Any + Send>;
 
 /// A channel of `T`: its sending end, which clones, and its receiving end.
 pub(crate) fn channel<T: Send + 'static>() -> (Sender<T>, Receiver<T>) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one std channel of the board's code, of Boxed alone, whatever its ends carry"
+    )]
     let (sender, receiver) = mpsc::channel();
     (Sender(sender, PhantomData), Receiver(receiver, PhantomData))
 }
 
-/// The sending end of a channel of `T` ([`channel`]).
-pub(crate) struct Sender<T>(mpsc::Sender<Boxed>, PhantomData<fn(T)>);
+/// The sending end of a channel of `T` ([`channel`]), invariant in `T` (the module's doc).
+pub(crate) struct Sender<T>(mpsc::Sender<Boxed>, PhantomData<fn(T) -> T>);
 
 impl<T: Send + 'static> Sender<T> {
     /// `item` sent, or handed back where the receiver has gone.
@@ -52,8 +65,8 @@ impl<T> Clone for Sender<T> {
     }
 }
 
-/// The receiving end of a channel of `T` ([`channel`]).
-pub(crate) struct Receiver<T>(mpsc::Receiver<Boxed>, PhantomData<fn() -> T>);
+/// The receiving end of a channel of `T` ([`channel`]), invariant in `T` (the module's doc).
+pub(crate) struct Receiver<T>(mpsc::Receiver<Boxed>, PhantomData<fn(T) -> T>);
 
 impl<T: 'static> Receiver<T> {
     /// The next item, waited for until one comes or every sender has gone.
@@ -173,5 +186,77 @@ mod tests {
     #[should_panic(expected = "carries only the type its ends were made for")]
     fn an_item_of_another_type_is_refused_as_a_mistake() {
         let _: u8 = unboxed(Box::new("not a byte"));
+    }
+
+    /// This module compiled by the build's own rustc as a crate of its own, after it a receiver of
+    /// `General` (a fn type) returned as one of `received` (line 6) and a sender of `Static` (a fn
+    /// type `General` is a subtype of) as one of `sent` (line 7): whether it compiled, and each
+    /// error the compiler pointed at a line, by its code and that line.
+    fn compiled(name: &str, received: &str, sent: &str) -> (bool, Vec<(String, u64)>) {
+        use crate::children::Child as _;
+        let dir =
+            std::env::temp_dir().join(format!("symphony-channel-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let module = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/channel.rs");
+        let ends = dir.join("ends.rs");
+        let source = format!(
+            "#[path = {module:?}]\nmod channel;\nuse channel::{{Receiver, Sender}};\n\
+             type Static = fn(&'static str);\ntype General = for<'a> fn(&'a str);\n\
+             fn received(end: Receiver<General>) -> Receiver<{received}> {{ end }}\n\
+             fn sent(end: Sender<Static>) -> Sender<{sent}> {{ end }}\n"
+        );
+        std::fs::write(&ends, source).unwrap();
+        let rustc = std::path::Path::new(env!("CARGO")).with_file_name("rustc");
+        let output = std::process::Command::of(rustc)
+            .args([
+                "--edition",
+                "2024",
+                "--crate-type",
+                "lib",
+                "--crate-name",
+                "ends",
+            ])
+            .args([
+                "--emit",
+                "metadata",
+                "--error-format",
+                "json",
+                "--cap-lints",
+                "allow",
+            ])
+            .arg("--out-dir")
+            .args([&dir, &ends])
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        let errors = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|said| said["level"] == "error")
+            .filter_map(|said| {
+                let spans = said["spans"].as_array()?;
+                let primary = spans.iter().find(|span| span["is_primary"] == true)?;
+                let code = said["code"]["code"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                Some((code, primary["line_start"].as_u64()?))
+            })
+            .collect();
+        (output.status.success(), errors)
+    }
+
+    #[test]
+    fn neither_end_is_taken_as_a_channel_of_another_type() {
+        // Each end at its own type compiles: the module is read whole, so what is refused below is
+        // the other type alone.
+        assert_eq!(compiled("own", "General", "Static"), (true, vec![]));
+        let mismatched = |line| ("E0308".to_string(), line);
+        assert_eq!(
+            compiled("other", "Static", "General"),
+            (false, vec![mismatched(6), mismatched(7)]),
+            "a receiver taken as one of a supertype, a sender as one of a subtype"
+        );
     }
 }

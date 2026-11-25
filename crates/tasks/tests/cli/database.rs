@@ -288,7 +288,7 @@ fn the_symphonys_read_waits_on_anothers_start_at_most_its_bound() {
     // Held until the read is refused, or for the backstop of the 30 s the read was once bounded by,
     // when it is let go: a read that waited on the holder for as long as it held on would then go on
     // to the board, not be refused.
-    let (refusal, heard) = std::sync::mpsc::channel::<()>();
+    let (refusal, heard) = crate::test_channel::channel::<()>();
     let holder = std::thread::spawn(move || {
         let _ = heard.recv_timeout(test_time::backstop(std::time::Duration::from_secs(30)));
         lock.unlock().unwrap();

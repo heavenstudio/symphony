@@ -354,3 +354,60 @@ async fn a_request_under_a_boards_id_that_added_the_visitor_asks_that_board_alon
         );
     }
 }
+
+/// A board that added a visitor and names them lists them, of its project, what waits on them: its
+/// count and first card are of the cards they decide, as its row on the machine's page is; the
+/// owner's phone, as the person at the machine, is listed every card.
+#[tokio::test]
+async fn the_list_counts_a_visitor_the_cards_they_decide_and_the_machine_every_card() {
+    use crate::testing::board::{Fixture, Seed};
+    use symphony_board::people::Power;
+    use symphony_board::people::ownership::Place;
+    let machine = Machine::with_gate(gate(ana_on("alpha")));
+    let root = crate::testing::repository_holding(
+        &machine.tree,
+        "alpha",
+        "docs/engineering/build.md",
+        "# Build\n\n- [ ] **new-build** — Which build tool?\n",
+    );
+    machine.tree.write(
+        "alpha/docs/design/palette.md",
+        "# Palette\n\n- [ ] **new-palette** — Which palette?\n",
+    );
+    crate::testing::git(&root, &["add", "."]);
+    crate::testing::git(&root, &["commit", "-qm", "Design's document"]);
+    let board = Fixture::new(Seed::default());
+    for (name, group) in [("ana", "design"), ("bo", "engineering")] {
+        let store = &board.store;
+        (store.add_group(group, &[Power::Speak, Power::Decide], "owner")).unwrap();
+        (store.add_person(name, &[group.into()], &[], "owner")).unwrap();
+        let folder = Place::Folder(format!("docs/{group}"));
+        store.map_place(&folder, group, "owner").unwrap();
+    }
+    let hub = Arc::new(crate::live::Hub::new(&root, &root.join("build/client")));
+    hub.refresh_page("", &root).unwrap();
+    hub.people_read(&board.store);
+    assert!(machine.projects.starter.api.set(hub).is_ok());
+    let listed = |body: &[u8]| {
+        let list: symphony_api::ProjectList = serde_json::from_slice(body).unwrap();
+        let alpha = list.projects.into_iter().find(|p| p.id == "alpha").unwrap();
+        (alpha.waiting, alpha.next.map(|card| card.href))
+    };
+    let projects = ("GET", "/api/projects", &[][..], "");
+    let (_, _, body) = exchange(&machine.projects, LAPTOP, projects).await;
+    assert_eq!(
+        listed(&body),
+        (
+            Some(1),
+            Some("/alpha/docs/design/palette.md#new-palette".into())
+        )
+    );
+    let (_, _, page) = exchange(&machine.projects, LAPTOP, ("GET", "/", &[], "")).await;
+    let page = String::from_utf8(page).unwrap();
+    assert!(page.contains("1 decision card waiting on you"), "{page}");
+    let (_, _, body) = exchange(&machine.projects, PHONE, projects).await;
+    assert_eq!(listed(&body).0, Some(2), "the person at the machine's");
+    let (_, _, page) = exchange(&machine.projects, PHONE, ("GET", "/", &[], "")).await;
+    let page = String::from_utf8(page).unwrap();
+    assert!(page.contains("2 decision cards waiting on you"), "{page}");
+}

@@ -6,7 +6,7 @@
 use super::moves::{RED, UNDER, WAIT, beside_a_red};
 use super::{EIGHT, F, K, O, W, capped, red, reserve_hint, sessions, with};
 use crate::common::{Fixture, refused};
-use std::sync::{Mutex, mpsc};
+use std::sync::Mutex;
 use std::thread;
 use symphony_board::NewTask;
 
@@ -19,9 +19,9 @@ fn an_owners_cancel_that_read_no_task_is_refused_there_never_closing_a_red_filed
         seed = with(seed, slug, status, None, Some(O));
     }
     let f = Fixture::new(seed);
-    let (read, owner_read) = mpsc::channel();
-    let (go, owner_go) = mpsc::channel();
-    let (finished, owner_finished) = mpsc::channel();
+    let (read, owner_read) = crate::test_channel::channel();
+    let (go, owner_go) = crate::test_channel::channel();
+    let (finished, owner_finished) = crate::test_channel::channel();
     let owner_go = Mutex::new(owner_go);
     // The owner's cancel of the red reads no such task, then waits.
     let owner = f.slow(move || {
@@ -119,8 +119,8 @@ fn a_start_that_read_a_red_marked_before_its_mark_was_lifted_is_decided_again_co
     // a claim reads seven, then waits.
     let f = beside_a_red(7, false);
     f.store.verdict(RED, "lark", "changes", "not yet").unwrap();
-    let (read, claim_read) = mpsc::channel();
-    let (go, claim_go) = mpsc::channel();
+    let (read, claim_read) = crate::test_channel::channel();
+    let (go, claim_go) = crate::test_channel::channel();
     let claim_go = Mutex::new(claim_go);
     let claiming = f
         .slow(move || {

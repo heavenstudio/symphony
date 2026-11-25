@@ -449,7 +449,7 @@ impl Silent {
         let socket = folder.join(symphony_board::server::postgres::SOCKET_FILE);
         let listener = UnixListener::bind(&socket).unwrap();
         let address = format!("postgresql:{}", folder.display());
-        let (tell, heard) = mpsc::channel();
+        let (tell, heard) = crate::test_channel::channel();
         let held = Arc::new(Mutex::new(None));
         let holder = Arc::clone(&held);
         let let_go = Arc::new(AtomicBool::new(false));
@@ -631,7 +631,7 @@ fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_
         .to_vec();
     args.extend(until_asked(&accepted));
     let called = now();
-    let (tell, done) = mpsc::channel();
+    let (tell, done) = crate::test_channel::channel();
     std::thread::spawn(move || {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let _ = tell.send(crate::run(&env, &args, ""));
@@ -738,7 +738,7 @@ fn a_command_that_ends_while_the_board_is_asked_is_left_unreaped_until_its_recor
         pid.to_str().unwrap(),
     ]
     .map(String::from);
-    let (tell, done) = mpsc::channel();
+    let (tell, done) = crate::test_channel::channel();
     std::thread::spawn(move || {
         let args = args.each_ref().map(String::as_str);
         let _ = tell.send(crate::run(&env, &args, ""));

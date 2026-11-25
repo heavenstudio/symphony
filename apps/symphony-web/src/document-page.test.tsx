@@ -339,9 +339,10 @@ describe("a section", () => {
     expect(owned).toContain('id="hand-docs%2FLAMPS.md%3Alamp"');
     expect(owned).toContain(">Verdict / message</button>");
     expect(owned).toContain(">✓ Approve</button>");
+    expect(owned).toContain(">Later</button>");
   });
 
-  it("of a card its reader does not decide offers its message and Later, and no verdict", () => {
+  it("of a card its reader does not decide offers its message alone: no verdict and no Later", () => {
     vi.stubGlobal("localStorage", memoryStorage());
     const owner = {
       name: "design",
@@ -370,10 +371,9 @@ describe("a section", () => {
     expect(theirs).not.toContain("Verdict / message");
     expect(theirs).toContain('aria-label="Message"');
     expect(theirs).toContain(">Send message</button>");
-    for (const verdict of ["Approve", "Dismiss", "Reset to pending", "verdict-choices"]) {
-      expect(theirs).not.toContain(verdict);
+    for (const control of ["Approve", "Dismiss", "Reset to pending", "verdict-choices", "Later"]) {
+      expect(theirs).not.toContain(control);
     }
-    expect(theirs).toContain(">Later</button>");
   });
 
   it("of a settled card is folded under its summary until opened", () => {
