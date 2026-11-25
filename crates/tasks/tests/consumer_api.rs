@@ -40,14 +40,14 @@ use std::process::ExitCode;
 
 use symphony_board::assessment_publication::{self, Binding, Bindings, Decision, Publication};
 use symphony_board::cli::{self, Env};
+use symphony_board::db::DbError;
 use symphony_board::land::Generator;
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::hc::Hc;
 use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
+use symphony_board::pg;
 use symphony_board::recovery;
 use symphony_board::rows::{Dump, LinkRow, RoleRow, SessionRow, TaskRow, TaskSessionRow};
-use symphony_board::db::DbError;
-use symphony_board::pg;
 use symphony_board::rpc::Client;
 use symphony_board::sweep::git::{DISPOSABLE, Listed};
 use symphony_board::sys::{Child, Command, Spawning as _, Stdio};

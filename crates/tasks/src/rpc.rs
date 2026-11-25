@@ -310,7 +310,6 @@ mod tests {
         }
     }
 
-
     /// A server that takes one request, keeps it, and gives `reply`.
     fn one_reply(reply: &'static [u8]) -> (String, std::thread::JoinHandle<Vec<u8>>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
