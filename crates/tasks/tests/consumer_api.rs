@@ -27,7 +27,9 @@
 //! calls, or beside it under a new one. A lint that asks for a signature pinned here to change is
 //! answered by an `#[expect]` on the item, never by the change (`clippy.toml`). Names were read
 //! from the consuming projects' code on 2026-11-12 and 2026-11-13 (every `symphony_board::` path
-//! and import); add one when a consumer starts calling it.
+//! and import), and on 2026-11-25 by building it against a tree whose public items were all
+//! deprecated, so the compiler named each use, the methods it calls on a value among them; add
+//! one when a consumer starts calling it.
 #![expect(
     clippy::type_complexity,
     reason = "each signature is written out whole: it is what a consumer's code depends on"
@@ -38,7 +40,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use symphony_board::assessment_publication::{self, Binding, Bindings, Decision, Publication};
+use symphony_board::assessment_publication::{
+    self, Binding, Bindings, Decision, Publication, Source,
+};
 use symphony_board::cli::{self, Env};
 use symphony_board::db::DbError;
 use symphony_board::land::Generator;
@@ -53,9 +57,11 @@ use symphony_board::sweep::git::{DISPOSABLE, Listed};
 use symphony_board::sys::{Child, Command, Spawning as _, Stdio};
 use symphony_board::{
     AssessmentReceipt, AssessmentState, Beat, Error, Health, Landed, Message, NewLaunch,
-    NewSession, NewTask, STATUSES, Session, Store, Task,
+    NewSession, NewTask, Opening, STATUSES, Session, Store, Task,
 };
-use symphony_board::{alarm, health, on_review, port, red, server, slots, sweep, sys};
+use symphony_board::{
+    alarm, builds, health, on_review, people, port, project, red, server, slots, sweep, sys,
+};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -78,7 +84,29 @@ fn the_names_consumers_call_keep_their_shapes() {
     // The store, opened on a client, and what consumers ask of it.
     let _: fn(&str, &str, &str) -> Client = Client::new;
     let _: fn(Client) -> Result<Store> = Store::open;
-    let _ = |client: Client| Store::with(client, Box::new(|| 0.0), Box::new(|_| false), "host");
+    // Its return held as well: a consumer goes on with the store it opened.
+    let _ = |client: Client| -> Result<Store> {
+        Store::with(client, Box::new(|| 0.0), Box::new(|_| false), "host")
+    };
+    // A consumer's fixture opens the store on a PostgreSQL client of its own, at this build's
+    // schema to write, and asks that client its address and another of its databases.
+    let _: fn(
+        symphony_board::Database,
+        Box<dyn Fn() -> f64 + Send + Sync>,
+        Box<dyn Fn(i64) -> bool + Send + Sync>,
+        &str,
+        &Opening,
+    ) -> Result<Store> = Store::opening_on;
+    let _: fn() -> Opening = Opening::write;
+    let _: fn(pg::Client) -> symphony_board::Database = symphony_board::Database::from;
+    let _: fn(&Path, &str) -> pg::Client = pg::Client::new;
+    let _: fn(&pg::Client) -> String = pg::Client::addr;
+    let _: fn(&pg::Client) -> &Path = pg::Client::socket;
+    let _: fn(&pg::Client) -> pg::Client = pg::Client::another;
+    let _: fn(&pg::Client, &str) -> pg::Client = pg::Client::of;
+    let _: fn(&pg::Client, &str) -> std::result::Result<Vec<pg::Answer>, DbError> =
+        pg::Client::simple;
+    let _: fn(&pg::Answer) -> Option<&str> = pg::Answer::value;
     // A consumer's fixture reads the store's PostgreSQL client by a refutable pattern, which its
     // lint (`-D warnings`) refuses once the pattern is irrefutable. `Database` is
     // `#[non_exhaustive]`, so the pattern stays refutable; it is matched here as that consumer
@@ -95,6 +123,8 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Store, &NewTask) -> Result<Task> = Store::create;
     let _: fn(&Store, &str, &str) -> Result<Task> = Store::claim;
     let _: fn(&Store, &str, &str, &str) -> Result<Task> = Store::take_role;
+    let _: fn(&Store, &str, &str, &str, Option<&str>) -> Result<Task> = Store::take_role_beside;
+    let _: fn(&Store, &str, &str, &str) -> Result<Task> = Store::done;
     let _: fn(&Store, &str, &str, &str) -> Result<Task> = Store::move_to;
     let _: fn(&Store, &str, &[&str], &str, &str) -> Result<Task> = Store::move_from;
     let _: fn(&Store, &str, &str) -> Result<Task> = Store::hold_blocked;
@@ -113,8 +143,10 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Store) -> Result<Vec<Session>> = Store::sessions;
     let _: fn(&Store, &str) -> Result<()> = Store::leave;
     let _: fn(&Store, &str, &Beat) -> Result<Option<String>> = Store::agent_beat;
+    let _: fn() -> Beat = Beat::default;
     let _: fn(&Store, &Dump) -> Result<()> = Store::copy;
     let _: fn(&Store) -> Result<Dump> = Store::dump;
+    let _: fn() -> Dump = Dump::default;
     // The writes bound to a recovery generation, beside `Store::amend` and `Store::copy`, which
     // keep their shapes: the token as a program keeps it, by its fields and as JSON, and the
     // authority a deployer implements.
@@ -198,6 +230,7 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Store, &str) -> Result<Vec<Task>> = Store::tasks_for_branch;
     let _: fn(&Store, &str) -> Result<()> = Store::touch;
     let _ = |task: &Task| task.holders("orchestrator").len();
+    let _: fn(&Task) -> bool = Task::red;
     // The board's error. A consumer builds both its variants and compares them in `assert_eq!`; it
     // matches each alone, the rest through a catch-all, and in one place matches it whole, by both
     // variants, as below: a variant added breaks it.
@@ -214,7 +247,13 @@ fn the_names_consumers_call_keep_their_shapes() {
     // the header's tripwire.
     let _: fn(&pg::Client, &[pg::Step<'_>]) -> std::result::Result<Vec<pg::Answer>, DbError> =
         pg::Client::request;
-    let _: fn(&'static str, &'static str) -> pg::Step<'static> = pg::Step::with;
+    // A step borrows its statement and its parameter for any lifetime, as a consumer passes a
+    // temporary (`&vars.to_string()`): pinned at `'static` alone, it would still compile were its
+    // parameter narrowed to `&'static str`.
+    fn step<'a>(_: std::marker::PhantomData<&'a ()>) {
+        let _: fn(&'a str, &'a str) -> pg::Step<'a> = pg::Step::with;
+    }
+    step(std::marker::PhantomData);
     let _ = |why: String| {
         [
             DbError::Conflict,
@@ -281,7 +320,7 @@ fn the_names_consumers_call_keep_their_shapes() {
     };
     // A task built both ways a consumer builds one: by its slug, title, author and body over
     // `Default`, and over `NewTask::new` by every other field it names (its parent it also sets on
-    // one built by `new`).
+    // one built by `new`, beside whether it is an instruction).
     let _ = |slug: String, by: String, body: String| NewTask {
         slug: slug.clone(),
         title: slug,
@@ -297,6 +336,11 @@ fn the_names_consumers_call_keep_their_shapes() {
         red: None,
         links: Vec::new(),
         ..NewTask::new(slug, "title", "by")
+    };
+    let _ = |parent: Option<String>, instruction: bool| NewTask {
+        parent,
+        instruction,
+        ..NewTask::new("slug", "title", "by")
     };
     let _ = |id: i64, ts: f64| Message {
         id,
@@ -342,6 +386,29 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _ = assessment_publication::unseal;
     let _: fn(&str) -> bool = assessment_publication::valid_id;
     let _ = assessment_publication::fence;
+    // Its land reads a submission's source, bindings and events back from the git common dir, and
+    // validates a decision it reads. An event's evidence is a type it cannot name, so its read is
+    // written with the two fields the consumer reads off it.
+    let _: [&str; 3] = [
+        assessment_publication::ASSESSMENTS,
+        assessment_publication::EVENT,
+        assessment_publication::SUBMISSION,
+    ];
+    let _: fn(&Path, Option<&str>, Option<&str>) -> String = assessment_publication::target;
+    let _: fn(&Path, &str) -> std::result::Result<Source, String> =
+        assessment_publication::read_source;
+    let _: fn(&Path, &Source) -> std::result::Result<Bindings, String> =
+        assessment_publication::read_bindings;
+    let _ = |common: &Path, id: &str| -> std::result::Result<(String, Decision), String> {
+        assessment_publication::read_event(common, id)
+            .map(|evidence| (evidence.publication, evidence.decision))
+    };
+    let _: fn(&Source, &Path, &Path, &str) -> std::result::Result<bool, String> = Source::current;
+    let _: fn(&Source) -> Bindings = Bindings::new;
+    let _: fn(&Bindings) -> std::result::Result<serde_json::Value, String> = Bindings::value;
+    let _: fn(&serde_json::Value) -> std::result::Result<Decision, String> = Decision::read;
+    let _: fn(&Decision) -> std::result::Result<(), String> = Decision::validate;
+    let _: fn(&Decision) -> serde_json::Value = Decision::value;
 
     // The board's words and folders.
     let _: [&str; 9] = STATUSES;
@@ -350,6 +417,18 @@ fn the_names_consumers_call_keep_their_shapes() {
         alarm::Waits::parse(text).map(|waits| (waits.tip, waits.on))
     }
     let _ = waits;
+    let _ = |text: &str| -> Option<bool> { alarm::Waits::parse(text).map(|waits| waits.changes()) };
+    let _: &str = cli::probes::SLOT_LOCKS;
+    let _: fn(&cli::pull::Digest) -> Vec<String> = cli::pull::Digest::lines;
+    let _: &str = project::FILE;
+    let _: fn(&Path, &str) -> Option<PathBuf> = project::board_path;
+    let _: fn(&Path) -> std::result::Result<people::Profiles, String> = people::Profiles::read;
+    let _: for<'a> fn(&'a people::Profiles, &str) -> Option<&'a people::Profile> =
+        people::Profiles::get;
+    // Where a consumer finds a board binary: the main checkout's build, then the machine's.
+    let _: fn() -> builds::Beyond = builds::Beyond::default;
+    let _: fn(&Path, &str, &builds::Beyond) -> Option<PathBuf> = builds::of_main;
+    let _: fn(&Path) -> bool = builds::runnable;
     let _: (f64, f64) = (health::LIVE_SECONDS, health::STALE_SECONDS);
     // `Left` compared in `assert_eq!` with a session's health.
     let _ = Health::Left;
@@ -359,6 +438,8 @@ fn the_names_consumers_call_keep_their_shapes() {
     };
     let _: &str = red::FILER;
     let _: fn(&str, &str) -> bool = red::filed_in;
+    let _: fn(&str) -> bool = red::filed;
+    let _: [&str; 3] = red::SERIES;
     let _: fn(&str) -> bool = red::open;
     let _: &str = server::FOLDER;
     // A board's home in a consumer's fixtures: by its folder and the SurrealDB binary an earlier
@@ -366,6 +447,25 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Path, &Path) -> server::Home = server::Home::new;
     let _: fn(&Path) -> server::Home = server::Home::at;
     let _: Option<&server::Running> = None;
+    // A PostgreSQL of a consumer's fixture's own on a home of its own: the engine it makes the
+    // home for, the server it ensures and stops, where its programs are and the socket's file.
+    // Its return held, as a consumer chains `.postgresql(&programs)` on it.
+    let _ = |home: server::Home| -> server::Home { home.telling(|_| {}) };
+    let _: fn(&server::Home, server::Engine) -> std::result::Result<(), server::ServerError> =
+        server::Home::initialize_backend;
+    let _: fn(&server::Home, &Path) -> server::Postgres = server::Home::postgresql;
+    let _: fn(&server::Postgres) -> std::result::Result<server::Serving, server::ServerError> =
+        server::Postgres::ensure;
+    let _: fn(
+        &server::Postgres,
+    ) -> std::result::Result<Option<server::Serving>, server::ServerError> = server::Postgres::stop;
+    let _: fn(&Path) -> std::result::Result<PathBuf, String> = server::postgres::discover_programs;
+    let _: &str = server::postgres::SOCKET_FILE;
+    // `PostgreSql` built as the engine it names; matched whole.
+    let _ = server::Engine::PostgreSql;
+    let _ = |engine: server::Engine| match engine {
+        server::Engine::SurrealDb | server::Engine::PostgreSql => {}
+    };
     let _: fn(Option<&str>, bool) -> bool = on_review::delivery_task;
     let _ = |branch: &str, found: &[(String, Option<String>, Option<String>)]| {
         slots::branch_task(

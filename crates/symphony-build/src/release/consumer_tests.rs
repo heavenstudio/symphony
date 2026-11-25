@@ -282,6 +282,90 @@ fn a_guard_loses_a_call_only_when_no_line_of_it_holds_that_call_any_more() {
     assert_eq!(lost("", before), Vec::<String>::new());
 }
 
+#[test]
+fn a_use_list_loses_the_paths_it_names_no_more_and_nothing_for_a_name_added() {
+    // The three lists tools/consumer-guard-pins-what-is-called grew, as it found them.
+    let before = "use std::path::Path;\nuse \
+                  board::assessment_publication::{self, Binding, Bindings, Decision, \
+                  Publication};\nuse board::{\n    AssessmentReceipt, NewSession, NewTask, \
+                  STATUSES, Session, Store, Task,\n};\nuse board::{alarm, health, on_review, \
+                  port, red, server, slots, sweep, sys};\n\nfn calls() {\n    let _ = \
+                  Store::open;\n}\n";
+    // Each gained a name, two are wrapped anew, one gained a comment, and one moved.
+    let grown = "use board::assessment_publication::{\n    self, Binding, Bindings, Decision, \
+                 Publication, Source,\n};\nuse board::{\n    AssessmentReceipt, NewSession, \
+                 NewTask, Opening, STATUSES, Session, Store, Task,\n};\nuse board::{\n    \
+                 alarm, builds, health, on_review, people, port, project, red, server, slots, \
+                 sweep,\n    sys,\n};\nuse std::path::Path; // its paths\n\nfn calls() {\n    \
+                 let _ = Store::open;\n}\n";
+    assert_eq!(lost(before, grown), Vec::<String>::new());
+    assert_eq!(lost(before, before), Vec::<String>::new());
+
+    // A name taken out of a list, the module a list names gone, and a name moved to another
+    // module, which a consumer's import of the old path no longer finds: each a path lost.
+    let narrowed = "use board::assessment_publication::{Binding, Bindings, Decision, \
+                    Publication};\nuse board::{\n    AssessmentReceipt, NewSession, NewTask, \
+                    STATUSES, Session, Task,\n};\nuse board::{alarm, health, on_review, port, \
+                    red, server, sweep, sys};\nuse board::server::slots;\nuse \
+                    std::path::Path;\nfn calls() {\n    let _ = Store::open;\n}\n";
+    assert_eq!(
+        lost(before, narrowed),
+        [
+            "use board::assessment_publication;",
+            "use board::Store;",
+            "use board::slots;"
+        ]
+    );
+    // A guard deleted loses each path and each call.
+    assert_eq!(lost(before, "").len(), 24);
+}
+
+#[test]
+fn a_use_tree_names_the_full_path_of_each_name_it_imports() {
+    let named = |tree: &str| {
+        let mut named = Vec::new();
+        paths("", tree, &mut named);
+        named
+    };
+    assert_eq!(named("std::process::ExitCode"), ["std::process::ExitCode"]);
+    assert_eq!(
+        named("board::{self, a::{b, c::{self, D}}, e,}"),
+        [
+            "board",
+            "board::a::b",
+            "board::a::c",
+            "board::a::c::D",
+            "board::e"
+        ]
+    );
+    assert_eq!(
+        named("board::sys::{Child, Spawning   as _,\n Stdio as In}"),
+        [
+            "board::sys::Child",
+            "board::sys::Spawning as _",
+            "board::sys::Stdio as In"
+        ]
+    );
+    assert_eq!(named("board::prelude::*"), ["board::prelude::*"]);
+    assert_eq!(named("board::{}"), Vec::<String>::new());
+
+    // A declaration inside a function, over three lines: its comments are no part of it, and the
+    // line after its `;` is a line again.
+    let guard = "fn calls() {\n    use board::execution::{\n        // The two it adapts.\n        \
+                 Act, Adapter, // and its host\n    }; // as a host imports them\n    let _ = \
+                 Act::run;\n}\n";
+    assert_eq!(
+        holds(guard),
+        [
+            Held::Line("fn calls() {"),
+            Held::Path("board::execution::Act".into()),
+            Held::Path("board::execution::Adapter".into()),
+            Held::Line("    let _ = Act::run;"),
+            Held::Line("}"),
+        ]
+    );
+}
+
 /// The files the notes read here say their versions as the reading expects: a rename or a move
 /// would leave every release's notes silent on its tools.
 #[test]
@@ -652,6 +736,40 @@ fn a_guard_whose_lines_only_moved_or_gained_comments_owes_nothing() {
          old_one;\n    let _ = Store::opening_on;\n    let _ = Store::reading_on;\n}\n",
     );
     repo.commit("Reorder the guard and add a call");
+    assert_eq!(owes(&repo), Vec::<String>::new());
+}
+
+#[test]
+fn a_branch_owes_nothing_for_a_name_added_to_a_use_list_and_an_api_entry_for_one_taken_out() {
+    let tree = Tree::new();
+    let repo = Scratch::new(&tree);
+    repo.write(
+        GUARD,
+        "use board::{Store, port};\n\nfn calls() {\n    let _ = Store::opening_on;\n    let _ = \
+         port::free;\n}\n",
+    );
+    repo.commit("Import what the guard names");
+
+    repo.git(&["checkout", "-q", "-b", "tools/grow"]);
+    repo.write(
+        GUARD,
+        "use board::{\n    Opening, Store, port,\n};\n\nfn calls() {\n    let _ = \
+         Store::opening_on;\n    let _ = Opening::write;\n    let _ = port::free;\n}\n",
+    );
+    repo.commit("Pin Opening::write");
+    assert_eq!(owes(&repo), Vec::<String>::new());
+
+    repo.write(
+        GUARD,
+        "use board::{Opening, Store};\n\nfn calls() {\n    let _ = Store::opening_on;\n    let _ \
+         = Opening::write;\n    let _ = board::port::free;\n}\n",
+    );
+    repo.commit("Name port by its whole path");
+    let owed = owes(&repo);
+    assert_eq!(owed.len(), 2, "{owed:?}");
+    assert!(owed[0].contains("(`use board::port;`)"), "{owed:?}");
+    assert!(owed[1].contains("(`let _ = port::free;`)"), "{owed:?}");
+    repo.commit("Say it\n\nConsumer-Note: api: none: the same call, by its whole path");
     assert_eq!(owes(&repo), Vec::<String>::new());
 }
 

@@ -82,7 +82,10 @@
 //! reads the branch's tip, [`crate::land::reopenable`]), each said as `kept branch`; and each
 //! `worktree-agent-*` branch merged into main, or squashed into it, that no
 //! worktree holds is deleted, only if it still points where it did when listed and no live or stale
-//! session still binds its agent's detached worktree. In-process agents must use their own
+//! session still binds its agent's detached worktree. The comments on documents a pass wrote into
+//! a removed worktree's files, all in main now, are kept under main's from then on
+//! ([`Store::held_landed`]), where the count of a later pass reads them; a board that refuses it is
+//! said, the sweep going on. In-process agents must use their own
 //! `agent-ID` worktree; their id does not bind an arbitrarily named checkout. One sweep runs at a
 //! time (`symphony/tasks/sweep.lock` in the git common dir). Contenders append a request and exit
 //! before connecting to the board; the holder runs another pass for requests received during its
@@ -335,6 +338,9 @@ pub struct Sweep {
     pub set_aside: Option<kept::Measured>,
     /// Why the project's cap could not be read, the default taken.
     pub cap_unread: Option<String>,
+    /// The branches of removed worktrees whose comments passed on into their documents stay under
+    /// the worktree's name, and the board's refusal ([`Store::held_landed`]): never their words.
+    pub unmoved: Vec<(String, String)>,
     pub total: usize,
     pub dry_run: bool,
     /// What the removed worktrees and the cleared build folders held on disk.
@@ -411,6 +417,9 @@ impl Sweep {
         if self.dry_run {
             out.extend(self.rows.iter().map(Row::line));
         }
+        out.extend(self.unmoved.iter().map(|(b, why)| {
+            format!("the comments passed on into {b} stay under its name, not main's: {why}")
+        }));
         if let Some(why) = &self.cap_unread {
             out.push(format!("set aside: {why}; its cap is {} GB", kept::CAP_GB));
         }
@@ -1056,6 +1065,14 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
                             .into();
                 }
             };
+            // Gone, all it held in main: the comments passed into its documents, kept under its id
+            // (its branch, `/` spelled `~`, as the Symphony names a worktree), are main's now.
+            if !o.dry_run
+                && let Some(branch) = branch
+                && let Err(error) = store.held_landed(&branch.replace('/', "~"))
+            {
+                result.unmoved.push((branch.to_string(), error.to_string()));
+            }
             let mut why = format!("{place} at {short}, {how}, clean, {lock}");
             if let (Some(to), Some(folder)) = (&went.aside, &artifacts) {
                 let moved = if o.dry_run { "would move" } else { "moved" };
@@ -2095,6 +2112,27 @@ mod tests {
         assert_eq!(
             done.summary(),
             "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* branches; cleared no build output: the board did not answer; freed 1.5 MB"
+        );
+    }
+
+    #[test]
+    fn a_move_the_board_refused_is_said_beside_the_removal_it_followed() {
+        let done = Sweep {
+            total: 2,
+            removed: vec![(PathBuf::from("/wt/a"), "merged".into())],
+            unmoved: vec![("sim/a".into(), "the board did not answer".into())],
+            freed: 1_500_000,
+            ..Sweep::default()
+        };
+        assert_eq!(
+            done.lines(),
+            [
+                "removed /wt/a (merged)",
+                "the comments passed on into sim/a stay under its name, not main's: the board did \
+                 not answer",
+                "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* \
+                 branches; freed 1.5 MB",
+            ]
         );
     }
 
