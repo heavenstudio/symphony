@@ -40,6 +40,8 @@ export const UPLOAD_ACCEPT =
 export const QUICK_TASK_TITLE_MAX = 200;
 export const TASK_ACTION_ROUTE = "/api/task-action";
 export const TASK_PASS_ROUTE = "/api/task-pass";
+export const DOCUMENT_HELD_PATH = "/api/document-held";
+export const DOCUMENT_PASS_ROUTE = "/api/document-pass";
 export const TASK_TOKENS_PATH = "/api/task-tokens";
 export const TASK_COSTS_PATH = "/api/task-costs";
 export const TASK_COSTS_MOST = 200;
@@ -1008,6 +1010,46 @@ export type Owner = {
 };
 
 export type CardOwners = { cards: { [key in string]: Owner } };
+
+export type DocumentHeld = {
+  held: Array<HeldComment>;
+  /**
+   * The one reading may pass them on ([`DOCUMENT_PASS_ROUTE`]): the person at the machine, or
+   * a person holding speak and direct agents.
+   */
+  passes: boolean;
+};
+
+export type HeldComment = {
+  /**
+   * Its number, which a pass names.
+   */
+  id: number;
+  /**
+   * Who wrote it, by their short name.
+   */
+  author: string;
+  /**
+   * A callout's kind (`comment`, `question`, `decision`), or `message` for a card's message.
+   */
+  kind: string;
+  /**
+   * Their words; a callout's title is the first line.
+   */
+  text: string;
+  /**
+   * The card, for a message.
+   */
+  card?: string | null;
+  /**
+   * The section a callout was left after, by its key ([`Section::key`]).
+   */
+  key?: string | null;
+  /**
+   * That section's last line then.
+   */
+  line?: number | null;
+};
 
 export type RunsPage = {
   /**

@@ -51,6 +51,7 @@ mod fixture_script;
 mod gate_decisions;
 mod hand_over_outage;
 mod health;
+mod held_documents;
 mod held_settle;
 mod held_words;
 mod keyed;

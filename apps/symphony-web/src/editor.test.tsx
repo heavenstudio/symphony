@@ -379,6 +379,25 @@ describe("a section's save", () => {
     expect(shown.saved).toHaveBeenLastCalledWith("Message sent");
   });
 
+  it("says a comment and a card's message the board held, and waits on no line for them", async () => {
+    const asked = server();
+    const comment = saving({ kind: "question" });
+    const commented = comment.control.send("comment");
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, { ok: true, held: 4 }));
+    await commented;
+    expect(comment.shown.saved).toHaveBeenLastCalledWith("Comment held");
+    expect(comment.shown.text).toHaveBeenLastCalledWith("");
+    expect(comment.field.setEditing).toHaveBeenCalledWith(false);
+    const { control, shown, page } = cardSave("Hello");
+    const messaged = control.send("message");
+    await asking(asked, 2);
+    asked[1]?.answer(reply(200, { ok: true, held: 5 }));
+    await messaged;
+    expect(shown.saved).toHaveBeenLastCalledWith("Message held");
+    expect(page.released.has("card:alpha")).toBe(false);
+  });
+
   it("takes a tap kept for the same words across a reload, never for others", async () => {
     const asked = server();
     storage.setItem(TAP, "ui-kept\napproved\nKeep it");

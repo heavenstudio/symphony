@@ -54,6 +54,8 @@ struct Read {
     /// The board's people revision and its map's.
     people: i64,
     map: i64,
+    /// The comments held on documents and not passed on, by number.
+    held: Vec<i64>,
 }
 
 /// What a pass said that went wrong, by where: said again only once it changes.
@@ -263,6 +265,16 @@ impl Hub {
                 return said.once(project, "board", format!("the board's people: {error}"));
             }
         };
+        let held = match store.held_on_documents() {
+            Ok(held) => {
+                said.clear("held");
+                held
+            }
+            Err(error) => {
+                let why = format!("the comments held on documents: {error}");
+                return said.once(project, "held", why);
+            }
+        };
         let page = {
             let pages = self.pages.read().recover();
             (pages.get("")).map(|page| {
@@ -277,6 +289,7 @@ impl Hub {
             page: page.as_ref().map(|(version, _)| *version),
             people: people.revision,
             map: map.revision,
+            held: held.iter().map(|held| held.id).collect(),
         };
         let now = (self.clock)();
         if last.as_ref() != Some(&read) {
@@ -302,12 +315,11 @@ impl Hub {
                     .map(|(doc, slug, _)| (doc.clone(), slug.clone()))
                     .collect();
                 let owners = symphony::owners::waiting(&people, &map, &self.root, &named);
-                (cards.into_iter().zip(owners))
-                    .map(|((doc, slug, href), owning)| Waiting {
-                        key: format!("{doc}#{slug}"),
-                        page: href,
-                        owning,
-                    })
+                let cards = (cards.into_iter().zip(owners)).map(|((doc, slug, href), owning)| {
+                    Waiting::card(format!("{doc}#{slug}"), href, owning)
+                });
+                cards
+                    .chain(held_waiting(&people, &map, &self.root, &held))
                     .collect()
             });
             let look = Look {
@@ -417,6 +429,38 @@ fn passers(people: &People, owning: &Owning, author: &str) -> Vec<String> {
     (people.members.iter())
         .map(|member| member.name.clone())
         .filter(may)
+        .collect()
+}
+
+/// The comments `held` on documents, not passed on, each waiting for someone who may pass it on
+/// ([`passers`]) of whose its card or its document is on `people` and `map` (`root` the project's
+/// checkout, its documents read once each): a notice links its place on its document's page,
+/// `/DOC#held-N`, a branch's under its scope.
+fn held_waiting(
+    people: &People,
+    map: &Map,
+    root: &std::path::Path,
+    held: &[symphony_board::held::OnDocument],
+) -> Vec<Waiting> {
+    let docs: Vec<(String, String)> = (held.iter())
+        .map(|held| {
+            let place = &held.document;
+            let doc = match &place.scope {
+                Some(scope) => format!("@{scope}/{}", place.path),
+                None => place.path.clone(),
+            };
+            (doc, place.card.clone().unwrap_or_default())
+        })
+        .collect();
+    let owners = symphony::owners::waiting(people, map, root, &docs);
+    (held.iter().zip(docs).zip(owners))
+        .map(|((held, (doc, _)), owning)| Waiting {
+            key: format!("held:{}", held.id),
+            page: format!("/{doc}#held-{}", held.id),
+            told: Some(passers(people, &owning, &held.author)),
+            owning,
+            kind: Kind::Held,
+        })
         .collect()
 }
 
