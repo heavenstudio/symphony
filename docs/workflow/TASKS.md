@@ -2402,11 +2402,13 @@ as it did before. That person stays `owner`, with every power, once others are n
   ask, its reply, the quick chat, a quick task and passing a held message or a held comment on
   (`/api/task-pass`, `/api/document-pass`) need `speak` and `direct_agents`; a task's message, a
   document's comment and a card's message need `speak`, held for people where their writer lacks
-  `direct_agents`; an upload needs `speak`; an attempt's controls
-  need `decide` and `direct_agents`; a change of the board's people needs `administer`, and a
-  profile's write from the People page and a hand-over ([below](#which-group-a-thing-belongs-to))
-  being on the board; anything else is the person at the machine's alone. A refusal is a
-  403 naming the power, `Forbidden: ana may not decide on this board`, and nothing is written.
+  `direct_agents`, but for a task's line that reads as an approve, which is written with its note
+  and asks where its writer may decide the task, and held where they may not; an upload needs
+  `speak`; an attempt's controls need `decide` and `direct_agents`; a change of the board's
+  people needs `administer`, and a profile's write from the People page and a hand-over
+  ([below](#which-group-a-thing-belongs-to)) being on the board; anything else is the person at
+  the machine's alone. A refusal is a 403 naming the power,
+  `Forbidden: ana may not decide on this board`, and nothing is written.
 - **Deciding a thing is its owner's** ([below](#which-group-a-thing-belongs-to)): a card's
   verdict and its Later (with its Undo, and the visit that clears its mark), a task's priority,
   field, cancel, action and workflow edge, and a setting (the Settings
@@ -2527,7 +2529,8 @@ callback, `--json`, `search`) is that line and nothing of her words or her name,
 how many are held (`held for people: 1 message`, `"held"` in its JSON). The line pushes to no
 session's inbox, as a line to `owner` never does. It waits on the person at the machine as a
 question does, until a person's line follows it on the thread, the one its pass writes among
-them.
+them. An approve she types on a task she may decide is no message: it is written with its note,
+and asks, as a card's note is; on a task she may not decide it is held.
 
 - **On the task page** a person's read draws the held message at that line: her name, to whom, her
   words and the state `held`, and Pass on for the person at the machine and anyone holding `speak`
@@ -2559,8 +2562,9 @@ them.
   and Pass on for those who may pass a held message on. A pass (`/api/document-pass`) writes it
   into the file as her own save would, her name on it and the passer first in its words, then
   opens or joins its ask and tells the chat, as hers; a callout goes after its block found again
-  in the file as it is now, the block of its key holding the same lines, else the one block
-  anywhere that does, and is refused with nothing written where none or several do. A second pass
+  in the file as it is now, the one block under its heading holding the same lines, else the one
+  block anywhere that does, and is refused with nothing written where none or several do, two
+  alike under its heading among them, as its place there moves with every block above. A second pass
   is refused naming who passed it. Those who may pass it on, of its card's or its document's
   group else of the board, are told a `held` notice linking `DOC#held-N`, none of its words. The
   note beside a verdict is no message: one who may decide a card writes it with the verdict.

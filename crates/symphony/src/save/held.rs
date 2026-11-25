@@ -9,8 +9,9 @@
 //! Its pass, by someone who may direct agents, writes it as its author's own comment would be
 //! written, their name on it and the passer's first in its words
 //! ([`symphony_board::held::passed_text`]): a callout after its block found again in the file as
-//! it is now (the block of its key holding the same lines, else the one block anywhere that does),
-//! refused in plain words with nothing written where none or several do; a message on its card.
+//! it is now (the one block under its heading holding the same lines, else the one block anywhere
+//! that does), refused in plain words with nothing written where none or several do; a message on
+//! its card.
 //! The save's ask and callback follow as the author's, and the row is marked passed once the file
 //! holds the words.
 
@@ -82,17 +83,21 @@ pub(super) fn place(
 }
 
 /// The line a passed callout left after `block` goes after in `text`, the document as it is now:
-/// the end of the block of its key that holds the same lines, else of the one block that does.
-/// Refused, with nothing written, where no block does or several do and none has its key.
+/// the end of the one block under its heading that holds the same lines, else of the one block
+/// anywhere that does. A key's place under its heading moves with every block above it there, so
+/// it never tells two such blocks apart: refused, with nothing written, where its lines stand
+/// twice under its heading, twice elsewhere and not under it, or nowhere.
 pub(super) fn found_again(text: &str, block: &Block) -> Result<i64, Failure> {
     let blocks = crate::render::keyed_blocks(text);
     let same: Vec<&(String, crate::render::Block)> = (blocks.iter())
         .filter(|(_, found)| found.text == block.text)
         .collect();
-    let found = match (same.iter()).find(|(key, _)| *key == block.key) {
-        Some(found) => found,
-        None if same.len() == 1 => same[0],
-        None if same.is_empty() => {
+    let mine: Vec<&(String, crate::render::Block)> = (same.iter().copied())
+        .filter(|(key, _)| heading(key) == heading(&block.key))
+        .collect();
+    let found = match (mine.as_slice(), same.as_slice()) {
+        ([one], _) | ([], [one]) => one,
+        (_, []) => {
             return Err(Failure {
                 status: 409,
                 error: "the block this comment was left after has changed or is gone: nothing \
@@ -100,7 +105,7 @@ pub(super) fn found_again(text: &str, block: &Block) -> Result<i64, Failure> {
                     .into(),
             });
         }
-        None => {
+        _ => {
             return Err(Failure {
                 status: 409,
                 error: "the block this comment was left after now stands in several places: \
@@ -110,6 +115,11 @@ pub(super) fn found_again(text: &str, block: &Block) -> Result<i64, Failure> {
         }
     };
     Ok(i64::try_from(found.1.end).unwrap_or(i64::MAX))
+}
+
+/// The heading a block's key (`section:ANCHOR:N`) sits under: the key without its place there.
+fn heading(key: &str) -> &str {
+    key.rsplit_once(':').map_or(key, |(heading, _)| heading)
 }
 
 /// The save a pass of `held` by `by` makes: the route its words take and its payload, as its
@@ -228,18 +238,16 @@ mod tests {
     }
 
     #[test]
-    fn a_block_is_found_again_by_its_key_and_lines_or_alone_by_its_lines() {
+    fn a_block_is_found_again_by_its_heading_and_lines_or_alone_by_its_lines() {
         let prose = |key: &str| block(key, 3, "Some prose.");
-        // Two blocks hold the same lines: the key decides.
+        // Two blocks hold the same lines under two headings: its heading decides.
         assert_eq!(ok(found_again(PAGE, &prose("section:topic:1"))), 3);
         assert_eq!(ok(found_again(PAGE, &prose("section:lamps:1"))), 7);
-        // A block came above the one under Lamps' heading: its key stands, found where it is now.
+        // A block came above it under its heading, or above the other heading: found where it is
+        // now, though its place under its heading moved.
         let grown = PAGE.replace("# Topic\n\n", "# Topic\n\nNew.\n\n");
         assert_eq!(ok(found_again(&grown, &prose("section:lamps:1"))), 9);
-        // Under its own heading the key moved with it, and its lines stand twice: refused rather
-        // than put after the other.
-        let moved = refused(found_again(&grown, &prose("section:topic:1")));
-        assert!(moved.error.contains("several places"), "{}", moved.error);
+        assert_eq!(ok(found_again(&grown, &prose("section:topic:1"))), 5);
         // Lines that stand once are found by them alone, whatever the key.
         let other = block("section:gone:1", 9, "Other prose.");
         assert_eq!(
@@ -247,7 +255,23 @@ mod tests {
             11,
             "the one block holding them"
         );
-        // Its lines changed, or stand twice under no block of its key: refused.
+        // Under one heading X, A and B, A and B alike: a comment left after A keeps A's place,
+        // which is B's once X is gone. Refused while they stand twice there, never put after B.
+        let twins = "# Topic\n\nX.\n\nSame.\n\nSame.\n";
+        let after_a = block("section:topic:2", 5, "Same.");
+        let without_x = twins.replace("X.\n\n", "");
+        for page in [twins, without_x.as_str()] {
+            let twice = refused(found_again(page, &after_a));
+            assert!(
+                twice.error.contains("several places"),
+                "{page}: {}",
+                twice.error
+            );
+        }
+        // B gone instead: A stands alone under its heading and is found.
+        let alone = "# Topic\n\nX.\n\nSame.\n";
+        assert_eq!(ok(found_again(alone, &after_a)), 5);
+        // Its lines changed, or stand twice under no block of its heading: refused.
         let changed = refused(found_again(
             PAGE,
             &block("section:topic:1", 3, "Some proze."),
