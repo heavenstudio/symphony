@@ -8,7 +8,7 @@
 //! make only with direct agents. The note beside her verdict is written with it
 //! ("The note beside a verdict").
 
-use super::decide_tests::{MACHINE, as_person, post, read};
+use super::decide_tests::{MACHINE, as_person, post, read, with_hub};
 use crate::testing::{Board, LAPTOP, Tree, git, repository_holding};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
@@ -296,6 +296,170 @@ async fn a_pass_finds_its_block_once_the_file_moved_or_refuses_with_nothing_writ
     .map(|held| held["id"].as_i64().unwrap())
     .collect();
     assert_eq!(still, [changed]);
+}
+
+/// How many times [`DOC`] holds her question and her message as a pass writes them, and as her
+/// own save writes them.
+fn written(root: &Path) -> [usize; 3] {
+    let page = std::fs::read_to_string(root.join(DOC)).unwrap();
+    let count = |wanted: &dyn Fn(&str) -> bool| page.lines().filter(|line| wanted(line)).count();
+    let question = format!("Too many {TOKEN}s");
+    [
+        count(&|line| {
+            line.starts_with("> [!question] ana · [passed on by ")
+                && line.ends_with(&format!("] {question}"))
+        }),
+        count(&|line| line == format!("> [!question] ana · {question}")),
+        count(&|line| {
+            line.starts_with("  [")
+                && line.contains("] ana — [passed on by ")
+                && line.ends_with(&format!("] And why {TOKEN}?"))
+        }),
+    ]
+}
+
+/// Her held comments, each kept under a key its number is not: found by that number, and the
+/// mark of a pass refused once its words went in, as a board that fails at the mark leaves them.
+/// Each press then answers the refusal and the file holds the words once; once the rows are right,
+/// a press marks each and writes nothing more, and the ask and the callback follow once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pass_whose_mark_is_refused_after_its_words_went_in_writes_them_once() {
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", DOC, PAGE);
+    let _board = named(&root);
+    let ana = as_person(&root, "ana");
+    let id = |answer: Value| answer["held"].as_i64().unwrap();
+    let callout = id(ok(post(&ana, LAPTOP, "/api/comment", question()).await));
+    let on_card = id(ok(post(&ana, LAPTOP, "/api/message", message()).await));
+    ana.saves.get().unwrap().close();
+    let store = Board::store(&root);
+    let raw = store.raw();
+    let key = |n: i64| json!(["document", n]);
+    let rekey = |from: i64, to: i64| {
+        let doc = raw.row("held_message", key(from)).get().unwrap();
+        raw.row("held_message", key(from)).delete().unwrap();
+        raw.row("held_message", key(to)).create(doc).unwrap();
+    };
+    for n in [callout, on_card] {
+        rekey(n, n + 100);
+    }
+    let stefano = as_person(&root, "stefano");
+    for press in 1..=2 {
+        for n in [callout, on_card] {
+            let (status, said) =
+                post(&stefano, MACHINE, "/api/document-pass", json!({"id": n})).await;
+            assert_ne!(status, StatusCode::OK, "press {press}: {said}");
+            let refused = format!("no comment #{n} is held on a document");
+            assert!(said.contains(&refused), "press {press}: {said}");
+        }
+        assert_eq!(written(&root), [1, 0, 1], "press {press}");
+    }
+    assert!(!journal_holds(&root, TOKEN), "nothing for the chat yet");
+    for n in [callout, on_card] {
+        rekey(n + 100, n);
+        ok(post(&stefano, MACHINE, "/api/document-pass", json!({"id": n})).await);
+    }
+    stefano.saves.get().unwrap().close();
+    assert_eq!(written(&root), [1, 0, 1]);
+    assert_eq!(
+        held(&stefano, MACHINE).await["held"],
+        json!([]),
+        "both marked"
+    );
+    assert!(journal_holds(&root, "[passed on by owner]"));
+    assert_eq!(
+        asks(&root),
+        [
+            ("comment".into(), None),
+            ("message".into(), Some("one".into()))
+        ]
+    );
+}
+
+/// Her own words are no pass's: once she may direct agents and writes her held question again
+/// herself, the held one's pass still writes it, the passer first.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pass_after_she_wrote_the_same_words_herself_still_writes_them() {
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", DOC, PAGE);
+    let _board = named(&root);
+    let ana = as_person(&root, "ana");
+    let held_one = ok(post(&ana, LAPTOP, "/api/comment", question()).await)["held"].clone();
+    let store = Board::store(&root);
+    let ana_holds = symphony_board::people::Holder::Person("ana");
+    (store.grant(ana_holds, &[Power::DirectAgents], "owner")).unwrap();
+    let own = ok(post(&ana, LAPTOP, "/api/comment", question()).await);
+    assert_eq!(own.get("held"), None, "{own}");
+    ana.saves.get().unwrap().close();
+    assert_eq!(written(&root), [0, 1, 0]);
+    let stefano = as_person(&root, "stefano");
+    ok(post(
+        &stefano,
+        MACHINE,
+        "/api/document-pass",
+        json!({"id": held_one}),
+    )
+    .await);
+    stefano.saves.get().unwrap().close();
+    assert_eq!(written(&root), [1, 1, 0]);
+}
+
+/// A card's message typed on a branch's page that draws main's card is kept under the branch's
+/// scope, where she typed it: that page's read finds it, main's does not, and its pass writes it on
+/// main's card, as her own line would be, leaving the branch's copy as it was. A message kept under
+/// main's scope, as a page's save kept it before, stays where it is: main's page reads it, and its
+/// pass writes it there too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_typed_on_a_branchs_page_is_drawn_there_and_passed_on_mains_card() {
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", DOC, PAGE);
+    let worktree = tree.path("wt");
+    let wt = worktree.to_str().unwrap();
+    git(&root, &["worktree", "add", "-q", "-b", "pic/x", wt]);
+    let _board = named(&root);
+    // The branch's page is read through the hub that knows its worktree.
+    let ana = with_hub(as_person(&root, "ana"), &root);
+    ana.api.get().unwrap().refresh_docs(None).unwrap();
+    let typed = ok(post(&ana, LAPTOP, "/@pic~x/api/message", message()).await)["held"].clone();
+    let earlier = symphony_board::held::Place {
+        path: DOC.into(),
+        scope: None,
+        kind: "message".into(),
+        card: Some("one".into()),
+        block: None,
+    };
+    let store = Board::store(&root).for_person("ana");
+    let kept = (store.hold_on_document("ana", "Kept on main", &earlier))
+        .unwrap()
+        .id;
+    ana.saves.get().unwrap().close();
+    let ids = |read: &Value| -> Vec<Value> {
+        (read["held"].as_array().unwrap().iter())
+            .map(|held| held["id"].clone())
+            .collect()
+    };
+    let branch_read = "/@pic~x/api/document-held?path=docs/TOPIC.md";
+    let (status, on_branch) = read(&ana, LAPTOP, branch_read).await;
+    assert_eq!(status, StatusCode::OK, "{on_branch}");
+    assert_eq!(ids(&on_branch), std::slice::from_ref(&typed));
+    assert_eq!(on_branch["held"][0]["card"], "one");
+    assert_eq!(ids(&held(&ana, LAPTOP).await), [json!(kept)]);
+    let stefano = as_person(&root, "stefano");
+    for id in [typed, json!(kept)] {
+        ok(post(&stefano, MACHINE, "/api/document-pass", json!({"id": id})).await);
+    }
+    stefano.saves.get().unwrap().close();
+    let main = std::fs::read_to_string(root.join(DOC)).unwrap();
+    for words in [format!("And why {TOKEN}?"), "Kept on main".into()] {
+        let passed = format!("] ana — [passed on by owner] {words}");
+        assert_eq!(main.matches(&passed).count(), 1, "{main}");
+    }
+    assert_eq!(std::fs::read_to_string(worktree.join(DOC)).unwrap(), PAGE);
+    assert_eq!(
+        ids(&read(&ana, LAPTOP, branch_read).await.1),
+        Vec::<Value>::new()
+    );
+    assert_eq!(ids(&held(&ana, LAPTOP).await), Vec::<Value>::new());
 }
 
 #[tokio::test(flavor = "multi_thread")]

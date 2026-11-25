@@ -463,6 +463,8 @@ impl Saves {
             return Ok(value);
         }
         drop(unpublished);
+        // The page it was given on, whose scope a held save keeps however it is moved (`held.rs`).
+        let page = (self.named(scope, string(payload, "path"))).map_or(scope, |(page, _)| page);
         // The owner's line on a card main holds is main's, whichever branch's page it was given on.
         let moved = matches!(
             route,
@@ -482,7 +484,7 @@ impl Saves {
         let result = match route {
             "/api/postpone" => self.postpone(actor, scope, payload, order),
             "/api/decision" | "/api/comment" | "/api/message" | symphony_api::CARD_HAND_ROUTE => {
-                self.document(actor, scope, route, payload, None)
+                self.document(actor, (scope, page), route, payload, None)
                     .map(|(value, ask)| {
                         asking = ask;
                         value
@@ -754,14 +756,16 @@ impl Saves {
     }
 
     /// A card's verdict, its message, a comment or a card's hand-over on the document `payload`
-    /// names, saved for `actor`. A comment or a card's message of a person a board named who may
-    /// not direct agents is held for people (`held.rs`): checked as it would be written, kept as
-    /// the board's row alone, and answered `"held"`, its number, with no ask. `pass`, a held comment
+    /// names, saved for `actor` in the checkout `scope`, given on the page of the checkout `page`
+    /// (main's card answered on a branch's page is saved in main's). A comment or a card's message
+    /// of a person a board named who may not direct agents is held for people (`held.rs`): checked
+    /// as it would be written, kept as the board's row alone under the page's scope, where its
+    /// author typed it, and answered `"held"`, its number, with no ask. `pass`, a held comment
     /// `actor` passes on, is written as its author's, where it was left, and marked passed.
     fn document(
         &self,
         actor: &Actor,
-        scope: &str,
+        (scope, page): (&str, &str),
         route: &str,
         payload: &Value,
         pass: Option<&symphony_board::held::OnDocument>,
@@ -867,6 +871,31 @@ impl Saves {
         } else {
             None
         };
+        // A pass whose words the document holds already, written by a press whose mark or commit
+        // did not follow: nothing is written again, and the row is marked, its ask and callback
+        // following now, as that press's never did.
+        if let Some((store, passed)) = &passing {
+            let place = &passed.document;
+            let mut rows = store.held_on_document(&place.path, place.scope.as_deref())?;
+            // A card's message typed on a branch's page and written on main's card: main's rows
+            // count too.
+            let (written, _) = self.named(scope, string(payload, "path"))?;
+            if place.scope.as_deref().unwrap_or("") != written {
+                let written = Some(written).filter(|written| !written.is_empty());
+                rows.extend(store.held_on_document(&rel, written)?);
+            }
+            if held::written_already(&original, passed, &rows) {
+                store.pass_on_document(passed.id, actor.name())?;
+                let ask =
+                    self.document_ask(route, payload, &root, &rel, &original, comment.as_ref());
+                let value = if pending {
+                    json!({"ok":true,"delivery":"pending"})
+                } else {
+                    json!({"ok":true})
+                };
+                return Ok((value, ask));
+            }
+        }
         // A verdict is a person's only on a card they are of the owner of, read as the page shows
         // the card; a card the document lacks is refused by the edit below, in its own words.
         if route == "/api/decision" && crate::owners::person(actor).is_some() {
@@ -926,8 +955,7 @@ impl Saves {
         };
         // Held: what was checked against the document is kept by the board, and nothing else.
         if let Some(store) = holding {
-            let (named, _) = self.named(scope, string(payload, "path"))?;
-            let place = held::place(route, named, &rel, &original, payload, after_line(payload))?;
+            let place = held::place(route, page, &rel, &original, payload, after_line(payload))?;
             let held = store.hold_on_document(name, &held::words(route, payload), &place)?;
             return Ok((json!({"ok": true, "held": held.id}), None));
         }
@@ -1027,9 +1055,12 @@ impl Saves {
 
     /// The held comment `payload`'s `id` passed on by `actor` ([`symphony_api::DOCUMENT_PASS_ROUTE`]):
     /// written into its document as its author's own save would write it, their name on it and
-    /// the passer's first in its words, where it was left (`held.rs`), then marked passed. Its ask
-    /// and the chat's callback are its author's comment's ([`Told`]). Refused, with nothing
-    /// written: no comment held by that number, one passed already, and its place not found again.
+    /// the passer's first in its words, where it was left (`held.rs`), then marked passed: a card's
+    /// message typed on a branch's page that draws main's card on main's, as its author's own line
+    /// is. A press after one whose words went in and whose mark did not writes nothing again and
+    /// marks it. Its ask and the chat's callback are its author's comment's ([`Told`]). Refused,
+    /// with nothing written: no comment held by that number, one passed already, and its place not
+    /// found again.
     fn pass_held(
         &self,
         actor: &Actor,
@@ -1043,8 +1074,17 @@ impl Saves {
         }
         let found = found.expect("a comment not refused is held");
         let (route, said) = held::passed_save(&found, actor.name());
-        let scope = found.document.scope.clone().unwrap_or_default();
-        let (value, ask) = self.document(actor, &scope, route, &said, Some(&found))?;
+        let page = found.document.scope.clone().unwrap_or_default();
+        // A card's message is written where its author's own would be now: on main's card where a
+        // branch's page, the one it was typed on, draws main's.
+        let moved = (route == "/api/message")
+            .then(|| self.mains(&page, &said))
+            .flatten();
+        let (scope, said) = match moved {
+            Some(moved) => (String::new(), moved),
+            None => (page.clone(), said),
+        };
+        let (value, ask) = self.document(actor, (&scope, &page), route, &said, Some(&found))?;
         let told = Told {
             route,
             scope,
