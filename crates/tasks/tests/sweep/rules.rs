@@ -15,6 +15,7 @@ use symphony_board::health::LIVE_SECONDS;
 use symphony_board::held::{MESSAGE, Place};
 use symphony_board::people::Power;
 use symphony_board::rows::SessionRow;
+use symphony_board::schema::{ADDED, HELD};
 use symphony_board::sweep::process;
 use symphony_board::{NewLaunch, NewSession, sweep, sys};
 
@@ -807,6 +808,40 @@ fn a_removed_worktrees_passed_comments_are_kept_under_mains() {
     r.assert_kept(&stays, &said);
     assert_eq!(scope(landed), None, "{said}");
     assert_eq!(scope(open).as_deref(), Some("sim~open"), "{said}");
+}
+
+/// A move the board refuses (one whose record lacks the held step) is said, its refusal and not
+/// the comment's words, and the sweep goes on: the worktree is removed, the row where it was.
+#[test]
+fn a_move_the_board_refuses_is_said_and_the_sweep_goes_on() {
+    let r = Repo::new();
+    let store = &r.board.store;
+    (store.add_person("ana", &[], &[Power::Speak], "owner")).unwrap();
+    let place = Place {
+        path: "docs/a.md".into(),
+        scope: Some("sim~done".into()),
+        kind: MESSAGE.into(),
+        card: Some("one".into()),
+        block: None,
+    };
+    let ana = r.board.other().for_person("ana");
+    let held = ana.hold_on_document("ana", "Quartz lamps", &place).unwrap();
+    (store.pass_on_document_into(held.id, "owner", Some("sim~done"))).unwrap();
+    let step = ADDED.iter().position(|step| *step == HELD).unwrap();
+    (store.raw().row("meta", "additions"))
+        .set(serde_json::json!({"version": step}))
+        .unwrap();
+    let wt = r.merged("named", "sim/done");
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    let line = said
+        .lines()
+        .find(|line| line.starts_with("the comments passed on into sim/done stay"))
+        .unwrap_or_else(|| panic!("{said}"));
+    assert!(line.contains("this write names `held_message`"), "{line}");
+    assert!(!said.contains("Quartz"), "{said}");
+    let kept = store.held_comment(held.id).unwrap().unwrap();
+    assert_eq!(kept.document.scope.as_deref(), Some("sim~done"));
 }
 
 #[test]
