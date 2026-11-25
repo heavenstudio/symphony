@@ -264,15 +264,19 @@ export class SaveControl {
       const reply = await post(scoped(scope, route), fields);
       if (this.mount.aborted) return;
       const held = heldBy(reply, sent);
+      // Kept on the board for people, it writes no line in the card for a release to wait for.
+      const kept = typeof field(reply, "held") === "number";
       // The card's save no reply answered, which this one retried under its tap.
       const earlier = this.waiting;
       this.setUnanswered(null);
       const retried = earlier?.retriedBy(tapId) === true ? earlier : null;
       const from =
-        before === null ? null : releasedFrom(field(reply, "repeat") === true, before, retried);
+        before === null || kept
+          ? null
+          : releasedFrom(field(reply, "repeat") === true, before, retried);
       if (from !== null && page !== null) release(page.released, sectionKey, from);
       save(this.tapKey, "");
-      this.end(ending(held, sent, attach.compose(this.typed)));
+      this.end(ending(held, sent, attach.compose(this.typed), kept));
     } catch (failure) {
       if (this.mount.aborted) return;
       // No reply says whether it was written: the feed will, if it was.

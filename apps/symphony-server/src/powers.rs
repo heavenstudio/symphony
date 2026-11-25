@@ -6,14 +6,14 @@
 //! (`symphony::owners::refused_task`, `refused_card`, `refused_settings`).
 //!
 //! A verdict, its note, a move, a field, Later and a setting are deciding. A line that reaches the
-//! board's agents (a comment, a message, an ask and its reply, a quick chat, a quick task) is
-//! speaking that directs them, and so is passing a held message on; an attempt's control or view
-//! is deciding that directs them. A task's message is speaking alone: the board holds the words of
-//! one who may not direct agents for people until someone who may passes them on
-//! (`symphony_board::held`). An upload is speaking alone. A change of the board's people is
-//! administering; a profile's write needs no power beyond being on the board, as whose profile it
-//! may write is `symphony_board::people::change`'s to say. A route this table does not place is
-//! the person at the machine's alone, as the agent focus is.
+//! board's agents (an ask and its reply, a quick chat, a quick task) is speaking that directs
+//! them, and so is passing a held message or a held comment on; an attempt's control or view is
+//! deciding that directs them. A task's message, a document's comment and a card's message are
+//! speaking alone: the board holds the words of one who may not direct agents for people until
+//! someone who may passes them on (`symphony_board::held`). An upload is speaking alone. A change
+//! of the board's people is administering; a profile's write needs no power beyond being on the
+//! board, as whose profile it may write is `symphony_board::people::change`'s to say. A route this
+//! table does not place is the person at the machine's alone, as the agent focus is.
 
 use symphony_board::people::{People, Power, Powers};
 
@@ -42,14 +42,15 @@ pub(crate) fn needs(route: &str) -> Needs {
         symphony_api::TASK_ACTION_ROUTE
         | symphony::save::WORKFLOW_APPLY
         | symphony_api::SETTING_WRITE_PATH => DECIDE,
-        "/api/comment"
-        | "/api/message"
-        | "/api/ask"
+        "/api/ask"
         | "/api/ask-reply"
         | "/api/quick-chat"
         | "/api/quick-task"
-        | symphony_api::TASK_PASS_ROUTE => SPEAK_TO_AGENTS,
-        "/api/task-message" | symphony_api::UPLOAD_PATH => SPEAK,
+        | symphony_api::TASK_PASS_ROUTE
+        | symphony_api::DOCUMENT_PASS_ROUTE => SPEAK_TO_AGENTS,
+        "/api/task-message" | "/api/comment" | "/api/message" | symphony_api::UPLOAD_PATH => {
+            SPEAK
+        }
         symphony_api::ATTEMPT_CONTROL_ROUTE | symphony_api::ATTEMPT_VIEW_ROUTE => DIRECT_ATTEMPTS,
         symphony_api::PEOPLE_CHANGE_PATH => ADMINISTER,
         symphony_api::PROFILE_PATH

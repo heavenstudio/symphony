@@ -773,6 +773,48 @@ pub struct HeldWords {
 /// it ([`HeldWords::id`]). It needs speak and direct agents.
 pub const TASK_PASS_ROUTE: &str = "/api/task-pass";
 
+/// A document's comments held for people ([`DocumentHeld`]), `?path=DOC`.
+pub const DOCUMENT_HELD_PATH: &str = "/api/document-held";
+
+/// The route a held comment on a document is passed on by: `id` ([`HeldComment::id`]). It needs
+/// what [`TASK_PASS_ROUTE`] needs.
+pub const DOCUMENT_PASS_ROUTE: &str = "/api/document-pass";
+
+/// The comments held for people on one document, not passed on yet, as its page reads them: none
+/// on a board that names nobody.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct DocumentHeld {
+    pub held: Vec<HeldComment>,
+    /// The one reading may pass them on ([`DOCUMENT_PASS_ROUTE`]): the person at the machine, or
+    /// a person holding speak and direct agents.
+    pub passes: bool,
+}
+
+/// A comment on a document held for people: the words of someone who may speak and may not direct
+/// agents, written into the document's file only once someone who may passes them on.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct HeldComment {
+    /// Its number, which a pass names.
+    pub id: i64,
+    /// Who wrote it, by their short name.
+    pub author: String,
+    /// A callout's kind (`comment`, `question`, `decision`), or `message` for a card's message.
+    pub kind: String,
+    /// Their words; a callout's title is the first line.
+    pub text: String,
+    /// The card, for a message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<String>,
+    /// The section a callout was left after, by its key ([`Section::key`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// That section's last line then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<i64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskHistory {

@@ -236,6 +236,9 @@ export class DocumentLive extends Model {
   loaded = new Set<string>();
   /** How many feed events moved the review queue's cards: their postponed list is read again. */
   orders = 0;
+  /** How many comments held on a document the feed said were held or passed on: the page reads
+   * its own again (document-held.tsx). */
+  held = 0;
   /** The feed's cursor the page holds the document at. */
   cursor = 0;
   /** How many outlines the server answered: a read of bodies made before the last is dropped. */
@@ -341,6 +344,7 @@ export class DocumentLive extends Model {
     for (const one of changes) {
       const region = field(one, "region");
       if (region === "queue-item" || region === "queue-item-order") this.orders += 1;
+      if (region === "held") this.held += 1;
       if (region !== "document") continue;
       const data = field(one, "data");
       const delta = readChange(data);

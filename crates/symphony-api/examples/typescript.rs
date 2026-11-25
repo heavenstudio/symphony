@@ -132,6 +132,8 @@ fn constants() -> String {
         ),
         ("TASK_ACTION_ROUTE", text(api::TASK_ACTION_ROUTE)),
         ("TASK_PASS_ROUTE", text(api::TASK_PASS_ROUTE)),
+        ("DOCUMENT_HELD_PATH", text(api::DOCUMENT_HELD_PATH)),
+        ("DOCUMENT_PASS_ROUTE", text(api::DOCUMENT_PASS_ROUTE)),
         ("TASK_TOKENS_PATH", text(api::TASK_TOKENS_PATH)),
         ("TASK_COSTS_PATH", text(api::TASK_COSTS_PATH)),
         ("TASK_COSTS_MOST", api::TASK_COSTS_MOST.to_string()),
@@ -275,6 +277,8 @@ fn page_declarations(cfg: &Config) -> Vec<Declared> {
         // Whose a card or a task is.
         declared::<api::Owner>(cfg),
         declared::<api::CardOwners>(cfg),
+        declared::<api::DocumentHeld>(cfg),
+        declared::<api::HeldComment>(cfg),
         // The Runs page's, its schema updates too.
         declared::<api::RunsPage>(cfg),
         declared::<api::RunPage>(cfg),

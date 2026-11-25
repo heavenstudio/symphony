@@ -368,6 +368,55 @@ fn a_held_message_tells_who_of_its_tasks_group_may_pass_it_never_its_author() {
     );
 }
 
+/// A comment held on a document (`symphony_board::held::OnDocument`) is told of as `held`, a link
+/// alone to its place on the document's page, to each of its document's group who may pass it on,
+/// never its author: none of its words goes in a notice. Once passed on, it tells no one again.
+#[test]
+fn a_comment_held_on_a_document_tells_who_of_its_group_may_pass_it_with_no_word_of_it() {
+    use symphony_board::held::{Block, Place as Left};
+    let telling = Telling::new(false);
+    telling.direct_agents(&["bo", "cy"]);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let place = |card: Option<&str>| Left {
+        path: DOC.into(),
+        scope: None,
+        kind: if card.is_some() { "message" } else { "question" }.into(),
+        card: card.map(String::from),
+        block: card.is_none().then(|| Block {
+            key: "section:palette:0".into(),
+            line: 1,
+            text: "# Palette".into(),
+        }),
+    };
+    let ana = telling.f.other().for_person("ana");
+    let callout = (ana.hold_on_document("ana", "Too many swatches", &place(None))).unwrap();
+    let message = (ana.hold_on_document("ana", "Why grey?", &place(Some("old-grid")))).unwrap();
+    passes.pass(&telling.hub);
+    let link = |id: i64| format!("{ORIGIN}/symphony/{DOC}#held-{id}");
+    assert_eq!(
+        telling.told(),
+        [
+            ("held".into(), "email".into(), BO_EMAIL.into(), link(callout.id)),
+            ("held".into(), "email".into(), BO_EMAIL.into(), link(message.id)),
+        ],
+        "bo alone: ana wrote them and cy is in engineering"
+    );
+    let told = std::fs::read_to_string(telling.tree.path("machine/notices/told")).unwrap();
+    assert!(
+        !told.contains("swatches") && !told.contains("grey"),
+        "{told}"
+    );
+    // Passed on, it tells no one again, and another look finds nothing new.
+    let bo = telling.f.other().for_person("bo");
+    (bo.pass_on_document(callout.id, "bo")).unwrap();
+    passes.pass(&telling.hub);
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 2);
+    let record = std::fs::read_to_string(telling.root.join("artifacts/notices.json")).unwrap();
+    assert!(!record.contains("swatches"), "{record}");
+}
+
 /// With nobody of the task's group able to pass it on but its author, every person of the board
 /// who may is told; with nobody but its author on the whole board, no one is, as the person at the
 /// machine is told by the page.

@@ -598,6 +598,40 @@ form.verdict {
   min-height: 160px;
   color: var(--muted-foreground);
 }
+/* ---- A comment held for people: a callout's box, dashed, until it is passed on. ---- */
+.held-comment {
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  background: var(--card);
+  padding: 10px 16px;
+  margin: 12px 0;
+}
+.held-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.held-kind,
+.held-head > .entry-held {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0 7px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--muted);
+}
+.held-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 80ch;
+}
+.held-comment > .row {
+  margin-top: 8px;
+}
 /* ---- Callouts: soft cards tinted by their kind. ---- */
 .callout {
   --c: var(--muted-foreground);

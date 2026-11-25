@@ -24,6 +24,7 @@ use crate::{asks, branches, clock, commit, edit, register, taskview};
 
 mod attest;
 mod failure;
+mod held;
 mod quick;
 mod quick_task;
 mod settings;
@@ -38,13 +39,14 @@ mod hand_tests;
 #[cfg(test)]
 mod lock_tests;
 
-pub const ROUTES: [&str; 18] = [
+pub const ROUTES: [&str; 19] = [
     "/api/postpone",
     "/api/decision",
     "/api/comment",
     "/api/message",
     "/api/task-message",
     symphony_api::TASK_PASS_ROUTE,
+    symphony_api::DOCUMENT_PASS_ROUTE,
     "/api/task-priority",
     "/api/task-field",
     "/api/task-cancel",
@@ -474,14 +476,24 @@ impl Saves {
         };
         // The ask this save opens or joins, if it waits on an agent's answer.
         let mut asking: Option<NewAsk> = None;
+        // What the chat is told was said, where it is not this save's own route and payload: a
+        // held comment's pass tells the comment it wrote, its author's words.
+        let mut told: Option<Told> = None;
         let result = match route {
             "/api/postpone" => self.postpone(scope, payload, order),
             "/api/decision" | "/api/comment" | "/api/message" | symphony_api::CARD_HAND_ROUTE => {
-                self.document(actor, scope, route, payload)
+                self.document(actor, scope, route, payload, None)
                     .map(|(value, ask)| {
                         asking = ask;
                         value
                     })
+            }
+            symphony_api::DOCUMENT_PASS_ROUTE => {
+                self.pass_held(actor, payload).map(|(value, ask, said)| {
+                    asking = ask;
+                    told = Some(said);
+                    value
+                })
             }
             "/api/task-message"
             | symphony_api::TASK_PASS_ROUTE
@@ -516,13 +528,19 @@ impl Saves {
             if matches!(route, "/api/ask" | "/api/ask-reply" | "/api/quick-chat") {
                 asking = self.chat_ask(scope, route, payload, value);
             }
+            let (route, scope, payload, by) = match &told {
+                Some(told) => (told.route, told.scope.as_str(), &told.payload, &*told.by),
+                None => (route, scope, payload, actor.name()),
+            };
             let notify = matches!(
                 route,
                 "/api/ask" | "/api/ask-reply" | "/api/quick-chat" | "/api/message" | "/api/comment"
             ) || ((route == "/api/decision"
                 || route == symphony_api::TASK_ACTION_ROUTE)
                 && !string(payload, "note").trim().is_empty());
-            if value["repeat"] == true {
+            if value.get("held").is_some() {
+                // Held for people: no ask, and nothing for the chat.
+            } else if value["repeat"] == true {
                 // A repeated tap was journalled by the tap it repeats.
             } else if notify {
                 let id = value["id"].as_i64();
@@ -533,8 +551,8 @@ impl Saves {
                 // never read as new; a retry publishes this same text. A person a board named is
                 // said by name (`by=ana`); the person at the machine's line reads as it always has,
                 // as `owner` is no one's short name.
-                let by = if symphony_docs::syntax::is_short_name(actor.name()) {
-                    format!(" by={}", actor.name())
+                let by = if symphony_docs::syntax::is_short_name(by) {
+                    format!(" by={by}")
                 } else {
                     String::new()
                 };
@@ -701,15 +719,30 @@ impl Saves {
         Some(ask)
     }
 
+    /// A card's verdict, its message, a comment or a card's hand-over on the document `payload`
+    /// names, saved for `actor`. A comment or a card's message of a person a board named who may
+    /// not direct agents is held for people (`held.rs`): checked as it would be written, kept as
+    /// the board's row alone, and answered `"held"`, its number, with no ask. `pass`, a held comment
+    /// `actor` passes on, is written as its author's, where it was left, and marked passed.
     fn document(
         &self,
         actor: &Actor,
         scope: &str,
         route: &str,
         payload: &Value,
+        pass: Option<&symphony_board::held::OnDocument>,
     ) -> Result<(Value, Option<NewAsk>), Failure> {
         let (root, rel) = self.scope(scope, string(payload, "path"))?;
         let target = Self::target(&root, &rel)?;
+        // Whose words the file is given: a passed comment's are its author's.
+        let name = pass.map_or(actor.name(), |held| held.author.as_str());
+        let holding = match crate::owners::person(actor) {
+            Some(person) if pass.is_none() && matches!(route, "/api/comment" | "/api/message") => {
+                let store = self.store_by(person)?;
+                held::holds(&store, person)?.then_some(store)
+            }
+            _ => None,
+        };
         // On the default branch of a project that delivers by pull request the save writes no file
         // and commits nothing here: it is kept and delivered by a pull request of its own
         // (`commit::pending`), and answered as pending.
@@ -730,6 +763,18 @@ impl Saves {
                 error: "document saves are closing".into(),
             });
         }
+        // A comment passed on once: another pass that came first is refused here, under the lock.
+        let passing = match pass {
+            Some(passed) => {
+                let store = self.store_by(actor.name())?;
+                let now = store.held_comment(passed.id)?;
+                if let Some(refused) = held::not_held(passed.id, now.as_ref()) {
+                    return Err(refused);
+                }
+                Some((store, passed))
+            }
+            None => None,
+        };
         let mut taps = self.taps.lock().recover();
         if !tap.is_empty()
             && let Some((_, state, note)) = taps.iter().find(|(held, ..)| *held == tap)
@@ -812,16 +857,17 @@ impl Saves {
                 slug,
                 string(payload, "text"),
                 &now,
-                actor.name(),
+                name,
                 None,
             )?,
             "/api/comment" => {
                 let (title, body) = comment.as_ref().expect("a comment's words were read");
-                let line = payload["after_line"]
-                    .as_i64()
-                    .or_else(|| payload["after_line"].as_str().and_then(|s| s.parse().ok()))
-                    .unwrap_or(0);
-                edit::insert_comment(&original, line, string(payload, "kind"), title, body)?
+                let line = match pass.and_then(|held| held.document.block.as_ref()) {
+                    Some(block) => held::found_again(&original, block)?,
+                    None => after_line(payload),
+                };
+                let kind = string(payload, "kind");
+                edit::insert_comment_by(&original, line, kind, title, body, name)?
             }
             _ => {
                 if edit::is_repeat_decision_by(
@@ -849,6 +895,13 @@ impl Saves {
                 )?
             }
         };
+        // Held: what was checked against the document is kept by the board, and nothing else.
+        if let Some(store) = holding {
+            let (named, _) = self.named(scope, string(payload, "path"))?;
+            let place = held::place(route, named, &rel, &original, payload, after_line(payload))?;
+            let held = store.hold_on_document(name, &held::words(route, payload), &place)?;
+            return Ok((json!({"ok": true, "held": held.id}), None));
+        }
         let (superseded, _) = register::supersede(&text, &now);
         // A hand-over rewrites its card's first line, and that alone.
         let whole = if handing.is_some() { &text } else { &original };
@@ -920,6 +973,10 @@ impl Saves {
                 // Kept for delivery, a save is written nowhere else: one not kept keeps no line.
                 .map_err(|error| if pending { take_back(error) } else { error })?;
         }
+        // Its words are in the file, or kept for its delivery: the board marks it passed.
+        if let Some((store, passed)) = &passing {
+            store.pass_on_document(passed.id, actor.name())?;
+        }
         if !tap.is_empty() {
             taps.push_back((
                 tap,
@@ -937,6 +994,34 @@ impl Saves {
             return Ok((json!({"ok":true,"delivery":"pending"}), ask));
         }
         Ok((json!({"ok":true}), ask))
+    }
+
+    /// The held comment `payload`'s `id` passed on by `actor` ([`symphony_api::DOCUMENT_PASS_ROUTE`]):
+    /// written into its document as its author's own save would write it, their name on it and
+    /// the passer's first in its words, where it was left (`held.rs`), then marked passed. Its ask
+    /// and the chat's callback are its author's comment's ([`Told`]). Refused, with nothing
+    /// written: no comment held by that number, one passed already, and its place not found again.
+    fn pass_held(
+        &self,
+        actor: &Actor,
+        payload: &Value,
+    ) -> Result<(Value, Option<NewAsk>, Told), Failure> {
+        let id = (payload["id"].as_i64()).ok_or("id must be a held comment's number".to_string())?;
+        let found = self.store_by(actor.name())?.held_comment(id)?;
+        if let Some(refused) = held::not_held(id, found.as_ref()) {
+            return Err(refused);
+        }
+        let found = found.expect("a comment not refused is held");
+        let (route, said) = held::passed_save(&found, actor.name());
+        let scope = found.document.scope.clone().unwrap_or_default();
+        let (value, ask) = self.document(actor, &scope, route, &said, Some(&found))?;
+        let told = Told {
+            route,
+            scope,
+            payload: said,
+            by: found.author.clone(),
+        };
+        Ok((value, ask, told))
     }
 
     fn ask(
@@ -977,6 +1062,23 @@ impl Saves {
             Ok(json!({"ok":true,"id":id}))
         }
     }
+}
+
+/// What the chat is told a save said, where it is not the save's own route and payload: the route
+/// and payload of the save it made, the checkout's scope and whose words they are.
+struct Told {
+    route: &'static str,
+    scope: String,
+    payload: Value,
+    by: String,
+}
+
+/// The line a comment's `payload` goes after, `after_line`, a number or its text: 0 where none.
+fn after_line(payload: &Value) -> i64 {
+    payload["after_line"]
+        .as_i64()
+        .or_else(|| payload["after_line"].as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0)
 }
 
 /// A card a save hands on: the card as the board's log names it, the name written on it before,
