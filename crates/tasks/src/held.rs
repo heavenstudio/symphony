@@ -85,7 +85,8 @@ pub struct OnDocument {
 pub struct Place {
     /// The document's route (`docs/…/X.md`).
     pub path: String,
-    /// The checkout's scope the page was of (a worktree's id), none for the project's own.
+    /// The checkout's scope the page was of (a worktree's id), none for the project's own; once
+    /// passed by [`crate::Store::pass_on_document_into`], the checkout its pass wrote to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
     /// A callout's kind (`comment`, `question`, `decision`), or [`MESSAGE`] for a card's message.
