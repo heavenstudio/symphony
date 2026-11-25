@@ -63,16 +63,27 @@ struct Read {
     held: Option<Vec<i64>>,
 }
 
-/// What a pass said that went wrong, by where: said again only once it changes.
+/// What a pass said that went wrong, by where: said again only once it changes, and never while
+/// the same words stand under another place, as one failure two meet does (a record that cannot
+/// be written, by the look and the hand of one pass). Each place keeps its own words all the same,
+/// so each clears as before. In a test, the lines it said, in order.
 #[derive(Default)]
-struct Said(BTreeMap<&'static str, String>);
+struct Said(
+    BTreeMap<&'static str, String>,
+    #[cfg(test)] Vec<String>,
+);
 
 impl Said {
     fn once(&mut self, project: &str, place: &'static str, why: String) {
-        if self.0.get(place) != Some(&why) {
-            eprintln!("NOTICE {project}: {why}");
-            self.0.insert(place, why);
+        if self.0.get(place) == Some(&why) {
+            return;
         }
+        if !self.0.values().any(|said| *said == why) {
+            eprintln!("NOTICE {project}: {why}");
+            #[cfg(test)]
+            self.1.push(why.clone());
+        }
+        self.0.insert(place, why);
     }
 
     fn clear(&mut self, place: &'static str) {

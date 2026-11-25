@@ -366,6 +366,44 @@ fn a_use_tree_names_the_full_path_of_each_name_it_imports() {
     );
 }
 
+/// A declaration that never closes, its `;` followed by a comment with no space between (which
+/// `rustfmt` never leaves) and no later line ending in `;`, is its lines as written, so neither it
+/// nor a call after it is dropped at the end of the guard: its name taken out reads as lost, and
+/// so does a call after it. Before, both read as kept.
+#[test]
+fn a_use_declaration_that_never_closes_is_its_lines_as_written() {
+    let before = "use board::Store;//the store\n\nfn calls() {\n    drop(Store::open)\n}\n";
+    assert_eq!(
+        holds(before),
+        [
+            Held::Line("use board::Store;//the store"),
+            Held::Line(""),
+            Held::Line("fn calls() {"),
+            Held::Line("    drop(Store::open)"),
+            Held::Line("}"),
+        ]
+    );
+    assert_eq!(lost(before, before), Vec::<String>::new());
+    let renamed = before.replace("board::Store", "board::Opening");
+    assert_eq!(lost(before, &renamed), ["use board::Store;//the store"]);
+    assert_eq!(
+        lost(before, "fn calls() {\n}\n"),
+        ["use board::Store;//the store", "drop(Store::open)"]
+    );
+
+    // Over several lines, a comment among them: each line as written, the comment's too.
+    let wrapped = "use board::{\n    // The store.\n    Store,\n};//its list";
+    assert_eq!(
+        holds(wrapped),
+        [
+            Held::Line("use board::{"),
+            Held::Line("    // The store."),
+            Held::Line("    Store,"),
+            Held::Line("};//its list"),
+        ]
+    );
+}
+
 /// The files the notes read here say their versions as the reading expects: a rename or a move
 /// would leave every release's notes silent on its tools.
 #[test]
