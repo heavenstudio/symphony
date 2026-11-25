@@ -1,9 +1,11 @@
 //! The machine's one server's notices for its project ([`crate::notices`]): a worker of its own
-//! beside the board's ticks, so a program's run never holds a tick. Each board read and each
-//! refresh of the documents wakes it, and so does the next notice coming due. A pass reads the
-//! programs and the profiles from the machine folder, and the board's people, map and lines after
-//! the record's, and the cards waiting from the main page's queue, again only when the board's
-//! newest line, the page, the people or the map moved; then it hands what is due.
+//! beside the board's ticks, so a program's run never holds a tick. Each board tick, once it read
+//! the board and looked at its people, and each refresh of the documents wakes it, and so does the
+//! next notice coming due. A pass reads the programs and the profiles from the machine folder,
+//! takes the board's people and map as the tick's last look read them ([`Hub::people_read`]), so
+//! it reads them no second time, and reads the board's lines after the record's and the cards
+//! waiting from the main page's queue, again only when the board's newest line, the page, the
+//! people or the map moved; then it hands what is due.
 //!
 //! It tells only while its server generation's recording gate stands open
 //! ([`symphony_board::recording`]), as the board's recorders record: a reload's replacement,
@@ -257,15 +259,18 @@ impl Hub {
         let Ok(store) = self.reader() else {
             return;
         };
-        let (people, map) = match store.people().and_then(|p| Ok((p, store.ownership_map()?))) {
-            Ok(read) => {
+        // The tick's look at them, which woke this pass: no read of its own.
+        let looked = match self.people_looked() {
+            Ok(Some(looked)) => {
                 said.clear("board");
-                read
+                looked
             }
+            Ok(None) => return,
             Err(error) => {
                 return said.once(project, "board", format!("the board's people: {error}"));
             }
         };
+        let (people, map) = &*looked;
         let held = match store.held_on_documents() {
             Ok(held) => {
                 said.clear("held");
@@ -298,7 +303,7 @@ impl Hub {
             let lines = match runner.cursor() {
                 Some(cursor) if cursor < latest => {
                     let rows = store.messages_after_rows(cursor, latest);
-                    match rows.and_then(|rows| told_lines(&store, &people, &map, rows)) {
+                    match rows.and_then(|rows| told_lines(&store, people, map, rows)) {
                         Ok(lines) => lines,
                         Err(error) => {
                             return said.once(
@@ -316,17 +321,17 @@ impl Hub {
                 let named: Vec<(String, String)> = (cards.iter())
                     .map(|(doc, slug, _)| (doc.clone(), slug.clone()))
                     .collect();
-                let owners = symphony::owners::waiting(&people, &map, &self.root, &named);
+                let owners = symphony::owners::waiting(people, map, &self.root, &named);
                 let cards = (cards.into_iter().zip(owners)).map(|((doc, slug, href), owning)| {
                     Waiting::card(format!("{doc}#{slug}"), href, owning)
                 });
                 let held = held.as_deref().unwrap_or_default();
                 cards
-                    .chain(held_waiting(&people, &map, &self.root, held))
+                    .chain(held_waiting(people, map, &self.root, held))
                     .collect()
             });
             let look = Look {
-                people: &people,
+                people,
                 cards,
                 held_read: held.is_some(),
                 lines,

@@ -203,15 +203,9 @@ pub(crate) struct Hub {
     /// ([`Hub::note_asks`]); none until the board is read.
     queue_asks: Mutex<Arc<Vec<symphony_board::Ask>>>,
     /// The board's people and map as its last look read them ([`Hub::people_read`]), which the
-    /// pages read who decides their cards with ([`theirs`]); none before the first.
-    people: Mutex<
-        Option<
-            Arc<(
-                symphony_board::people::People,
-                symphony_board::people::ownership::Map,
-            )>,
-        >,
-    >,
+    /// pages read who decides their cards with ([`theirs`]) and the notices tell by
+    /// ([`notices`]); none before the first.
+    people: Mutex<theirs::Looked>,
     /// The shared server's hourly roll-up of the project into its day files ([`reports::Rollup`]);
     /// none on a private server, which writes none.
     pub(crate) reports: Mutex<Option<reports::Rollup>>,
