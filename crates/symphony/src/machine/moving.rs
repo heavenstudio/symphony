@@ -50,7 +50,7 @@ pub fn prune(folder: &Path, kept: usize) {
         })
         .filter_map(|path| Some((fs::metadata(&path).ok()?.modified().ok()?, path)))
         .collect();
-    found.sort();
+    symphony_board::order::sort_by(&mut found, &Ord::cmp);
     let gone = found.len().saturating_sub(kept);
     for (_, path) in found.into_iter().take(gone) {
         let _ = fs::remove_file(path);

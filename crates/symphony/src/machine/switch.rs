@@ -241,7 +241,7 @@ fn installed_releases(machine: &Path) -> Vec<String> {
         .filter(|name| !name.starts_with('.'))
         .filter(|name| matches!(release::installed(machine, name), Ok(Some(_))))
         .collect();
-    names.sort();
+    symphony_board::order::sort_by(&mut names, &Ord::cmp);
     names
 }
 

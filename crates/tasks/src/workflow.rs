@@ -300,10 +300,13 @@ pub fn authority_pages(text: &str) -> std::collections::BTreeMap<String, String>
         .and_then(|value| taken::<Vec<WrittenAuthority>>(Some(value), "workflow_authorities").ok())
         .flatten()
         .unwrap_or_default();
-    (written.into_iter())
-        .filter(|authority| authority.check_page().is_ok())
-        .filter_map(|authority| Some((authority.adapter, authority.page?)))
-        .collect()
+    let mut pages = std::collections::BTreeMap::new();
+    pages.extend(
+        (written.into_iter())
+            .filter(|authority| authority.check_page().is_ok())
+            .filter_map(|authority| Some((authority.adapter, authority.page?))),
+    );
+    pages
 }
 
 /// The `[project] id` the file commits, which every attestation names as the project it is for:
@@ -549,10 +552,9 @@ impl Grants {
 
     /// The capabilities granted to anyone: the ones the host supports.
     pub fn supported(&self) -> BTreeSet<&str> {
-        self.0
-            .iter()
-            .map(|(capability, _)| capability.as_str())
-            .collect()
+        let mut supported = BTreeSet::new();
+        supported.extend(self.0.iter().map(|(capability, _)| capability.as_str()));
+        supported
     }
 }
 
@@ -596,12 +598,12 @@ fn normalize(mut d: Definition) -> Definition {
     ordered(&mut d.positions, |position| pair_key(&position.at));
     ordered(&mut d.edges, |edge| edge.id.clone());
     ordered(&mut d.guards, |guard| guard.id.clone());
-    d.capabilities.sort();
-    d.adapters.sort();
-    d.task_kinds.sort();
+    crate::order::sort_by(&mut d.capabilities, &Ord::cmp);
+    crate::order::sort_by(&mut d.adapters, &Ord::cmp);
+    crate::order::sort_by(&mut d.task_kinds, &Ord::cmp);
     for edge in &mut d.edges {
-        edge.inputs.sort();
-        edge.guards.sort();
+        crate::order::sort_by(&mut edge.inputs, &Ord::cmp);
+        crate::order::sort_by(&mut edge.guards, &Ord::cmp);
         // Authority is an unordered OR; effects remain in application order.
         ordered(&mut edge.authority, authority_key);
     }
@@ -621,7 +623,7 @@ pub(crate) fn canonical(value: &impl serde::Serialize) -> Result<Vec<u8>, String
 /// link a sort each.
 pub(crate) fn ordered<T>(items: &mut Vec<T>, key: impl Fn(&T) -> String) {
     let mut keyed: Vec<(String, usize)> = items.iter().map(key).zip(0..).collect();
-    keyed.sort_unstable();
+    crate::order::sort_by(&mut keyed, &Ord::cmp);
     let mut slots: Vec<Option<T>> = std::mem::take(items).into_iter().map(Some).collect();
     items.extend((keyed.into_iter()).map(|(_, at)| slots[at].take().expect("each index once")));
 }

@@ -7,6 +7,7 @@ use super::{Error, Message, Store, message};
 use crate::rows::MessageRow;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::BTreeSet;
 
 /// Maximum lines returned by one history read, plus one probe row inside the query.
 pub const THREAD_WINDOW_LIMIT: usize = 256;
@@ -25,7 +26,7 @@ pub struct ThreadWindow {
     pub uncertain: bool,
     /// The ids of its lines a person a board named wrote, by the board's mark of each
     /// ([`MessageRow::person`]): their senders are people, never sessions of the task's.
-    pub by_person: std::collections::BTreeSet<i64>,
+    pub by_person: BTreeSet<i64>,
 }
 
 impl Store {
@@ -61,10 +62,12 @@ impl Store {
             .take(THREAD_WINDOW_LIMIT)
             .collect();
         let uncertain = rows.iter().any(|row| row.cut);
-        let by_person = (rows.iter())
-            .filter(|row| row.message.person)
-            .map(|row| row.message.id)
-            .collect();
+        let mut by_person = BTreeSet::new();
+        by_person.extend(
+            (rows.iter())
+                .filter(|row| row.message.person)
+                .map(|row| row.message.id),
+        );
         let mut lines: Vec<_> = rows.into_iter().map(|row| message(row.message)).collect();
         lines.reverse();
         Ok(ThreadWindow {

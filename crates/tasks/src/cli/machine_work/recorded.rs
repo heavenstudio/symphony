@@ -505,7 +505,7 @@ fn names(operations: &Path) -> io::Result<Vec<PathBuf>> {
             paths.push(path);
         }
     }
-    paths.sort_unstable();
+    crate::order::sort_by(&mut paths, &Ord::cmp);
     Ok(paths)
 }
 
@@ -744,7 +744,7 @@ fn entries(folder: &Path) -> io::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
             visible.push(path);
         }
     }
-    visible.sort_unstable();
+    crate::order::sort_by(&mut visible, &Ord::cmp);
     Ok((visible, hidden))
 }
 

@@ -28,10 +28,9 @@
 //! is never sent twice, a read no more than a write, so a client never repeats work the server may
 //! have done. One the server took on a connection that worked and did not answer within the
 //! client's wait ([`Client::waiting`]), or a startup it did not answer in that time, says the
-//! server is slow in the words [`crate::rpc::slow`] knows, as the `rpc` client consumers keep says
-//! it: a server that is there and late, never one that cannot be reached. The system says such a wait
-//! run out as its bare error, `EAGAIN`, "Resource temporarily unavailable", which names no wait,
-//! as a blocking socket's timeout does.
+//! server is slow in the words [`crate::rpc::slow`] knows: a server that is there and late, never
+//! one that cannot be reached. The system says such a wait run out as its bare error, `EAGAIN`,
+//! "Resource temporarily unavailable", which names no wait, as a blocking socket's timeout does.
 
 use crate::db::DbError;
 use crate::lock::Recovered as _;

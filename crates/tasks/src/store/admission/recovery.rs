@@ -259,7 +259,7 @@ pub(super) fn vars(
         .cloned()
         .collect();
     holding.extend(recovery.drop.iter().cloned());
-    holding.sort();
+    crate::order::sort_by(&mut holding, &Ord::cmp);
     holding.dedup();
     let status = (recovery.transition.as_ref()).map_or(&decided.task.status, |t| &t.status);
     json!({

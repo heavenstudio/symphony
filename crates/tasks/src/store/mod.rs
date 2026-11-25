@@ -12,7 +12,6 @@ use crate::health::{self, EXECUTING, Health};
 use crate::maps::Collect as _;
 pub(crate) use crate::quote::repr;
 use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
-use crate::rpc::Client;
 use crate::schema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -229,7 +228,7 @@ pub struct Store {
     db: database::Board,
     /// The client the unanswered-post lookup reads through when one is set
     /// ([`Store::looking_up_within`]): this one's board, a read that ran out its shorter wait not
-    /// sent again ([`Client::bounded`]). None reads through `db`, as every other read.
+    /// sent again ([`crate::pg::Client::bounded`]). None reads through `db`, as every other read.
     lookup: Option<database::Board>,
     clock: Clock,
     pid_alive: Probe,
@@ -321,14 +320,6 @@ impl Store {
             self.named_server.then(|| self.db.addr()).as_deref(),
             self.db.database(),
         )
-    }
-
-    /// A SurrealDB client of the board, which no board has: every board is on PostgreSQL, whose
-    /// client is [`Store::database`]'s. Kept by its name for the consumers that call it
-    /// (`tests/consumer_api.rs`) until their code no longer does, as it has panicked on a
-    /// PostgreSQL board since the first one.
-    pub fn client(&self) -> &Client {
-        panic!("this board is on PostgreSQL, which no SurrealDB client reaches")
     }
 
     /// The database the board is in.
@@ -428,7 +419,7 @@ impl Store {
         let mut slugs: Vec<String> = self.retrying(|| {
             self.read_together(read(), json!({"handle": handle, "executing": EXECUTING}))
         })?;
-        slugs.sort_unstable();
+        crate::order::sort_by(&mut slugs, &Ord::cmp);
         slugs.dedup();
         Ok(slugs)
     }

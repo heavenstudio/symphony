@@ -130,7 +130,7 @@ pub fn install(providers: Vec<Provider>) -> Result<(), String> {
     if named.iter().any(|name| name.trim().is_empty()) {
         return Err("an execution provider names its configuration".into());
     }
-    named.sort_unstable();
+    symphony_board::order::sort_by(&mut named, &Ord::cmp);
     if let Some(pair) = named.windows(2).find(|pair| pair[0] == pair[1]) {
         return Err(format!(
             "two execution providers answer for configuration {:?}",

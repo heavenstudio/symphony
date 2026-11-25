@@ -671,8 +671,10 @@ fn mark_unseen_replies(
         let (Some(current), Some(new)) = (current.get(&card.slug), new.get(&card.slug)) else {
             continue;
         };
-        let current_keys: BTreeSet<_> = entry_keys(&current.entries()).into_iter().collect();
-        let new_keys: BTreeSet<_> = entry_keys(&new.entries()).into_iter().collect();
+        let mut current_keys: BTreeSet<_> = BTreeSet::new();
+        current_keys.extend(entry_keys(&current.entries()));
+        let mut new_keys: BTreeSet<_> = BTreeSet::new();
+        new_keys.extend(entry_keys(&new.entries()));
         let entries = card.entries();
         let keys = entry_keys(&entries);
         let mut pairs = BTreeSet::new();
@@ -680,10 +682,12 @@ fn mark_unseen_replies(
         for source in [current, new, &card] {
             pairs.extend(source.raw.iter().filter_map(|line| unseen_reply(line)));
         }
-        let mut markers: BTreeSet<String> = pairs
-            .into_iter()
-            .map(|(owner, reply)| unseen_marker(owner, reply))
-            .collect();
+        let mut markers: BTreeSet<String> = BTreeSet::new();
+        markers.extend(
+            pairs
+                .into_iter()
+                .map(|(owner, reply)| unseen_marker(owner, reply)),
+        );
         for (index, owner) in entries.iter().enumerate() {
             let key = &keys[index];
             if owner.who != Who::Owner || current_keys.contains(key) || !new_keys.contains(key) {
@@ -734,7 +738,8 @@ fn card_counts(text: &str) -> BTreeMap<String, usize> {
 /// merge disagrees with the unambiguous three-way count choice for any slug.
 fn card_count_mismatch(current: &str, base: &str, new: &str, merged: &str) -> Option<bool> {
     let counts = [current, base, new, merged].map(card_counts);
-    let slugs: std::collections::BTreeSet<_> = counts.iter().flat_map(BTreeMap::keys).collect();
+    let mut slugs: std::collections::BTreeSet<_> = std::collections::BTreeSet::new();
+    slugs.extend(counts.iter().flat_map(BTreeMap::keys));
     let mut mismatch = false;
     for slug in slugs {
         let [current, base, new, merged] = counts
@@ -961,7 +966,8 @@ impl<'a> Histories<'a> {
             line.strip_suffix('\r').unwrap_or(line)
         };
         let plain: Vec<_> = text.split_inclusive('\n').map(bare).collect();
-        let openers: BTreeSet<_> = shared_cards(&plain).iter().map(|c| c.line - 1).collect();
+        let mut openers: BTreeSet<_> = BTreeSet::new();
+        openers.extend(shared_cards(&plain).iter().map(|c| c.line - 1));
         let dated = |line: &'a str| {
             let at = line.find('[')? + 1;
             Some(&line[at..at + entry_line(bare(line))?.ts?.len()])
@@ -1101,8 +1107,8 @@ fn merge_history(current: &str, base: &str, new: &str, plugins: &Plugins) -> Opt
             return None;
         };
         merged.push_str(header);
-        let metadata: std::collections::BTreeSet<_> =
-            c.metadata.iter().chain(&n.metadata).collect();
+        let mut metadata = std::collections::BTreeSet::new();
+        metadata.extend(c.metadata.iter().chain(&n.metadata));
         for line in metadata {
             merged.push_str(line);
         }
@@ -1821,11 +1827,13 @@ fn release(
         root,
         &["diff", "--no-renames", "--name-only", &base, branch],
     )?;
-    let branch_pages: BTreeSet<String> = names
-        .lines()
-        .filter(|name| project.is_page(name))
-        .map(str::to_owned)
-        .collect();
+    let mut branch_pages: BTreeSet<String> = BTreeSet::new();
+    branch_pages.extend(
+        names
+            .lines()
+            .filter(|name| project.is_page(name))
+            .map(str::to_owned),
+    );
     let pending = waiting.lock().recover().clone();
     let output_pages = ahead.lock().recover().clone();
     let mut pages = branch_pages.clone();
@@ -2205,7 +2213,7 @@ impl OutputJob {
                 Err(error) => report_journal_error(root, &folder, &error.to_string()),
             }
         }
-        paths.sort();
+        symphony_board::order::sort_by(&mut paths, &Ord::cmp);
         let mut found = Vec::new();
         for path in paths {
             if path.extension().is_none_or(|extension| extension != "json") {
@@ -2390,8 +2398,8 @@ impl OutputJob {
                 let outside = {
                     let _file = write_lock(root)?.map(Held);
                     let pending = waiting.lock().recover();
-                    let pages: std::collections::BTreeSet<_> =
-                        pending.values().map(|edit| edit.rel.as_str()).collect();
+                    let mut pages = std::collections::BTreeSet::new();
+                    pages.extend(pending.values().map(|edit| edit.rel.as_str()));
                     let mut outside = std::collections::BTreeSet::new();
                     for checkout in main_worktrees(root)? {
                         for rel in git(&checkout, &["diff", "--name-only", "HEAD", "--"])?.lines() {

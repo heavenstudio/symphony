@@ -314,7 +314,7 @@ impl Place<'_> {
                 (name, title)
             })
             .collect();
-        docs.sort_by_cached_key(|(_, title)| title.to_lowercase());
+        symphony_board::order::sort_by_key(&mut docs, &|(_, title)| title.to_lowercase());
         docs
     }
 

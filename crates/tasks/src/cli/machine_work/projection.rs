@@ -184,10 +184,12 @@ impl Projection {
             }
             return Err(Rejected::Limit);
         }
-        let terminal: BTreeSet<_> = finished
-            .iter()
-            .filter_map(|operation| operation.operation_id.clone())
-            .collect();
+        let mut terminal: BTreeSet<_> = BTreeSet::new();
+        terminal.extend(
+            finished
+                .iter()
+                .filter_map(|operation| operation.operation_id.clone()),
+        );
         let mut all = sample.clone();
         all.operations.extend(finished);
         let normalized = normalize(&all);
@@ -382,31 +384,30 @@ fn native_receipts(
     old: Option<&Accepted>,
     receipt_ms: u64,
 ) -> BTreeMap<String, u64> {
-    let previous: BTreeMap<_, _> = old
-        .into_iter()
-        .flat_map(|old| &old.sample.operations)
-        .map(|operation| {
-            (
-                operation.operation_id.as_deref().expect("normalized id"),
-                operation,
-            )
-        })
-        .collect();
-    sample
-        .operations
-        .iter()
-        .map(|operation| {
-            let id = operation.operation_id.as_deref().expect("normalized id");
-            let retained = old.filter(|_| previous.get(id).copied() == Some(operation));
-            let receipt = retained.map_or(receipt_ms, |old| {
-                old.native_receipts
-                    .get(id)
-                    .copied()
-                    .unwrap_or(old.receipt_ms)
-            });
-            (id.to_owned(), receipt)
-        })
-        .collect()
+    let mut previous = BTreeMap::new();
+    previous.extend(
+        (old.into_iter())
+            .flat_map(|old| &old.sample.operations)
+            .map(|operation| {
+                (
+                    operation.operation_id.as_deref().expect("normalized id"),
+                    operation,
+                )
+            }),
+    );
+    let mut receipts = BTreeMap::new();
+    receipts.extend(sample.operations.iter().map(|operation| {
+        let id = operation.operation_id.as_deref().expect("normalized id");
+        let retained = old.filter(|_| previous.get(id).copied() == Some(operation));
+        let receipt = retained.map_or(receipt_ms, |old| {
+            old.native_receipts
+                .get(id)
+                .copied()
+                .unwrap_or(old.receipt_ms)
+        });
+        (id.to_owned(), receipt)
+    }));
+    receipts
 }
 
 fn normalize(sample: &Sample) -> Result<Vec<Operation>, Rejected> {

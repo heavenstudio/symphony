@@ -85,13 +85,11 @@ pub(super) fn resolve(
     thread: &[Message],
     current: &[Role],
 ) -> BTreeMap<i64, BTreeMap<String, String>> {
-    let acquired: BTreeSet<_> = thread
-        .iter()
-        .filter_map(|post| match change(post) {
-            Some(Change::Acquire(role)) => Some((post.sender.as_str(), role)),
-            _ => None,
-        })
-        .collect();
+    let mut acquired = BTreeSet::new();
+    acquired.extend(thread.iter().filter_map(|post| match change(post) {
+        Some(Change::Acquire(role)) => Some((post.sender.as_str(), role)),
+        _ => None,
+    }));
     // Imported current roles may predate the retained journal. Their `since` remains evidence;
     // a launch record alone cannot assign all old conversations to a role-addressed post.
     let imported: Vec<_> = current

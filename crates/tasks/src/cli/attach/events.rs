@@ -46,23 +46,30 @@ pub fn diff_on(
     emit: &mut dyn FnMut(&str),
 ) -> Result<(), Error> {
     // The sessions it registered: what they take on and let go is its own staffing.
-    let children: BTreeSet<&str> = (board.sessions.iter())
-        .filter(|s| s.row.parent.as_deref() == Some(handle))
-        .map(|s| s.row.handle.as_str())
-        .collect();
+    let mut children: BTreeSet<&str> = BTreeSet::new();
+    children.extend(
+        (board.sessions.iter())
+            .filter(|s| s.row.parent.as_deref() == Some(handle))
+            .map(|s| s.row.handle.as_str()),
+    );
     let through = now.latest_message.unwrap_or_default();
     let since = before.latest_message.unwrap_or(through);
     // The tasks this session's orchestrator role came to or left since the last look.
     let orchestrating = |seen: &Seen| -> BTreeSet<String> {
-        (seen.roles.iter())
-            .filter(|(_, who, role)| who == handle && role == "orchestrator")
-            .map(|(slug, _, _)| slug.clone())
-            .collect()
+        let mut slugs = BTreeSet::new();
+        slugs.extend(
+            (seen.roles.iter())
+                .filter(|(_, who, role)| who == handle && role == "orchestrator")
+                .map(|(slug, _, _)| slug.clone()),
+        );
+        slugs
     };
-    let flipped: BTreeSet<String> = orchestrating(before)
-        .symmetric_difference(&orchestrating(now))
-        .cloned()
-        .collect();
+    let mut flipped: BTreeSet<String> = BTreeSet::new();
+    flipped.extend(
+        orchestrating(before)
+            .symmetric_difference(&orchestrating(now))
+            .cloned(),
+    );
     let needs_actions = before.statuses != now.statuses
         || !flipped.is_empty()
         || (now.ready.keys()).any(|slug| !before.ready.contains_key(slug));
@@ -205,10 +212,12 @@ fn role_changes<'s>(
     let held_before = |slug: &str| {
         (before.roles.iter()).any(|(old_slug, old_who, _)| old_slug == slug && old_who == handle)
     };
-    let joined: BTreeSet<&str> = (now.roles.iter())
-        .filter(|(slug, who, _)| who == handle && !held_before(slug))
-        .map(|(slug, _, _)| slug.as_str())
-        .collect();
+    let mut joined: BTreeSet<&str> = BTreeSet::new();
+    joined.extend(
+        (now.roles.iter())
+            .filter(|(slug, who, _)| who == handle && !held_before(slug))
+            .map(|(slug, _, _)| slug.as_str()),
+    );
     let mut changed: BTreeSet<(&str, &str)> = BTreeSet::new();
     for (slug, who, _) in now.roles.symmetric_difference(&before.roles) {
         if who != handle

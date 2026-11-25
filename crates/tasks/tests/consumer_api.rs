@@ -40,13 +40,15 @@ use std::process::ExitCode;
 
 use symphony_board::assessment_publication::{self, Binding, Bindings, Decision, Publication};
 use symphony_board::cli::{self, Env};
+use symphony_board::db::DbError;
 use symphony_board::land::Generator;
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::hc::Hc;
 use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
+use symphony_board::pg;
 use symphony_board::recovery;
 use symphony_board::rows::{Dump, LinkRow, RoleRow, SessionRow, TaskRow, TaskSessionRow};
-use symphony_board::rpc::{Client, DbError};
+use symphony_board::rpc::Client;
 use symphony_board::sweep::git::{DISPOSABLE, Listed};
 use symphony_board::sys::{Child, Command, Spawning as _, Stdio};
 use symphony_board::{
@@ -77,7 +79,6 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&str, &str, &str) -> Client = Client::new;
     let _: fn(Client) -> Result<Store> = Store::open;
     let _ = |client: Client| Store::with(client, Box::new(|| 0.0), Box::new(|_| false), "host");
-    let _: fn(&Store) -> &Client = Store::client;
     // A consumer's fixture reads the store's PostgreSQL client by a refutable pattern, which its
     // lint (`-D warnings`) refuses once the pattern is irrefutable. `Database` is
     // `#[non_exhaustive]`, so the pattern stays refutable; it is matched here as that consumer
@@ -206,14 +207,14 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _ = |e: Error| match e {
         Error::Refused(why) | Error::Db(why) => why,
     };
-    // A raw query's error. A consumer's fixture builds each of its three variants, clones them and
-    // `assert_eq!`s them, and matches `Conflict` alone, taking the rest through a catch-all; the
-    // match of every variant below is the header's tripwire.
-    let _: fn(
-        &Client,
-        &str,
-        serde_json::Value,
-    ) -> std::result::Result<Vec<serde_json::Value>, DbError> = Client::query;
+    // A raw query on the store's PostgreSQL client, and its error. A consumer's fixture writes one
+    // statement with its parameters as JSON text (read from its code on 2026-11-25); it builds
+    // each of the error's three variants, clones them and `assert_eq!`s them, and matches
+    // `Conflict` alone, taking the rest through a catch-all; the match of every variant below is
+    // the header's tripwire.
+    let _: fn(&pg::Client, &[pg::Step<'_>]) -> std::result::Result<Vec<pg::Answer>, DbError> =
+        pg::Client::request;
+    let _: fn(&'static str, &'static str) -> pg::Step<'static> = pg::Step::with;
     let _ = |why: String| {
         [
             DbError::Conflict,

@@ -38,9 +38,7 @@ pub(super) fn compatible(tag: &str, raw: &RawValue) -> Option<String> {
     let mut answer = raw.get().to_owned();
     // Each borrowed RawValue is a slice of this answer. Apply edits from the end so every
     // untouched field retains its original bytes, including duplicate fields a decoder refuses.
-    reader
-        .edits
-        .sort_unstable_by_key(|(part, _)| part.get().as_ptr());
+    symphony_board::order::sort_by_key(&mut reader.edits, &|(part, _)| part.get().as_ptr());
     for (part, replacement) in reader.edits.into_iter().rev() {
         let start = part.get().as_ptr() as usize - raw.get().as_ptr() as usize;
         answer.replace_range(start..start + part.get().len(), &replacement);

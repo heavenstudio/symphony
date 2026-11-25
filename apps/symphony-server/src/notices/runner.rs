@@ -181,16 +181,15 @@ impl Runner {
             let Some(cards) = look.cards.as_ref().filter(|_| look.held_read) else {
                 return Ok(());
             };
+            let mut told = std::collections::BTreeMap::new();
+            for card in cards {
+                let mut people = std::collections::BTreeSet::new();
+                people.extend(card.told(look.people));
+                told.insert(card.key.clone(), people);
+            }
             let record = Record {
                 line: look.latest,
-                cards: (cards.iter())
-                    .map(|card| {
-                        (
-                            card.key.clone(),
-                            card.told(look.people).into_iter().collect(),
-                        )
-                    })
-                    .collect(),
+                cards: told,
                 pending: Vec::new(),
             };
             record.write(&self.path)?;

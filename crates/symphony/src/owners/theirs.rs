@@ -33,12 +33,12 @@ impl Deciders {
     /// its owner who hold decide ([`ownership::deciders`]).
     pub fn read(people: &People, map: &Map, root: &Path, cards: &[(String, String)]) -> Deciders {
         let owners = super::waiting(people, map, root, cards);
-        let cards = (cards.iter().zip(&owners))
-            .map(|((doc, slug), owning)| {
-                let key = (doc.trim_start_matches('/').to_string(), slug.clone());
-                (key, ownership::deciders(people, owning))
-            })
-            .collect();
+        let mut deciders = BTreeMap::new();
+        deciders.extend((cards.iter().zip(&owners)).map(|((doc, slug), owning)| {
+            let key = (doc.trim_start_matches('/').to_string(), slug.clone());
+            (key, ownership::deciders(people, owning))
+        }));
+        let cards = deciders;
         Deciders {
             revision: (people.revision, map.revision),
             cards,
@@ -100,12 +100,9 @@ pub fn board(board: &Board, theirs: &Queue) -> Board {
         .cloned()
         .collect();
     shown.counts.waiting = count(theirs.waiting.len());
-    shown.counts.docs_waiting = count(
-        (theirs.waiting.iter())
-            .map(|card| document_path(&card.doc))
-            .collect::<BTreeSet<_>>()
-            .len(),
-    );
+    let mut docs = BTreeSet::new();
+    docs.extend((theirs.waiting.iter()).map(|card| document_path(&card.doc)));
+    shown.counts.docs_waiting = count(docs.len());
     shown.counts.spot_check = count(theirs.spot_check.len());
     shown.progress.decisions_waiting = shown.counts.waiting;
     shown

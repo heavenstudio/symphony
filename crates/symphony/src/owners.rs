@@ -288,14 +288,14 @@ fn owners_of(
     actor: &str,
     machine: bool,
 ) -> BTreeMap<String, Owner> {
-    (cards.iter())
-        .map(|card| {
-            let owning = card_owning(people, map, rel, card);
-            let open = waits(card.state);
-            let said = owner(people, &owning, actor, machine, open);
-            (card.slug.clone(), said)
-        })
-        .collect()
+    let mut owners = BTreeMap::new();
+    owners.extend(cards.iter().map(|card| {
+        let owning = card_owning(people, map, rel, card);
+        let open = waits(card.state);
+        let said = owner(people, &owning, actor, machine, open);
+        (card.slug.clone(), said)
+    }));
+    owners
 }
 
 /// Whose the card `card` of the document of route `rel` is, on `people` and `map`.

@@ -235,22 +235,20 @@ impl Digest {
     /// Actionable identities, independent of clocks, counts or titles.
     pub fn entries(&self) -> BTreeSet<(String, String)> {
         let alarm = (self.alarm.iter()).map(|_| (ALARM.to_string(), "review".to_string()));
-        let mut entries: BTreeSet<_> = CATEGORIES
-            .iter()
-            .flat_map(|name| {
-                let entries: Vec<String> = if *name == "idle" {
-                    self.idle.clone()
-                } else if *name == "unanswered" {
-                    self.unanswered.iter().map(|p| p.key.clone()).collect()
-                } else {
-                    self.items(name).iter().map(|t| t.slug.clone()).collect()
-                };
-                entries
-                    .into_iter()
-                    .map(move |entry| (name.to_string(), entry))
-            })
-            .chain(alarm)
-            .collect();
+        let mut entries = BTreeSet::new();
+        entries.extend(CATEGORIES.iter().flat_map(|name| {
+            let entries: Vec<String> = if *name == "idle" {
+                self.idle.clone()
+            } else if *name == "unanswered" {
+                self.unanswered.iter().map(|p| p.key.clone()).collect()
+            } else {
+                self.items(name).iter().map(|t| t.slug.clone()).collect()
+            };
+            entries
+                .into_iter()
+                .map(move |entry| (name.to_string(), entry))
+        }));
+        entries.extend(alarm);
         for (handle, count) in &self.volume {
             if *count < self.low_volume {
                 entries.insert(("low_volume".into(), handle.clone()));
@@ -759,18 +757,18 @@ pub(crate) fn digest_on(
             (handle, count)
         })
         .collect_map();
-    let liveness_unknown = tasks
-        .iter()
-        .flat_map(|t| {
-            t.roles
-                .iter()
-                .filter(move |role| crate::health::claimable(&role.role, &t.status))
-        })
-        .filter(|r| r.health == crate::Health::Unknown)
-        .map(|r| r.handle.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let mut liveness_unknown = BTreeSet::new();
+    liveness_unknown.extend(
+        (tasks.iter())
+            .flat_map(|t| {
+                t.roles
+                    .iter()
+                    .filter(move |role| crate::health::claimable(&role.role, &t.status))
+            })
+            .filter(|r| r.health == crate::Health::Unknown)
+            .map(|r| r.handle.clone()),
+    );
+    let liveness_unknown = liveness_unknown.into_iter().collect();
     // Who is there, by the rule the board's line of what a task waits on reads too.
     let look = crate::waits_on::Look::new(tasks, verifying);
     let below = |task: &Task| look.below(task);
@@ -793,7 +791,11 @@ pub(crate) fn digest_on(
         unanswered_scanned = false;
         Vec::new()
     });
-    let verifying: BTreeSet<_> = verifying.iter().cloned().collect();
+    let verifying = {
+        let mut set = BTreeSet::new();
+        set.extend(verifying.iter().cloned());
+        set
+    };
     let unanswered: Vec<_> = pending
         .into_iter()
         .filter(|p| !busy.contains(p.handle.as_str()))

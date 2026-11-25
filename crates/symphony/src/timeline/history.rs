@@ -19,7 +19,7 @@ impl Source {
     fn new(mut window: ThreadWindow) -> Self {
         let lines: Vec<_> = window.lines.iter().map(Line::from).collect();
         let mut replay = roles::replay(&lines);
-        window.lines.sort_unstable_by_key(|line| line.id);
+        symphony_board::order::sort_by_key(&mut window.lines, &|line| line.id);
         window.lines.dedup_by_key(|line| line.id);
         replay.uncertain |= window.uncertain;
         replay.uncertain |= window.lines.iter().any(|line| {
@@ -58,7 +58,8 @@ impl Source {
     }
 
     fn parents(&self) -> Vec<String> {
-        let mut parents: BTreeSet<String> = self.window.parent.iter().cloned().collect();
+        let mut parents: BTreeSet<String> = BTreeSet::new();
+        parents.extend(self.window.parent.iter().cloned());
         for message in &self.window.lines {
             if let Some(moved) = parent_move(message) {
                 parents.extend(moved.from.map(str::to_owned));
@@ -335,9 +336,9 @@ fn project(
                 after_close: source.closed_before(message.id),
             });
         }
-        history
-            .messages
-            .sort_unstable_by(|a, b| a.at.total_cmp(&b.at).then(a.id.cmp(&b.id)));
+        symphony_board::order::sort_by(&mut history.messages, &|a, b| {
+            a.at.total_cmp(&b.at).then(a.id.cmp(&b.id))
+        });
     }
     history
 }

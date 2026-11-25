@@ -132,12 +132,14 @@ pub struct Powers(BTreeSet<Power>);
 impl Powers {
     /// Every power: the person at the machine's, on every board.
     pub fn all() -> Powers {
-        Powers(Power::ALL.into_iter().collect())
+        Powers::of(Power::ALL)
     }
 
     /// Exactly `powers`.
     pub fn of(powers: impl IntoIterator<Item = Power>) -> Powers {
-        Powers(powers.into_iter().collect())
+        let mut held = BTreeSet::new();
+        held.extend(powers);
+        Powers(held)
     }
 
     /// Whether these hold `power`: read is held with any power.

@@ -191,10 +191,12 @@ fn claim(root: &Path, identity: &str, path: &Path, fingerprint: &str) -> Result<
 fn canonical(value: &Value) -> Value {
     match value {
         Value::Object(fields) => {
-            let ordered: std::collections::BTreeMap<_, _> = fields
-                .iter()
-                .map(|(key, value)| (key.clone(), canonical(value)))
-                .collect();
+            let mut ordered: std::collections::BTreeMap<_, _> = std::collections::BTreeMap::new();
+            ordered.extend(
+                fields
+                    .iter()
+                    .map(|(key, value)| (key.clone(), canonical(value))),
+            );
             json!(ordered)
         }
         Value::Array(values) => Value::Array(values.iter().map(canonical).collect()),

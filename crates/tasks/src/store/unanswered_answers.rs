@@ -31,17 +31,19 @@ pub(super) fn parents(
     rows: &[Answer],
 ) -> Result<Vec<(String, Option<String>)>, Error> {
     let mut tree = Tree::new();
-    let mut wanted: BTreeSet<_> = rows.iter().map(|(_, slug)| slug.clone()).collect();
+    let mut wanted: BTreeSet<_> = BTreeSet::new();
+    wanted.extend(rows.iter().map(|(_, slug)| slug.clone()));
     while !wanted.is_empty() {
         let edges: Vec<(String, Option<String>)> = store
             .bounded_read(Statement::from(pg::parents()), json!({"slugs":wanted}))
             .map_err(recovery_error)?;
         tree.extend(edges.iter().cloned());
-        wanted = edges
-            .into_iter()
-            .filter_map(|(_, parent)| parent)
-            .filter(|parent| !tree.contains_key(parent))
-            .collect();
+        wanted.clear();
+        wanted.extend(
+            (edges.into_iter())
+                .filter_map(|(_, parent)| parent)
+                .filter(|parent| !tree.contains_key(parent)),
+        );
     }
     let mut parents: Vec<_> = tree.into_iter().collect();
     parents.sort_unstable();

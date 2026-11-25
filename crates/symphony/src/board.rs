@@ -200,7 +200,7 @@ fn open_comment_lines(plugins: &Plugins, docs: &[Doc]) -> Vec<String> {
                 body,
             ));
         }
-        items.sort();
+        symphony_board::order::sort_by(&mut items, &Ord::cmp);
         for (line, kind, title, body) in items {
             let head = format!("{}:{line}  {kind:<8} {title}", doc.path);
             lines.push(crate::text::rstrip(&head).to_string());

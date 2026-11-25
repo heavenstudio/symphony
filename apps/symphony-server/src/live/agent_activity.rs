@@ -365,7 +365,8 @@ impl Summing {
         to: f64,
         started: BTreeMap<(String, String), u64>,
     ) -> Hour {
-        let mut kinds: BTreeSet<&(String, String)> = self.quiet.keys().collect();
+        let mut kinds: BTreeSet<&(String, String)> = BTreeSet::new();
+        kinds.extend(self.quiet.keys());
         kinds.extend(started.keys());
         let sessions = kinds
             .into_iter()
@@ -466,7 +467,8 @@ fn counted(board: &Board) -> Counted {
             }
         }
     }
-    let mut models: BTreeMap<&str, &str> = held.keys().map(|(_, handle)| (*handle, "")).collect();
+    let mut models: BTreeMap<&str, &str> = BTreeMap::new();
+    models.extend(held.keys().map(|(_, handle)| (*handle, "")));
     let mut counted = Counted::default();
     for session in &board.sessions {
         if let Some(model) = models.get_mut(session.row.handle.as_str()) {

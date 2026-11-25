@@ -64,7 +64,7 @@ fn assign(
         .filter(|r| r.closed.is_none() && r.handle == handle && r.worktree == operation.checkout)
         .map(|r| r.slug.as_str())
         .collect();
-    tasks.sort_unstable();
+    crate::order::sort_by(&mut tasks, &Ord::cmp);
     tasks.dedup();
     if tasks.len() == 1 {
         operation.task = Some(tasks[0].to_owned());

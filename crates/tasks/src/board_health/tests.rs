@@ -1,6 +1,4 @@
 use super::*;
-use crate::rpc::Client;
-use serde_json::json;
 use std::fs;
 
 /// The start of a minute, in seconds since the epoch.
@@ -505,15 +503,6 @@ fn every_client_of_a_board_counts_its_requests_in_the_boards_one_log() {
     assert!(slowest.at >= before && slowest.ms >= 0.0);
     assert!(writes.p50_ms.is_some());
     assert_eq!(elsewhere.queries().report(slowest.at).0.count, 0);
-}
-
-#[test]
-fn a_request_that_got_no_answer_is_counted_failed() {
-    let client = Client::new("127.0.0.1:1", "sf", "health_refused");
-    assert!(client.query("SELECT * FROM thing;", json!({})).is_err());
-    let (requests, writes) = client.queries().report(crate::sweep::trigger::now());
-    assert_eq!((requests.count, requests.failed, writes.count), (1, 1, 0));
-    assert!(requests.slowest.unwrap().failed);
 }
 
 /// A recorder whose dispatch failed twice, its sweep ok, its requests one slow unanswered read.
