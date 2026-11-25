@@ -1459,8 +1459,35 @@ Each step can ship alone, and a machine with one person sees none of them.
    told to the members of the task's group as step 4 tells a question, an agent's read saying only
    how many are held; passed on with one press or `just tasks pass`, under both names, as an ask;
    and direct agents given and taken as any power
-   ([TASKS](../../workflow/TASKS.md#words-held-for-people)). Not yet: held comments on documents,
-   the verdict's note and personal agents.
+   ([TASKS](../../workflow/TASKS.md#words-held-for-people)). Not yet: held comments on documents
+   and the verdict's note.
+   Personal agents, as far as any agent reaches a board: every session that reaches one runs on
+   its machine, under its account and on its credits, since the board's commands write its
+   database there and none reaches a hosted board yet
+   ([POSTGRESQL](../../operations/POSTGRESQL.md#a-hosted-board)). So each is the person at the
+   machine's personal agent, and a shared agent too where it holds a task's role, and it stands
+   where they stand, each part held by a test:
+   - its words are never held, and a pass of held words by it is theirs
+     (`crates/tasks/tests/store/held_words.rs`:
+     `who_may_direct_agents_writes_as_the_owner_does_and_only_a_persons_words_are_held`,
+     `passed_on_the_words_reach_the_tasks_agents_once_under_both_names_and_ask`);
+   - it never writes as a person, so its approve is no `owner` stamp: the command line refuses
+     `owner` as its actor (`crates/tasks/tests/cli/commands.rs`:
+     `owner_actors_are_refused_by_flag_and_environment_without_changing_the_board`), no session
+     is given a person's name (`crates/tasks/tests/store/board_people.rs`:
+     `no_person_is_named_as_a_handle_and_no_session_is_given_a_persons_or_a_groups_name`), and a
+     session's approve meets no stamp (`crates/tasks/src/stamps/read/tests.rs`:
+     `the_owners_stamp_is_the_owners_approve_naming_the_tip_and_stale_at_a_later_commit`);
+   - it reviews by today's fresh-session rule (`crates/tasks/tests/store/verdict.rs`:
+     `whoever_orchestrates_orchestrated_or_filed_the_task_is_refused_its_review_at_once`,
+     `a_session_that_executed_the_task_gives_it_no_verdict_whatever_role_it_holds_now`).
+
+   Two things wait. On a board that names others, which of the machine's sessions are its
+   person's alone, whose words no one else's reach, is [an open card](#machine-agents-whose).
+   Another person's personal agent needs an agent on another machine to reach a board and prove
+   its handle and whose it is, a [later round's](#later-rounds), after step 7's agent
+   credentials: until then no record ties a session to a person, as one claimed by hand would say
+   what no session on the machine is.
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
    saves through the same writes as local ones. Then the Symphony's own sign-in service, a
    separate program in front.
