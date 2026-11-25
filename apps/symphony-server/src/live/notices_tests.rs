@@ -5,7 +5,9 @@
 //! group else of the board, never its author, and its pass, a person's line, tells no one, and a
 //! look that cannot read its held row tells it at the next that can; a comment held on a document
 //! tells who of its group may pass it on, with no word of it, as long as it waits; a board that
-//! names nobody tells no one; and the worker hands what a wake finds and ends at the stop.
+//! names nobody tells no one; and the worker hands what a wake finds and ends at the stop. A pass
+//! tells by the tick's look at the board's people, none while the board does not read, and one
+//! that cannot look still hands what is due; one that can hand nothing waits for a wake.
 
 use super::super::Hub;
 use super::{Said, Turns};
@@ -14,8 +16,9 @@ use crate::notices::runner::Runner;
 use crate::testing::board::{Fixture, Seed};
 use crate::testing::{Tree, repository_holding, store_on};
 use serde_json::json;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use symphony_board::people::ownership::Place;
 use symphony_board::people::{Power, Profile, Profiles};
 use symphony_board::recording::Gate;
@@ -44,19 +47,23 @@ fn page_holding(card: &str) -> String {
 }
 
 /// A project, its board, its machine folder and its hub, the hub's main page and board read and
-/// its people looked at, as a tick does, and its server generation's recording gate, open.
+/// its people looked at, as a tick does, and its server generation's recording gate, open; the
+/// hub's clock and its retries' clock, which the test moves.
 struct Telling {
     tree: Tree,
     root: PathBuf,
     f: Fixture,
     hub: Arc<Hub>,
     gate: Arc<Gate>,
+    clock: Arc<Mutex<f64>>,
+    retry: Arc<Mutex<Instant>>,
 }
 
 impl Telling {
     /// The board names ana and bo (design) and cy (engineering) unless `nobody`; design holds the
     /// folder docs/design and the area app. Ana goes by Slack, bo by email, cy by WhatsApp, for
-    /// which the machine names no program.
+    /// which the machine names no program, which takes each notice, or answers `75` while
+    /// [`Telling::later`] stands.
     fn new(nobody: bool) -> Telling {
         let tree = Tree::new();
         let root = repository_holding(&tree, "main", DOC, &page(false));
@@ -88,7 +95,9 @@ impl Telling {
         std::fs::create_dir_all(sender.parent().unwrap()).unwrap();
         crate::fixture_script::write(
             &sender,
-            "#!/bin/sh\nhere=\"${0%/*}\"\ncat >> \"$here/told\"\nexit 0\n",
+            "#!/bin/sh\nhere=\"${0%/*}\"\n\
+             if [ -e \"$here/later\" ]; then cat > /dev/null; exit 75; fi\n\
+             cat >> \"$here/told\"\nexit 0\n",
             false,
         );
         tree.write(
@@ -98,6 +107,12 @@ impl Telling {
         profiles().write(&machine).unwrap();
         let mut hub = Hub::new(&root, &root.join("build/client"));
         hub.machine = Some(machine);
+        let clock = Arc::new(Mutex::new(symphony_board::sweep::trigger::now()));
+        let read = Arc::clone(&clock);
+        hub.clock = Box::new(move || *read.lock().unwrap());
+        let retry = Arc::new(Mutex::new(Instant::now()));
+        let read = Arc::clone(&retry);
+        hub.retry_clock = Box::new(move || *read.lock().unwrap());
         let board = f.other_database();
         hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
         hub.refresh_page("", &root).unwrap();
@@ -111,6 +126,8 @@ impl Telling {
             f,
             hub: Arc::new(hub),
             gate,
+            clock,
+            retry,
         }
     }
 
@@ -749,6 +766,7 @@ fn a_hub_dropped_without_a_stop_ends_its_worker_and_lets_the_record_go() {
         f: _board,
         hub,
         gate: _gate,
+        ..
     } = Telling::new(false);
     let alive = Arc::new(());
     let held = Arc::clone(&alive);
@@ -932,7 +950,7 @@ fn a_branchs_proposal_written_for_one_person_tells_them_alone_as_its_verdict_rea
         &telling.root,
         &[&add[..], &[worktree.to_str().unwrap()]].concat(),
     );
-    // In design's folder, written for bo: design's members but him are not told.
+    // In design's folder, written for bo: design's members but bo are not told.
     let card = "- [ ] **proposed** — *For:* bo. Which palette for the policy?\n";
     std::fs::write(worktree.join(DOC), page_holding(card)).unwrap();
     crate::testing::git(&worktree, &["commit", "-qam", "Propose"]);
@@ -1020,5 +1038,297 @@ fn a_pass_tells_by_the_ticks_look_at_the_people_and_where_it_failed_says_so_once
     assert_eq!(
         told_after(&telling, 6),
         [notice("card", "whatsapp", "+15551234567")]
+    );
+}
+
+impl Telling {
+    /// Moves the hub's clock on by `seconds`.
+    fn pass_time(&self, seconds: f64) {
+        *self.clock.lock().unwrap() += seconds;
+    }
+
+    /// Moves the retries' clock past the longest wait a failed board tick asks
+    /// ([`super::super::retry`]): the next tick is due.
+    fn retry_due(&self) {
+        *self.retry.lock().unwrap() += Duration::from_secs(61);
+    }
+
+    /// Whether the fake program answers each notice `75`, not sent this time, rather than take it.
+    fn later(&self, later: bool) {
+        let flag = self.tree.path("machine/notices/later");
+        if later {
+            std::fs::write(flag, "").unwrap();
+        } else {
+            std::fs::remove_file(flag).unwrap();
+        }
+    }
+
+    /// The card new-palette starts waiting on design by a document's edit alone, which the hub's
+    /// page reads.
+    fn card_waits(&self) {
+        std::fs::write(self.root.join(DOC), page(true)).unwrap();
+        self.hub.refresh_page("", &self.root).unwrap();
+    }
+
+    /// A tick of the hub's board, on `board` as the last left it, opening another store of the
+    /// fixture's where it has none.
+    fn tick(&self, board: &mut Option<symphony_board::Store>) {
+        self.hub
+            .board_tick(board, &mut |_: &Path| Ok(self.f.other()));
+    }
+
+    /// The table the board's marker reads gone (`away`) or back: each board read of a tick fails
+    /// while it is gone, as the board still takes its people's writes.
+    fn marker_table(&self, away: bool) {
+        let (from, to) = ("session_revision", "session_revision_away");
+        let (from, to) = if away { (from, to) } else { (to, from) };
+        let sql = format!("ALTER TABLE {from} RENAME TO {to}");
+        self.f.postgresql().simple(&sql).unwrap();
+    }
+}
+
+/// The card new-palette as the fake program is handed it by `way` to `address`.
+fn card_for(way: &str, address: &str) -> (String, String, String) {
+    notice("card", way, address)
+}
+
+/// While the board's tick cannot read the board, a pass tells by no look: a person removed
+/// meanwhile is told nothing of a card that starts waiting by a document's edit alone, and the
+/// failure is said once, in the first failure's words, whatever words the next failures carry.
+/// The next tick that reads looks again and wakes a pass, which tells the card once, to those that
+/// look names. Before, the pass told it to bo by the look taken before the failure.
+#[test]
+fn a_failed_board_read_holds_the_look_until_a_tick_reads_the_people_again() {
+    let telling = Telling::new(false);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    assert!(passes.cursor().is_some(), "the first look");
+    let mut board = None;
+    telling.tick(&mut board);
+    assert!(board.is_some(), "a tick that reads");
+    telling.marker_table(true);
+    telling.tick(&mut board);
+    assert!(board.is_none(), "the tick's read failed");
+    (telling.f.store.leave_group("bo", "design", "owner")).unwrap();
+    telling.card_waits();
+    passes.pass(&telling.hub);
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    let said = passes.said.0.get("board").cloned().unwrap_or_default();
+    assert!(
+        said.starts_with("the board's people: ") && said.contains("session_revision"),
+        "{said}"
+    );
+    // A slow board's words next: the first failure's stand, so nothing is said again.
+    let slow = "the board's database: request 7 is slow: no answer within 5 s".to_string();
+    telling.hub.board_error(slow);
+    telling.retry_due();
+    telling.tick(&mut board);
+    passes.pass(&telling.hub);
+    assert_eq!(passes.said.0["board"], said);
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    // The board reads again: the tick looks and wakes, and ana alone is told, once.
+    telling.marker_table(false);
+    telling.retry_due();
+    telling.tick(&mut board);
+    assert!(board.is_some());
+    passes.pass(&telling.hub);
+    passes.pass(&telling.hub);
+    assert_eq!(told_after(&telling, 0), [card_for("slack", ANA_SLACK)]);
+    assert!(!passes.said.0.contains_key("board"), "the fault cleared");
+}
+
+/// A tick wakes the notices only once it looked at the board's people: the one wake of a tick
+/// finds that tick's look, never the one before it. A tick whose read fails wakes nothing and
+/// leaves the look failed.
+#[test]
+fn a_ticks_wake_finds_its_own_look() {
+    let telling = Telling::new(false);
+    let before = telling.hub.people_looked().unwrap().unwrap();
+    (telling.f.store.leave_group("bo", "design", "owner")).unwrap();
+    super::woken::take();
+    let mut board = None;
+    telling.tick(&mut board);
+    let now = telling.hub.people_looked().unwrap().unwrap();
+    assert!(
+        now.0.revision > before.0.revision,
+        "the tick read bo's leaving"
+    );
+    let (wakes, found) = super::woken::take();
+    assert_eq!(wakes, 1);
+    let found = found.unwrap().unwrap().unwrap();
+    assert!(Arc::ptr_eq(&found, &now), "the wake found this tick's look");
+    telling.marker_table(true);
+    telling.retry_due();
+    telling.tick(&mut board);
+    assert!(board.is_none(), "the tick's read failed");
+    assert_eq!(super::woken::take().0, 0, "a failed tick wakes nothing");
+    assert!(telling.hub.people_looked().is_err());
+}
+
+/// The most turns [`worker_turns`] lets the worker take: far more than one wake's.
+const MOST_TURNS: usize = 50;
+
+/// The worker's turns on `hub` from `turns`, each wait it asks answered as its wake channel
+/// answers when no wake comes: a wait of no time at once, so it turns again, up to [`MOST_TURNS`];
+/// a longer one, or one for a wake alone, ends them. The waits it asked, one a turn.
+fn worker_turns(hub: &Arc<Hub>, turns: &mut Turns) -> Vec<Option<Duration>> {
+    let mut waits = Vec::new();
+    super::turn_until(&Arc::downgrade(hub), turns, |within| {
+        waits.push(within);
+        within == Some(Duration::ZERO) && waits.len() < MOST_TURNS
+    });
+    waits
+}
+
+/// The card new-palette waiting, its two notices made and answered `75`, then the hub's clock past
+/// their next hand: both are due, and the program takes them from then on.
+fn due_again(telling: &Telling, passes: &mut Turns) {
+    passes.pass(&telling.hub);
+    telling.later(true);
+    telling.card_waits();
+    passes.pass(&telling.hub);
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    assert!(passes.runner.as_ref().and_then(Runner::next_due).is_some());
+    telling.later(false);
+    telling.pass_time(crate::notices::runner::again_after(1) + 1.0);
+}
+
+/// A pass that cannot look still hands what is due: before the tick's first look, and while the
+/// board's last read failed, the notices due again after a `75` are handed, and the worker then
+/// waits for a wake, one turn in all. Counted before: it turned at once again and again until the
+/// look came, handing nothing ([`MOST_TURNS`] here).
+#[test]
+fn a_pass_that_cannot_look_hands_what_is_due_and_the_worker_waits_for_a_wake() {
+    for failed in [false, true] {
+        let telling = Telling::new(false);
+        let mut passes = turns();
+        due_again(&telling, &mut passes);
+        if failed {
+            telling
+                .hub
+                .board_error("the board could not be reached".into());
+        } else {
+            *telling.hub.people.lock().unwrap() = Default::default();
+        }
+        assert_eq!(
+            worker_turns(&telling.hub, &mut passes),
+            [None],
+            "failed={failed}"
+        );
+        assert_eq!(
+            told_after(&telling, 0),
+            [card_for("slack", ANA_SLACK), card_for("email", BO_EMAIL)]
+        );
+    }
+}
+
+/// A pass that can hand nothing, its profiles unread or its record unwritten, has the worker wait
+/// for a wake with its notices due, one turn, said once; the turn a wake starts once they mend
+/// hands them. Counted before: it turned at once again and again ([`MOST_TURNS`] here).
+#[test]
+fn a_pass_that_can_hand_nothing_waits_for_a_wake() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let chmod = |path: &Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    for unread in [true, false] {
+        let telling = Telling::new(false);
+        let mut passes = turns();
+        due_again(&telling, &mut passes);
+        let profiles = telling.tree.path("machine/people.json");
+        let artifacts = telling.root.join("artifacts");
+        let kept = std::fs::read(&profiles).unwrap();
+        let place = if unread {
+            std::fs::write(&profiles, "{ not json").unwrap();
+            "profiles"
+        } else {
+            chmod(&artifacts, 0o555);
+            "record"
+        };
+        let first = worker_turns(&telling.hub, &mut passes);
+        let said = passes.said.0.contains_key(place);
+        std::fs::write(&profiles, kept).unwrap();
+        chmod(&artifacts, 0o755);
+        assert_eq!(first, [None], "{place}");
+        assert!(said, "{place}: {:?}", passes.said.0);
+        assert!(telling.told().is_empty(), "{:?}", telling.told());
+        assert_eq!(worker_turns(&telling.hub, &mut passes), [None], "{place}");
+        assert_eq!(
+            told_after(&telling, 0),
+            [card_for("slack", ANA_SLACK), card_for("email", BO_EMAIL)],
+            "{place}"
+        );
+        assert!(!passes.said.0.contains_key(place), "{place}: cleared");
+    }
+}
+
+/// A look whose record cannot be written makes no notice, said once in a place of its own, which
+/// the hand after it, with nothing due, never clears; once the record writes, the next look tells
+/// the card that started waiting meanwhile.
+#[test]
+fn a_look_whose_record_cannot_be_written_is_said_once_and_tells_once_it_writes() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let chmod = |path: &Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    let telling = Telling::new(false);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let artifacts = telling.root.join("artifacts");
+    chmod(&artifacts, 0o555);
+    telling.card_waits();
+    let mut said = Vec::new();
+    for _ in 0..2 {
+        passes.pass(&telling.hub);
+        said.push(passes.said.0.clone());
+    }
+    chmod(&artifacts, 0o755);
+    for said in &said {
+        assert!(said.contains_key("look"), "{said:?}");
+        assert!(!said.contains_key("record"), "nothing was due: {said:?}");
+    }
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    passes.pass(&telling.hub);
+    assert!(!passes.said.0.contains_key("look"), "the fault cleared");
+    assert_eq!(
+        told_after(&telling, 0),
+        [card_for("slack", ANA_SLACK), card_for("email", BO_EMAIL)]
+    );
+}
+
+/// The worker waits until the next notice is due, a retry after a `75`, and a wake while it waits
+/// turns it: the notice due by then is handed.
+#[test]
+fn the_worker_waiting_for_a_retry_hands_it_at_a_wake_once_it_is_due() {
+    let telling = Telling::new(false);
+    telling.later(true);
+    let hub = &telling.hub;
+    hub.start_notices_with("symphony", bounds(), Box::new(|| ORIGIN.to_string()));
+    let record = telling.root.join("artifacts/notices.json");
+    test_time::until_true("the worker's first look", hand_bound(), || record.is_file())
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    telling.card_waits();
+    hub.wake_notices();
+    // A notice not handing has no `handing` in the record.
+    let answered = || {
+        let record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+        let pending = record["pending"].as_array().cloned().unwrap_or_default();
+        pending.len() == 2
+            && (pending.iter()).all(|notice| notice["hands"] == 1 && notice["handing"] != true)
+    };
+    test_time::until_true("both notices answered 75", hand_bound(), answered)
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    telling.later(false);
+    telling.pass_time(crate::notices::runner::again_after(1) + 1.0);
+    hub.wake_notices();
+    test_time::until_true("both notices handed again", hand_bound(), || {
+        telling.told().len() == 2
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    hub.stop_notices();
+    assert_eq!(
+        told_after(&telling, 0),
+        [card_for("slack", ANA_SLACK), card_for("email", BO_EMAIL)]
     );
 }

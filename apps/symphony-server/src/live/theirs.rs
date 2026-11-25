@@ -261,14 +261,15 @@ pub(crate) fn sent_to(json: &str, waits: Option<&(Arc<Waits>, Arc<Waits>)>, name
 pub(crate) struct Looked {
     /// The last look that read them: none before the first.
     read: Option<Arc<(People, Map)>>,
-    /// Why the last look could not read them, where it could not: none once one does.
+    /// Why the board or its people could not be read since that look, in the first failure's
+    /// words: none once a look reads them.
     failed: Option<String>,
 }
 
 impl Hub {
     /// The board's people and map as its last look read them ([`Hub::people_read`]), which the
-    /// notices tell by: none before its first look; `Err` where the last could not read them,
-    /// why.
+    /// notices tell by: none before its first look; `Err` where the board or its people did not
+    /// read since ([`Hub::people_unread`]), why.
     pub(super) fn people_looked(&self) -> Result<Option<Arc<(People, Map)>>, String> {
         let looked = self.people.lock().recover();
         match &looked.failed {
@@ -324,10 +325,7 @@ impl Hub {
         });
         let read = match read {
             Ok(read) => Arc::new(read),
-            Err(error) => {
-                self.people.lock().recover().failed = Some(error.to_string());
-                return;
-            }
+            Err(error) => return self.people_unread(error.to_string()),
         };
         *self.people.lock().recover() = Looked {
             read: Some(Arc::clone(&read)),
@@ -358,6 +356,14 @@ impl Hub {
             page.deciders = deciders.clone();
             self.publish(page, Vec::new());
         }
+    }
+
+    /// The board or its people could not be read, `why`: the notices tell by no look until a tick
+    /// reads them again ([`Hub::people_looked`]), so nobody the board no longer names is told by
+    /// an older look, while the pages keep that look's deciders. The first failure since the
+    /// last look that read them is kept, so the notices say it once, whatever the next ones say.
+    pub(super) fn people_unread(&self, why: String) {
+        self.people.lock().recover().failed.get_or_insert(why);
     }
 }
 
