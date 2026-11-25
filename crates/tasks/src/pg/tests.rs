@@ -573,13 +573,9 @@ fn a_server_that_takes_none_of_a_request_and_says_nothing_fails_it_at_the_client
 /// loaded machine, meets first.
 fn started_then_waiting(dir: &Dir, wait: Duration) -> Client {
     let mut client = Client::new(dir.path(), "board");
-    let connection = client.connect().unwrap().unwrap();
-    connection.writer.set_write_timeout(Some(wait)).unwrap();
-    connection
-        .stream
-        .get_ref()
-        .set_read_timeout(Some(wait))
-        .unwrap();
+    let mut connection = client.connect().unwrap().unwrap();
+    connection.writer.wait = wait;
+    connection.stream.get_mut().wait = wait;
     *client.connection.get_mut().unwrap() = Some(connection);
     client.waiting(wait)
 }
@@ -774,11 +770,16 @@ fn a_connection_waits_the_clients_wait_on_each_write_as_on_each_read() {
     client.request(&[Step::bare("SELECT 1")]).unwrap();
     let held = client.connection.lock().unwrap();
     let connection = held.as_ref().expect("the connection is kept");
-    assert_eq!(connection.writer.write_timeout().unwrap(), Some(wait));
-    assert_eq!(
-        connection.stream.get_ref().read_timeout().unwrap(),
-        Some(wait)
-    );
+    assert_eq!(connection.writer.wait, wait);
+    assert_eq!(connection.stream.get_ref().wait, wait);
+    // Neither descriptor waits in the socket ([`socket`]): a drain could fail that wait.
+    for side in [
+        &connection.writer.socket,
+        &connection.stream.get_ref().socket,
+    ] {
+        assert_eq!(side.read_timeout().unwrap(), None);
+        assert_eq!(side.write_timeout().unwrap(), None);
+    }
 }
 
 #[test]
@@ -786,8 +787,8 @@ fn a_request_the_socket_takes_whole_is_taken_at_once_and_of_a_longer_one_what_it
     // A peer that reads nothing: what the socket takes is what its buffers hold.
     let (ours, _peer) = UnixStream::pair().unwrap();
     let connection = Connection {
-        stream: BufReader::new(ours.try_clone().unwrap()),
-        writer: ours,
+        stream: BufReader::new(Socket::waiting(ours.try_clone().unwrap(), TIMEOUT).unwrap()),
+        writer: Socket::waiting(ours, TIMEOUT).unwrap(),
     };
     let short = [b'S', 0, 0, 0, 4];
     assert_eq!(connection.taken(&short).unwrap(), short.len());
@@ -1053,8 +1054,8 @@ fn a_connections_socket_never_reaches_a_forked_child() {
     {
         let held = client.connection.lock().unwrap();
         let connection = held.as_ref().expect("a connection kept");
-        let reader = connection.stream.get_ref().as_raw_fd();
-        let writer = connection.writer.as_raw_fd();
+        let reader = connection.stream.get_ref().socket.as_raw_fd();
+        let writer = connection.writer.socket.as_raw_fd();
         assert_ne!(reader, writer, "two descriptors");
         for (side, fd) in [("reader", reader), ("writer", writer)] {
             assert!(
