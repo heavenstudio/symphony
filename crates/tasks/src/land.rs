@@ -1740,7 +1740,7 @@ fn watched<T>(
     now: &(dyn Fn() -> Instant + Sync),
     wait: impl FnOnce() -> T,
 ) -> (T, Ended) {
-    use std::sync::mpsc::{RecvTimeoutError, channel};
+    use crate::channel::{RecvTimeoutError, channel};
     let (waited, ended) = std::thread::scope(|scope| {
         let (done, finished) = channel::<()>();
         let watchdog = scope.spawn(move || {
