@@ -26,6 +26,9 @@ mod first_run;
 mod gate;
 #[path = "after_reload/lines.rs"]
 mod lines;
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "common/test_channel.rs"]
+mod test_channel;
 use gate::{Entry, Gate};
 use lines::Lines;
 

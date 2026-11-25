@@ -187,7 +187,7 @@ impl Heard {
     /// Read `pipe` to its end, its first [`KEPT`] bytes kept.
     fn listen(mut pipe: impl Read + Send + 'static) -> Heard {
         let kept = Arc::new(Mutex::new(Vec::new()));
-        let (closes, closed) = mpsc::channel();
+        let (closes, closed) = crate::wake::channel();
         let keeping = Arc::clone(&kept);
         std::thread::spawn(move || {
             let mut chunk = [0u8; 8192];

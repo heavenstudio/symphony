@@ -90,6 +90,12 @@ mod test_tree;
 #[path = "../tests/common/layouts.rs"]
 mod test_layouts;
 
+/// How the unit tests make a channel, std's; the library itself through `channel` alone
+/// (clippy.toml).
+#[cfg(test)]
+#[path = "../tests/common/test_channel.rs"]
+mod test_channel;
+
 #[cfg(test)]
 #[path = "../../../tools/test-support/script_board.rs"]
 mod fixture_script;

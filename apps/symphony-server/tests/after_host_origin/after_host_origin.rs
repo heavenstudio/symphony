@@ -427,7 +427,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                 .write(true)
                 .open(self.root.join("finish.notice"))
                 .unwrap();
-            let (send, receive) = std::sync::mpsc::channel();
+            let (send, receive) = crate::test_channel::channel();
             std::thread::spawn(move || {
                 for line in std::io::BufReader::new(fifo).lines() {
                     line.unwrap();

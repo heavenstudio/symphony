@@ -2219,7 +2219,7 @@ fn run(
     board: Option<symphony_board::Store>,
     connect: impl FnMut(&Path) -> Result<symphony_board::Store, String> + Send,
 ) {
-    let (stop, stopped) = mpsc::channel();
+    let (stop, stopped) = crate::wake::channel();
     {
         let Some(hub) = weak.upgrade() else { return };
         let _ = hub.documents_waker.set(backstop.waker());

@@ -109,7 +109,7 @@ const BACKSTOP: std::time::Duration = test_time::backstop(std::time::Duration::f
 /// what a test waits on, with [`BACKSTOP`], while it holds what the answer must not wait on.
 fn asked_aside(machine: &Machine, path: &'static str) -> std::sync::mpsc::Receiver<String> {
     let projects = machine.projects.clone();
-    let (send, answered) = std::sync::mpsc::channel();
+    let (send, answered) = crate::test_channel::channel();
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()

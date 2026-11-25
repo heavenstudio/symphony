@@ -1,0 +1,74 @@
+# How clippy reads the workspace lints (Cargo.toml, `[workspace.lints.clippy]`). Only what differs from
+# clippy's defaults is here.
+
+# A lint may ask for a change to a `pub` signature. Not every caller is in this tree: consuming
+# projects pin some of these packages by git and call a few hundred of their names. The
+# `tests/consumer_api.rs` guards (docs/workflow/RELEASES.md, step 4), which this same lint compiles, hold
+# most of those names by signature, each coerced to its fn pointer type, and some by a call
+# written as a consumer writes it: a lint-driven change to a signature so held fails the gate
+# wherever it would break the consumer's code, and the name keeps its signature under an
+# `#[expect(clippy::..., reason = "a consumer calls it")]`.
+# The signature of a function a guard names alone, and what no guard names, is the consuming
+# project's to meet when it moves its pin, its own gate building it on the new one. `true` would
+# instead exempt every exported item of every package from the lints this setting governs, where
+# the workspace has some two thousand `pub fn`s and nearly all of them only this tree calls.
+avoid-breaking-exported-api = false
+
+# A test asserts: its `unwrap()` and `panic!` are the assertion, and it may print what it saw.
+allow-unwrap-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+
+# Names `doc_markdown` would otherwise want in backticks: the products and formats the docs name as
+# words. `..` keeps clippy's own list (JavaScript, GitHub, macOS and the rest).
+doc-valid-idents = ["SurrealDB", "SQLite", "GDScript", "CBOR", "WhatsApp", ".."]
+
+# No code waits a length of time and then looks or acts (RULES.md `code/no-timed-waits`): it waits
+# for the thing itself (a message, a signal, a child's end, a watcher's event) and acts at once. A
+# number only paces a named helper, which says so in an `#[expect]` of its own, and a site kept
+# until it is converted says why in `#[expect(clippy::disallowed_methods, reason = "no-timed-waits
+# baseline: ...")]`, which fails once the site is gone. A deadline that only bounds a wait for an
+# event (`recv_timeout`, `Condvar::wait_timeout`, `thread::park_timeout`, `tokio::time::timeout`) is
+# not listed. Tables, not one array, so a crate's own clippy.toml (crates/tasks', crates/symphony's,
+# apps/symphony-server's) adds its own after this file whole, which
+# crates/symphony/src/channel_tests.rs holds each to.
+[[disallowed-methods]]
+path = "std::thread::sleep"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "std::thread::sleep_ms"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::sleep"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::sleep_until"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::interval"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::interval_at"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+# The crate's own, below the workspace's settings above. Clippy reads the nearest clippy.toml alone,
+# so this crate's starts with the workspace's whole (src/channel_tests.rs holds every crate's own to
+# that).
+#
+# A channel this crate's code makes is `crate::channel`'s (src/channel.rs): std's is compiled whole
+# for each item type it carries, 5 to 16 KB of a binary a type, and carried boxed every type shares
+# one. Clippy refuses std's two constructors. A test makes std's through
+# tests/common/test_channel.rs (`test_channel::channel`), whose one use carries its `#[expect]`, as
+# no test holds a size line.
+[[disallowed-methods]]
+path = "std::sync::mpsc::channel"
+reason = "a channel of this crate's code is crate::channel's, which every item type shares; a test's is test_channel::channel"
+
+[[disallowed-methods]]
+path = "std::sync::mpsc::sync_channel"
+reason = "a channel of this crate's code is crate::channel's, which every item type shares; a test's is test_channel::channel"

@@ -78,7 +78,7 @@ impl Held {
         let mut store = matches!(board, Board::Opens)
             .then(|| Fixture::new(Seed::default().task("tests/initial-board", "ready")).store);
         let (entered, entering) = tokio::sync::oneshot::channel();
-        let (release, waiting) = mpsc::channel();
+        let (release, waiting) = crate::test_channel::channel();
         let mut entered = Some(entered);
         let mut waiting = Some(waiting);
         let kept_tree = tree.clone();

@@ -141,8 +141,8 @@ mod tests {
     #[test]
     fn a_watcher_is_found_by_its_folder_while_it_lives_and_each_hears_its_own_events() {
         let (one, two) = (Path::new("/handing/one"), Path::new("/handing/two"));
-        let (send_one, heard_one) = mpsc::channel();
-        let (send_two, heard_two) = mpsc::channel();
+        let (send_one, heard_one) = crate::test_channel::channel();
+        let (send_two, heard_two) = crate::test_channel::channel();
         let mut first = Handing::<false>::new(send_one, notify::Config::default()).unwrap();
         assert_eq!(watching(one), None, "listed only once it watches");
         first.watch(one, RecursiveMode::NonRecursive).unwrap();
@@ -177,8 +177,8 @@ mod tests {
     #[test]
     fn a_watcher_dropped_after_another_took_its_folder_leaves_the_others_entry() {
         let folder = Path::new("/handing/taken");
-        let (send_old, heard_old) = mpsc::channel();
-        let (send_new, heard_new) = mpsc::channel();
+        let (send_old, heard_old) = crate::test_channel::channel();
+        let (send_new, heard_new) = crate::test_channel::channel();
         let mut old = Handing::<false>::new(send_old, notify::Config::default()).unwrap();
         old.watch(folder, RecursiveMode::NonRecursive).unwrap();
         let mut new = Handing::<false>::new(send_new, notify::Config::default()).unwrap();
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn a_failing_watcher_watches_nothing() {
         let folder = Path::new("/handing/failing");
-        let (send, _) = mpsc::channel();
+        let (send, _) = crate::test_channel::channel();
         let mut watcher = Handing::<true>::new(send, notify::Config::default()).unwrap();
         assert!(watcher.watch(folder, RecursiveMode::NonRecursive).is_err());
         assert!(watcher.watched.is_empty());

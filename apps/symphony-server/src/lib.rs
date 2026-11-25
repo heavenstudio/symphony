@@ -41,10 +41,17 @@ mod shell;
 mod spawn;
 mod starter;
 pub mod sys;
+mod wake;
 mod write;
 
 #[cfg(test)]
 mod testing;
+
+// The library's tests make their channels through it, std's of any type; the library itself through
+// `wake`, of `()` alone (clippy.toml).
+#[cfg(test)]
+#[path = "../tests/common/test_channel.rs"]
+mod test_channel;
 
 #[cfg(test)]
 #[path = "../../../tools/test-support/script_board.rs"]
