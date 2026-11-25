@@ -81,8 +81,7 @@ pub fn slow(error: &str) -> bool {
 /// is the client's kind ([`crate::sys::connect`]), so no spawn copies it during the exchange, and
 /// it waits only in `poll` ([`exchanged`]): the one close a drain can still meet, in its connect,
 /// leaves it answering as a sound socket does, where a blocking read's EBADF would fail a live
-/// server's answer (a field written while the command says the server did not answer, a health
-/// probe saying it is not healthy).
+/// server's answer (a field written while the command says the server did not answer).
 pub(crate) fn exchange(
     addr: &str,
     request: &[u8],
@@ -113,13 +112,11 @@ fn exchanged(stream: TcpStream, request: &[u8], timeout: Duration) -> std::io::R
     Ok(raw)
 }
 
-/// An HTTP/1.1 response's head: its status, how its body is sent, and whether the server closes
-/// the connection after it.
+/// An HTTP/1.1 response's head: its status and how its body is sent.
 struct Head {
     status: u16,
     length: Option<usize>,
     chunked: bool,
-    close: bool,
     /// Where the body starts.
     end: usize,
 }
@@ -142,7 +139,6 @@ impl Head {
             status,
             length: None,
             chunked: false,
-            close: first.starts_with("HTTP/1.0 "),
             end: end + 4,
         };
         for line in lines {
@@ -158,8 +154,6 @@ impl Head {
                 );
             } else if name == "transfer-encoding" {
                 read.chunked = value.eq_ignore_ascii_case("chunked");
-            } else if name == "connection" {
-                read.close = value.eq_ignore_ascii_case("close");
             }
         }
         Ok(Some(read))

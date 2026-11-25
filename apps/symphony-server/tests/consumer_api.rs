@@ -23,6 +23,11 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Path) -> Result<repo::Checkout, String> = repo::checkout;
     let _: fn(i64) -> bool = sys::pid_alive;
     let _: fn(i64, libc::c_int) = sys::signal;
+    // A server's process taken by its pid, asked whether it is still that process, and printed in
+    // a fixture's failure (read from its code on 2026-11-25).
+    let _: fn(i64) -> sys::Taken = sys::Taken::of;
+    let _: fn(&sys::Taken) -> bool = sys::Taken::alive;
+    let _ = |taken: &sys::Taken| format!("{taken:?}");
     // Built by its fields: one added here breaks the consumer's fixture.
     let _ = |port: u16, pid: i64, root: String| home::Running { port, pid, root };
 }
