@@ -164,7 +164,7 @@ pub(super) fn steps(text: &str, error: &serde_json::Error) -> Vec<Step> {
 
 /// A key's text, its quotes and escapes read as serde_json reads them.
 fn key(quoted: &str) -> String {
-    match serde_json::from_str(quoted) {
+    match serde_json::from_slice(quoted.as_bytes()) {
         Ok(Value::String(key)) => key,
         _ => String::new(),
     }

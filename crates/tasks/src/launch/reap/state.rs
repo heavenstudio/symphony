@@ -70,7 +70,7 @@ pub(super) fn read_state(state: &Path) -> Map<String, Value> {
     let Ok(text) = std::fs::read_to_string(state) else {
         return Map::new();
     };
-    match serde_json::from_str::<Value>(&text) {
+    match serde_json::from_slice::<Value>(text.as_bytes()) {
         Ok(Value::Object(read)) => read,
         _ => Map::new(),
     }

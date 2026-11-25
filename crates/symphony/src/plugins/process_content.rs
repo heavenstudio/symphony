@@ -59,7 +59,7 @@ impl<'a> Reader<'a> {
             return;
         }
         if let Shape::List(item) = shape {
-            if let Ok(items) = serde_json::from_str::<Vec<&RawValue>>(raw.get()) {
+            if let Ok(items) = serde_json::from_slice::<Vec<&RawValue>>(raw.get().as_bytes()) {
                 for raw in items {
                     self.walk(raw, *item, depth + 1);
                 }
@@ -131,7 +131,7 @@ impl<'a> Reader<'a> {
 
 /// A tag is text, never a missing or wrongly typed field repaired by the compatibility reader.
 fn word(object: &BTreeMap<String, &RawValue>, key: &str) -> Option<String> {
-    serde_json::from_str(object.get(key)?.get()).ok()
+    serde_json::from_slice(object.get(key)?.get().as_bytes()).ok()
 }
 
 /// Read only this object's fields, rejecting duplicates before a replacement could hide them.
@@ -152,7 +152,7 @@ fn object_of(raw: &RawValue) -> Option<BTreeMap<String, &RawValue>> {
             Ok(fields)
         }
     }
-    serde_json::Deserializer::from_str(raw.get())
+    serde_json::Deserializer::from_slice(raw.get().as_bytes())
         .deserialize_map(Object)
         .ok()
 }

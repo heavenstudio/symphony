@@ -376,14 +376,7 @@ impl AskStore {
         &self,
         script: &str,
     ) -> Result<Vec<T>, AskError> {
-        let printed = self.run(script)?;
-        let mut rows = Vec::new();
-        for array in serde_json::Deserializer::from_str(&printed).into_iter::<Vec<T>>() {
-            rows.extend(array.map_err(|problem| {
-                AskError::Store(format!("sqlite3 printed what does not read: {problem}"))
-            })?);
-        }
-        Ok(rows)
+        arrays(&self.run(script)?)
     }
 
     /// `body` as one write: it waits for the lock, prunes first, and is all or nothing.
@@ -454,7 +447,7 @@ impl AskStore {
             text_sql(question),
         );
         let printed = self.write((self.clock)(), &body)?;
-        serde_json::from_str::<Vec<Id>>(&printed)
+        serde_json::from_slice::<Vec<Id>>(printed.as_bytes())
             .ok()
             .and_then(|ids| ids.first().map(|row| row.id))
             .ok_or_else(|| AskError::Store(format!("sqlite3 gave no id: {printed:?}")))
@@ -508,7 +501,7 @@ impl AskStore {
             "BEGIN IMMEDIATE;\n{}SELECT changes() AS gone;\nCOMMIT;\n",
             prune_sql(now - max_age)
         ))?;
-        Ok(serde_json::from_str::<Vec<Gone>>(&printed)
+        Ok(serde_json::from_slice::<Vec<Gone>>(printed.as_bytes())
             .ok()
             .and_then(|rows| rows.first().map(|row| row.gone))
             .unwrap_or(0))
@@ -647,6 +640,19 @@ impl AskStore {
             clock: Box::new(now_seconds),
         })
     }
+}
+
+/// Every JSON array `printed` holds, one after another, as `sqlite3 -json` prints each statement's
+/// rows. Read as bytes, through the one reader the crate reads JSON with: the same rows, and the same
+/// error in the same words and at the same line and column, as a read of the text.
+fn arrays<T: serde::de::DeserializeOwned>(printed: &str) -> Result<Vec<T>, AskError> {
+    let mut rows = Vec::new();
+    for array in serde_json::Deserializer::from_slice(printed.as_bytes()).into_iter::<Vec<T>>() {
+        rows.extend(array.map_err(|problem| {
+            AskError::Store(format!("sqlite3 printed what does not read: {problem}"))
+        })?);
+    }
+    Ok(rows)
 }
 
 /// `ASKS_DB` when set, else, for a folder this process serves, the journal found from it when it
@@ -934,3 +940,7 @@ pub fn main(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "asks_tests.rs"]
+mod tests;

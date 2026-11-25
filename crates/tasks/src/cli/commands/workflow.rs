@@ -296,7 +296,7 @@ fn observe(store: &Store, c: &mut Context) -> Result<(), Stop> {
 fn signed(path: &str, flag: &str) -> Result<Signed, Stop> {
     let text =
         std::fs::read_to_string(path).map_err(|e| Stop::Refused(format!("{flag} {path}: {e}")))?;
-    serde_json::from_str(&text).map_err(|e| {
+    serde_json::from_slice(text.as_bytes()).map_err(|e| {
         Stop::Refused(format!(
             "{flag} {path}: not a signed statement ({{\"payload\", \"signature\"}}): {e}"
         ))

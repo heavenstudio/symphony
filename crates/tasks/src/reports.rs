@@ -578,7 +578,7 @@ pub fn closed(folder: &Path, day: &str) -> bool {
 pub fn read(folder: &Path, day: &str) -> Result<Option<ReportDay>, String> {
     let path = folder.join(symphony_api::report_file(day));
     match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text)
+        Ok(text) => serde_json::from_slice(text.as_bytes())
             .map(Some)
             .map_err(|e| format!("{}: {e}", path.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),

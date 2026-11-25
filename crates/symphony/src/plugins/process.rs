@@ -518,10 +518,10 @@ type ReadAnswer<'a> = &'a mut dyn FnMut(&RawValue) -> Result<(), String>;
 /// ([`answer_in`]), so each call's own reading is only its answer's type.
 fn answer_of<T: serde::de::DeserializeOwned>(tag: &str, raw: &RawValue) -> Result<T, String> {
     let answer = answer_in(tag, raw)?;
-    serde_json::from_str(answer.get())
+    serde_json::from_slice(answer.get().as_bytes())
         .or_else(|why| {
             content::compatible(tag, answer)
-                .map_or(Err(why), |answer| serde_json::from_str(&answer))
+                .map_or(Err(why), |answer| serde_json::from_slice(answer.as_bytes()))
         })
         .map_err(|why| cannot_read(tag, &why))
 }
@@ -532,7 +532,7 @@ mod content;
 /// The answer `raw` holds as it came, or why it does not read or that the plugin refused the call.
 #[inline(never)]
 fn answer_in<'a>(tag: &str, raw: &'a RawValue) -> Result<&'a RawValue, String> {
-    serde_json::from_str::<Answered<&RawValue>>(raw.get())
+    serde_json::from_slice::<Answered<&RawValue>>(raw.get().as_bytes())
         .map_err(|why| cannot_read(tag, &why))?
         .shown()
         .map_err(|why| format!("it refused {tag}: {why}"))

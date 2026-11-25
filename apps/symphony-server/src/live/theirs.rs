@@ -241,7 +241,7 @@ pub(super) fn begin(page: &mut Page) {
 /// waits left out, and where it carries `waits`, their diff as `name` is shown each, after its
 /// other changes. An event that does not read as one is sent as it is.
 pub(crate) fn sent_to(json: &str, waits: Option<&(Arc<Waits>, Arc<Waits>)>, name: &str) -> String {
-    let Ok(mut event) = serde_json::from_str::<Value>(json) else {
+    let Ok(mut event) = serde_json::from_slice::<Value>(json.as_bytes()) else {
         return json.into();
     };
     let Some(sent) = event["changes"].as_array_mut() else {

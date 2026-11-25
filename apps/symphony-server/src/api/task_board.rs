@@ -213,7 +213,7 @@ fn project(
         return waiting::project(request, tasks, work, signoff, workflow);
     }
     let cursor = match query(request, "cursor")
-        .map(|text| serde_json::from_str::<Key>(&text))
+        .map(|text| serde_json::from_slice::<Key>(text.as_bytes()))
         .transpose()
     {
         Ok(cursor) => cursor,
