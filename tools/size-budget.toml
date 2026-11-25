@@ -139,8 +139,8 @@ symphony-server = 18_750_000
 # 12,278,240 at 01987f0d9; the line was that plus 4%, rounded down to 10,000.
 # Every sort outside the board's busy paths through the board's shared sorter, and every collect
 # into a B-tree map or set through extend on an empty one (perf/shared-sorter-everywhere), took
-# back 214,976: 12,377,744 on main at ec0c17362, 12,162,768 with it. Measured 12,162,768 at
-# 3ab622e9d; the line is that plus 4%, rounded down to 10,000.
+# back 198,480: 12,361,184 on main at fc9509e05, 12,162,704 with it. Measured 12,162,704 at
+# 3f14a4a23; the line is that plus 4%, rounded down to 10,000.
 symphony = 12_640_000
 # PostgreSQL board selection and lifecycle add 66,176 bytes to tasks and 49,632 to agent-send.
 # agent-send links no snapshot/recovery command body. Canonical four-binary
@@ -245,7 +245,7 @@ tasks = 8_560_000
 # plus 4%, rounded down to 10,000. With main merged at dc1760b7f (a task's kind on PostgreSQL alone),
 # measured 2,954,960 at 7f8ef3fe7; the line was that plus 4%, rounded down to 10,000. Every sort
 # outside the board's busy paths through the shared sorter, and every collect into a B-tree map or
-# set through extend on an empty one (perf/shared-sorter-everywhere), took back 82,752: 2,971,776
-# on main at ec0c17362, 2,889,024 with it. Measured 2,889,024 at 3ab622e9d; the line is that plus
+# set through extend on an empty one (perf/shared-sorter-everywhere), took back 82,736: 2,971,760
+# on main at fc9509e05, 2,889,024 with it. Measured 2,889,024 at 3f14a4a23; the line is that plus
 # 4%, rounded down to 10,000.
 agent-send = 3_000_000
