@@ -940,7 +940,7 @@ fn install_settings(root: &Path, report: &mut Report) -> io::Result<()> {
     let path = root.join(SETTINGS);
     let have = read_optional(&path)?;
     let mut settings: Value = match &have {
-        Some(text) => serde_json::from_str(text).map_err(|error| {
+        Some(text) => serde_json::from_slice(text.as_bytes()).map_err(|error| {
             io::Error::new(io::ErrorKind::InvalidData, format!("{SETTINGS}: {error}"))
         })?,
         None => json!({}),

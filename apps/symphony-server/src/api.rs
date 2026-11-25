@@ -790,9 +790,11 @@ async fn board_read(
     let after = query(request, "after").and_then(|id| id.parse().ok());
     let from = query(request, "from").and_then(|n| n.parse::<usize>().ok());
     // The cards a board drew, a JSON list of at most TASK_COSTS_MOST slugs.
-    let costs = serde_json::from_str::<Vec<String>>(&query(request, "slugs").unwrap_or_default())
-        .ok()
-        .filter(|slugs| slugs.len() <= symphony_api::TASK_COSTS_MOST);
+    let costs = serde_json::from_slice::<Vec<String>>(
+        query(request, "slugs").unwrap_or_default().as_bytes(),
+    )
+    .ok()
+    .filter(|slugs| slugs.len() <= symphony_api::TASK_COSTS_MOST);
     let page = AgentsAsked {
         offset: query(request, "offset")
             .and_then(|n| n.parse::<usize>().ok())
@@ -1166,8 +1168,8 @@ fn document_response(
                 json!(folder)
             }),
         "/api/section" if query(request, "keys").is_some() => {
-            let keys = match serde_json::from_str::<Vec<String>>(
-                &query(request, "keys").unwrap_or_default(),
+            let keys = match serde_json::from_slice::<Vec<String>>(
+                query(request, "keys").unwrap_or_default().as_bytes(),
             ) {
                 Ok(keys) => keys,
                 Err(_) => {
@@ -1615,7 +1617,7 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
     let document_filter = {
         let path = query(&request, "document").unwrap_or_default();
         let keys = query(&request, "sections")
-            .and_then(|keys| serde_json::from_str::<Vec<String>>(&keys).ok())
+            .and_then(|keys| serde_json::from_slice::<Vec<String>>(keys.as_bytes()).ok())
             .unwrap_or_default();
         (path, keys)
     };
@@ -1742,7 +1744,7 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
 /// threads only for sections its viewport has requested. Other streams receive no documents.
 fn filtered_document_event(json: &str, filter: &(String, Vec<String>)) -> String {
     let (path, keys) = filter;
-    let Ok(mut event) = serde_json::from_str::<serde_json::Value>(json) else {
+    let Ok(mut event) = serde_json::from_slice::<serde_json::Value>(json.as_bytes()) else {
         return json.into();
     };
     if let Some(changes) = event["changes"].as_array_mut() {

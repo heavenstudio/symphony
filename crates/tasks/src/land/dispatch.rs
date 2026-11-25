@@ -412,7 +412,7 @@ pub fn armed(folder: &Path) -> Vec<Journal> {
         .filter_map(Result::ok)
         .filter(|entry| entry.file_name().to_string_lossy().ends_with(".delivery"))
         .filter_map(|entry| fs::read_to_string(entry.path()).ok())
-        .filter_map(|text| serde_json::from_str::<Journal>(&text).ok())
+        .filter_map(|text| serde_json::from_slice::<Journal>(text.as_bytes()).ok())
         .filter(Journal::watched)
         .collect();
     crate::order::sort_by(&mut armed, &|a, b| a.slug.cmp(&b.slug));

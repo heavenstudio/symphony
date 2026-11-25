@@ -179,7 +179,7 @@ pub fn standing(machine: &Path) -> String {
     let Manifest { release, .. } = manifest;
     let recorded: Option<Record> = std::fs::read_to_string(machine.join(super::command::RECORD))
         .ok()
-        .and_then(|text| serde_json::from_str(&text).ok());
+        .and_then(|text| serde_json::from_slice(text.as_bytes()).ok());
     let server = match &recorded {
         Some(record) if record.release.as_deref() == Some(release.as_str()) => format!(
             "the machine's server (port {}, pid {}) runs it",

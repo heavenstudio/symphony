@@ -158,7 +158,7 @@ pub fn installed(machine: &Path, name: &str) -> Result<Option<Manifest>, String>
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("{}: {error}", path.display())),
     };
-    serde_json::from_str(&text)
+    serde_json::from_slice(text.as_bytes())
         .map(Some)
         .map_err(|error| format!("{}: {error}", path.display()))
 }
@@ -531,7 +531,10 @@ pub fn of_binary(binary: &Path) -> Option<(PathBuf, Manifest)> {
         return None;
     }
     let text = fs::read_to_string(release.join(MANIFEST)).ok()?;
-    Some((release.to_path_buf(), serde_json::from_str(&text).ok()?))
+    Some((
+        release.to_path_buf(),
+        serde_json::from_slice(text.as_bytes()).ok()?,
+    ))
 }
 
 /// The client the server at `binary` serves from beside it: its release's `client/HASH/`, when

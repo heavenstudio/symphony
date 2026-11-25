@@ -108,7 +108,8 @@ impl Registry {
     pub fn read(dir: &Path) -> Result<Registry, String> {
         let path = dir.join(PROJECTS);
         match fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display())),
+            Ok(text) => serde_json::from_slice(text.as_bytes())
+                .map_err(|e| format!("{}: {e}", path.display())),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(Registry::default()),
             Err(e) => Err(crate::text::os_error(&e, &path)),
         }

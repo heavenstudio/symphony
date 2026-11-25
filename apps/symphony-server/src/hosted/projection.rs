@@ -22,7 +22,7 @@ pub(crate) fn project_page(mut page: symphony_api::TaskPage) -> symphony_api::Ta
 /// event keeps its empty changes array so section reads at that cursor can still catch up.
 /// Malformed envelopes are withheld, never passed through as an authentication fallback.
 pub(crate) fn project_feed(json: &str) -> Option<String> {
-    let mut event: serde_json::Value = serde_json::from_str(json).ok()?;
+    let mut event: serde_json::Value = serde_json::from_slice(json.as_bytes()).ok()?;
     let changes = event.get_mut("changes")?.as_array_mut()?;
     changes.retain(|change| {
         !matches!(
