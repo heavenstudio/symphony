@@ -210,10 +210,9 @@ impl Store {
                 .holdings()
                 .into_iter()
                 .map(|(owner, slots)| {
-                    (
-                        owner.to_string(),
-                        slots.into_keys().map(String::from).collect(),
-                    )
+                    let mut held = BTreeSet::new();
+                    held.extend(slots.into_keys().map(String::from));
+                    (owner.to_string(), held)
                 })
                 .collect_map())
         })

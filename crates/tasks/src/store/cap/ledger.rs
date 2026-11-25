@@ -64,7 +64,8 @@ impl Observation {
         store: &Store,
         parent: Option<&str>,
     ) -> Result<(), Failure> {
-        let mut looked: BTreeSet<String> = self.rows.keys().cloned().collect();
+        let mut looked: BTreeSet<String> = BTreeSet::new();
+        looked.extend(self.rows.keys().cloned());
         for _ in 0..DEPTH {
             let above = self
                 .rows
@@ -105,7 +106,7 @@ impl Observation {
             }
         }
         for held in orchestrators.values_mut().chain(executors.values_mut()) {
-            held.sort_unstable();
+            crate::order::sort_by(held, &Ord::cmp);
             held.dedup();
         }
         let tasks = self.rows.values().map(|row| Entry {

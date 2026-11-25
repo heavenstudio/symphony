@@ -6,6 +6,7 @@ use crate::cli::{Env, agents, probes};
 use crate::rows::TaskSessionRow;
 use crate::store::unanswered::{Asked, restorable};
 use crate::{Error, Store};
+use std::collections::BTreeSet;
 use std::io::Write;
 
 pub(super) fn present(launch: &TaskSessionRow, agents: &[Object]) -> bool {
@@ -38,7 +39,13 @@ pub fn restore_unanswered(
         panes: Box::new(|| Ok(Vec::new())),
         ..probes::machine(&env)
     };
-    let verifying = || agents::running_tests(store, &probes).map(|runs| runs.into_keys().collect());
+    let verifying = || {
+        agents::running_tests(store, &probes).map(|runs| {
+            let mut handles = BTreeSet::new();
+            handles.extend(runs.into_keys());
+            handles
+        })
+    };
     let mut restored = Vec::new();
     for pending in store.pending_posts(&board, Asked::Overdue(&board.tasks, store.now()))? {
         if pending.health.holds() && callbacks.contains_key(&pending.handle) {

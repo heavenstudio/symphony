@@ -38,10 +38,9 @@ fn tells(line: &Queued) -> Entries {
     let none = Entries::new();
     let withheld = line.pull_withheld.as_ref().unwrap_or(&none);
     let recorded = line.pull_entries.iter().flatten();
-    recorded
-        .filter(|entry| !withheld.contains(entry))
-        .cloned()
-        .collect()
+    let mut told = Entries::new();
+    told.extend(recorded.filter(|entry| !withheld.contains(entry)).cloned());
+    told
 }
 
 /// What becomes of the PULLs `queued` for a recipient that hears the entries `heard` of the
@@ -54,7 +53,11 @@ pub(super) fn pull_plan(
 ) -> PullPlan {
     let waiting: Vec<&Queued> = queued.iter().filter(|line| line.is_pull()).collect();
     let new: Entries = match acknowledged {
-        Some(told) => heard.difference(told).cloned().collect(),
+        Some(told) => {
+            let mut new = Entries::new();
+            new.extend(heard.difference(told).cloned());
+            new
+        }
         None => heard.clone(),
     };
     if acknowledged.is_some() && new.is_empty() {
@@ -63,7 +66,8 @@ pub(super) fn pull_plan(
             false => PullPlan::Dropped,
         };
     }
-    let pending: Entries = waiting.iter().flat_map(|line| tells(line)).collect();
+    let mut pending: Entries = BTreeSet::new();
+    pending.extend(waiting.iter().flat_map(|line| tells(line)));
     match waiting.iter().max_by_key(|line| line.sequence) {
         Some(line) if new.is_subset(&pending) => PullPlan::Kept(line.key.clone()),
         _ => PullPlan::Queued,
@@ -98,9 +102,11 @@ pub(super) struct Account {
 /// acknowledged unanswered posts retain their identity across departures and returns.
 pub(super) fn told(state: &State, entries: &Entries) -> Option<Entries> {
     state.acknowledged().map(|told| {
-        told.into_iter()
-            .filter(|entry| entry.0 == "unanswered" || entries.contains(entry))
-            .collect()
+        let mut kept = Entries::new();
+        kept.extend(
+            (told.into_iter()).filter(|entry| entry.0 == "unanswered" || entries.contains(entry)),
+        );
+        kept
     })
 }
 
@@ -151,11 +157,13 @@ impl Account {
     /// still needs its first acknowledgement.
     pub(super) fn upgrade(state: &State, entries: &Entries, heard: &Entries) -> Self {
         let unheard = entries - heard;
-        let untold: Entries = heard
-            .iter()
-            .filter(|entry| entry.0 == "low_volume")
-            .cloned()
-            .collect();
+        let mut untold: Entries = BTreeSet::new();
+        untold.extend(
+            heard
+                .iter()
+                .filter(|entry| entry.0 == "low_volume")
+                .cloned(),
+        );
         let first_condition = !untold.is_empty();
         Account {
             plan: if first_condition {

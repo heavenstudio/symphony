@@ -19,7 +19,7 @@ pub(super) fn tasks<'a>(board: &[Task], handles: impl IntoIterator<Item = &'a st
             .iter()
             .filter(|task| finished(task) && holds(task))
             .collect();
-        done.sort_by(|a, b| b.updated.total_cmp(&a.updated));
+        symphony_board::order::sort_by(&mut done, &|a, b| b.updated.total_cmp(&a.updated));
         shown.extend(
             done.into_iter()
                 .take(FINISHED)

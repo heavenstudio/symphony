@@ -550,7 +550,7 @@ pub fn sort_register(text: &str, plugins: &crate::plugins::Plugins) -> Result<St
         .map(|(slug, _)| slug)
         .collect();
     if !duplicates.is_empty() {
-        duplicates.sort_unstable();
+        symphony_board::order::sort_by(&mut duplicates, &Ord::cmp);
         return Err(ReviewError(format!(
             "duplicate decision slug(s): {}",
             duplicates.join(", ")
@@ -693,7 +693,7 @@ fn refuse_repeats(before: &[Decision], after: &[Decision], doing: &str) -> Resul
     if repeated.is_empty() {
         return Ok(());
     }
-    repeated.sort_unstable();
+    symphony_board::order::sort_by(&mut repeated, &Ord::cmp);
     let named: Vec<String> = repeated.into_iter().map(repr).collect();
     Err(ReviewError(format!(
         "{doing} would repeat card(s) {}; nothing was written",

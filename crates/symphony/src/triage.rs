@@ -294,16 +294,18 @@ pub fn render_stats(found: &Stats) -> String {
 }
 
 fn slugs_in(pattern: &Regex, text: &str) -> BTreeSet<String> {
-    pattern
-        .captures_iter(text)
-        .flat_map(|m| {
-            m["slugs"]
-                .split(',')
-                .map(|s| strip(s).to_string())
-                .collect::<Vec<_>>()
-        })
-        .filter(|s| !s.is_empty())
-        .collect()
+    let mut slugs = BTreeSet::new();
+    slugs.extend(
+        (pattern.captures_iter(text))
+            .flat_map(|m| {
+                m["slugs"]
+                    .split(',')
+                    .map(|s| strip(s).to_string())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|s| !s.is_empty()),
+    );
+    slugs
 }
 
 /// What a design card of `doc` gates: what the project's card kinds count in it, each as (how
@@ -315,13 +317,14 @@ pub fn gates(
     card: &Decision,
     cards: &[(String, Decision)],
 ) -> (Vec<(usize, String)>, usize) {
-    let mut waiting: BTreeSet<String> = cards
-        .iter()
-        .filter(|(_, other)| {
-            other.slug != card.slug && slugs_in(&DEPENDS, &other.text).contains(&card.slug)
-        })
-        .map(|(_, other)| other.slug.clone())
-        .collect();
+    let mut waiting: BTreeSet<String> = BTreeSet::new();
+    waiting.extend(
+        (cards.iter())
+            .filter(|(_, other)| {
+                other.slug != card.slug && slugs_in(&DEPENDS, &other.text).contains(&card.slug)
+            })
+            .map(|(_, other)| other.slug.clone()),
+    );
     waiting.extend(
         slugs_in(&BLOCKS, &card.text)
             .into_iter()

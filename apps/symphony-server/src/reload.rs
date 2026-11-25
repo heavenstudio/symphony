@@ -195,7 +195,8 @@ pub(crate) fn setup(serve: &Serve) -> Result<Setup, String> {
             .chain([transfer.lease])
             .chain(ends.iter().copied())
             .collect();
-        let unique: std::collections::BTreeSet<_> = all.iter().copied().collect();
+        let mut unique: std::collections::BTreeSet<_> = std::collections::BTreeSet::new();
+        unique.extend(all.iter().copied());
         if unique.len() != all.len()
             || transfer.listeners.is_empty()
             || all.iter().any(|&fd| fd < 3)

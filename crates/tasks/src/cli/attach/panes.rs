@@ -273,10 +273,13 @@ fn launches<'launches>(
     open: &'launches [TaskSessionRow],
 ) -> BTreeMap<&'launches str, &'launches TaskSessionRow> {
     let owners = Owners::new(&board.tasks);
-    open.iter()
-        .filter(|record| overseen.hears(board, &owners, record))
-        .map(|record| (record.handle.as_str(), record))
-        .collect()
+    let mut launches = BTreeMap::new();
+    launches.extend(
+        (open.iter())
+            .filter(|record| overseen.hears(board, &owners, record))
+            .map(|record| (record.handle.as_str(), record)),
+    );
+    launches
 }
 
 fn pane_of<'panes>(
@@ -409,16 +412,18 @@ pub fn overseen<'b>(board: &'b Board, handle: &'b str) -> Overseen<'b> {
     let orchestrator =
         (board.sessions.iter()).any(|s| s.row.handle == handle && s.row.kind == "orchestrator");
     let work = orchestrator.then(|| claimable_work(board));
-    let sessions = (board.sessions.iter())
-        .map(|s| &s.row)
-        .filter(|s| s.left_at.is_none() && s.handle != handle)
-        .filter(|s| {
-            told_of(&owners, work.as_ref(), s, handle)
-                || holders.contains(s.handle.as_str())
-                || delegated.iter().any(|(who, _)| *who == s.handle)
-        })
-        .map(|s| s.handle.as_str())
-        .collect();
+    let mut sessions = BTreeSet::new();
+    sessions.extend(
+        (board.sessions.iter())
+            .map(|s| &s.row)
+            .filter(|s| s.left_at.is_none() && s.handle != handle)
+            .filter(|s| {
+                told_of(&owners, work.as_ref(), s, handle)
+                    || holders.contains(s.handle.as_str())
+                    || delegated.iter().any(|(who, _)| *who == s.handle)
+            })
+            .map(|s| s.handle.as_str()),
+    );
     Overseen {
         recipient: handle,
         orchestrator,

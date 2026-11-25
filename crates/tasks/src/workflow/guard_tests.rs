@@ -1335,6 +1335,25 @@ fn a_met_guard_stands_by_a_word_with_the_reason_a_dispatch_gives() {
     }
 }
 
+/// Two authorities for one adapter: the page of the one written last is its page, as a map collected
+/// from the authorities kept a key's last value.
+#[test]
+fn an_adapter_named_by_two_authorities_takes_the_page_written_last() {
+    let (first, last) = (
+        "/docs/LEDGER.md#{task}",
+        "https://ledger.example/approvals?task={task}",
+    );
+    let text = format!(
+        "{}page = \"{first}\"\n\n[[workflow_authorities]]\nadapter = \"approvals\"\n\
+         issuer = \"ledger\"\ncontract = 1\nkey = \"{}\"\npage = \"{last}\"\n",
+        guarded_text(7),
+        attester(8).key
+    );
+    let pages = crate::workflow::authority_pages(&text);
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert_eq!(pages.get("approvals").map(String::as_str), Some(last));
+}
+
 #[test]
 fn an_authority_may_name_the_page_of_its_ledger_which_the_board_reads_for_a_link_and_never_keeps() {
     let paged = |page: &str| {

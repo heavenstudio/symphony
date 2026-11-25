@@ -1371,7 +1371,7 @@ fn justfile(root: &Path) -> Option<PathBuf> {
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| matches!(name.to_lowercase().as_str(), "justfile" | ".justfile"))
         .collect();
-    names.sort_unstable();
+    crate::order::sort_by(&mut names, &Ord::cmp);
     names.first().map(|name| root.join(name))
 }
 
@@ -2866,7 +2866,7 @@ impl Landing<'_> {
                 taken.push(file.clone());
             }
         }
-        taken.sort_unstable();
+        crate::order::sort_by(&mut taken, &Ord::cmp);
         if !taken.is_empty() {
             if let Err(why) = self.take_ours(&path, &taken) {
                 let _ = git(&path, &["merge", "--abort"]);
@@ -3300,8 +3300,9 @@ impl Landing<'_> {
         let range = format!("^{base}");
         let brought = told(&self.main, &["rev-list", tip, &range])
             .map_err(|why| format!("the commits {slug} brings could not be listed: {why}"))?;
-        let brought = String::from_utf8_lossy(&brought.stdout).into_owned();
-        let brought: BTreeSet<&str> = brought.split_whitespace().collect();
+        let commits = String::from_utf8_lossy(&brought.stdout).into_owned();
+        let mut brought: BTreeSet<&str> = BTreeSet::new();
+        brought.extend(commits.split_whitespace());
         let mut left = Vec::new();
         for entry in listed {
             if entry.bare

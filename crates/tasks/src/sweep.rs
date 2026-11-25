@@ -216,14 +216,16 @@ impl Finished {
         // An in-process agent (a Claude Code subagent) has no launch record: its session says where
         // it worked, and its health whether it still does.
         let board = store.board()?;
-        let workers: BTreeSet<&str> = board
-            .tasks
-            .iter()
-            .filter(|task| slugs.contains(&task.slug))
-            .flat_map(|task| &task.roles)
-            .filter(|role| matches!(role.role.as_str(), "executor" | "reviewer"))
-            .map(|role| role.handle.as_str())
-            .collect();
+        let mut workers: BTreeSet<&str> = BTreeSet::new();
+        workers.extend(
+            board
+                .tasks
+                .iter()
+                .filter(|task| slugs.contains(&task.slug))
+                .flat_map(|task| &task.roles)
+                .filter(|role| matches!(role.role.as_str(), "executor" | "reviewer"))
+                .map(|role| role.handle.as_str()),
+        );
         for session in &board.sessions {
             if !workers.contains(session.row.handle.as_str()) || session.health.holds() {
                 continue;
@@ -1480,17 +1482,16 @@ fn recorded_lands(root: &Path) -> BTreeSet<String> {
     let Ok(entries) = std::fs::read_dir(&folder) else {
         return BTreeSet::new();
     };
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let text = std::fs::read_to_string(entry.path()).ok()?;
-            let record: crate::land::Record = crate::objects::parse(&text)?;
-            let at = entry.path();
-            (at == crate::land::Record::path(&folder, &record.slug)
-                || at == crate::land::Record::dashed(&folder, &record.slug))
-            .then_some(record.slug)
-        })
-        .collect()
+    let mut slugs = BTreeSet::new();
+    slugs.extend(entries.flatten().filter_map(|entry| {
+        let text = std::fs::read_to_string(entry.path()).ok()?;
+        let record: crate::land::Record = crate::objects::parse(&text)?;
+        let at = entry.path();
+        (at == crate::land::Record::path(&folder, &record.slug)
+            || at == crate::land::Record::dashed(&folder, &record.slug))
+        .then_some(record.slug)
+    }));
+    slugs
 }
 
 /// Why branch `name`, landed in main, stays though its worktree went, if it does: a land's
@@ -1590,12 +1591,14 @@ fn agent_branches(
     store: &Store,
     o: &Options,
 ) -> Result<Vec<String>, String> {
-    let held: BTreeSet<&str> = trees
-        .iter()
-        .zip(paths)
-        .filter(|(_, path)| !gone.contains(*path))
-        .filter_map(|(entry, _)| entry.branch.as_deref())
-        .collect();
+    let mut held: BTreeSet<&str> = BTreeSet::new();
+    held.extend(
+        trees
+            .iter()
+            .zip(paths)
+            .filter(|(_, path)| !gone.contains(*path))
+            .filter_map(|(entry, _)| entry.branch.as_deref()),
+    );
     let listing = git::git(
         root,
         &[

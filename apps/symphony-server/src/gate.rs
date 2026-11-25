@@ -426,15 +426,17 @@ fn names_in(status: &str) -> BTreeSet<String> {
             .map(str::to_string)
             .collect::<Vec<_>>()
     };
-    status["Self"]["DNSName"]
-        .as_str()
-        .map(|dns| dns.trim_end_matches('.').to_string())
-        .into_iter()
-        .chain(addresses(&status["TailscaleIPs"]))
-        .chain(addresses(&status["Self"]["TailscaleIPs"]))
-        .map(|name| name.to_lowercase())
-        .filter(|name| !name.is_empty())
-        .collect()
+    let mut names = BTreeSet::new();
+    names.extend(
+        (status["Self"]["DNSName"].as_str())
+            .map(|dns| dns.trim_end_matches('.').to_string())
+            .into_iter()
+            .chain(addresses(&status["TailscaleIPs"]))
+            .chain(addresses(&status["Self"]["TailscaleIPs"]))
+            .map(|name| name.to_lowercase())
+            .filter(|name| !name.is_empty()),
+    );
+    names
 }
 
 /// The address, with an IPv4-mapped IPv6 one unwrapped.

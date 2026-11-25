@@ -445,20 +445,16 @@ fn named_powers(powers: &[Power]) -> Result<(), Error> {
 
 /// `powers` once each, in the order they are said.
 fn said_order(powers: impl IntoIterator<Item = Power>) -> Vec<Power> {
-    powers
-        .into_iter()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
+    let mut once = BTreeSet::new();
+    once.extend(powers);
+    once.into_iter().collect()
 }
 
 /// `names` once each, in order.
 fn in_order(names: impl IntoIterator<Item = String>) -> Vec<String> {
-    names
-        .into_iter()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
+    let mut once = BTreeSet::new();
+    once.extend(names);
+    once.into_iter().collect()
 }
 
 /// A refusal that wrote nothing.

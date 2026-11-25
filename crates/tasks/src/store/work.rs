@@ -528,7 +528,7 @@ impl Store {
                 .filter(|held| held.handle == handle)
                 .map(|held| held.slug.clone())
                 .collect();
-            slugs.sort_unstable();
+            crate::order::sort_by(&mut slugs, &Ord::cmp);
             slugs.dedup();
             top_in(&tree, &slugs).cloned()
         };

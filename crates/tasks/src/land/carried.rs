@@ -197,7 +197,7 @@ pub(crate) fn merged(
         .take_while(|field| !field.is_empty())
         .map(str::to_string)
         .collect();
-    conflicted.sort_unstable();
+    crate::order::sort_by(&mut conflicted, &Ord::cmp);
     conflicted.dedup();
     // 0 is a clean merge and 1 one with conflicts, the tree written either way; a status that
     // disagrees with the paths listed is not one to go by.

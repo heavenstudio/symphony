@@ -633,12 +633,13 @@ pub fn describe_board_observed(
 /// once a poll, only when a child is quiet, never once per child.
 pub fn running_tests(store: &Store, probes: &Probes) -> Result<BTreeMap<String, Detail>, Error> {
     let view = describe(store, probes, store.now(), false)?;
-    Ok(view
-        .agents
-        .into_iter()
-        .filter(|a| a.state == "running_test")
-        .filter_map(|a| a.detail.map(|d| (a.handle, d)))
-        .collect())
+    let mut running = BTreeMap::new();
+    running.extend(
+        (view.agents.into_iter())
+            .filter(|a| a.state == "running_test")
+            .filter_map(|a| a.detail.map(|d| (a.handle, d))),
+    );
+    Ok(running)
 }
 
 /// The same answer as columns under a header, for the terminal: what each agent does (its state)

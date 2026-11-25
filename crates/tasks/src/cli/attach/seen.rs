@@ -138,12 +138,15 @@ fn look(board: &Board, handle: &str, kind: &str, scope: Scope) -> Seen {
         (t.roles.iter())
             .any(|r| r.handle == handle && matches!(r.role.as_str(), "executor" | "orchestrator"))
     };
-    let verdict_tasks = (mine.iter().filter(decides).map(|t| t.slug.clone()))
-        .chain(below.into_iter().map(str::to_owned))
-        .collect();
-    let roles = (mine.iter())
-        .flat_map(|t| (t.roles.iter()).map(|r| (t.slug.clone(), r.handle.clone(), r.role.clone())))
-        .collect();
+    let mut verdict_tasks = BTreeSet::new();
+    verdict_tasks.extend(
+        (mine.iter().filter(decides).map(|t| t.slug.clone()))
+            .chain(below.into_iter().map(str::to_owned)),
+    );
+    let mut roles = BTreeSet::new();
+    roles.extend((mine.iter()).flat_map(|t| {
+        (t.roles.iter()).map(|r| (t.slug.clone(), r.handle.clone(), r.role.clone()))
+    }));
     // A session going quiet is said to its parent; to an orchestrator, only when it is the
     // orchestrator of the work that session holds, or that work is nobody's.
     let work = (orchestrator && scope == Scope::Heard).then(|| claimable_work(board));
@@ -152,6 +155,8 @@ fn look(board: &Board, handle: &str, kind: &str, scope: Scope) -> Seen {
         .filter(|s| told_of(&owners, work.as_ref(), &s.row, handle))
         .map(|s| (s.row.handle.clone(), s.health))
         .collect_map();
+    let mut owned = BTreeSet::new();
+    owned.extend(unclaimed.into_iter().map(str::to_owned));
     Seen {
         latest_message: Some(board.latest_message),
         staffing,
@@ -160,7 +165,7 @@ fn look(board: &Board, handle: &str, kind: &str, scope: Scope) -> Seen {
         statuses: (watched.iter())
             .map(|(slug, task)| (slug.to_string(), task.status.clone()))
             .collect_map(),
-        unclaimed: unclaimed.into_iter().map(str::to_owned).collect(),
+        unclaimed: owned,
         ready,
         children,
     }
@@ -231,21 +236,19 @@ fn staffing(board: &Board, reaches: &dyn Fn(&str) -> bool) -> String {
         (matches!(t.status.as_str(), "ready" | "review") || EXECUTING.contains(&t.status.as_str()))
             && reaches(&t.slug)
     };
-    let roles: BTreeSet<(&str, &str, &str, bool)> = (board.tasks.iter())
-        .filter(active)
-        .flat_map(|t| {
-            (t.roles.iter())
-                .filter(|r| matches!(r.role.as_str(), "executor" | "reviewer" | "reserved"))
-                .map(|r| {
-                    (
-                        t.slug.as_str(),
-                        r.handle.as_str(),
-                        r.role.as_str(),
-                        r.health.holds(),
-                    )
-                })
-        })
-        .collect();
+    let mut roles: BTreeSet<(&str, &str, &str, bool)> = BTreeSet::new();
+    roles.extend((board.tasks.iter()).filter(active).flat_map(|t| {
+        (t.roles.iter())
+            .filter(|r| matches!(r.role.as_str(), "executor" | "reviewer" | "reserved"))
+            .map(|r| {
+                (
+                    t.slug.as_str(),
+                    r.handle.as_str(),
+                    r.role.as_str(),
+                    r.health.holds(),
+                )
+            })
+    }));
     serde_json::to_string(&roles).expect("strings and booleans serialize")
 }
 
@@ -298,11 +301,14 @@ impl<V> Default for Delta<V> {
 
 impl<V: Clone> Delta<V> {
     fn between(legacy: &BTreeMap<String, V>, heard: &BTreeMap<String, V>) -> Delta<V> {
-        Delta {
-            left: (legacy.keys())
+        let mut left = BTreeSet::new();
+        left.extend(
+            (legacy.keys())
                 .filter(|key| !heard.contains_key(*key))
-                .cloned()
-                .collect(),
+                .cloned(),
+        );
+        Delta {
+            left,
             added: (heard.iter())
                 .filter(|(key, _)| !legacy.contains_key(*key))
                 .map(|(key, value)| (key.clone(), value.clone()))
@@ -325,18 +331,15 @@ impl<V: Clone> Delta<V> {
 impl Narrowing {
     /// The heard look `heard` as a narrowing of `legacy`, both of one board.
     pub fn between(legacy: &Seen, heard: &Seen) -> Narrowing {
+        let (mut verdicts_left, mut verdicts_added) = (BTreeSet::new(), BTreeSet::new());
+        verdicts_left.extend((legacy.verdict_tasks.difference(&heard.verdict_tasks)).cloned());
+        verdicts_added.extend((heard.verdict_tasks.difference(&legacy.verdict_tasks)).cloned());
         Narrowing {
             statuses: Delta::between(&legacy.statuses, &heard.statuses),
             ready: Delta::between(&legacy.ready, &heard.ready),
             children: Delta::between(&legacy.children, &heard.children),
-            verdicts_left: (legacy.verdict_tasks)
-                .difference(&heard.verdict_tasks)
-                .cloned()
-                .collect(),
-            verdicts_added: (heard.verdict_tasks)
-                .difference(&legacy.verdict_tasks)
-                .cloned()
-                .collect(),
+            verdicts_left,
+            verdicts_added,
             unclaimed: heard.unclaimed.clone(),
             staffing: heard.staffing.clone(),
         }
@@ -345,11 +348,13 @@ impl Narrowing {
     /// The heard look this narrowing makes of `legacy`. Its roles and messages are the legacy
     /// look's, which both scopes share.
     pub fn over(&self, legacy: &Seen) -> Seen {
-        let mut verdict_tasks: BTreeSet<String> = legacy
-            .verdict_tasks
-            .difference(&self.verdicts_left)
-            .cloned()
-            .collect();
+        let mut verdict_tasks: BTreeSet<String> = BTreeSet::new();
+        verdict_tasks.extend(
+            legacy
+                .verdict_tasks
+                .difference(&self.verdicts_left)
+                .cloned(),
+        );
         verdict_tasks.extend(self.verdicts_added.iter().cloned());
         Seen {
             latest_message: legacy.latest_message,

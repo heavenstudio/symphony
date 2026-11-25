@@ -614,7 +614,7 @@ impl Project {
         let loaded = Self::read_known(root).and_then(|(project, unknown)| {
             let mut read = Vec::new();
             let checked = project.check_files(root, &mut read);
-            read.sort();
+            symphony_board::order::sort_by(&mut read, &Ord::cmp);
             read.dedup();
             stamps.extend(read.into_iter().map(|path| stamped(root.join(path))));
             checked
@@ -1134,7 +1134,7 @@ impl Project {
                 }
             });
         }
-        found.sort_by(|a, b| a.1.cmp(&b.1));
+        symphony_board::order::sort_by(&mut found, &|a, b| a.1.cmp(&b.1));
         found
     }
 
@@ -1323,7 +1323,7 @@ impl Project {
                                 .is_some_and(|(holder, _)| std::ptr::eq(holder, entry)))
             })
             .collect();
-        names.sort();
+        symphony_board::order::sort_by(&mut names, &Ord::cmp);
         names
     }
 

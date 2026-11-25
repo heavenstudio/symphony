@@ -175,7 +175,7 @@ fn output(starts: &Path, slug: &str, at: f64) -> std::io::Result<PathBuf> {
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "log"))
         .collect();
-    found.sort_unstable();
+    crate::order::sort_by(&mut found, &Ord::cmp);
     let gone = found.len().saturating_sub(KEPT_STARTS.saturating_sub(1));
     for path in found.into_iter().take(gone) {
         let _ = fs::remove_file(path);

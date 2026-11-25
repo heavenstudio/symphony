@@ -295,19 +295,21 @@ impl Sweep {
             }
         };
         let gone = |path: &&PathBuf| !stamps.contains_key(*path) && covered(&roots, path).is_some();
-        let missed = stamps
-            .iter()
-            .filter(|(path, stamp)| before(path) != Some(*stamp))
-            .map(|(path, _)| path)
-            .chain(self.stamps.keys().filter(gone))
-            .chain(
-                self.adopted
-                    .keys()
-                    .filter(|path| covered(&self.roots, path).is_none())
-                    .filter(gone),
-            )
-            .cloned()
-            .collect();
+        let mut missed = BTreeSet::new();
+        missed.extend(
+            stamps
+                .iter()
+                .filter(|(path, stamp)| before(path) != Some(*stamp))
+                .map(|(path, _)| path)
+                .chain(self.stamps.keys().filter(gone))
+                .chain(
+                    self.adopted
+                        .keys()
+                        .filter(|path| covered(&self.roots, path).is_none())
+                        .filter(gone),
+                )
+                .cloned(),
+        );
         self.adopted
             .retain(|path, _| covered(&roots, path).is_none());
         self.roots = roots;
