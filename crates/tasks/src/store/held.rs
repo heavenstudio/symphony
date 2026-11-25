@@ -218,7 +218,8 @@ impl Store {
     /// `author`'s comment `text` on a document, left at `place`, held for people
     /// ([`crate::held::OnDocument`]): its row alone, with no line on any thread and no ask, so no
     /// agent is handed it. Refused, with nothing written: an author who is not a person this store
-    /// writes for (the owner's words are never held), an empty text, a place that names no
+    /// writes for (the person at the machine's words, as `owner` or under the name they gave
+    /// themselves, are never held: [`Store::is_machine`]), an empty text, a place that names no
     /// document, a card's message with no card, a callout with no block, and a board without the
     /// step.
     pub fn hold_on_document(
@@ -227,7 +228,7 @@ impl Store {
         text: &str,
         place: &Place,
     ) -> Result<OnDocument, Error> {
-        if author == OWNER || !self.is_person(author) {
+        if self.is_machine(author) || !self.is_person(author) {
             return Err(refused(format!(
                 "only a person's words are held, and {} writes as no person here: nothing was \
                  written",

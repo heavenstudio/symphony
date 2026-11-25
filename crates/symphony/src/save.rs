@@ -783,7 +783,7 @@ impl Saves {
         let name = pass.map_or(actor.name(), |held| held.author.as_str());
         let holding = match crate::owners::person(actor) {
             Some(person) if pass.is_none() && matches!(route, "/api/comment" | "/api/message") => {
-                let store = self.store_by(person)?;
+                let store = self.store_for(actor)?;
                 held::holds(&store, person)?.then_some(store)
             }
             _ => None,
@@ -811,7 +811,7 @@ impl Saves {
         // A comment passed on once: another pass that came first is refused here, under the lock.
         let passing = match pass {
             Some(passed) => {
-                let store = self.store_by(actor.name())?;
+                let store = self.store_for(actor)?;
                 let now = store.held_comment(passed.id)?;
                 if let Some(refused) = held::not_held(passed.id, now.as_ref()) {
                     return Err(refused);
@@ -1048,7 +1048,7 @@ impl Saves {
     ) -> Result<(Value, Option<NewAsk>, Told), Failure> {
         let id =
             (payload["id"].as_i64()).ok_or("id must be a held comment's number".to_string())?;
-        let found = self.store_by(actor.name())?.held_comment(id)?;
+        let found = self.store_for(actor)?.held_comment(id)?;
         if let Some(refused) = held::not_held(id, found.as_ref()) {
             return Err(refused);
         }
