@@ -34,7 +34,9 @@
 //! calls, or beside it under a new one; a trait gains a method only with a default. A lint that
 //! asks for a signature pinned here to change is answered by an `#[expect]` on the item, never by
 //! the change (`clippy.toml`). Names were read from the consuming projects' code on 2026-11-12 and
-//! 2026-11-13; add one when a consumer starts calling it.
+//! 2026-11-13, and on 2026-11-25 by building it against a tree whose public items were all
+//! deprecated, so the compiler named each use, the methods it calls on a value among them; add one
+//! when a consumer starts calling it.
 #![expect(
     clippy::type_complexity,
     reason = "each signature is written out whole: it is what a consumer's code depends on"
@@ -81,6 +83,27 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Project) -> symphony::theme::Package = symphony::theme::Package::of;
     let _: fn(Vec<&'static dyn Plugin>) -> Plugins = Plugins::new;
     let _: fn(&Project) -> Plugins = Plugins::for_project;
+    // Its tests ask the project's plugins, and none, as a host asks them (read from its code on
+    // 2026-11-25, as every name below it gives that date).
+    let _: fn(&Path) -> Plugins = Plugins::of;
+    let _: fn() -> Plugins = Plugins::default;
+    let _: fn(&Plugins) -> &[&'static dyn Plugin] = Plugins::list;
+    let _: for<'a> fn(&'a Plugins, &str) -> Option<&'a dyn Component> = Plugins::component;
+    let _: for<'a> fn(&'a Plugins, &str) -> Option<&'a dyn Route> = Plugins::route;
+    let _: fn(&Plugins) -> Vec<NavItem> = Plugins::nav;
+    let _: fn(&Plugins) -> Vec<&dyn Watch> = Plugins::watches;
+    let _: fn(&Plugins) -> Vec<&dyn CardKind> = Plugins::card_kinds;
+    let _: fn(&Plugins) -> Vec<&dyn DocCheck> = Plugins::doc_checks;
+    let _: fn(&Plugins) -> Vec<&dyn HomeRegion> = Plugins::home_regions;
+    let _: fn(&Plugins) -> Vec<&dyn BoardAction> = Plugins::board_actions;
+    let _: fn(&Plugins, &Page<'_>) -> Option<String> = Plugins::cache_version;
+    let _: fn(&Project) -> Vec<String> = Project::history;
+    let _: fn(&Project, &str) -> bool = Project::is_page;
+    let _: fn(&Project) -> symphony_api::ProjectView = Project::view;
+    let _: fn() -> Entrypoint = Entrypoint::convention;
+    let _: fn(&Entrypoint, &str) -> Option<symphony::entrypoint::Renderer> = Entrypoint::renderer;
+    let _: fn(&Entrypoint, &str) -> bool = Entrypoint::shows;
+    let _: fn(&symphony::theme::Package) -> String = symphony::theme::Package::css;
     let _: fn(&'static [&'static dyn Plugin]) -> Result<(), String> = plugins::install;
     let _: fn() -> &'static [&'static dyn Plugin] = plugins::compiled;
     let _: fn() -> Vec<&'static dyn Command> = plugins::commands;
@@ -108,6 +131,12 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&[String], &[symphony::cli::Flag]) -> usize = symphony::cli::command_at;
     let _: fn(&[String], &[symphony_args::Flag]) -> Result<symphony_args::Parsed, String> =
         symphony_args::parse;
+    // What a parse is asked, by either name (one type).
+    let _: fn(&symphony_args::Parsed, &str) -> bool = symphony_args::Parsed::flag;
+    let _: for<'a> fn(&'a symphony_args::Parsed, &str) -> Option<&'a str> =
+        symphony_args::Parsed::value;
+    let _ = |parsed: &symphony::cli::Parsed| parsed.values("name").map(str::len).sum::<usize>();
+    let _: fn(symphony_args::Parsed) -> symphony::cli::Parsed = std::convert::identity;
     let _ = |name: &'static str, value: bool| {
         (
             symphony_args::Flag { name, value },
@@ -135,6 +164,11 @@ fn the_names_consumers_call_keep_their_shapes() {
         register::check_nothing_repeated;
     let _: fn(&str, &str, &Plugins) -> (String, Vec<String>) = register::resolve;
     let _: fn(&Decision) -> Vec<Entry> = Decision::entries;
+    let _: fn(&Decision) -> Option<String> = Decision::posted_at;
+    let _: fn(&Decision, &Plugins) -> bool = Decision::open;
+    let _: fn(&Decision, &Plugins) -> bool = Decision::resolvable;
+    let _: fn(&Decision, &Plugins) -> Group = Decision::group;
+    let _: fn(State) -> char = State::mark;
     let _: (&str, &str) = (register::REGION_START, register::REGION_END);
     // The variants a consumer names: `Who`'s compared with `==`, `Group`'s two in `assert_eq!`,
     // and four of `State`'s built to mark a card with, one compared with `!=`. Each enum then
@@ -177,6 +211,7 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&str) -> String = edit::heading_anchor;
     let _: fn(&Path) -> Result<Vec<Doc>, symphony::ReviewError> = symphony::board::scan;
     let _: fn(&Path) -> Vec<symphony::branches::BranchCard> = symphony::branches::branch_cards;
+    let _: fn(&symphony::branches::BranchCard) -> String = symphony::branches::BranchCard::path;
     let _: fn(&Plugins, &[Doc], usize, &str) -> Vec<Item> = triage::queue;
     let _: fn(&[Item]) -> String = triage::render_queue;
     let _: fn(&Plugins, &[Doc]) -> Result<triage::Stats, String> = triage::stats;
@@ -193,6 +228,11 @@ fn the_names_consumers_call_keep_their_shapes() {
 
     // Rendering documents into blocks.
     let _ = |root: &Path| Render::new(root);
+    let _: fn(Render, Plugins) -> Render = Render::with_plugins;
+    let _: fn(&Render, &str, &str) -> String = Render::html;
+    let _: fn(&Render, &str, &str) -> Vec<symphony::render::Section> = Render::sections;
+    let _: fn(&Render, &str, &str) -> Vec<symphony::render::Section> = Render::typed_sections;
+    let _: fn(&Render, &str, &str) -> symphony::render::Fragment = Render::typed_reply;
     let _: fn(&str) -> Vec<(String, String, Option<String>)> = symphony::render::references;
     let _: fn(&str) -> Vec<VectorShape> = blocks::vector_shapes;
     let _: fn(&[Block], &mut dyn FnMut(Media) -> usize) -> String = blocks::write::html;
@@ -448,6 +488,25 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&serde_json::Value) -> String = symphony_schema::repr;
     let _ = symphony_schema::validate;
     let _: Option<&symphony::schema::Schema> = None;
+    let _: fn(&serde_json::Value) -> Result<symphony_schema::Schema, symphony_schema::SchemaError> =
+        symphony_schema::Schema::compile;
+    let _: fn(&symphony_schema::Schema, &serde_json::Value) -> Vec<String> =
+        symphony_schema::Schema::errors;
+    let _: fn(symphony_schema::Schema) -> symphony::schema::Schema = std::convert::identity;
+    // The docs a plugin's check reads (`Docs` and `Problem` are the kit's and the helpers' by
+    // either name), and a card's state and entries.
+    let _: fn(&Path) -> Docs = Docs::read;
+    let _: fn(&Docs) -> &Path = Docs::root;
+    let _: fn(&Docs) -> &[String] = Docs::paths;
+    let _: for<'a> fn(&'a Docs, &str) -> &'a str = Docs::text;
+    let _: fn(&Docs, &str) -> bool = Docs::has;
+    let _: for<'a> fn(&'a Docs, &str) -> &'a [syntax::Card] = Docs::cards;
+    let _: fn(&Docs) -> Vec<(&str, syntax::Component)> = Docs::components;
+    let _: fn(&str, usize, String) -> Problem = Problem::new;
+    let _: fn(Docs) -> symphony_docs::Docs = std::convert::identity;
+    let _: fn(Problem) -> symphony_docs::Problem = std::convert::identity;
+    let _: fn(&syntax::Card) -> &'static str = syntax::Card::state;
+    let _: fn(&syntax::Card) -> Vec<syntax::Entry> = syntax::Card::entries;
     let _ = symphony_docs::check;
     let _: fn(&str) -> Vec<(usize, &str)> = symphony_docs::prose_lines;
     let _ = |line: &str| symphony_docs::runs(line, char::is_alphabetic).len();
@@ -495,6 +554,30 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: &str = symphony_plugin::ARTIFACTS;
     let _ = |page: &Page<'_>, rel: &str| -> String { page.artifact(rel) };
     let _ = |page: Page<'static>| page.in_artifacts("out");
+    // A page borrows its root and its document for any lifetime.
+    fn page<'a>(_: std::marker::PhantomData<&'a ()>) {
+        let _: fn(&'a Path, &'a str) -> Page<'a> = Page::new;
+    }
+    page(std::marker::PhantomData);
+    let _ = |page: &Page<'_>| -> Arc<u32> { page.once("key", || 0) };
+    let _: fn() -> Submission = Submission::default;
+    let _: fn() -> TaskOffer = TaskOffer::default;
+    // A board action submitted on a sender's behalf, as its tests ask a process plugin's.
+    let _: fn(&str, &str, Vec<String>) -> symphony_plugin::Sender = symphony_plugin::Sender::new;
+    let _ = |action: &dyn BoardAction,
+             root: &Path,
+             task: &TaskRef<'_>,
+             submission: &Submission,
+             sender: &symphony_plugin::Sender|
+     -> Result<Submitted, String> {
+        action.submit_from(root, task, submission, sender)
+    };
+    // Its process plugin's test writes the declaration request a host sends first.
+    let _ = || {
+        use symphony_plugin::protocol::{Declare, Envelope, PROTOCOL, Request};
+        let request = Envelope::<Request, ()>::asking(1, Declare::new(PROTOCOL).into());
+        serde_json::to_string(&request)
+    };
     // Its tests ask its components and card kinds as a host does: a request made by its `new` from
     // what the seam borrows, as no protocol struct is built by its fields (`#[non_exhaustive]`).
     let _ = |plugin: &'static dyn Plugin, page: &Page<'_>, card: &Card<'_>| {
