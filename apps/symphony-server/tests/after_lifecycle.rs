@@ -8,6 +8,10 @@ mod fixture;
 #[path = "common/bash_env.rs"]
 mod bash_env;
 
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "common/test_channel.rs"]
+mod test_channel;
+
 #[path = "after_lifecycle/discovery_tests.rs"]
 mod discovery_tests;
 

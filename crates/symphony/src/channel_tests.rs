@@ -185,3 +185,39 @@ fn no_end_is_taken_as_a_channel_of_another_type() {
         "a receiver taken as one of a supertype, a sender and a bounded sender as ones of a subtype"
     );
 }
+
+/// Clippy reads the nearest clippy.toml alone (or `.clippy.toml`), so a crate's own replaces the
+/// workspace's: each, this crate's among them, which refuses std's channel past [`channel`] and
+/// [`sync_channel`], holds the workspace's settings whole before its own.
+#[test]
+fn every_crates_clippy_settings_start_with_the_workspaces() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let workspace = std::fs::read_to_string(root.join("clippy.toml")).unwrap();
+    let mut held = Vec::new();
+    for group in ["crates", "apps"] {
+        for package in std::fs::read_dir(root.join(group)).unwrap() {
+            let package = package.unwrap().path();
+            for name in ["clippy.toml", ".clippy.toml"] {
+                let Ok(own) = std::fs::read_to_string(package.join(name)) else {
+                    continue;
+                };
+                let file = format!("{group}/{}/{name}", package.file_name().unwrap().display());
+                assert!(
+                    own.starts_with(&workspace),
+                    "{file} must start with the workspace's clippy.toml whole"
+                );
+                held.push(file);
+            }
+        }
+    }
+    for own in [
+        "apps/symphony-server/clippy.toml",
+        "crates/symphony/clippy.toml",
+        "crates/tasks/clippy.toml",
+    ] {
+        assert!(
+            held.iter().any(|file| file == own),
+            "{own} not found: {held:?}"
+        );
+    }
+}

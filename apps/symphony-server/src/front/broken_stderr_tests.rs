@@ -53,7 +53,7 @@ async fn stop_with_stderr_broken() {
         .saves
         .get_or_init(|| symphony::save::Saves::start(&root));
     let panicking = worker("panicking probe", || panic!("the worker probe panics"));
-    let (release, released) = std::sync::mpsc::channel::<()>();
+    let (release, released) = crate::test_channel::channel::<()>();
     let joined = Arc::new(AtomicBool::new(false));
     let held = {
         let joined = joined.clone();

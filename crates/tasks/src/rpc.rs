@@ -7,6 +7,7 @@
 
 use crate::cbor;
 use crate::lock::Recovered as _;
+use crate::socket::Socket;
 use serde_json::{Value, json};
 use std::fmt;
 use std::io::{Read, Write};
@@ -583,9 +584,11 @@ fn whole(raw: &[u8]) -> Result<Option<Reply>, String> {
 }
 
 /// Send `request` to `addr` on a connection of its own and read the response to its end. Its socket
-/// is the client's kind ([`crate::sys::connect`]): a copy a spawn took during the exchange would
-/// drain it, and its read's EBADF would fail a live server's answer (a health probe would say it
-/// is not healthy).
+/// is the client's kind ([`crate::sys::connect`]), so no spawn copies it during the exchange, and
+/// it waits only in `poll` ([`exchanged`]): the one close a drain can still meet, in its connect,
+/// leaves it answering as a sound socket does, where a blocking read's EBADF would fail a live
+/// server's answer (a field written while the command says the server did not answer, a health
+/// probe saying it is not healthy).
 pub(crate) fn exchange(
     addr: &str,
     request: &[u8],
@@ -597,18 +600,23 @@ pub(crate) fn exchange(
         .map_err(cannot)?
         .next()
         .ok_or_else(|| format!("{addr} names no address"))?;
-    let mut stream = crate::sys::connect(&to, timeout).map_err(cannot)?;
-    let talk = |stream: &mut TcpStream| -> std::io::Result<Vec<u8>> {
-        stream.set_nodelay(true)?;
-        stream.set_read_timeout(Some(timeout))?;
-        stream.set_write_timeout(Some(timeout))?;
-        stream.write_all(request)?;
-        let mut raw = Vec::new();
-        stream.read_to_end(&mut raw)?;
-        Ok(raw)
-    };
-    let raw = talk(&mut stream).map_err(|e| format!("the server at {addr} did not answer: {e}"))?;
+    let stream = crate::sys::connect(&to, timeout).map_err(cannot)?;
+    let raw = exchanged(stream, request, timeout)
+        .map_err(|e| format!("the server at {addr} did not answer: {e}"))?;
     parse_response(&raw)
+}
+
+/// `request` written on `stream` and the response read to the end of the connection, each read and
+/// each write waiting at most `timeout`, in `poll` ([`crate::socket`]), and a wait that runs out
+/// saying `EAGAIN`, as the socket's own timeouts did: a socket macOS drained answers as a sound
+/// one does.
+fn exchanged(stream: TcpStream, request: &[u8], timeout: Duration) -> std::io::Result<Vec<u8>> {
+    stream.set_nodelay(true)?;
+    let socket = Socket::waiting(stream, timeout)?;
+    (&socket).write_all(request)?;
+    let mut raw = Vec::new();
+    (&socket).read_to_end(&mut raw)?;
+    Ok(raw)
 }
 
 /// Whether a SurrealDB server answers its health check at `addr`.
@@ -785,6 +793,7 @@ fn results(reply: Value) -> Result<Vec<Value>, DbError> {
 
 #[cfg(test)]
 mod tests {
+    mod exchange;
     mod failures;
     mod resend;
 

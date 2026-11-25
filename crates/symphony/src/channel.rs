@@ -10,9 +10,10 @@
 //! plugin process's lines, the end of its stderr and its replies, the committer's queued jobs and
 //! its wakes, a described setting's program output, an authority's answer), some 74 KB of the
 //! server. Carried boxed, every channel this crate makes shares one, and a type costs its box and
-//! its unboxing alone. The board's code does the same with a module of its own
-//! (`symphony_board`'s `crate::channel`), as a module one crate shares with another is still
-//! compiled once in each.
+//! its unboxing alone: the crate's clippy.toml refuses std's `channel` and `sync_channel` anywhere
+//! else, and a test makes std's through tests/common/test_channel.rs, as no test holds a size line.
+//! The board's code does the same with a module of its own (`symphony_board`'s `crate::channel`),
+//! as a module one crate shares with another is still compiled once in each.
 //!
 //! Each end is invariant in its type. Were a [`Receiver`] covariant or a sender contravariant, a
 //! channel of a type with a more general subtype, such as `fn(&'static str)` of
@@ -38,12 +39,20 @@ type Boxed = Box<dyn Any + Send>;
 
 /// An unbounded channel of `T`: its sending end, which clones, and its receiving end.
 pub(crate) fn channel<T: Send + 'static>() -> (Sender<T>, Receiver<T>) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one unbounded std channel of this crate's code, of Boxed alone, whatever its ends carry"
+    )]
     let (sender, receiver) = mpsc::channel();
     (Sender(sender, PhantomData), Receiver(receiver, PhantomData))
 }
 
 /// A channel of `T` holding `bound` items at most: its sending end and its receiving end.
 pub(crate) fn sync_channel<T: Send + 'static>(bound: usize) -> (SyncSender<T>, Receiver<T>) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one bounded std channel of this crate's code, of Boxed alone, whatever its ends carry"
+    )]
     let (sender, receiver) = mpsc::sync_channel(bound);
     (
         SyncSender(sender, PhantomData),

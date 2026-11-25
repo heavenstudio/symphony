@@ -65,7 +65,7 @@ impl Listener {
         let socket = UnixListener::bind(&path).unwrap();
         let stopped = Arc::new(AtomicBool::new(false));
         let stop = stopped.clone();
-        let (send, messages) = mpsc::channel();
+        let (send, messages) = crate::test_channel::channel();
         let thread = std::thread::spawn(move || {
             for stream in socket.incoming() {
                 let mut stream = stream.unwrap();

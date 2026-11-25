@@ -18,6 +18,9 @@ mod posted;
 mod routes;
 #[path = "after_worktrees/saving.rs"]
 mod saving;
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "common/test_channel.rs"]
+mod test_channel;
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -1329,7 +1332,7 @@ fn scan_225_worktrees_has_bounded_commands_and_parallel_waits() {
     let arrivals = open_fifo("arrived");
     let mut arrivals_guard = arrivals.try_clone().unwrap();
     let mut release = open_fifo("release");
-    let (send, receive) = std::sync::mpsc::channel();
+    let (send, receive) = crate::test_channel::channel();
     let send_end = send.clone();
     let reader = std::thread::spawn(move || {
         let mut reader = BufReader::new(arrivals);

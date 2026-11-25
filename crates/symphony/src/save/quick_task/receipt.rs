@@ -392,10 +392,10 @@ mod tests {
         let payload = json!({"title":"Task"});
         let barrier = std::sync::Barrier::new(8);
         let results = std::thread::scope(|scope| {
-            let (reported, results) = std::sync::mpsc::channel();
+            let (reported, results) = crate::test_channel::channel();
             let mut releases = Vec::new();
             for _ in 0..8 {
-                let (release, released) = std::sync::mpsc::channel();
+                let (release, released) = crate::test_channel::channel();
                 releases.push(release);
                 let reported = reported.clone();
                 let (barrier, root, payload) = (&barrier, &tree.root, &payload);

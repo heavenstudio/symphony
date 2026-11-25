@@ -4,14 +4,13 @@
 
 use super::*;
 use crate::test_tree::Tree;
-use std::sync::mpsc;
 use std::time::Duration;
 
 #[test]
 fn a_close_waits_for_the_save_in_flight_and_names_what_it_waits_on() {
     let saves = Arc::new(Saves::start(Path::new("/nowhere")));
     let in_flight = saves.writes.lock().unwrap();
-    let (stage, stages) = mpsc::channel();
+    let (stage, stages) = crate::test_channel::channel();
     let closing = {
         let saves = saves.clone();
         std::thread::spawn(move || {

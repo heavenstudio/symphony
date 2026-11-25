@@ -164,7 +164,7 @@ impl Hub {
 
     /// Arm the activation the owned worker waits on; data reads wait until its first result.
     fn arm_initial_board(&mut self) -> mpsc::Receiver<()> {
-        let (start, starting) = mpsc::channel();
+        let (start, starting) = crate::wake::channel();
         // Each holder of this lock only takes or puts the sender, so a panic under it leaves either
         // the sender or nothing: both are a whole state, and the poisoned value is used as it is.
         *self.initial_start.get_mut().recover() = Some(start);
