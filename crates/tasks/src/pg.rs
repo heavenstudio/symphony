@@ -35,7 +35,7 @@
 
 use crate::db::DbError;
 use crate::lock::Recovered as _;
-use socket::Socket;
+use crate::socket::Socket;
 use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
@@ -47,7 +47,6 @@ use std::time::{Duration, Instant};
 pub mod external;
 #[cfg(feature = "hosted-postgresql")]
 pub mod hosted;
-mod socket;
 mod wire;
 
 #[cfg(test)]
@@ -127,8 +126,8 @@ pub struct Client {
 /// to ([`Connection::exchange`]), each a descriptor of its own that waits the client's wait.
 #[derive(Debug)]
 struct Connection {
-    stream: BufReader<Socket>,
-    writer: Socket,
+    stream: BufReader<Socket<UnixStream>>,
+    writer: Socket<UnixStream>,
 }
 
 impl Client {
@@ -465,13 +464,13 @@ impl Connection {
         }
         let ended = AtomicBool::new(false);
         // The connection ended for both sides, and whether this was the first to end it.
-        let end = |stream: &Socket| {
+        let end = |stream: &Socket<UnixStream>| {
             let first = !ended.swap(true, Ordering::SeqCst);
             let _ = stream.shutdown(Shutdown::Both);
             first
         };
         let Connection { stream, writer } = self;
-        let writer: &Socket = writer;
+        let writer: &Socket<UnixStream> = writer;
         std::thread::scope(|scope| {
             let sending = std::thread::Builder::new()
                 .name("board-pg-send".into())
