@@ -187,6 +187,14 @@ async fn held_words_reach_no_clone_and_a_pass_writes_them_as_hers_under_both_nam
     );
     seen = held(&stefano, MACHINE).await;
     assert_eq!(seen["held"], json!([]), "a passed comment is the file's");
+    // One who may direct agents writes as before, under their own name.
+    let own = json!({"path": DOC, "kind": "comment", "after_line": 3, "text": "Keep the lamps"});
+    let again = as_person(&root, "stefano");
+    let answer = ok(post(&again, LAPTOP, "/api/comment", own).await);
+    assert_eq!(answer.get("held"), None, "{answer}");
+    again.saves.get().unwrap().close();
+    let page = std::fs::read_to_string(root.join(DOC)).unwrap();
+    assert!(page.contains("> [!comment] stefano · Keep the lamps"), "{page}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
