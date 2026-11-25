@@ -413,6 +413,18 @@ fn unshared(waits: &super::Waits) -> super::Waits {
     }
 }
 
+/// What `scope`'s page keeps as its last event's waits is what it holds now, part for part: no part
+/// was taken from the event before where the page moved it.
+fn kept_as_held(q: &Queues, scope: &str) {
+    let pages = q.hub.pages.read().recover();
+    let page = &pages[scope];
+    assert_eq!(
+        page.waits.as_deref(),
+        Some(&super::Waits::of(page)),
+        "{scope}"
+    );
+}
+
 /// Each named reader's changes of each of `events` are what comparing the whole of its waits
 /// before and after makes: a part shared is skipped, never said otherwise.
 fn said_as_whole(events: &[Event]) {
@@ -463,6 +475,9 @@ fn a_task_count_moved_alone_shares_what_waits_but_the_board_and_filters_each_que
         assert_eq!(counts[0]["data"]["tasks"]["in_progress"], 1);
     }
     said_as_whole(&events);
+    for scope in ["", BRANCH] {
+        kept_as_held(&q, scope);
+    }
 }
 
 /// An event that moved no part of what waits a reader is shown (the board's own count of the
@@ -482,6 +497,11 @@ fn a_part_no_event_moved_is_never_filtered_and_an_event_moving_none_carries_no_w
     page.board.counts.answered_today += 1;
     let (before, after) = super::moved(page).unwrap();
     assert_eq!(counted::take().parts, 1, "the board alone");
+    assert_eq!(
+        *after,
+        super::Waits::of(page),
+        "every part as the page holds it"
+    );
     assert!(
         Arc::ptr_eq(&after, page.waits.as_ref().unwrap()),
         "the next before"
@@ -510,7 +530,21 @@ fn what_moved_is_compared_whole_for_each_reader_a_card_posted_or_the_people_chan
     assert!(!posted.is_empty());
     let (before, after) = posted[0].waits.as_ref().unwrap();
     assert!(!Arc::ptr_eq(&before.queue, &after.queue));
+    assert!(!Arc::ptr_eq(&before.pending, &after.pending));
+    // The pending list moved by the card: ana, who decides it, is told; bo is not.
+    let key = format!("/{DESIGN}#brand-new");
+    let pending = |name: &str| -> Vec<Value> {
+        (super::changes(before, after, name).into_iter())
+            .filter(|change| change["region"] == "pending")
+            .collect()
+    };
+    let ana = pending("ana");
+    assert_eq!(ana.len(), 1, "{ana:?}");
+    assert_eq!(ana[0]["data"]["key"], key);
+    assert_eq!(ana[0]["data"]["value"]["slug"], "brand-new");
+    assert_eq!(pending("bo"), Vec::<Value>::new());
     said_as_whole(&posted);
+    kept_as_held(&q, "");
     let since = q.version("");
     q.f.store.join_group("bo", "design", "owner").unwrap();
     q.hub.people_read(&q.f.store);
@@ -523,7 +557,7 @@ fn what_moved_is_compared_whole_for_each_reader_a_card_posted_or_the_people_chan
     assert_eq!(
         counted::take().filters,
         4,
-        "his queue and pending list, before and after"
+        "their queue and pending list, before and after"
     );
     assert!(
         (bo.iter()).any(|change| change["region"] == "queue-item"
@@ -531,4 +565,45 @@ fn what_moved_is_compared_whole_for_each_reader_a_card_posted_or_the_people_chan
         "{bo:?}"
     );
     said_as_whole(&changed);
+    for scope in ["", BRANCH] {
+        kept_as_held(&q, scope);
+    }
+}
+
+/// The pending list moved alone, the queue and the board as they were: it is made anew, the rest
+/// shared, and its move reaches those who decide its card alone.
+#[test]
+fn a_pending_list_moved_alone_is_made_anew_and_its_move_reaches_its_deciders_alone() {
+    let q = Queues::new(false);
+    let mut pages = q.hub.pages.write().recover();
+    let page = pages.get_mut("").unwrap();
+    let gone = format!("/{ENGINEERING}#new-build");
+    assert!(page.pending.items.iter().any(|item| item.href == gone));
+    page.pending.items.retain(|item| item.href != gone);
+    counted::take();
+    let (before, after) = super::moved(page).expect("the pending list moved");
+    assert_eq!(counted::take().parts, 1, "the pending list alone");
+    assert_eq!(
+        *after,
+        super::Waits::of(page),
+        "every part as the page holds it"
+    );
+    assert!(!Arc::ptr_eq(&before.pending, &after.pending));
+    assert!(Arc::ptr_eq(&before.queue, &after.queue) && Arc::ptr_eq(&before.board, &after.board));
+    let bo = super::changes(&before, &after, "bo");
+    assert!(
+        (bo.iter()).any(|change| change["region"] == "pending"
+            && change["data"]["key"] == gone
+            && change["data"]["removed"] == true),
+        "{bo:?}"
+    );
+    assert!(
+        !bo.iter().any(|change| change["region"] == "queue-item"),
+        "the queue did not move: {bo:?}"
+    );
+    assert_eq!(
+        super::changes(&before, &after, "ana"),
+        Vec::<Value>::new(),
+        "not ana's"
+    );
 }

@@ -952,14 +952,14 @@ fn a_pass_tells_by_the_ticks_look_at_the_people_and_where_it_failed_says_so_once
     passes.pass(&telling.hub);
     assert_eq!(telling.told().len(), 6, "{:?}", telling.told());
     assert!(!passes.said.0.contains_key("board"), "the fault cleared");
-    // cy joins design: the card waiting on design is told him once a look reads him there.
+    // cy joins design: the card waiting on design is told to cy once a look reads cy there.
     (telling.f.store.join_group("cy", "design", "owner")).unwrap();
     telling.whatsapp();
     passes.pass(&telling.hub);
     assert_eq!(
         telling.told().len(),
         6,
-        "the look has not read him in design"
+        "the look has not read cy in design"
     );
     telling.hub.people_read(&telling.f.store);
     passes.pass(&telling.hub);
