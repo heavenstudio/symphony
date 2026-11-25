@@ -99,6 +99,7 @@ pub mod server;
 pub mod session_url;
 pub mod settings;
 pub mod slots;
+mod socket;
 pub mod stages;
 pub mod stamps;
 mod store;
