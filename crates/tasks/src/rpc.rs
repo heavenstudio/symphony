@@ -296,6 +296,35 @@ mod tests {
         assert!(parse_response(b"garbage\r\n\r\n").is_err());
     }
 
+    /// A chunked body cut anywhere ends inside a chunk, and one whose chunk is not where its size
+    /// says, or whose size is no hexadecimal number, says so.
+    #[test]
+    fn a_chunked_body_cut_or_malformed_anywhere_is_refused_with_its_reason() {
+        let head = b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n";
+        let with = |body: &[u8]| parse_response(&[head.as_slice(), body].concat());
+        for cut in [
+            b"3\r\n[1,\r\n2".as_slice(),
+            b"3\r\n[1,",
+            b"3\r\n[1,\r",
+            b"3\r\n[1,\r\n0\r\n",
+        ] {
+            assert_eq!(
+                with(cut),
+                Err("the body ended inside a chunk".into()),
+                "{:?}",
+                String::from_utf8_lossy(cut)
+            );
+        }
+        assert_eq!(
+            with(b"3\r\n[1,X\r\n0\r\n\r\n"),
+            Err("a chunk did not end where its size said".into())
+        );
+        assert_eq!(
+            with(b"zz\r\n[1,]\r\n0\r\n\r\n"),
+            Err("a chunk size of \"zz\"".into())
+        );
+    }
+
     #[test]
     fn a_name_that_is_not_a_plain_identifier_is_refused() {
         for bad in ["sf; REMOVE", "", "a-b", "t`x"] {
