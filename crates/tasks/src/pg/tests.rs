@@ -100,7 +100,7 @@ impl Fake {
         let dir = Dir::new();
         let listener =
             UnixListener::bind(dir.path().join(crate::server::postgres::SOCKET_FILE)).unwrap();
-        let (tell, sent) = mpsc::channel();
+        let (tell, sent) = crate::test_channel::channel();
         thread::spawn(move || {
             for script in scripts {
                 let (mut stream, _) = listener.accept().unwrap();
@@ -502,7 +502,7 @@ fn a_server_that_answers_at_length_before_it_has_read_the_request_is_read_while_
     answer.extend(len(4 + b"SELECT 16\0".len()));
     answer.extend(b"SELECT 16\0");
     answer.extend(bytes("5a0000000549"));
-    let (tell, heard) = mpsc::channel();
+    let (tell, heard) = crate::test_channel::channel();
     let dir = serving(move |mut stream| {
         stream.write_all(&answer).unwrap();
         let mut sent = Vec::new();
@@ -537,7 +537,7 @@ fn a_server_that_answers_at_length_before_it_has_read_the_request_is_read_while_
 
 #[test]
 fn a_server_that_takes_none_of_a_request_and_says_nothing_fails_it_at_the_clients_wait() {
-    let (done, finished) = mpsc::channel::<()>();
+    let (done, finished) = crate::test_channel::channel::<()>();
     // It holds the connection and reads nothing, until the client has given up.
     let dir = serving(move |stream| {
         let _ = finished.recv();
@@ -594,7 +594,7 @@ fn eagain() -> String {
 
 #[test]
 fn a_request_the_server_takes_and_never_answers_says_it_is_slow_at_the_clients_wait() {
-    let (done, finished) = mpsc::channel::<()>();
+    let (done, finished) = crate::test_channel::channel::<()>();
     // It reads the whole request and answers nothing, until the client has given up.
     let dir = serving(move |mut stream| {
         while wire::read(&mut stream).unwrap().kind != b'S' {}
@@ -636,7 +636,7 @@ fn a_startup_the_server_never_answers_says_it_is_slow_and_that_no_request_was_se
     let dir = Dir::new();
     let listener =
         UnixListener::bind(dir.path().join(crate::server::postgres::SOCKET_FILE)).unwrap();
-    let (done, finished) = mpsc::channel::<()>();
+    let (done, finished) = crate::test_channel::channel::<()>();
     // It takes the connection and its startup, and says nothing, until the client has given up.
     thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
@@ -731,7 +731,7 @@ fn a_wait_run_out_is_a_socket_timeout_and_no_other_failure() {
 
 #[test]
 fn a_server_gone_after_an_answer_fails_the_next_request_and_drops_its_connection() {
-    let (tell, gone) = mpsc::channel();
+    let (tell, gone) = crate::test_channel::channel();
     let dir = serving(move |mut stream| {
         while wire::read(&mut stream).unwrap().kind != b'S' {}
         stream.write_all(&bytes(JSONB_AND_NULL)).unwrap();

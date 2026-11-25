@@ -5,7 +5,6 @@
 
 use crate::postgres::{Board, GONE, folder, programs, signalled};
 use std::path::Path;
-use std::sync::mpsc;
 use symphony_board::server::Home;
 use symphony_board::server::postgres::Slots;
 use symphony_board::sys::{self, command};
@@ -134,7 +133,7 @@ fn more_scratch_boards_than_slots_start_in_turn_and_none_is_refused() {
     let third = slots.board("in-turn-3", |home| home);
     let one = first.pg.ensure().unwrap();
     let two = second.pg.ensure().unwrap();
-    let (said, heard) = mpsc::channel();
+    let (said, heard) = crate::test_channel::channel();
     let pg = third
         .home()
         .slots(slots.0.clone())
