@@ -35,7 +35,7 @@ fn status_and_page(root: &Path) -> (Vec<(String, String)>, Vec<String>) {
         .map(|card| (card.slug.clone(), card.state.clone()))
         .collect();
     let sorted = |mut cards: Vec<(String, String)>| {
-        cards.sort();
+        symphony_board::order::sort_by(&mut cards, &Ord::cmp);
         cards
     };
     assert_eq!(
@@ -63,7 +63,7 @@ fn main_states(root: &Path) -> Vec<(String, String)> {
             .into_iter()
             .map(|card| (card.slug, card.state.as_str().to_string()))
             .collect();
-    cards.sort();
+    symphony_board::order::sort_by(&mut cards, &Ord::cmp);
     cards
 }
 

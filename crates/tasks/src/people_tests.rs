@@ -357,7 +357,7 @@ fn profiles_and_their_lock_are_the_machine_accounts_alone_and_kept_as_written() 
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     let mut left = left;
-    left.sort();
+    crate::order::sort_by(&mut left, &Ord::cmp);
     assert_eq!(left, [FILE, LOCK]);
 }
 

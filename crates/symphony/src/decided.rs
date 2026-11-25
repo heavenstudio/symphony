@@ -89,7 +89,7 @@ pub fn said<'a>(cards: impl IntoIterator<Item = (&'a str, &'a Decision)>) -> Sai
     }
     for lines in said.values_mut() {
         // Stable: lines of one minute keep the order their card holds them in.
-        lines.sort_by(|a, b| a.at.total_cmp(&b.at));
+        symphony_board::order::sort_by(lines, &|a, b| a.at.total_cmp(&b.at));
     }
     said
 }

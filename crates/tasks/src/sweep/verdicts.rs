@@ -109,6 +109,10 @@ fn leaf(path: &Path) -> Option<PathBuf> {
         .ok()?
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a busy board path keeps std's in-place sort (crate::order): the sweep"
+    )]
     entries.sort_unstable_by_key(|entry| entry.file_name());
     entries.into_iter().find_map(|entry| leaf(&entry.path()))
 }

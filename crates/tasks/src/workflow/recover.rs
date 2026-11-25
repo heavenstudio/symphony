@@ -122,7 +122,7 @@ pub fn recover(
                 .cloned(),
         );
     }
-    drop.sort();
+    crate::order::sort_by(&mut drop, &Ord::cmp);
     drop.dedup();
     let recovered = Recovered {
         trigger,
@@ -383,7 +383,7 @@ pub fn observed(
         })
         .cloned()
         .collect();
-    drop.sort();
+    crate::order::sort_by(&mut drop, &Ord::cmp);
     drop.dedup();
     let transition = Transition {
         key: Some(format!("attempt/{id}")),

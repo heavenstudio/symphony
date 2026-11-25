@@ -125,9 +125,12 @@ fn heading(key: &str) -> &str {
 }
 
 /// Whether what a pass of `held` writes stands in `text`, the document as its page shows it, more
-/// often than the rows of that document passed already (`passed`) put there: a pass whose words
-/// went in and whose mark did not, so the next press writes nothing again and marks the row. Only
-/// what a pass writes counts, its author's words with a passer first
+/// often than the rows passed into that file already (`passed`, those kept under its checkout,
+/// where a pass keeps the row it wrote, `Store::pass_on_document_into`, and where a sweep moves a
+/// landed worktree's, `Store::held_landed`) put there: a pass whose words went in and whose mark
+/// did not, so the next press writes nothing again and marks the row (what it misses: the save's
+/// comment where it is called).
+/// Only what a pass writes counts, its author's words with a passer first
 /// ([`symphony_board::held::passed_text`]), whoever passed them: a callout of its kind and author
 /// whose title and body are those words, a message of its author on its card. The author's own
 /// words, written as hers once she may direct agents, never do.
@@ -557,6 +560,24 @@ mod tests {
             ("another author", said("one", "cy", &passed)),
         ] {
             assert!(!written_already(&page, &mine, &[]), "{what}: {page}");
+        }
+    }
+
+    #[test]
+    fn a_cards_message_of_an_author_no_line_can_carry_stands_nowhere() {
+        let mine = held(Some("one"), None);
+        let cards = "# Topic\n\n- [ ] **one** — proposal.\n";
+        let words = passed_text("owner", &mine.text);
+        let page = edit::add_message_by(cards, "one", &words, "2026-11-25 10:00", "ana", None);
+        let page = page.unwrap();
+        assert!(written_already(&page, &mine, &[]));
+        // A name no line carries, as no save writes one: its pass would be refused, never marked.
+        for author in ["Ana Lima", ""] {
+            let nameless = OnDocument {
+                author: author.into(),
+                ..mine.clone()
+            };
+            assert!(!written_already(&page, &nameless, &[]), "{author:?}");
         }
     }
 

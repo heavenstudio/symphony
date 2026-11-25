@@ -200,6 +200,10 @@
 .asks-shell {
   min-height: 160px;
 }
+/* A reader who may not ask, of a document with no questions, is drawn nothing in it. */
+.asks-shell:empty {
+  min-height: 0;
+}
 .ask-thread {
   content-visibility: auto;
   contain-intrinsic-size: auto 220px;
@@ -256,6 +260,10 @@
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
   overflow-wrap: anywhere;
+}
+/* The rule parts a message from what follows it: the follow-up, or nothing where none is drawn. */
+.ask-message:last-child {
+  border-bottom: 0;
 }
 .ask-message .by {
   color: var(--muted-foreground);

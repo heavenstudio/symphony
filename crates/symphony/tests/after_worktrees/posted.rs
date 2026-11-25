@@ -47,14 +47,14 @@ pub(super) fn shown(root: &Path, finished: &BTreeSet<String>) -> Shown {
         .iter()
         .map(|c| c.slug.clone())
         .collect();
-    waiting.sort();
+    symphony_board::order::sort_by(&mut waiting, &Ord::cmp);
     let mut agent: Vec<String> = snapshot
         .queue
         .agent
         .iter()
         .map(|c| c.slug.clone())
         .collect();
-    agent.sort();
+    symphony_board::order::sort_by(&mut agent, &Ord::cmp);
     let counts = (
         snapshot.board.counts.waiting,
         snapshot.board.counts.docs_waiting,

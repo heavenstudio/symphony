@@ -147,10 +147,13 @@ pub fn heard_statuses<'statuses>(
     statuses: &'statuses BTreeMap<String, String>,
     handle: &str,
 ) -> BTreeMap<&'statuses str, &'statuses str> {
-    (statuses.iter())
-        .filter(|(slug, _)| owners.reaches(slug, handle))
-        .map(|(slug, status)| (slug.as_str(), status.as_str()))
-        .collect()
+    let mut heard = BTreeMap::new();
+    heard.extend(
+        (statuses.iter())
+            .filter(|(slug, _)| owners.reaches(slug, handle))
+            .map(|(slug, status)| (slug.as_str(), status.as_str())),
+    );
+    heard
 }
 
 /// Each session's claimable work ([`crate::health::claimable`]), by handle.

@@ -1099,7 +1099,7 @@ mod tests {
     #[test]
     fn the_boards_tables_words_and_copied_fields_are_each_named_once() {
         let mut names: Vec<&str> = TABLES.iter().map(|table| table.name).collect();
-        names.sort_unstable();
+        crate::order::sort_by(&mut names, &Ord::cmp);
         names.dedup();
         assert_eq!(names.len(), 30);
         let defined = define();

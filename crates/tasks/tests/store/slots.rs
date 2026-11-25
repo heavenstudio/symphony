@@ -117,7 +117,7 @@ fn open(store: &Store) -> Vec<String> {
         .filter(|t| t.status == "in_progress" || t.status == "review")
         .map(|t| t.slug)
         .collect();
-    open.sort();
+    symphony_board::order::sort_by(&mut open, &Ord::cmp);
     open
 }
 

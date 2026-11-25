@@ -235,6 +235,10 @@ impl Look<'_> {
                 Err(_) => unnamed = true,
             }
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a busy board path keeps std's in-place sort (crate::order): the sweep"
+        )]
         names.sort_unstable();
         let start = kept.len();
         let mut left_out = false;

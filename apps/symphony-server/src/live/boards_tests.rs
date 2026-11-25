@@ -109,8 +109,8 @@ impl Project {
     /// Hold the hub's next reach of its board where it waits, once its check has passed: what
     /// returns says when it is there, and lets it go on.
     fn paused(&self) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
-        let (there, arrived) = mpsc::channel();
-        let (go, on) = mpsc::channel();
+        let (there, arrived) = crate::test_channel::channel();
+        let (go, on) = crate::test_channel::channel();
         *self.pause.lock().unwrap() = Some(Pause { there, on });
         (arrived, go)
     }

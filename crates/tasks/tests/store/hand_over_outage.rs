@@ -173,7 +173,7 @@ fn what_waited_out_an_outage_says_nothing_of_the_work_a_hand_over_took_away() {
         let mut kinds: Vec<&str> = (waiting.iter())
             .map(|text| text.split(' ').next().unwrap())
             .collect();
-        kinds.sort_unstable();
+        symphony_board::order::sort_by(&mut kinds, &Ord::cmp);
         let held = if keeps_work {
             "scratch/kept, scratch/one"
         } else {

@@ -45,7 +45,7 @@ pub(crate) struct Wakes {
 
 impl Wakes {
     pub(crate) fn new() -> Self {
-        let (send, woken) = mpsc::sync_channel(1);
+        let (send, woken) = crate::wake::sync_channel(1);
         Self {
             waker: Waker(send),
             woken,
@@ -295,19 +295,21 @@ impl Sweep {
             }
         };
         let gone = |path: &&PathBuf| !stamps.contains_key(*path) && covered(&roots, path).is_some();
-        let missed = stamps
-            .iter()
-            .filter(|(path, stamp)| before(path) != Some(*stamp))
-            .map(|(path, _)| path)
-            .chain(self.stamps.keys().filter(gone))
-            .chain(
-                self.adopted
-                    .keys()
-                    .filter(|path| covered(&self.roots, path).is_none())
-                    .filter(gone),
-            )
-            .cloned()
-            .collect();
+        let mut missed = BTreeSet::new();
+        missed.extend(
+            stamps
+                .iter()
+                .filter(|(path, stamp)| before(path) != Some(*stamp))
+                .map(|(path, _)| path)
+                .chain(self.stamps.keys().filter(gone))
+                .chain(
+                    self.adopted
+                        .keys()
+                        .filter(|path| covered(&self.roots, path).is_none())
+                        .filter(gone),
+                )
+                .cloned(),
+        );
         self.adopted
             .retain(|path, _| covered(&roots, path).is_none());
         self.roots = roots;
@@ -585,7 +587,7 @@ mod tests {
         quiet: Duration,
         most: Duration,
     ) -> mpsc::Receiver<mpsc::Receiver<()>> {
-        let (said, done) = mpsc::channel();
+        let (said, done) = crate::test_channel::channel();
         std::thread::spawn(move || {
             super::debounce(&events, quiet, most);
             let _ = said.send(events);
@@ -605,7 +607,7 @@ mod tests {
 
     #[test]
     fn a_debounce_takes_the_whole_burst_its_watcher_already_sent() {
-        let (send, events) = mpsc::channel();
+        let (send, events) = crate::test_channel::channel();
         for _ in 0..5 {
             send.send(()).unwrap();
         }
@@ -628,7 +630,7 @@ mod tests {
 
     #[test]
     fn a_debounce_ends_at_once_when_its_watcher_has_gone() {
-        let (send, events) = mpsc::channel();
+        let (send, events) = crate::test_channel::channel();
         send.send(()).unwrap();
         drop(send);
         // No quiet or limit it could wait out: only the watcher's end returns it.
@@ -639,7 +641,7 @@ mod tests {
 
     #[test]
     fn a_watcher_that_never_goes_quiet_is_taken_by_the_limit() {
-        let (send, events) = mpsc::channel();
+        let (send, events) = crate::test_channel::channel();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let sender = std::thread::spawn({
             let stop = stop.clone();

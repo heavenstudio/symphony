@@ -175,7 +175,7 @@ fn output(starts: &Path, slug: &str, at: f64) -> std::io::Result<PathBuf> {
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "log"))
         .collect();
-    found.sort_unstable();
+    crate::order::sort_by(&mut found, &Ord::cmp);
     let gone = found.len().saturating_sub(KEPT_STARTS.saturating_sub(1));
     for path in found.into_iter().take(gone) {
         let _ = fs::remove_file(path);
@@ -619,7 +619,7 @@ mod tests {
         let mut kept: Vec<String> = (fs::read_dir(dir.join(STARTS)).unwrap())
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        kept.sort();
+        crate::order::sort_by(&mut kept, &Ord::cmp);
         assert_eq!(kept.len(), KEPT_STARTS + 1, "{kept:?}");
         assert_eq!(
             kept[0],

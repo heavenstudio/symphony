@@ -1582,7 +1582,7 @@ impl Hub {
             .filter(|agent| agent.state == "running_test")
             .map(|agent| agent.handle.clone())
             .collect();
-        busy.sort_unstable();
+        symphony_board::order::sort_by(&mut busy, &Ord::cmp);
         let unchanged = {
             let state = self.tasks.lock().recover();
             (state.raw.as_ref() == Some(&snapshot) && state.busy == busy)
@@ -1761,12 +1761,13 @@ impl Hub {
                     json!({"day":recent(1.0),"week":recent(7.0)}),
                 ));
                 // A task closed or gone holds no page's room for its gates any more.
-                let open: BTreeSet<&str> = next
-                    .tasks
-                    .iter()
-                    .filter(|task| !task.is_finished())
-                    .map(|task| task.slug.as_str())
-                    .collect();
+                let mut open: BTreeSet<&str> = BTreeSet::new();
+                open.extend(
+                    next.tasks
+                        .iter()
+                        .filter(|task| !task.is_finished())
+                        .map(|task| task.slug.as_str()),
+                );
                 self.gates.keep_open(|slug| open.contains(slug));
             }
             // Heartbeats are not displayed. Sending last_seen/last_tool on every beat makes every
@@ -1986,7 +1987,7 @@ fn watched(root: &Path) -> Vec<String> {
         .into_iter()
         .flat_map(|watch| watch.paths())
         .collect();
-    paths.sort();
+    symphony_board::order::sort_by(&mut paths, &Ord::cmp);
     paths.dedup();
     paths
 }
@@ -2024,7 +2025,7 @@ fn moved_branches(common: Option<&Path>, dirty: Option<&BTreeSet<PathBuf>>) -> V
             parts.filter(|parts| !parts.is_empty()).map(|p| p.join("/"))
         })
         .collect();
-    moved.sort();
+    symphony_board::order::sort_by(&mut moved, &Ord::cmp);
     moved.dedup();
     moved
 }
@@ -2213,7 +2214,7 @@ fn run(
     board: Option<symphony_board::Store>,
     connect: impl FnMut(&Path) -> Result<symphony_board::Store, String> + Send,
 ) {
-    let (stop, stopped) = mpsc::channel();
+    let (stop, stopped) = crate::wake::channel();
     {
         let Some(hub) = weak.upgrade() else { return };
         let _ = hub.documents_waker.set(backstop.waker());
@@ -3199,7 +3200,7 @@ mod tests {
                 .iter()
                 .map(|card| card.slug.as_str())
                 .collect();
-            queued.sort();
+            symphony_board::order::sort_by(&mut queued, &Ord::cmp);
             assert_eq!(queued, ["answered", "proposed", "waits"], "{scope}");
             assert_eq!(
                 (design, topic, pages[scope].board.progress.decisions_waiting),

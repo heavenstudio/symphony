@@ -348,7 +348,7 @@ fn failed_or_unanswered_presence_rounds_hold_work_until_the_cap_and_confirmation
         .iter()
         .map(|(_, handle)| handle.clone())
         .collect::<Vec<_>>();
-    holding.sort();
+    symphony_board::order::sort_by(&mut holding, &Ord::cmp);
     assert_eq!(
         digest.liveness_unknown, holding,
         "finished roles are not actionable work"

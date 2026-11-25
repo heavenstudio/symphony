@@ -20,7 +20,7 @@
 //! own and keyed `["document", N]`, so it never meets a task's key. Nothing is written into the
 //! document's file, no line goes on any thread and no ask is opened. Its pass writes the file
 //! through the same save as the owner's comment, the passer first in its words, and then marks the
-//! row passed ([`crate::Store::pass_on_document`]).
+//! row passed, kept under the checkout it wrote to ([`crate::Store::pass_on_document_into`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -61,7 +61,7 @@ pub struct Passed {
 /// A comment on a document held for people: a callout left after a block, or a message on a card.
 /// Its row is the table's as a task's held message is, with no `slug`, so no read of a task's held
 /// messages finds it; its words are written into the document's file only by its pass, which the
-/// Symphony's save makes ([`crate::Store::pass_on_document`] records it).
+/// Symphony's save makes ([`crate::Store::pass_on_document_into`] records it).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OnDocument {
@@ -85,7 +85,9 @@ pub struct OnDocument {
 pub struct Place {
     /// The document's route (`docs/…/X.md`).
     pub path: String,
-    /// The checkout's scope the page was of (a worktree's id), none for the project's own.
+    /// The checkout's scope the page was of (a worktree's id), none for the project's own; once
+    /// passed by [`crate::Store::pass_on_document_into`], the checkout its pass wrote to, and the
+    /// project's own once a sweep removed that worktree ([`crate::Store::held_landed`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
     /// A callout's kind (`comment`, `question`, `decision`), or [`MESSAGE`] for a card's message.

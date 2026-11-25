@@ -367,7 +367,7 @@ fn a_field_gone_or_retyped_is_named() {
     let bad = json!({"parent": 3, "roles": [{"handle": "h"}, {}], "links": {}});
     misfits(&bad, &shape, "get", &mut out);
     // A map's order is serde_json's, which a workspace build may change.
-    out.sort();
+    symphony_board::order::sort_by(&mut out, &Ord::cmp);
     assert_eq!(
         out,
         [

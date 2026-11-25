@@ -186,7 +186,7 @@ fn asks_a_day_old_are_pruned_on_the_next_write() {
     f.clock.add(DAY - 1.0);
     let young = f.store.ask("docs/A.md", "fresh", "", "").unwrap();
     let mut both = ids(&f.store.all().unwrap());
-    both.sort_unstable();
+    symphony_board::order::sort_by(&mut both, &Ord::cmp);
     assert_eq!(both, [old, young]);
     f.clock.add(2.0);
     f.store.answer(young, "still here", "agent").unwrap();

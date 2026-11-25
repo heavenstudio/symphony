@@ -65,9 +65,9 @@ pub(crate) fn scan_end(events: &Receiver<Scan>) -> Output {
 #[cfg(test)]
 mod tests {
     use super::{Scan, ended_early, in_flight, scan_end};
+    use crate::test_channel::channel;
     use std::os::unix::process::ExitStatusExt;
     use std::process::{ExitStatus, Output};
-    use std::sync::mpsc::channel;
 
     fn ended(code: i32) -> Scan {
         Scan::Ended(Ok(Output {

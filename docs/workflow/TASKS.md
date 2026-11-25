@@ -2415,7 +2415,11 @@ it on every board, named or not, and they keep every power
   people needs `administer`, and a profile's write from the People page and a hand-over
   ([below](#which-group-a-thing-belongs-to)) being on the board; anything else is the person at
   the machine's alone. A refusal is a 403 naming the power,
-  `Forbidden: ana may not decide on this board`, and nothing is written.
+  `Forbidden: ana may not decide on this board`, and nothing is written. A document's asks read
+  (`/api/asks`) says `may_ask` for whoever may ask and follow an ask up (the person at the
+  machine, a person holding `speak` and `direct_agents`, never a hosted visitor), and the page
+  draws Use selected passage, the question and each thread's Follow up for them alone; anyone else
+  reads the threads alone, and nothing where there are none.
 - **Deciding a thing is its owner's** ([below](#which-group-a-thing-belongs-to)): a card's
   verdict and its Later (with its Undo, and the visit that clears its mark), a task's priority,
   field, cancel, action and workflow edge, and a setting (the Settings
@@ -2564,7 +2568,8 @@ and asks, as a card's note is; on a task she may not decide it is held.
   with nobody named holds nothing, and every line reads as before.
 - **On a document** a callout or a card's message from such a person is held the same way, in a
   row of the same table that names its document (its path, and the checkout of the page it was
-  typed on, a branch's page that draws main's card among them), its kind, its card, or
+  typed on, a branch's page that draws main's card among them, or once passed the checkout its
+  pass wrote to, main's once the sweep removes that worktree), its kind, its card, or
   the block a callout was left after by its section's key, its last line and its lines then; no
   task's read, thread or ask carries it. Nothing of it reaches a clone: no file is written, no
   commit or delivery made, no ask opened and no callback sent, and an agent is told nothing of it.
@@ -2579,9 +2584,14 @@ and asks, as a card's note is; on a task she may not decide it is held.
   message goes where her own line would go then: on main's card where the branch's page it was
   typed on draws main's. A second pass is refused naming who passed it. A press after one whose
   words went in and whose mark did not writes nothing again and marks it: the document holds what
-  a pass writes, her words with a passer first, more often than its rows passed already put
-  there, while her own words written as hers never count. Those who may pass it on, of its
-  card's or its document's group else of the board, are told a `held` notice linking
+  a pass writes, her words with a passer first, more often than the rows passed into that file
+  already put there, from whichever page each was typed on and, once the sweep removed a branch's
+  worktree, all it held landed, from that branch too, while her own words written as hers never
+  count. Between a landing and its sweep the branch's line is not counted on main, so a later
+  pass of the same words onto main's card is marked and writes nothing; three rarer cases, each
+  after a press whose mark was refused, leave her words twice on one card (the save's comment
+  where it counts says them). Those who may pass it on, of its card's or its document's group
+  else of the board, are told a `held` notice linking
   `DOC#held-N`, none of its words; a look whose read of them fails says so once and tells the
   rest, cards and lines and the notices due, and what was told of them stands. The
   note beside a verdict is no message: one who may decide a card writes it with the verdict.
@@ -3002,7 +3012,10 @@ a lock it lifts goes back if the removal is refused. A detached agent's merged o
 `worktree-agent-ID` branch stays while its live or stale session still binds its worktree.
 In-process agents work only in their own `agent-ID` worktree; a different directory they create
 is not bound by their agent id. Full sessions register from the worktree they use. Each removal
-says what the worktree held on disk, and the summary what the sweep freed; a sweep started
+says what the worktree held on disk, and the summary what the sweep freed. The comments on
+documents a pass wrote into a removed worktree are kept under main's from then on, where a later
+pass's count reads them, once no other worktree holds its branch; a board that refuses that is
+said, the sweep going on. A sweep started
 detached (a land's, work finishing's) writes them to `symphony/tasks/sweep.log` under a line saying when
 and why.
 A board `TASKS_SERVER` names (a test's) starts no sweep unless

@@ -98,8 +98,10 @@ nothing, and who writes each:
   holding a call in a consumer-API guard with no `api` entry, or takes a key out of the settings
   reference with no `settings` entry, and for a trailer that reads as no entry. A guard's call
   that moved, was wrapped anew or gained a comment is the same call, and one added beside the old
-  owes nothing. `Consumer-Note: api: none: WHY` answers for a guard changed with no consumer to
-  move, and is left out of the notes.
+  owes nothing. A guard's `use` declaration holds no call, only the full path of each name it
+  imports: a path no declaration of the guard names any more is lost, and a name added to its
+  list owes nothing. `Consumer-Note: api: none: WHY` answers for a guard changed with no
+  consumer to move, and is left out of the notes.
 - **After a release is cut**, what its landings left unsaid is said by a later commit naming it,
   `Consumer-Note: release-NAME SECTION: TEXT`. No tag and no installed release is rewritten: the
   entry is read as that release's in every notes file written from then on, marked with the commit

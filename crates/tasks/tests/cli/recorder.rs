@@ -134,7 +134,7 @@ pub(crate) fn day_lines(work: &Path, runs: &Path, ends: usize) -> Vec<RunLine> {
                     .collect()
             })
             .unwrap_or_default();
-        days.sort();
+        symphony_board::order::sort_by(&mut days, &Ord::cmp);
         let lines: Vec<RunLine> = days
             .iter()
             .flat_map(|day| {
@@ -182,6 +182,16 @@ fn a_day_file_gone_since_it_was_listed_reads_as_a_day_with_no_lines() {
     assert_eq!(day_text(&day), "{}\n");
     fs::remove_file(&day).unwrap();
     assert_eq!(day_text(&day), "");
+}
+
+/// Only a file gone reads as no lines: any other error reading one is the test's to fail, naming
+/// the path, here a folder where a day file is listed.
+#[test]
+#[should_panic(expected = "2000-01-01.jsonl: Is a directory")]
+fn a_day_file_that_cannot_be_read_for_another_reason_fails_naming_it() {
+    let day = scratch("recorder-day-unreadable").join("2000-01-01.jsonl");
+    fs::create_dir(&day).unwrap();
+    day_text(&day);
 }
 
 /// The backstop of the tests' own waits for what a run records: the 30 s they once gave it, as
@@ -2184,7 +2194,9 @@ fn runs_started_back_to_back_each_name_the_one_their_caller_ran_before() {
         .collect();
     assert_eq!(statuses, [Some(3), Some(0), Some(0), Some(0)]);
     let mut lines = symphony_api::fold(day_lines(&folders.work, &runs, 4));
-    lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
+    symphony_board::order::sort_by(&mut lines, &|one, other| {
+        one.queued.total_cmp(&other.queued)
+    });
     assert_eq!(lines[0].rerun_of, None);
     for pair in lines.windows(2) {
         assert_eq!(
@@ -2922,7 +2934,7 @@ fn a_steps_log_is_its_own_and_its_runs_log_holds_it_too() {
     // what the run writes once the step's command ended.
     let run = lines.iter().find(|line| line.step.is_none()).unwrap();
     let mut words: Vec<String> = read(run).lines().map(str::to_owned).collect();
-    words.sort_unstable();
+    symphony_board::order::sort_by(&mut words, &Ord::cmp);
     assert_eq!(words, ["after", "before", "inside"]);
     assert_ne!(run.log, step.log);
 }

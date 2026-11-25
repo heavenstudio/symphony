@@ -168,7 +168,7 @@ fn a_dispatcher_whose_lease_lapsed_leaves_the_next_holder_its_lease_and_its_asks
 fn a_dispatcher_waiting_on_a_dead_holder_takes_the_host_over_once_its_lease_lapses() {
     let f = Arc::new(Fixture::new(crate::common::Seed::default()));
     let mut recipients: Vec<Recipient> = (0..2).map(|n| recipient(&f, n)).collect();
-    recipients.sort_by(|a, b| a.handle.cmp(&b.handle));
+    symphony_board::order::sort_by(&mut recipients, &|a, b| a.handle.cmp(&b.handle));
     let (first, last) = (&recipients[0], &recipients[1]);
     let writer = f.session("worker");
     let writing = deferring(&f);

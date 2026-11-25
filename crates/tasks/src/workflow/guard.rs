@@ -110,7 +110,7 @@ pub fn check_attesters(definition: &Validated, attesters: &[Attester]) -> Result
 /// and its payload is an attestation of this contract from that authority.
 pub fn verified_attestation(attester: &Attester, signed: &Signed) -> Result<Attestation, String> {
     verify(attester, ATTESTATION_CONTEXT, signed)?;
-    let attestation: Attestation = serde_json::from_str(&signed.payload)
+    let attestation: Attestation = serde_json::from_slice(signed.payload.as_bytes())
         .map_err(|e| format!("its payload is no attestation: {e}"))?;
     from_authority(
         attester,
@@ -124,7 +124,7 @@ pub fn verified_attestation(attester: &Attester, signed: &Signed) -> Result<Atte
 /// The observation `signed` carries, refused as [`verified_attestation`] refuses.
 pub fn verified_observation(attester: &Attester, signed: &Signed) -> Result<Observation, String> {
     verify(attester, OBSERVATION_CONTEXT, signed)?;
-    let observation: Observation = serde_json::from_str(&signed.payload)
+    let observation: Observation = serde_json::from_slice(signed.payload.as_bytes())
         .map_err(|e| format!("its payload is no observation: {e}"))?;
     from_authority(
         attester,
@@ -143,7 +143,7 @@ pub fn claimed_adapter(signed: &Signed) -> Result<String, String> {
     struct Claim {
         adapter: String,
     }
-    serde_json::from_str::<Claim>(&signed.payload)
+    serde_json::from_slice::<Claim>(signed.payload.as_bytes())
         .map(|c| c.adapter)
         .map_err(|e| format!("its payload names no adapter: {e}"))
 }

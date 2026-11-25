@@ -197,7 +197,7 @@ fn every_seam_answers_the_same_linked_and_timed_and_its_line_holds_its_time_alon
             .keys()
             .map(String::as_str)
             .collect();
-        keys.sort_unstable();
+        symphony_board::order::sort_by(&mut keys, &Ord::cmp);
         assert_eq!(
             keys,
             [
@@ -987,7 +987,7 @@ fn every_call(plugins: &Plugins, root: &Path, docs: &Docs) {
 
 /// The median of `values`.
 pub(super) fn median(values: &mut [f64]) -> f64 {
-    values.sort_by(f64::total_cmp);
+    symphony_board::order::sort_by(values, &f64::total_cmp);
     values.get(values.len() / 2).copied().unwrap_or(f64::NAN)
 }
 

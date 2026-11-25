@@ -111,7 +111,7 @@ impl Store {
         let (mut dump, copied): (Dump, Vec<(String, String, Value)>) =
             read_strictly(self.retrying(|| self.read_together(dump(), json!({})))?)?;
         for (slug, original, normalized) in copied {
-            let original: Value = serde_json::from_str(&original)
+            let original: Value = serde_json::from_slice(original.as_bytes())
                 .map_err(|e| Error::Db(format!("copied fields: {e}")))?;
             if let Some(task) = dump.tasks.iter_mut().find(|task| task.slug == slug) {
                 for (namespace, fields) in &mut task.fields {
@@ -136,17 +136,19 @@ impl Store {
         ];
         rows.into_iter().flatten().for_each(Value::sort_all_objects);
         let text = |value: &Value| value.to_string();
-        dump.execution_attempts
-            .sort_by_key(|row| text(&row["attempt"]));
-        dump.execution_facts
-            .sort_by_key(|row| (text(&row["attempt"]), row["seq"].as_i64()));
-        dump.execution_fences.sort_by_key(|row| text(&row["key"]));
-        dump.execution_artifacts
-            .sort_by_key(|row| (text(&row["attempt"]), text(&row["name"])));
+        crate::order::sort_by_key(&mut dump.execution_attempts, &|row| text(&row["attempt"]));
+        crate::order::sort_by_key(&mut dump.execution_facts, &|row| {
+            (text(&row["attempt"]), row["seq"].as_i64())
+        });
+        crate::order::sort_by_key(&mut dump.execution_fences, &|row| text(&row["key"]));
+        crate::order::sort_by_key(&mut dump.execution_artifacts, &|row| {
+            (text(&row["attempt"]), text(&row["name"]))
+        });
         // Compound ids in one order (PostgreSQL's jsonb puts a shorter array first), as an export
         // has always held them.
-        dump.workflow
-            .sort_by(|a, b| crate::store::workflow::key_order(&a.key, &b.key));
+        crate::order::sort_by(&mut dump.workflow, &|a, b| {
+            crate::store::workflow::key_order(&a.key, &b.key)
+        });
         let fields = (dump.tasks.iter_mut()).flat_map(|task| task.fields.values_mut());
         for value in fields.flat_map(|namespace| namespace.values_mut()) {
             value.sort_all_objects();
@@ -608,8 +610,8 @@ mod placed {
             .map(|(_, table, _)| *table)
             .collect();
         let mut written = dumped();
-        read.sort_unstable();
-        written.sort_unstable();
+        crate::order::sort_by(&mut read, &Ord::cmp);
+        crate::order::sort_by(&mut written, &Ord::cmp);
         assert_eq!(read, written);
     }
 
@@ -626,8 +628,8 @@ mod placed {
         let mut read: Vec<&str> = (postgres::copy::DUMPED.iter())
             .map(|(name, _, _)| *name)
             .collect();
-        held.sort_unstable();
-        read.sort_unstable();
+        crate::order::sort_by(&mut held, &Ord::cmp);
+        crate::order::sort_by(&mut read, &Ord::cmp);
         assert_eq!(held, read);
         assert_eq!(Dump::from_json(&text.to_string()), Ok(dump));
     }

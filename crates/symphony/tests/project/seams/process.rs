@@ -1509,7 +1509,7 @@ fn the_cost_of_a_plugins_calls_linked_and_from_its_process() {
             more.push((process - linked, name.clone()));
         }
     }
-    more.sort_by(|a, b| a.0.total_cmp(&b.0));
+    symphony_board::order::sort_by(&mut more, &|a, b| a.0.total_cmp(&b.0));
     if let (Some((least, cheapest)), Some((most, dearest))) = (more.first(), more.last()) {
         println!(
             "from the process, a call costs {least:.1} µs ({cheapest}) to {most:.1} µs ({dearest}) \

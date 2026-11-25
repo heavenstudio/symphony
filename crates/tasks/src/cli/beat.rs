@@ -464,7 +464,8 @@ pub fn run(input: &mut dyn std::io::Read, env: &Env, program: Option<&Path>) -> 
     let _ = (|| -> Option<()> {
         let mut raw = String::new();
         input.read_to_string(&mut raw).ok()?;
-        let event: Value = serde_json::from_str(if raw.is_empty() { "null" } else { &raw }).ok()?;
+        let event: Value =
+            serde_json::from_slice((if raw.is_empty() { "null" } else { &raw }).as_bytes()).ok()?;
         let event = event.as_object()?;
         if !truthy(event.get("agent_id")) && !truthy(event.get("session_id")) {
             return None; // no key to be bound by: nothing to open

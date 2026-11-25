@@ -42,10 +42,13 @@ fn similarity(before: &str, after: &str) -> usize {
         return 0;
     }
     let words = |text: &str| {
-        text.split(|c: char| !c.is_alphanumeric())
-            .filter(|word| !word.is_empty())
-            .map(str::to_lowercase)
-            .collect::<BTreeSet<_>>()
+        let mut words = BTreeSet::new();
+        words.extend(
+            (text.split(|c: char| !c.is_alphanumeric()))
+                .filter(|word| !word.is_empty())
+                .map(str::to_lowercase),
+        );
+        words
     };
     let (before, after) = (words(before), words(after));
     before.intersection(&after).count() * 1000 / (before.len() + after.len()).max(1)
@@ -197,16 +200,10 @@ pub(super) fn apply(render: &Render, rel: &str, scope: &str, text: &str, doc: &m
     let before_blocks = crate::render::split_blocks(&before);
     let after_blocks = crate::render::split_blocks(text);
     let fork_diff = diff(&base_blocks, &after_blocks);
-    let changed: BTreeSet<_> = fork_diff
-        .hunks()
-        .flat_map(|h| h.after)
-        .map(|i| i as usize)
-        .collect();
-    let affected: BTreeSet<_> = fork_diff
-        .hunks()
-        .flat_map(|h| h.before)
-        .map(|i| i as usize)
-        .collect();
+    let mut changed: BTreeSet<_> = BTreeSet::new();
+    changed.extend(fork_diff.hunks().flat_map(|h| h.after).map(|i| i as usize));
+    let mut affected: BTreeSet<_> = BTreeSet::new();
+    affected.extend(fork_diff.hunks().flat_map(|h| h.before).map(|i| i as usize));
     let main_origins = origins(&base_blocks, &before_blocks);
     let branch_origins = origins(&base_blocks, &after_blocks);
     let authored = |index: usize| main_origins[index].is_some_and(|base| affected.contains(&base));

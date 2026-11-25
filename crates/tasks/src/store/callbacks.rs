@@ -322,15 +322,18 @@ fn resting(
     heard: &BTreeSet<(String, String)>,
 ) -> BTreeMap<String, String> {
     let agents = view.map_or(&[][..], |view| view.agents.as_slice());
-    (agents.iter())
-        .filter(|a| a.pane.is_none() && a.confirmed)
-        .filter(|a| heard.contains(&("idle".to_string(), a.handle.clone())))
-        .filter_map(|a| board.sessions.iter().find(|s| s.row.handle == a.handle))
-        .map(|s| {
-            let beat = s.row.last_tool.unwrap_or(s.row.connected);
-            (s.row.handle.clone(), beat.to_string())
-        })
-        .collect()
+    let mut resting = BTreeMap::new();
+    resting.extend(
+        (agents.iter())
+            .filter(|a| a.pane.is_none() && a.confirmed)
+            .filter(|a| heard.contains(&("idle".to_string(), a.handle.clone())))
+            .filter_map(|a| board.sessions.iter().find(|s| s.row.handle == a.handle))
+            .map(|s| {
+                let beat = s.row.last_tool.unwrap_or(s.row.connected);
+                (s.row.handle.clone(), beat.to_string())
+            }),
+    );
+    resting
 }
 
 impl Callback {
@@ -615,12 +618,13 @@ impl Store {
 
     /// STALE/LOST bookkeeping uses the last sweep's evidence until the next sweep plus its margin.
     pub(crate) fn confirmed_callbacks(&self) -> Result<BTreeSet<String>, Error> {
-        Ok(self
-            .cached_callbacks()?
-            .into_iter()
-            .filter(|c| c.confirmed(self.now()))
-            .map(|c| c.handle)
-            .collect())
+        let mut confirmed = BTreeSet::new();
+        confirmed.extend(
+            (self.cached_callbacks()?.into_iter())
+                .filter(|c| c.confirmed(self.now()))
+                .map(|c| c.handle),
+        );
+        Ok(confirmed)
     }
 
     /// The idle sweep confirms native reachability rather than treating absent tool calls as an
@@ -1341,12 +1345,14 @@ impl Store {
             seen = seen.with_holdings(holdings(visit)?, handle);
         }
         let mut legacy = attach::legacy_seen(board, handle, &session.row.kind);
-        let active: BTreeSet<&str> = board
-            .tasks
-            .iter()
-            .filter(|task| !crate::health::FINISHED.contains(&task.status.as_str()))
-            .map(|task| task.slug.as_str())
-            .collect();
+        let mut active: BTreeSet<&str> = BTreeSet::new();
+        active.extend(
+            board
+                .tasks
+                .iter()
+                .filter(|task| !crate::health::FINISHED.contains(&task.status.as_str()))
+                .map(|task| task.slug.as_str()),
+        );
         let compact = |seen: &attach::Seen| {
             let mut seen = seen.clone();
             seen.statuses
@@ -1758,10 +1764,13 @@ impl Store {
         let answer: Value =
             self.retrying(|| self.read(Statement::from(pg::pending()), vars.clone()))?;
         let due = recipient_rows(&answer, "struct Due", |row| row.field::<bool>("pending"))?;
-        Ok((due.into_iter())
-            .filter(|(_, pending)| *pending)
-            .map(|(handle, _)| handle)
-            .collect())
+        let mut owed = BTreeSet::new();
+        owed.extend(
+            (due.into_iter())
+                .filter(|(_, pending)| *pending)
+                .map(|(handle, _)| handle),
+        );
+        Ok(owed)
     }
 
     /// Whether a line of `callback`'s outbox is due now ([`Store::pending`]).

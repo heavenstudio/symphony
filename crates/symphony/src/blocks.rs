@@ -1219,6 +1219,10 @@ mod ordering_tests {
             let compare = |a: &(String, usize), b: &(String, usize)| {
                 b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
             };
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the standard sort this test holds the shared sorter to"
+            )]
             let (_, old_cpu) = test_time::cpu::spent(|| old.sort_by(&compare));
             let (_, new_cpu) =
                 test_time::cpu::spent(|| symphony_board::order::sort_by(&mut pairs, &compare));

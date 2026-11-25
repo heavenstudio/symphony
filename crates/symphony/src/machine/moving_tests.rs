@@ -35,7 +35,7 @@ fn the_snapshots_kept_are_the_newest_and_nothing_else_is_touched() {
     fs::write(folder.join("someone-else.sql"), "y").unwrap();
     prune(&folder, KEPT_SNAPSHOTS);
     let mut left = tree.names("snapshots");
-    left.sort();
+    symphony_board::order::sort_by(&mut left, &Ord::cmp);
     assert_eq!(
         left,
         [

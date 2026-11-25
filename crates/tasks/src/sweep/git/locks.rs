@@ -174,6 +174,10 @@ pub(super) fn saved_locks(dir: &Path) -> Option<Vec<String>> {
             ));
         }
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a busy board path keeps std's in-place sort (crate::order): the sweep"
+    )]
     saved.sort_unstable();
     Some(saved)
 }

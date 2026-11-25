@@ -111,6 +111,10 @@ pub fn own_over<'a>(
         .chain(made)
         .chain(moved_at.filter(|at| *at > since && *at <= now))
         .collect();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a busy board path keeps std's in-place sort (crate::order): PULL's alarms"
+    )]
     times.sort_unstable_by(f64::total_cmp);
     times.dedup();
     let mut own: HashMap<&'a str, Vec<(f64, bool)>> = HashMap::new();

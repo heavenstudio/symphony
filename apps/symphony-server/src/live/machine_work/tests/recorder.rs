@@ -203,7 +203,7 @@ fn recorded_work_and_a_project_readers_work_are_one_machines_and_either_malforme
         .iter()
         .map(|operation| (operation.resource.as_str(), operation.task.as_deref()))
         .collect();
-    tasks.sort_unstable();
+    symphony_board::order::sort_by(&mut tasks, &Ord::cmp);
     // The recorder's binding is its own; the project reader's is the receiver's.
     assert_eq!(
         tasks,

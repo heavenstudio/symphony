@@ -439,16 +439,23 @@ fn profiled(
         (ways::SLACK, &asked.slack),
         (ways::WHATSAPP, &asked.whatsapp),
     ];
+    let (mut said, mut notices) = (
+        std::collections::BTreeMap::new(),
+        std::collections::BTreeMap::new(),
+    );
+    said.extend(
+        (addresses.into_iter()).filter_map(|(way, text)| Some((way.to_string(), text.clone()?))),
+    );
+    notices.extend(
+        (asked.notices.iter())
+            .map(|notice| (notice.kind.clone(), notice.way.clone().unwrap_or_default())),
+    );
     let given = Given {
         display: asked.display.clone(),
         signins: signins(&asked.signins)?,
         git: asked.git.clone(),
-        addresses: (addresses.into_iter())
-            .filter_map(|(way, text)| Some((way.to_string(), text.clone()?)))
-            .collect(),
-        notices: (asked.notices.iter())
-            .map(|notice| (notice.kind.clone(), notice.way.clone().unwrap_or_default()))
-            .collect(),
+        addresses: said,
+        notices,
     };
     change::profile(&folder(machine)?, &asked.name, &given, writer).map_err(stopped(asker))?;
     Ok(())

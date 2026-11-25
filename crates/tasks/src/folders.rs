@@ -57,7 +57,7 @@ mod tests {
             assert!(!name.is_empty() && !name.contains('/'), "{folder}");
         }
         let mut names = all.to_vec();
-        names.sort_unstable();
+        crate::order::sort_by(&mut names, &Ord::cmp);
         names.dedup();
         assert_eq!(names.len(), all.len(), "each folder once");
     }

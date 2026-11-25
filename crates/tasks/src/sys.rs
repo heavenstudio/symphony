@@ -288,7 +288,7 @@ pub fn terminate(pid: i64, hard: bool) -> bool {
 
 /// Whether a child std forks beside this process's connections holds `fd` before its exec, as
 /// the child's own table says: the probe of a connection no spawn copies (the board's PostgreSQL
-/// socket, the `rpc` client's kept connection), against std's socket as the control.
+/// socket), against std's socket as the control.
 #[cfg(all(test, target_vendor = "apple"))]
 pub(crate) fn a_forked_child_holds(fd: std::os::fd::RawFd) -> bool {
     use crate::children::Child as _;
@@ -558,6 +558,8 @@ mod tests {
 
     /// Clippy reads the nearest clippy.toml alone: the crate's, which refuses a child made past
     /// [`command`] and [`command_with`], must hold the workspace's settings whole before its own.
+    /// symphony-app's lib tests hold every crate's to that (crates/symphony/src/channel_tests.rs);
+    /// this holds the board's in the board's own run, which an edit to it alone is tested by.
     #[test]
     fn the_crates_clippy_settings_start_with_the_workspaces() {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));

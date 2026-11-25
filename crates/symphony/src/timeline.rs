@@ -103,7 +103,7 @@ pub fn build(
 /// first verdict, and holds nothing before it.
 fn lanes(gates: &[Gate], created: f64, reviewed: Option<f64>) -> Vec<GateLane> {
     let mut lanes: Vec<GateLane> = gates.iter().map(|gate| lane(gate, created)).collect();
-    lanes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    symphony_board::order::sort_by(&mut lanes, &|a, b| a.name.cmp(&b.name));
     if let Some(review) = lanes.iter_mut().find(|lane| lane.name == REVIEW) {
         review.states = from_review(std::mem::take(&mut review.states), reviewed);
     }
@@ -251,7 +251,7 @@ fn claims(holds: &[Hold], segments: &[Segment]) -> Vec<Claim> {
             }
         }
     }
-    found.sort_by(|a, b| a.from.total_cmp(&b.from));
+    symphony_board::order::sort_by(&mut found, &|a, b| a.from.total_cmp(&b.from));
     found
 }
 
@@ -267,7 +267,7 @@ fn own_runs(records: &[Record]) -> Vec<Run> {
                 .is_none_or(|parent| !records.iter().any(|other| other.operation_id == parent))
         })
         .collect();
-    runs.sort_by(|a, b| a.queued_at.total_cmp(&b.queued_at));
+    symphony_board::order::sort_by(&mut runs, &|a, b| a.queued_at.total_cmp(&b.queued_at));
     runs.into_iter()
         .map(|record| Run {
             phase: match record.phase {

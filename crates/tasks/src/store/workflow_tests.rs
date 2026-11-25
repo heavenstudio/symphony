@@ -557,7 +557,7 @@ fn record_keys_order_part_by_part_a_shorter_key_first() {
         json!(["definition", "ff"]),
         json!(["activation", 10]),
     ];
-    keys.sort_by(key_order);
+    crate::order::sort_by(&mut keys, &key_order);
     assert_eq!(
         keys,
         vec![

@@ -111,10 +111,11 @@ pub(crate) fn retain(stage: &Path, public: &Path) -> io::Result<()> {
             }
         }
     }
-    let wanted: BTreeSet<&str> = kept
-        .iter()
-        .flat_map(|build| build.files.iter().map(String::as_str))
-        .collect();
+    let mut wanted: BTreeSet<&str> = BTreeSet::new();
+    wanted.extend(
+        kept.iter()
+            .flat_map(|build| build.files.iter().map(String::as_str)),
+    );
     for entry in fs::read_dir(&assets)? {
         let entry = entry?;
         if !entry.file_type()?.is_file() {

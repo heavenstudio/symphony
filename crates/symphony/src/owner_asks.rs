@@ -481,12 +481,14 @@ pub fn open_comments(
     store: &Store,
     agent: &[QueueItem],
 ) -> Result<Vec<String>, String> {
-    let known: BTreeSet<String> = store
-        .asks(Some(0.0))
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|ask| ask.about)
-        .collect();
+    let mut known: BTreeSet<String> = BTreeSet::new();
+    known.extend(
+        store
+            .asks(Some(0.0))
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|ask| ask.about),
+    );
     let project = crate::project::Project::of(root);
     let mut opened = Vec::new();
     for item in agent

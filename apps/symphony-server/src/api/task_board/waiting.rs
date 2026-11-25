@@ -159,7 +159,7 @@ pub(super) fn project(
         return error(StatusCode::BAD_REQUEST, why);
     }
     let cursor = match query(request, "cursor")
-        .map(|text| serde_json::from_str::<Key>(&text))
+        .map(|text| serde_json::from_slice::<Key>(text.as_bytes()))
         .transpose()
     {
         Ok(cursor) if cursor.as_ref().is_none_or(|key| key.3.is_finite()) => cursor,
@@ -354,6 +354,10 @@ mod ordering_study {
                     old = rows();
                     shared = rows();
                     let (old_cpu, new_cpu) = if sample % 2 == 0 {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "the standard sort this test holds the shared sorter to"
+                        )]
                         let (_, old_cpu) =
                             test_time::cpu::spent(|| old.sort_by(|(a, _), (b, _)| a.compare(b)));
                         let (_, new_cpu) = test_time::cpu::spent(|| {
@@ -368,6 +372,10 @@ mod ordering_study {
                                 a.compare(b)
                             })
                         });
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "the standard sort this test holds the shared sorter to"
+                        )]
                         let (_, old_cpu) =
                             test_time::cpu::spent(|| old.sort_by(|(a, _), (b, _)| a.compare(b)));
                         (old_cpu, new_cpu)
@@ -381,8 +389,8 @@ mod ordering_study {
                         new_times.push(new_cpu);
                     }
                 }
-                old_times.sort_unstable();
-                new_times.sort_unstable();
+                symphony_board::order::sort_by(&mut old_times, &Ord::cmp);
+                symphony_board::order::sort_by(&mut new_times, &Ord::cmp);
                 let (old_cpu, new_cpu) = (old_times[4], new_times[4]);
                 assert_eq!(
                     serde_json::to_vec(&shared).unwrap(),

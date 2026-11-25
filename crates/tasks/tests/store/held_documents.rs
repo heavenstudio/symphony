@@ -2,8 +2,9 @@
 //! `Store::pass_on_document`): the comment of a person who may speak and may not direct agents is
 //! a row of the held table with no task, keyed apart from every task's held message: no line goes
 //! on any thread, no ask is opened, and no read of a task's held messages finds it. The reads of a
-//! document's find it by its route and checkout, whole; a pass marks it passed once. A board
-//! without the step holds nothing and refuses a hold.
+//! document's find it by its route and checkout, whole; a pass marks it passed once, and a sweep's
+//! move keeps a landed worktree's under main's. A board without the step holds nothing and refuses
+//! a hold.
 //!
 //! And the note beside a verdict (users-and-identity.md, "The note beside a verdict"): a line of
 //! a person who may decide the task and may not direct agents that reads as their approve is
@@ -199,6 +200,133 @@ fn a_pass_marks_the_comment_passed_once_and_names_who_passed_it() {
         )
     );
     assert_eq!(f.store.held_comment(held.id).unwrap(), Some(passed));
+}
+
+/// A pass into a checkout keeps its row under that checkout, where the reads of its document find
+/// it: a branch's message written on main's card is main's, a page's own stays its page's, and a
+/// pass that names none keeps its row where it was left. Its refusals move nothing.
+#[test]
+fn a_pass_into_a_checkout_keeps_its_row_under_the_checkout_it_wrote_to() {
+    let f = board();
+    let ana = person(&f, "ana");
+    let on_branch = |card: &str| Place {
+        scope: Some("feat~x".into()),
+        ..message("docs/a.md", card)
+    };
+    let hold = |place: &Place| ana.hold_on_document("ana", WORDS, place).unwrap();
+    let (to_main, kept, unnamed) = (
+        hold(&on_branch("one")),
+        hold(&on_branch("two")),
+        hold(&on_branch("three")),
+    );
+    let into_branch = hold(&message("docs/a.md", "one"));
+    let stefano = person(&f, "stefano");
+    let passed = stefano
+        .pass_on_document_into(to_main.id, "stefano", None)
+        .unwrap();
+    assert_eq!(passed.document, message("docs/a.md", "one"));
+    assert_eq!(
+        passed.passed,
+        Some(PassedOn {
+            by: "stefano".into(),
+            at: NOW
+        })
+    );
+    let stays = stefano
+        .pass_on_document_into(kept.id, "stefano", Some("feat~x"))
+        .unwrap();
+    assert_eq!(stays.document, kept.document);
+    let marked = stefano.pass_on_document(unnamed.id, "stefano").unwrap();
+    assert_eq!(marked.document, unnamed.document);
+    let moved = stefano
+        .pass_on_document_into(into_branch.id, "stefano", Some("feat~y"))
+        .unwrap();
+    assert_eq!(moved.document.scope.as_deref(), Some("feat~y"));
+    let ids = |scope: Option<&str>| -> Vec<i64> {
+        (f.store.held_on_document("docs/a.md", scope).unwrap().iter())
+            .map(|held| held.id)
+            .collect()
+    };
+    assert_eq!(ids(None), [to_main.id]);
+    assert_eq!(ids(Some("feat~x")), [kept.id, unnamed.id]);
+    assert_eq!(ids(Some("feat~y")), [into_branch.id]);
+    assert_eq!(f.store.held_comment(to_main.id).unwrap(), Some(passed));
+    // A second pass is refused, and the row stays where its first pass kept it.
+    let again = refused(stefano.pass_on_document_into(to_main.id, "owner", Some("feat~x")));
+    assert!(again.contains("passed on already, by stefano"), "{again}");
+    let none = refused(stefano.pass_on_document_into(into_branch.id + 9, "owner", None));
+    assert!(none.starts_with("no comment #"), "{none}");
+    assert_eq!(ids(None), [to_main.id]);
+}
+
+/// The ids of the comments held on `path` of the checkout `scope`, passed on or not.
+fn ids(f: &Fixture, path: &str, scope: Option<&str>) -> Vec<i64> {
+    (f.store.held_on_document(path, scope).unwrap().iter())
+        .map(|held| held.id)
+        .collect()
+}
+
+/// A sweep's move (`Store::held_landed`): the comments passed into the swept worktree's checkout
+/// are kept under the project's own from then on, whole but for their scope, where a count of
+/// main's file reads them. One still held there, one passed into another checkout and main's own
+/// stay where they are; a second move, and one of a checkout nothing was passed into, move none.
+#[test]
+fn a_sweeps_move_keeps_the_rows_passed_into_a_landed_worktree_under_mains() {
+    let f = board();
+    let ana = person(&f, "ana");
+    let on = |scope: &str, card: &str| Place {
+        scope: Some(scope.into()),
+        ..message("docs/a.md", card)
+    };
+    let hold = |place: &Place| ana.hold_on_document("ana", WORDS, place).unwrap();
+    let card = hold(&on("feat~x", "one"));
+    let after = hold(&callout("docs/b.md", Some("feat~x"), "section:topic:1"));
+    let still = hold(&on("feat~x", "two"));
+    let other = hold(&on("feat~y", "one"));
+    let mains = hold(&message("docs/a.md", "one"));
+    let stefano = person(&f, "stefano");
+    let pass = |held: &OnDocument, into: Option<&str>| {
+        (stefano.pass_on_document_into(held.id, "stefano", into)).unwrap()
+    };
+    let card = pass(&card, Some("feat~x"));
+    pass(&after, Some("feat~x"));
+    pass(&other, Some("feat~y"));
+    pass(&mains, None);
+    assert_eq!(f.store.held_landed("feat~x").unwrap(), 2);
+    assert_eq!(ids(&f, "docs/a.md", None), [card.id, mains.id]);
+    assert_eq!(ids(&f, "docs/b.md", None), [after.id]);
+    assert_eq!(ids(&f, "docs/a.md", Some("feat~x")), [still.id]);
+    assert_eq!(ids(&f, "docs/a.md", Some("feat~y")), [other.id]);
+    let mains_now = OnDocument {
+        document: message("docs/a.md", "one"),
+        ..card.clone()
+    };
+    assert_eq!(f.store.held_comment(card.id).unwrap(), Some(mains_now));
+    assert_eq!(f.store.held_landed("feat~x").unwrap(), 0);
+    assert_eq!(f.store.held_landed("feat~z").unwrap(), 0);
+    assert_eq!(ids(&f, "docs/a.md", Some("feat~x")), [still.id]);
+}
+
+/// On a board without the step a sweep's move of a checkout nothing was passed into writes nothing,
+/// so nothing refuses it; one with a passed row is refused by the guard, the row where it was.
+#[test]
+fn a_sweeps_move_on_a_board_without_the_step_writes_only_where_a_row_was_passed() {
+    let f = board();
+    let ana = person(&f, "ana");
+    let place = Place {
+        scope: Some("feat~x".into()),
+        ..message("docs/a.md", "one")
+    };
+    let held = ana.hold_on_document("ana", WORDS, &place).unwrap();
+    (person(&f, "stefano").pass_on_document_into(held.id, "stefano", Some("feat~x"))).unwrap();
+    let step = ADDED.iter().position(|step| *step == HELD).unwrap();
+    (f.store.raw().row("meta", "additions"))
+        .set(serde_json::json!({"version": step}))
+        .unwrap();
+    assert_eq!(f.store.held_landed("feat~y").unwrap(), 0);
+    let why = refused(f.store.held_landed("feat~x"));
+    assert!(why.contains("this write names `held_message`"), "{why}");
+    assert_eq!(ids(&f, "docs/a.md", Some("feat~x")), [held.id]);
 }
 
 #[test]

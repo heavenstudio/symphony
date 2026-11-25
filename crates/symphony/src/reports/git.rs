@@ -102,7 +102,7 @@ pub fn excluded(project: &Project) -> Vec<String> {
         .map(|generator| generator.outputs.clone())
         .filter(|outputs| !outputs.is_empty())
         .collect();
-    outputs.sort();
+    symphony_board::order::sort_by(&mut outputs, &Ord::cmp);
     outputs.dedup();
     outputs.extend(LOCKS.iter().map(|name| (*name).to_string()));
     outputs

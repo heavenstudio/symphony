@@ -85,13 +85,11 @@ pub(super) fn resolve(
     thread: &[Message],
     current: &[Role],
 ) -> BTreeMap<i64, BTreeMap<String, String>> {
-    let acquired: BTreeSet<_> = thread
-        .iter()
-        .filter_map(|post| match change(post) {
-            Some(Change::Acquire(role)) => Some((post.sender.as_str(), role)),
-            _ => None,
-        })
-        .collect();
+    let mut acquired = BTreeSet::new();
+    acquired.extend(thread.iter().filter_map(|post| match change(post) {
+        Some(Change::Acquire(role)) => Some((post.sender.as_str(), role)),
+        _ => None,
+    }));
     // Imported current roles may predate the retained journal. Their `since` remains evidence;
     // a launch record alone cannot assign all old conversations to a role-addressed post.
     let imported: Vec<_> = current
@@ -99,6 +97,10 @@ pub(super) fn resolve(
         .filter(|role| !acquired.contains(&(role.handle.as_str(), role.role.as_str())))
         .collect();
     let mut ordered: Vec<_> = thread.iter().collect();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a busy board path keeps std's in-place sort (crate::order): PULL's unanswered posts"
+    )]
     ordered.sort_by_key(|post| post.id);
     let mut roles: BTreeMap<&str, Holders> = BTreeMap::new();
     let mut last_role: BTreeMap<&str, &str> = BTreeMap::new();

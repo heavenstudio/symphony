@@ -1,51 +1,98 @@
-//! One descriptor of a board connection's socket, which never waits in the socket itself: it is
+//! One descriptor of a socket the board talks on, which never waits in the socket itself: it is
 //! nonblocking, and a read or a write that cannot go at once waits for the socket in `poll`, at
-//! most the client's wait each time, as a blocking socket's timeout bounds each of its reads and
-//! writes. A wait that runs out says so as that timeout does, `EAGAIN`.
+//! most the caller's wait each time, as a blocking socket's timeout bounds each of its reads and
+//! writes. A wait that runs out says so as that timeout does, `EAGAIN`. Its stream is a Unix
+//! socket's, the board's PostgreSQL connection ([`crate::pg`]), or a TCP connection's, a request
+//! to a server on this machine ([`crate::rpc::exchange`]).
 //!
 //! macOS drains a socket when one of its descriptors is closed while another process holds that
 //! descriptor, as every `lsof` does for each descriptor it reads (`proc_pidfdinfo`): the socket is
 //! marked draining for good, and every later wait in its own blocking read or write fails with
-//! EBADF, on each descriptor of it, while what does not wait goes on as before. The board's
-//! connection has such a close in its making ([`super::unshared`]), and the board's own scans
-//! (`lsof +D`, `lsof -iTCP`) read every process's descriptors beside it. A drained socket's
-//! `poll`, and its reads and writes that do not wait, answer as a sound socket's do (measured on
-//! macOS 26), so a connection that waits only in `poll` is one no drain can break.
+//! EBADF, on each descriptor of it, while what does not wait goes on as before. Each of those
+//! sockets has such a close in its making (the board connection's `pg::unshared`, a TCP
+//! connection's [`crate::sys::connect`]), and the board's own scans (`lsof +D`, `lsof -iTCP`)
+//! read every process's descriptors beside them. A drained socket's `poll`, and its reads and
+//! writes that do not wait, answer as a sound socket's do (measured on macOS 26, a Unix pair and a
+//! loopback TCP pair alike), so a socket that waits only in `poll` is one no drain can break.
 
 use std::io::{self, Read, Write};
-use std::net::Shutdown;
-use std::os::fd::AsRawFd as _;
+use std::net::{Shutdown, TcpStream};
+use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
-/// One descriptor of a connection's socket and the client's wait ([`super::Client::waiting`]).
-#[derive(Debug)]
-pub(super) struct Socket {
-    pub(super) socket: UnixStream,
-    pub(super) wait: Duration,
+#[cfg(all(test, target_vendor = "apple"))]
+pub(crate) mod drain;
+
+/// What a [`Socket`] asks of its stream, which std's Unix and TCP streams each answer by their own
+/// methods: one descriptor, made nonblocking, read and written once at a time through a shared
+/// reference, and shut down.
+pub(crate) trait Stream: AsRawFd {
+    /// The stream nonblocking from now on.
+    fn nonblocking(&self) -> io::Result<()>;
+    /// One read: what the socket holds now, or that it would wait.
+    fn read_once(&self, buf: &mut [u8]) -> io::Result<usize>;
+    /// One write: what the socket takes now, or that it would wait.
+    fn write_once(&self, buf: &[u8]) -> io::Result<usize>;
+    /// The socket's reads, its writes or both ended, for every descriptor of it.
+    fn end(&self, how: Shutdown) -> io::Result<()>;
 }
 
-impl Socket {
+/// [`Stream`] for each of std's streams named, by that stream's own methods.
+macro_rules! streams {
+    ($($kind:ty),+) => {$(
+        impl Stream for $kind {
+            fn nonblocking(&self) -> io::Result<()> {
+                self.set_nonblocking(true)
+            }
+
+            fn read_once(&self, buf: &mut [u8]) -> io::Result<usize> {
+                let mut from: &$kind = self;
+                from.read(buf)
+            }
+
+            fn write_once(&self, buf: &[u8]) -> io::Result<usize> {
+                let mut to: &$kind = self;
+                to.write(buf)
+            }
+
+            fn end(&self, how: Shutdown) -> io::Result<()> {
+                self.shutdown(how)
+            }
+        }
+    )+};
+}
+
+streams!(UnixStream, TcpStream);
+
+/// One descriptor of a socket, and the most each of its reads and writes waits: the board
+/// client's wait ([`crate::pg::Client::waiting`]), or an exchange's own.
+#[derive(Debug)]
+pub(crate) struct Socket<S> {
+    pub(crate) socket: S,
+    pub(crate) wait: Duration,
+}
+
+impl<S: Stream> Socket<S> {
     /// `socket`, nonblocking from now on, each read and write of it waiting at most `wait`. A
     /// zero wait is refused, as std refuses a socket's zero timeout: it would never wait at all.
-    pub(super) fn waiting(socket: UnixStream, wait: Duration) -> io::Result<Socket> {
+    pub(crate) fn waiting(socket: S, wait: Duration) -> io::Result<Socket<S>> {
         if wait.is_zero() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "cannot set a 0 duration timeout",
             ));
         }
-        socket.set_nonblocking(true)?;
+        socket.nonblocking()?;
         Ok(Socket { socket, wait })
     }
 
     /// As much of `out` as the socket takes now, written without waiting: how many bytes that
     /// was, none when it takes nothing.
-    pub(super) fn write_now(&self, out: &[u8]) -> io::Result<usize> {
-        let mut to = &self.socket;
+    pub(crate) fn write_now(&self, out: &[u8]) -> io::Result<usize> {
         let mut taken = 0;
         while taken < out.len() {
-            match to.write(&out[taken..]) {
+            match self.socket.write_once(&out[taken..]) {
                 Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
                 Ok(more) => taken += more,
                 Err(why) if why.kind() == io::ErrorKind::WouldBlock => break,
@@ -58,16 +105,16 @@ impl Socket {
 
     /// The socket's reads, its writes or both ended, for every descriptor of it: a read or a
     /// write waiting on another thread then answers at once.
-    pub(super) fn shutdown(&self, how: Shutdown) -> io::Result<()> {
-        self.socket.shutdown(how)
+    pub(crate) fn shutdown(&self, how: Shutdown) -> io::Result<()> {
+        self.socket.end(how)
     }
 
     /// What `once` gives the first time it goes without waiting, waiting between for `events`
-    /// in `poll`, at most the client's wait from the first time it would have waited.
+    /// in `poll`, at most the socket's wait from the first time it would have waited.
     fn waited<T>(
         &self,
         events: libc::c_short,
-        mut once: impl FnMut(&UnixStream) -> io::Result<T>,
+        mut once: impl FnMut(&S) -> io::Result<T>,
     ) -> io::Result<T> {
         let mut by = None;
         loop {
@@ -85,7 +132,7 @@ impl Socket {
     /// The socket ready for `events` (an end or an error included) before `by`, or `EAGAIN`, as
     /// a blocking socket's timeout says it. No `by` is a wait longer than the clock counts: none.
     /// A `by` already past is `EAGAIN` before any `poll`, so a socket `poll` calls ready while its
-    /// read or write still would wait never keeps the operation past the client's wait.
+    /// read or write still would wait never keeps the operation past the socket's wait.
     fn ready(&self, events: libc::c_short, by: Option<Instant>) -> io::Result<()> {
         loop {
             let within = match by {
@@ -120,21 +167,21 @@ impl Socket {
     }
 }
 
-impl Read for &Socket {
+impl<S: Stream> Read for &Socket<S> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.waited(libc::POLLIN, |mut socket| socket.read(buf))
+        self.waited(libc::POLLIN, |socket| socket.read_once(buf))
     }
 }
 
-impl Read for Socket {
+impl<S: Stream> Read for Socket<S> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         (&*self).read(buf)
     }
 }
 
-impl Write for &Socket {
+impl<S: Stream> Write for &Socket<S> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.waited(libc::POLLOUT, |mut socket| socket.write(buf))
+        self.waited(libc::POLLOUT, |socket| socket.write_once(buf))
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -146,7 +193,7 @@ impl Write for &Socket {
 mod tests {
     use super::Socket;
     use std::io::{self, Read, Write};
-    use std::net::Shutdown;
+    use std::net::{Shutdown, TcpListener, TcpStream};
     use std::os::unix::net::UnixStream;
     use std::thread;
     use std::time::Duration;
@@ -170,6 +217,13 @@ mod tests {
 
     fn eagain(why: &io::Error) -> bool {
         why.kind() == io::ErrorKind::WouldBlock && why.raw_os_error() == Some(libc::EAGAIN)
+    }
+
+    /// A loopback TCP connection's two ends: ours, then its peer's.
+    fn tcp_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let ours = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        (ours, listener.accept().unwrap().0)
     }
 
     #[test]
@@ -264,13 +318,50 @@ mod tests {
         assert_eq!(why.to_string(), std_says.to_string());
     }
 
+    /// A TCP connection's socket as a Unix one's: nonblocking, a read that meets its wait as
+    /// EAGAIN, writes and reads each way, what the socket takes now, and a shutdown that ends a
+    /// read waiting on another thread.
+    #[test]
+    fn a_tcp_socket_waits_reads_writes_and_shuts_down_as_a_unix_one() {
+        let (ours, mut peer) = tcp_pair();
+        let mut socket = Socket::waiting(ours, SHORT).unwrap();
+        let why = (&socket).read(&mut [0; 1]).unwrap_err();
+        assert!(eagain(&why), "{why}");
+        socket.wait = LONG;
+        let heard = bounded("a TCP socket read and written each way", move || {
+            let mut heard = Vec::new();
+            let mut got = [0; 4];
+            assert_eq!(socket.write_now(b"ping").unwrap(), 4);
+            peer.read_exact(&mut got).unwrap();
+            heard.push(got);
+            peer.write_all(b"pong").unwrap();
+            (&socket).read_exact(&mut got).unwrap();
+            heard.push(got);
+            (&socket).write_all(b"more").unwrap();
+            peer.read_exact(&mut got).unwrap();
+            heard.push(got);
+            heard
+        });
+        assert_eq!(heard, [*b"ping", *b"pong", *b"more"]);
+
+        let (ours, _peer) = tcp_pair();
+        let socket = std::sync::Arc::new(Socket::waiting(ours, Duration::MAX).unwrap());
+        let reader = std::sync::Arc::clone(&socket);
+        let read = bounded("a TCP read a shutdown ends", move || {
+            let reading = thread::spawn(move || (&*reader).read(&mut [0; 1]));
+            socket.shutdown(Shutdown::Both).unwrap();
+            reading.join().unwrap()
+        });
+        assert_eq!(read.unwrap(), 0, "the end of the socket");
+    }
+
     /// A socket macOS has drained (a descriptor of it closed while a read held that descriptor,
     /// as `lsof` holds each it reads): a blocking read of it fails with EBADF, the control, and
     /// the connection's socket still waits, reads and writes as a sound one does.
     #[cfg(target_vendor = "apple")]
     #[test]
     fn a_socket_macos_drained_still_waits_reads_and_writes_in_poll() {
-        let (kept, mut peer) = drained();
+        let (kept, mut peer) = super::drain::drained::<UnixStream>();
         let mut control = kept.try_clone().unwrap();
         control.set_read_timeout(Some(SHORT)).unwrap();
         let blocked = control.read(&mut [0; 1]).unwrap_err();
@@ -302,103 +393,20 @@ mod tests {
         assert_eq!(echo.join().unwrap().unwrap(), vec![b'y'; 1 << 20]);
     }
 
+    /// An operation that always would wait, on a socket `poll` always calls ready, meets its wait:
+    /// without the deadline checked before each `poll` it would never end, which the bound fails
+    /// as a stall.
     #[test]
     fn a_socket_poll_calls_ready_whose_operation_still_would_wait_meets_its_wait() {
         let (ours, _peer) = UnixStream::pair().unwrap();
         // An empty socket is always ready to write: poll answers at once every time.
         let socket = Socket::waiting(ours, SHORT).unwrap();
-        let tries = bounded("an operation that always would wait", move || {
-            let mut tries = 0u64;
-            let said = socket.waited(libc::POLLOUT, |_| {
-                tries += 1;
+        let said = bounded("an operation that always would wait", move || {
+            socket.waited(libc::POLLOUT, |_| {
                 Err::<(), _>(io::ErrorKind::WouldBlock.into())
-            });
-            (said, tries)
-        });
-        let why = tries.0.unwrap_err();
-        assert!(eagain(&why), "{why}");
-        assert!(tries.1 > 1, "poll answered ready, and it was tried again");
-    }
-
-    /// How many pairs [`drained`] makes before it fails: a read the reader thread waits in is
-    /// drained by the first, and another try is for a reader waiting somewhere else at that look.
-    #[cfg(target_vendor = "apple")]
-    const DRAIN_TRIES: u32 = 100;
-
-    /// `PROC_PIDTHREADID64INFO` (`sys/proc_info.h`), which the libc crate does not name: a thread
-    /// of a process by its id, as `pthread_threadid_np` gives it.
-    #[cfg(target_vendor = "apple")]
-    const PROC_PIDTHREADID64INFO: libc::c_int = 15;
-
-    /// Whether the thread of this process whose id is `id` waits in the kernel now.
-    #[cfg(target_vendor = "apple")]
-    fn waiting_in_the_kernel(id: u64) -> bool {
-        // SAFETY: proc_threadinfo is integers and a byte array, for which zero is a value.
-        let mut info: libc::proc_threadinfo = unsafe { std::mem::zeroed() };
-        let size = libc::c_int::try_from(size_of_val(&info)).expect("its size fits an int");
-        // SAFETY: info is writable for size bytes, the size given, and outlives the call.
-        let got = unsafe {
-            libc::proc_pidinfo(
-                libc::getpid(),
-                PROC_PIDTHREADID64INFO,
-                id,
-                (&raw mut info).cast(),
-                size,
-            )
-        };
-        got == size && info.pth_run_state == libc::TH_STATE_WAITING
-    }
-
-    /// A socket pair's first end, drained, and its peer. A thread reads one descriptor of it,
-    /// which has nothing to read; once that thread waits in the kernel, which is its read, a
-    /// descriptor of `/dev/null` is put in that descriptor's place (`dup2`, so the number is never
-    /// free for another test's file), and that close, the read holding the descriptor, drains the
-    /// socket. A try whose reader waited somewhere else at that look drained nothing, and is made
-    /// again on a pair of its own, up to [`DRAIN_TRIES`].
-    #[cfg(target_vendor = "apple")]
-    fn drained() -> (UnixStream, UnixStream) {
-        use std::os::fd::AsRawFd as _;
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicU64, Ordering};
-        let null = std::fs::File::open("/dev/null").unwrap();
-        for _ in 0..DRAIN_TRIES {
-            let (held, peer) = UnixStream::pair().unwrap();
-            let kept = held.try_clone().unwrap();
-            let fd = held.as_raw_fd();
-            let id = Arc::new(AtomicU64::new(0));
-            let said = Arc::clone(&id);
-            let reader = thread::spawn(move || {
-                let mut mine = 0u64;
-                // SAFETY: mine is writable, and pthread_self is this thread.
-                assert_eq!(
-                    unsafe { libc::pthread_threadid_np(libc::pthread_self(), &raw mut mine) },
-                    0
-                );
-                said.store(mine, Ordering::SeqCst);
-                let mut byte = 0u8;
-                // SAFETY: fd stays open until this thread is joined: held keeps it, and the dup2
-                // below only puts another file in its place.
-                unsafe { libc::read(fd, (&raw mut byte).cast(), 1) }
-            });
-            let backstop = test_time::backstop(Duration::from_secs(10));
-            test_time::until_true("the reader waits in its read", backstop, || {
-                let id = id.load(Ordering::SeqCst);
-                id != 0 && waiting_in_the_kernel(id)
             })
-            .unwrap_or_else(|stall| panic!("{stall}"));
-            // SAFETY: both descriptors are open; fd is held's, which owns what dup2 puts there.
-            assert_ne!(unsafe { libc::dup2(null.as_raw_fd(), fd) }, -1);
-            reader.join().unwrap();
-            drop(held);
-            let probe = kept.try_clone().unwrap();
-            probe
-                .set_read_timeout(Some(Duration::from_millis(1)))
-                .unwrap();
-            let read = (&probe).read(&mut [0; 1]);
-            if read.is_err_and(|why| why.raw_os_error() == Some(libc::EBADF)) {
-                return (kept, peer);
-            }
-        }
-        panic!("no socket drained in {DRAIN_TRIES} pairs");
+        });
+        let why = said.unwrap_err();
+        assert!(eagain(&why), "{why}");
     }
 }

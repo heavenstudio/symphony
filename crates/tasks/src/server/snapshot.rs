@@ -186,7 +186,7 @@ mod tests {
             "2026-11-12T07-45-00Z.2",
             "2026-11-11T23-59-59Z",
         ];
-        names.sort_by(|a, b| order(b).cmp(&order(a)));
+        crate::order::sort_by(&mut names, &|a, b| order(b).cmp(&order(a)));
         assert_eq!(
             names,
             [

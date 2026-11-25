@@ -173,12 +173,12 @@ impl Home {
     /// [`Home::ensure`] when the server does not answer.
     pub fn recorded(&self) -> Option<Running> {
         match fs::read_to_string(self.dir.join(ADDRESS)) {
-            Ok(text) => serde_json::from_str(&text).ok(),
+            Ok(text) => serde_json::from_slice(text.as_bytes()).ok(),
             Err(error) if error.kind() == ErrorKind::NotFound => self
                 .legacy_record
                 .get_or_init(|| {
                     let text = fs::read_to_string(self.legacy.as_ref()?.join(ADDRESS)).ok()?;
-                    serde_json::from_str(&text).ok()
+                    serde_json::from_slice(text.as_bytes()).ok()
                 })
                 .clone(),
             Err(_) => None,

@@ -241,7 +241,7 @@ pub(super) fn begin(page: &mut Page) {
 /// waits left out, and where it carries `waits`, their diff as `name` is shown each, after its
 /// other changes. An event that does not read as one is sent as it is.
 pub(crate) fn sent_to(json: &str, waits: Option<&(Arc<Waits>, Arc<Waits>)>, name: &str) -> String {
-    let Ok(mut event) = serde_json::from_str::<Value>(json) else {
+    let Ok(mut event) = serde_json::from_slice::<Value>(json.as_bytes()) else {
         return json.into();
     };
     let Some(sent) = event["changes"].as_array_mut() else {
@@ -261,14 +261,15 @@ pub(crate) fn sent_to(json: &str, waits: Option<&(Arc<Waits>, Arc<Waits>)>, name
 pub(crate) struct Looked {
     /// The last look that read them: none before the first.
     read: Option<Arc<(People, Map)>>,
-    /// Why the last look could not read them, where it could not: none once one does.
+    /// Why the board or its people could not be read since that look, in the first failure's
+    /// words: none once a look reads them.
     failed: Option<String>,
 }
 
 impl Hub {
     /// The board's people and map as its last look read them ([`Hub::people_read`]), which the
-    /// notices tell by: none before its first look; `Err` where the last could not read them,
-    /// why.
+    /// notices tell by: none before its first look; `Err` where the board or its people did not
+    /// read since ([`Hub::people_unread`]), why.
     pub(super) fn people_looked(&self) -> Result<Option<Arc<(People, Map)>>, String> {
         let looked = self.people.lock().recover();
         match &looked.failed {
@@ -324,10 +325,7 @@ impl Hub {
         });
         let read = match read {
             Ok(read) => Arc::new(read),
-            Err(error) => {
-                self.people.lock().recover().failed = Some(error.to_string());
-                return;
-            }
+            Err(error) => return self.people_unread(error.to_string()),
         };
         *self.people.lock().recover() = Looked {
             read: Some(Arc::clone(&read)),
@@ -358,6 +356,14 @@ impl Hub {
             page.deciders = deciders.clone();
             self.publish(page, Vec::new());
         }
+    }
+
+    /// The board or its people could not be read, `why`: the notices tell by no look until a tick
+    /// reads them again ([`Hub::people_looked`]), so nobody the board no longer names is told by
+    /// an older look, while the pages keep that look's deciders. The first failure since the
+    /// last look that read them is kept, so the notices say it once, whatever the next ones say.
+    pub(super) fn people_unread(&self, why: String) {
+        self.people.lock().recover().failed.get_or_insert(why);
     }
 }
 

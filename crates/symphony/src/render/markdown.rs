@@ -69,7 +69,7 @@ fn spaced_headings(text: &str, options: &Options<'_>) -> String {
             .then_some(data.sourcepos)
         })
         .collect();
-    protected.sort_by_key(|range| range.start.line);
+    symphony_board::order::sort_by_key(&mut protected, &|range| range.start.line);
     let mut protected = protected.into_iter().peekable();
     let mut out = String::with_capacity(text.len());
     for (index, line) in text.split_inclusive('\n').enumerate() {

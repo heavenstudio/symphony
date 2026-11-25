@@ -10,14 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// How a test hands a client a statement: a PostgreSQL client's statement, bare or bound, or its
-/// simple query, and the two calls of the `rpc` client consumers keep.
-const SENDS: [&str; 5] = [
-    "Step::bare(",
-    "Step::with(",
-    ".simple(",
-    ".query(",
-    ".define_then(",
-];
+/// simple query.
+const SENDS: [&str; 3] = ["Step::bare(", "Step::with(", ".simple("];
 
 /// The engine is the test's subject: its catalogue, a plan, a definition or trigger made or
 /// removed, a transaction refused or tried again, a database not made yet or ended.
@@ -65,7 +59,7 @@ fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
         .unwrap_or_else(|why| panic!("{}: {why}", dir.display()))
         .map(|entry| entry.unwrap().path())
         .collect();
-    entries.sort();
+    symphony_board::order::sort_by(&mut entries, &Ord::cmp);
     for path in entries {
         if path.is_dir() {
             walk(&path, found);
@@ -119,9 +113,9 @@ fn only_the_listed_tests_send_a_statement_of_their_own() {
 
 /// The fence reads every folder of `tests/` and `examples/`, at any depth: a file of the server's
 /// target that sends a statement is found though no store test changed, each way of sending is
-/// found, and a file that sends none, a file that is not Rust and this fence's own are not. The
-/// package is a folder of this process's own, as `just lint-rs` and a board `just test-rs` in one
-/// worktree run this target at once.
+/// found, and a file that sends none (a call of the SurrealDB client no board has among them), a
+/// file that is not Rust and this fence's own are not. The package is a folder of this process's
+/// own, as `just lint-rs` and a board `just test-rs` in one worktree run this target at once.
 #[test]
 fn a_sender_is_found_in_any_target_whichever_way_it_sends() {
     let package = Path::new(env!("CARGO_TARGET_TMPDIR"))
@@ -132,15 +126,18 @@ fn a_sender_is_found_in_any_target_whichever_way_it_sends() {
     let files = [
         ("tests/server/new.rs", "client.simple(\"SELECT 1\");"),
         ("tests/store/quiet.rs", "store.raw().row(\"task\", id);"),
-        ("tests/cli/deep/nested.rs", "db.query(\"INFO FOR DB\");"),
-        ("tests/launch/define.rs", "db.define_then(text, next);"),
+        (
+            "tests/cli/deep/nested.rs",
+            "client.request(&[Step::bare(\"SELECT 1\")]);",
+        ),
+        ("tests/launch/define.rs", "db.query(\"INFO FOR DB\");"),
         (
             "tests/perf/bound.rs",
             "client.request(&[Step::with(text, id)]);",
         ),
         ("tests/sweep/step.rs", "plan.push(Step::bare(text));"),
         ("tests/sweep/notes.txt", "client.simple(\"not Rust\");"),
-        ("examples/demo.rs", "db.query(\"SELECT 1\");"),
+        ("examples/demo.rs", "client.simple(\"SELECT 1\");"),
         ("tests/raw_fence.rs", "client.simple(\"this fence's own\");"),
     ];
     for (path, text) in files {
@@ -152,7 +149,6 @@ fn a_sender_is_found_in_any_target_whichever_way_it_sends() {
         senders(&package),
         [
             "tests/cli/deep/nested.rs",
-            "tests/launch/define.rs",
             "tests/perf/bound.rs",
             "tests/server/new.rs",
             "tests/sweep/step.rs",

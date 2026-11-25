@@ -41,7 +41,7 @@ impl Home {
             }
         }
         ports.retain(|&port| port != 0);
-        ports.sort_unstable();
+        symphony_board::order::sort_by(&mut ports, &Ord::cmp);
         ports.dedup();
         (ports, unknown)
     }

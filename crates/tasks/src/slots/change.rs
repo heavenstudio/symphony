@@ -71,6 +71,10 @@ fn differing<'a>(
     now: &HashMap<&'a str, Held<'a>>,
 ) -> Vec<&'a str> {
     let mut owners: Vec<&'a str> = was.keys().chain(now.keys()).copied().collect();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a busy board path keeps std's in-place sort (crate::order): PULL's slot ledger"
+    )]
     owners.sort_unstable();
     owners.dedup();
     owners.retain(|owner| was.get(owner) != now.get(owner));

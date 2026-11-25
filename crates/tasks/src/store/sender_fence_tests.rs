@@ -41,7 +41,7 @@ fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
         .unwrap_or_else(|why| panic!("{}: {why}", dir.display()))
         .map(|entry| entry.unwrap().path())
         .collect();
-    entries.sort();
+    crate::order::sort_by(&mut entries, &Ord::cmp);
     for path in entries {
         if path.is_dir() {
             walk(&path, found);

@@ -146,7 +146,7 @@ fn roles(f: &Fixture, slug: &str) -> Vec<(String, String)> {
     let mut roles: Vec<_> = (f.store.get(slug).unwrap().roles.iter())
         .map(|r| (r.handle.clone(), r.role.clone()))
         .collect();
-    roles.sort();
+    symphony_board::order::sort_by(&mut roles, &Ord::cmp);
     roles
 }
 

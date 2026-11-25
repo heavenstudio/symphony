@@ -909,7 +909,7 @@ fn stored_states_of_every_recipient_in_one_read() {
     );
     assert_eq!(amber_stored.checked_pull, 5.0);
     let mut queued: Vec<&str> = amber_stored.queued.iter().map(|q| q.key.as_str()).collect();
-    queued.sort_unstable();
+    crate::order::sort_by(&mut queued, &Ord::cmp);
     assert_eq!(
         queued,
         ["event-5", "pane-6-0", "pull-3"],

@@ -48,17 +48,17 @@ pub fn native_inventory(
     common: &Path,
     limit: Duration,
 ) -> Answer<Vec<u8>> {
-    let vars = env
-        .vars
-        .iter()
-        .filter(|(key, _)| {
-            matches!(
-                key.as_str(),
-                "PATH" | "LANG" | "LC_ALL" | "LLVM_PROFILE_FILE"
-            )
-        })
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
+    let mut vars = std::collections::BTreeMap::new();
+    vars.extend(
+        (env.vars.iter())
+            .filter(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    "PATH" | "LANG" | "LC_ALL" | "LLVM_PROFILE_FILE"
+                )
+            })
+            .map(|(key, value)| (key.clone(), value.clone())),
+    );
     let mut command = sys::command_with(reader, &vars);
     command
         .args(["machine-work", "--common-dir"])
@@ -142,7 +142,7 @@ pub fn slot_runs(dir: &Path) -> Answer<Vec<Run>> {
         .map_err(|e| e.to_string())?
         .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
         .collect();
-    names.sort_unstable();
+    crate::order::sort_by(&mut names, &Ord::cmp);
     for (pool, prefix) in POOLS {
         for name in names
             .iter()
@@ -206,7 +206,7 @@ fn places(dir: &Path, names: &[String], prefix: &str) -> Vec<PathBuf> {
             Some((seq.parse().ok().filter(|_| digits)?, name))
         })
         .collect();
-    found.sort_unstable();
+    crate::order::sort_by(&mut found, &Ord::cmp);
     found.into_iter().map(|(_, name)| dir.join(name)).collect()
 }
 
@@ -228,7 +228,7 @@ fn standing(path: &Path) -> Answer<bool> {
 /// Who a slot or place file says holds it, if it reads as a JSON object.
 fn holder(path: &Path) -> Option<serde_json::Map<String, Value>> {
     let text = fs::read_to_string(path).ok()?;
-    match serde_json::from_str(text.trim()).ok()? {
+    match serde_json::from_slice(text.trim().as_bytes()).ok()? {
         Value::Object(info) => Some(info),
         _ => None,
     }

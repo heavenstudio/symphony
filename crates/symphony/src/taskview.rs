@@ -133,10 +133,10 @@ pub fn asks(questions: BTreeMap<String, u32>, verdict: Option<&TaskVerdict>) -> 
         questions,
         verdicts: verdict
             .map(|verdict| {
-                PEOPLE
-                    .iter()
-                    .map(|person| ((*person).to_string(), verdict.clone()))
-                    .collect()
+                let mut verdicts = BTreeMap::new();
+                verdicts
+                    .extend((PEOPLE.iter()).map(|person| ((*person).to_string(), verdict.clone())));
+                verdicts
             })
             .unwrap_or_default(),
     }
@@ -545,10 +545,12 @@ pub fn held_words(
     store: &symphony_board::Store,
     rows: &[&symphony_board::rows::MessageRow],
 ) -> Result<std::collections::BTreeMap<i64, symphony_api::HeldWords>, symphony_board::Error> {
-    let slugs: std::collections::BTreeSet<&str> = (rows.iter())
-        .filter(|row| symphony_board::held::may_be_of_one(row))
-        .map(|row| row.slug.as_str())
-        .collect();
+    let mut slugs: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    slugs.extend(
+        (rows.iter())
+            .filter(|row| symphony_board::held::may_be_of_one(row))
+            .map(|row| row.slug.as_str()),
+    );
     let mut found = std::collections::BTreeMap::new();
     for slug in slugs {
         for held in store.held_on(slug)? {
@@ -656,12 +658,9 @@ fn stamp(seconds: f64) -> String {
 
 pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symphony_board::Error> {
     let said = store.to_owner(40)?;
-    let slugs = said
-        .iter()
-        .map(|m| m.slug.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
+    let mut once = std::collections::BTreeSet::new();
+    once.extend(said.iter().map(|m| m.slug.clone()));
+    let slugs = once.into_iter().collect::<Vec<_>>();
     let threads = store.threads_rows(&slugs)?;
     Ok(said
         .iter()

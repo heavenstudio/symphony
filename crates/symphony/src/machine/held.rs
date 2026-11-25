@@ -187,7 +187,7 @@ fn running(registry: &Registry) -> Option<String> {
         let common = symphony_board::git::checkout_common_dir(&entry.root)?;
         let path = common.join(symphony_board::folders::RELEASE).join(RUNNING);
         let said: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+            serde_json::from_slice(std::fs::read_to_string(&path).ok()?.as_bytes()).ok()?;
         let pid = said["pid"].as_i64()?;
         symphony_board::sys::pid_alive(pid).then(|| {
             format!(

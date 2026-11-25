@@ -192,7 +192,7 @@ fn received(frames: &Frames) -> BTreeMap<String, BTreeMap<i64, usize>> {
 
 fn summary(times: &[f64]) -> Value {
     let mut sorted = times.to_vec();
-    sorted.sort_by(f64::total_cmp);
+    symphony_board::order::sort_by(&mut sorted, &f64::total_cmp);
     let at = |q: f64| sorted[((sorted.len() - 1) as f64 * q).round() as usize];
     json!({"n": sorted.len(), "min": at(0.0), "median": at(0.5), "p90": at(0.9), "max": at(1.0)})
 }

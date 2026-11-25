@@ -202,7 +202,7 @@ fn cleanup_waits_for_release(
     mut release: impl Write,
 ) {
     let base = repo.base.clone();
-    let (finished, completion) = std::sync::mpsc::channel();
+    let (finished, completion) = crate::test_channel::channel();
     let cleanup = std::thread::spawn(move || {
         let began = Instant::now();
         drop(owner);

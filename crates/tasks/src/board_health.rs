@@ -8,7 +8,7 @@
 //! `/api/health`; the
 //! machine's one server also writes it to `symphony/tasks/health.json` in the git common dir
 //! ([`file`]), which `tasks status` reads ([`Report::read`]), and appends each hour of it to a day
-//! file in `symphony/health/` there ([`hours`]). Every request a [`crate::rpc::Client`] sends is
+//! file in `symphony/health/` there ([`hours`]). Every request a [`crate::pg::Client`] sends is
 //! counted in the [`QueryLog`] of its board ([`queries_of`]), on the client's side, with no request
 //! of its own.
 
@@ -299,11 +299,11 @@ impl PassReport {
 pub struct Query {
     /// When its answer, or its failure, came, in seconds since the epoch.
     pub at: f64,
-    /// How long it took, in milliseconds, its one more sending included.
+    /// How long it took, in milliseconds.
     pub ms: f64,
-    /// The line that asked for it ([`crate::rpc::Client::query`] tracks its caller).
+    /// The line that asked for it ([`crate::pg::Client::request`] tracks its caller).
     pub source: &'static Location<'static>,
-    /// Whether it may write ([`crate::rpc::Kind::Write`]).
+    /// Whether it may write, as its client reads that from its statements' text.
     pub write: bool,
     /// Whether it got no answer.
     pub failed: bool,
@@ -446,7 +446,7 @@ impl Queries {
             .filter(|(at, _)| keep(minute(*at)))
             .map(|(_, ms)| *ms)
             .collect();
-        latencies.sort_unstable_by(f64::total_cmp);
+        crate::order::sort_by(&mut latencies, &f64::total_cmp);
         writes.p50_ms = percentile(&latencies, 50);
         writes.p90_ms = percentile(&latencies, 90);
         (queries, writes)
@@ -620,7 +620,7 @@ impl Report {
     /// The record at `path`; none when there is none.
     pub fn read(path: &Path) -> Result<Option<Report>, String> {
         match std::fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text)
+            Ok(text) => serde_json::from_slice(text.as_bytes())
                 .map(Some)
                 .map_err(|e| format!("{}: {e}", path.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),

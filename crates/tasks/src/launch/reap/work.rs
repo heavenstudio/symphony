@@ -213,7 +213,8 @@ impl<'a> Holds<'a> {
         if let Some(found) = self.found.get(handle) {
             return Ok(found.clone());
         }
-        let mut asked: BTreeSet<String> = self.under(handle).into_iter().collect();
+        let mut asked: BTreeSet<String> = BTreeSet::new();
+        asked.extend(self.under(handle));
         asked.insert(handle.to_string());
         let posts: Vec<(Hold, String)> = (self.store)
             .pending_posts(&self.board, Asked::Handles(&asked))?

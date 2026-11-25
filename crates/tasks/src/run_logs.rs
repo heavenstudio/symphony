@@ -504,7 +504,7 @@ fn find(runs: &Path, run: &str) -> Result<(String, File), Unread> {
         .filter_map(|entry| entry.file_name().into_string().ok())
         .filter(|name| crate::runs::date(name))
         .collect();
-    days.sort_unstable_by(|a, b| b.cmp(a));
+    crate::order::sort_by(&mut days, &|a, b| b.cmp(a));
     for day in days {
         let path = logs.join(&day).join(format!("{run}.log"));
         match crate::runs::regular(&path, OpenOptions::new().read(true)) {

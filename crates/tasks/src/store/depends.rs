@@ -102,8 +102,12 @@ impl Store {
             lines: Vec<String>,
             executing: bool,
         }
-        let add: BTreeSet<&str> = add.iter().map(String::as_str).collect();
-        let remove: BTreeSet<&str> = remove.iter().map(String::as_str).collect();
+        fn names(named: &[String]) -> BTreeSet<&str> {
+            let mut set = BTreeSet::new();
+            set.extend(named.iter().map(String::as_str));
+            set
+        }
+        let (add, remove) = (names(add), names(remove));
         if add.is_empty() && remove.is_empty() {
             return Err(refused(
                 "name a dependency to add, remove or replace".into(),
@@ -137,7 +141,8 @@ impl Store {
             for (from, to) in &read.deps {
                 deps.entry(from.as_str()).or_default().push(to.as_str());
             }
-            let mine: BTreeSet<&str> = deps.get(slug).into_iter().flatten().copied().collect();
+            let mut mine: BTreeSet<&str> = BTreeSet::new();
+            mine.extend(deps.get(slug).into_iter().flatten().copied());
             if let Some(gone) = remove.iter().find(|r| !mine.contains(*r)) {
                 return Err(Failure::Stop(refused(format!(
                     "{slug} does not depend on {gone}"
@@ -160,7 +165,8 @@ impl Store {
                 };
                 return Err(Failure::Stop(refused(why)));
             }
-            let kept: BTreeSet<&str> = mine.difference(&remove).chain(&add).copied().collect();
+            let mut kept: BTreeSet<&str> = BTreeSet::new();
+            kept.extend(mine.difference(&remove).chain(&add).copied());
             let watch: Vec<_> = (kept.iter())
                 .map(|dep| json!({"slug": dep, "status": statuses.get(dep)}))
                 .collect();

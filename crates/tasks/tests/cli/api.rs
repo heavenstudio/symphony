@@ -34,7 +34,7 @@ fn a_call_gives_the_stores_result_in_pythons_field_order() {
         .keys()
         .map(String::as_str)
         .collect();
-    keys.sort_unstable();
+    symphony_board::order::sort_by(&mut keys, &Ord::cmp);
     assert_eq!(
         keys,
         [

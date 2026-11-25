@@ -54,7 +54,6 @@ mod store_fixture;
 
 pub mod board_health;
 pub mod builds;
-pub mod cbor;
 mod channel;
 pub mod cli;
 pub mod codex_queue;
@@ -99,6 +98,7 @@ pub mod server;
 pub mod session_url;
 pub mod settings;
 pub mod slots;
+mod socket;
 pub mod stages;
 pub mod stamps;
 mod store;

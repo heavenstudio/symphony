@@ -28,14 +28,13 @@
 //! is never sent twice, a read no more than a write, so a client never repeats work the server may
 //! have done. One the server took on a connection that worked and did not answer within the
 //! client's wait ([`Client::waiting`]), or a startup it did not answer in that time, says the
-//! server is slow in the words [`crate::rpc::slow`] knows, as the `rpc` client consumers keep says
-//! it: a server that is there and late, never one that cannot be reached. The system says such a wait
-//! run out as its bare error, `EAGAIN`, "Resource temporarily unavailable", which names no wait,
-//! as a blocking socket's timeout does.
+//! server is slow in the words [`crate::rpc::slow`] knows: a server that is there and late, never
+//! one that cannot be reached. The system says such a wait run out as its bare error, `EAGAIN`,
+//! "Resource temporarily unavailable", which names no wait, as a blocking socket's timeout does.
 
 use crate::db::DbError;
 use crate::lock::Recovered as _;
-use socket::Socket;
+use crate::socket::Socket;
 use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
@@ -47,7 +46,6 @@ use std::time::{Duration, Instant};
 pub mod external;
 #[cfg(feature = "hosted-postgresql")]
 pub mod hosted;
-mod socket;
 mod wire;
 
 #[cfg(test)]
@@ -127,8 +125,8 @@ pub struct Client {
 /// to ([`Connection::exchange`]), each a descriptor of its own that waits the client's wait.
 #[derive(Debug)]
 struct Connection {
-    stream: BufReader<Socket>,
-    writer: Socket,
+    stream: BufReader<Socket<UnixStream>>,
+    writer: Socket<UnixStream>,
 }
 
 impl Client {
@@ -465,13 +463,13 @@ impl Connection {
         }
         let ended = AtomicBool::new(false);
         // The connection ended for both sides, and whether this was the first to end it.
-        let end = |stream: &Socket| {
+        let end = |stream: &Socket<UnixStream>| {
             let first = !ended.swap(true, Ordering::SeqCst);
             let _ = stream.shutdown(Shutdown::Both);
             first
         };
         let Connection { stream, writer } = self;
-        let writer: &Socket = writer;
+        let writer: &Socket<UnixStream> = writer;
         std::thread::scope(|scope| {
             let sending = std::thread::Builder::new()
                 .name("board-pg-send".into())

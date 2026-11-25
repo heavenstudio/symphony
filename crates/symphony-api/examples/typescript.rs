@@ -2178,11 +2178,12 @@ fn documents() -> Vec<(&'static str, Value)> {
         ),
         (
             "asks",
-            json!({"asks": [part::ask()], "listening": true, "recipient": "amber-heron"}),
+            json!({"asks": [part::ask()], "listening": true, "recipient": "amber-heron",
+                "may_ask": true}),
         ),
         (
             "noAsks",
-            json!({"asks": [], "listening": false, "recipient": null}),
+            json!({"asks": [], "listening": false, "recipient": null, "may_ask": false}),
         ),
     ]
 }

@@ -174,7 +174,8 @@ fn inherited(
     let Ok(text) = var(INHERITED.name) else {
         return Ok(None);
     };
-    let transfer = serde_json::from_str::<Transfer>(&text).map_err(|e| e.to_string())?;
+    let transfer =
+        serde_json::from_slice::<Transfer>(text.as_bytes()).map_err(|e| e.to_string())?;
     Ok((transfer.parent == parent).then_some(transfer))
 }
 
@@ -194,7 +195,8 @@ pub(crate) fn setup(serve: &Serve) -> Result<Setup, String> {
             .chain([transfer.lease])
             .chain(ends.iter().copied())
             .collect();
-        let unique: std::collections::BTreeSet<_> = all.iter().copied().collect();
+        let mut unique: std::collections::BTreeSet<_> = std::collections::BTreeSet::new();
+        unique.extend(all.iter().copied());
         if unique.len() != all.len()
             || transfer.listeners.is_empty()
             || all.iter().any(|&fd| fd < 3)

@@ -672,7 +672,7 @@ pub fn audit(root: &Path) -> Result {
     let mut result = Result::default();
     let renderer = Render::new(root);
     let mut docs = doc_paths(root);
-    docs.sort();
+    symphony_board::order::sort_by(&mut docs, &Ord::cmp);
     let project = crate::project::Project::of(root);
     let mut folders: Vec<String> = project.entrypoints.iter().map(|e| e.url.clone()).collect();
     for rel in &docs {
@@ -685,7 +685,7 @@ pub fn audit(root: &Path) -> Result {
             folder = path.parent();
         }
     }
-    folders.sort();
+    symphony_board::order::sort_by(&mut folders, &Ord::cmp);
     folders.dedup();
     let fork = crate::branches::Fork::of(root);
     let refuses = fork.is_some() && !main_itself(root);
@@ -810,7 +810,7 @@ fn recipes_named(
         .filter(|file| recipes::beside_documents(file) && !texts.iter().any(|(at, ..)| at == *file))
         .cloned()
         .collect();
-    beside.sort();
+    symphony_board::order::sort_by(&mut beside, &Ord::cmp);
     for file in beside {
         if let Ok(text) = read(&file) {
             texts.push((file, 1, text));

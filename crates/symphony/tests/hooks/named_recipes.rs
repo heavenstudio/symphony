@@ -235,7 +235,7 @@ fn files(dir: &Path) -> Vec<PathBuf> {
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect();
-    entries.sort();
+    symphony_board::order::sort_by(&mut entries, &Ord::cmp);
     for path in entries {
         if path.is_dir() {
             found.extend(files(&path));
@@ -264,7 +264,7 @@ fn texts() -> Vec<(String, usize, String)> {
             .map(|entry| entry.unwrap().path().join("src"))
             .filter(|src| src.is_dir())
             .collect();
-        members.sort();
+        symphony_board::order::sort_by(&mut members, &Ord::cmp);
         for path in members.iter().flat_map(|src| files(src)) {
             let rel = relative(&path);
             let name = path.file_name().unwrap().to_string_lossy();

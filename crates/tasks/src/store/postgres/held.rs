@@ -119,7 +119,9 @@ board_answer := (SELECT doc FROM held_message WHERE id = {key});"
 }
 
 /// The held comment `v ->> 'id'`, passed on by `v ->> 'by'`: refused where none is held by it or it
-/// was passed already, naming who passed it; else the row marked passed, its answer.
+/// was passed already, naming who passed it; else the row marked passed, its answer, and kept
+/// under the checkout `v -> 'into'` names (`{"scope": SCOPE}`, `{}` the project's own) where `v`
+/// has one.
 pub(in crate::store) fn pass_on_document() -> Pg<'static> {
     let key = document_key("v ->> 'id'");
     Pg::script(format!(
@@ -129,7 +131,10 @@ IF held_ IS NULL THEN RAISE EXCEPTION '%', v ->> 'none_held'; END IF;
 IF held_ ? 'passed' THEN
     RAISE EXCEPTION '%', format(v ->> 'passed_already', held_ #>> '{{passed,by}}');
 END IF;
-UPDATE held_message SET doc = doc || jsonb_build_object('passed',
+IF v ? 'into' THEN
+    held_ := jsonb_set(held_, '{{document}}', (held_ -> 'document') - 'scope' || (v -> 'into'));
+END IF;
+UPDATE held_message SET doc = held_ || jsonb_build_object('passed',
         jsonb_build_object('by', v ->> 'by', 'at', (v ->> 'now')::double precision))
     WHERE id = {key};
 board_answer := (SELECT doc FROM held_message WHERE id = {key});
@@ -166,4 +171,30 @@ pub(in crate::store) fn comment() -> Pg<'static> {
 /// The comments held on documents and not passed on.
 pub(in crate::store) fn unpassed() -> Pg<'static> {
     on_documents("NOT doc ? 'passed'")
+}
+
+/// The condition on `doc` of a comment on a document passed into the checkout `v ->> 'scope'`.
+const PASSED_INTO: &str =
+    "doc ? 'document' AND doc ? 'passed' AND doc #>> '{document,scope}' = v ->> 'scope'";
+
+/// How many comments on documents were passed into the checkout `v ->> 'scope'`: none on a board
+/// without the step.
+pub(in crate::store) fn passed_into() -> Pg<'static> {
+    Pg::script(format!(
+        "board_answer := '0'::jsonb;
+IF to_regclass('held_message') IS NOT NULL THEN
+    board_answer := to_jsonb((SELECT count(*) FROM held_message WHERE {PASSED_INTO}));
+END IF;"
+    ))
+}
+
+/// The comments on documents passed into the checkout `v ->> 'scope'` kept under the project's own
+/// from now on, their scope dropped: how many, its answer.
+pub(in crate::store) fn passed_into_main() -> Pg<'static> {
+    Pg::script(format!(
+        "UPDATE held_message SET doc = jsonb_set(doc, '{{document}}', (doc -> 'document') - 'scope')
+    WHERE {PASSED_INTO};
+GET DIAGNOSTICS sid_ = ROW_COUNT;
+board_answer := to_jsonb(sid_);"
+    ))
 }

@@ -549,7 +549,7 @@ fn remove_retired(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Re
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| !shipped.skills.iter().any(|skill| &skill.name == name))
         .collect();
-    names.sort();
+    symphony_board::order::sort_by(&mut names, &Ord::cmp);
     for name in names {
         let folder = root.join(SKILLS).join(&name);
         let main = folder.join("SKILL.md");
@@ -634,7 +634,7 @@ fn justfile(root: &Path) -> io::Result<Option<PathBuf>> {
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| matches!(name.to_lowercase().as_str(), "justfile" | ".justfile"))
         .collect();
-    names.sort();
+    symphony_board::order::sort_by(&mut names, &Ord::cmp);
     Ok(names.first().map(|name| root.join(name)))
 }
 
@@ -940,7 +940,7 @@ fn install_settings(root: &Path, report: &mut Report) -> io::Result<()> {
     let path = root.join(SETTINGS);
     let have = read_optional(&path)?;
     let mut settings: Value = match &have {
-        Some(text) => serde_json::from_str(text).map_err(|error| {
+        Some(text) => serde_json::from_slice(text.as_bytes()).map_err(|error| {
             io::Error::new(io::ErrorKind::InvalidData, format!("{SETTINGS}: {error}"))
         })?,
         None => json!({}),

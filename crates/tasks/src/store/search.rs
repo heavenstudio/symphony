@@ -149,7 +149,7 @@ mod tests {
         groups: BTreeMap<String, Vec<ScoredSource>>,
     ) -> BTreeMap<String, SearchSource> {
         let mut rows: Vec<_> = groups.into_values().flatten().collect();
-        rows.sort_by(|a, b| {
+        crate::order::sort_by(&mut rows, &|a, b| {
             a.rank
                 .cmp(&b.rank)
                 .then_with(|| b.score.total_cmp(&a.score))

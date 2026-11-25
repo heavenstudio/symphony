@@ -790,9 +790,11 @@ async fn board_read(
     let after = query(request, "after").and_then(|id| id.parse().ok());
     let from = query(request, "from").and_then(|n| n.parse::<usize>().ok());
     // The cards a board drew, a JSON list of at most TASK_COSTS_MOST slugs.
-    let costs = serde_json::from_str::<Vec<String>>(&query(request, "slugs").unwrap_or_default())
-        .ok()
-        .filter(|slugs| slugs.len() <= symphony_api::TASK_COSTS_MOST);
+    let costs = serde_json::from_slice::<Vec<String>>(
+        query(request, "slugs").unwrap_or_default().as_bytes(),
+    )
+    .ok()
+    .filter(|slugs| slugs.len() <= symphony_api::TASK_COSTS_MOST);
     let page = AgentsAsked {
         offset: query(request, "offset")
             .and_then(|n| n.parse::<usize>().ok())
@@ -924,6 +926,22 @@ async fn board_read(
 /// no one but the machine's person the control, whose press the route would refuse.
 fn passes(store: &symphony_board::Store, machine: bool, name: &str) -> bool {
     machine || (store.people()).is_ok_and(|people| crate::powers::may_pass(&people, name))
+}
+
+/// Whether who asks `request` may ask about a document and follow an ask up, which its page draws
+/// Ask and Follow up for: the person at the machine, or a person holding what `/api/ask` needs
+/// ([`crate::powers::may_ask`]). Never a hosted visitor, who saves nothing here, and no one but the
+/// machine's person on a board whose people cannot be read, as the route would refuse their press.
+fn may_ask(shared: &Shared, hub: &Hub, request: &Request) -> bool {
+    if crate::hosted::admission(request).is_some() {
+        return false;
+    }
+    if crate::front::Admitted::machine(request.extensions()) {
+        return true;
+    }
+    let actor = crate::front::Admitted::actor(shared, request.extensions());
+    (hub.on_reader(symphony_board::Store::people))
+        .is_ok_and(|people| crate::powers::may_ask(&people, actor.name()))
 }
 
 /// The comments held for people on the document `rel` of the checkout `scope` (empty: the
@@ -1119,8 +1137,14 @@ fn document_response(
                 .ok()
                 .and_then(|board| board.chat_recipient().ok().flatten())
         });
-        return match ask_response(&render, rel, scope, request, path == "/api/asks", recipient) {
-            Ok(value) => no_store(Json(value)),
+        let list = path == "/api/asks";
+        return match ask_response(&render, rel, scope, request, list, recipient) {
+            Ok(mut value) => {
+                if list {
+                    value["may_ask"] = json!(may_ask(shared, hub, request));
+                }
+                no_store(Json(value))
+            }
             Err((status, why)) => error(status, why),
         };
     }
@@ -1167,8 +1191,8 @@ fn document_response(
                 json!(folder)
             }),
         "/api/section" if query(request, "keys").is_some() => {
-            let keys = match serde_json::from_str::<Vec<String>>(
-                &query(request, "keys").unwrap_or_default(),
+            let keys = match serde_json::from_slice::<Vec<String>>(
+                query(request, "keys").unwrap_or_default().as_bytes(),
             ) {
                 Ok(keys) => keys,
                 Err(_) => {
@@ -1616,7 +1640,7 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
     let document_filter = {
         let path = query(&request, "document").unwrap_or_default();
         let keys = query(&request, "sections")
-            .and_then(|keys| serde_json::from_str::<Vec<String>>(&keys).ok())
+            .and_then(|keys| serde_json::from_slice::<Vec<String>>(keys.as_bytes()).ok())
             .unwrap_or_default();
         (path, keys)
     };
@@ -1743,7 +1767,7 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
 /// threads only for sections its viewport has requested. Other streams receive no documents.
 fn filtered_document_event(json: &str, filter: &(String, Vec<String>)) -> String {
     let (path, keys) = filter;
-    let Ok(mut event) = serde_json::from_str::<serde_json::Value>(json) else {
+    let Ok(mut event) = serde_json::from_slice::<serde_json::Value>(json.as_bytes()) else {
         return json.into();
     };
     if let Some(changes) = event["changes"].as_array_mut() {
@@ -1835,7 +1859,7 @@ fn typed_anchors(value: &serde_json::Value) -> Vec<String> {
     }
     let mut ids = Vec::new();
     collect(value, &mut ids);
-    ids.sort();
+    symphony_board::order::sort_by(&mut ids, &Ord::cmp);
     ids.dedup();
     ids
 }

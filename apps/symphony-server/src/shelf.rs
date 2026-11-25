@@ -348,7 +348,7 @@ fn build(root: &Path) -> Vec<GalleryItem> {
                 && path.is_file()
         })
         .collect();
-    paths.sort();
+    symphony_board::order::sort_by(&mut paths, &Ord::cmp);
     let mut items = Vec::new();
     for path in paths {
         let Some(name) = path.file_stem().and_then(|name| name.to_str()) else {

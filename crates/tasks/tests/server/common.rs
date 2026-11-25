@@ -37,7 +37,7 @@ pub fn prune_kept(root: &Path, keep: usize) {
                 .then_some((meta.modified().ok()?, entry.path()))
         })
         .collect();
-    kept.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    symphony_board::order::sort_by_key(&mut kept, &|(modified, _)| std::cmp::Reverse(*modified));
     for (_, path) in kept.into_iter().skip(keep) {
         let _ = std::fs::remove_dir_all(path);
     }
@@ -136,9 +136,9 @@ fn kept_folders_of_ended_runs_are_pruned_to_the_newest() {
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
-    left.sort();
+    symphony_board::order::sort_by(&mut left, &Ord::cmp);
     let mut expected = vec![names[2].clone(), names[3].clone(), names[4].clone(), file];
-    expected.sort();
+    symphony_board::order::sort_by(&mut expected, &Ord::cmp);
     assert_eq!(left, expected);
     let _ = std::fs::remove_dir_all(&root);
 }

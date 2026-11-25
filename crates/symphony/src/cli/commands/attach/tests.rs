@@ -41,7 +41,7 @@ fn store(root: &Path) -> Vec<String> {
     let mut names: Vec<String> = entries
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    names.sort();
+    symphony_board::order::sort_by(&mut names, &Ord::cmp);
     names
 }
 
@@ -100,7 +100,7 @@ fn a_file_attached_in_a_linked_worktree_is_stored_in_its_main_checkout_from_any_
     );
     assert!(paper.is_file());
     let mut both = vec![stored_as(PNG, "png"), stored_as(PDF, "pdf")];
-    both.sort();
+    symphony_board::order::sort_by(&mut both, &Ord::cmp);
     assert_eq!(store(&main), both, "the main checkout's store");
     assert_eq!(store(&linked), Vec::<String>::new(), "none in the worktree");
 }

@@ -536,7 +536,7 @@ mod tests {
             thread.join().unwrap();
         }
         let mut closed = numbers.closed.lock().unwrap().clone();
-        closed.sort_unstable();
+        crate::order::sort_by(&mut closed, &Ord::cmp);
         assert_eq!(
             closed,
             [0, 1],

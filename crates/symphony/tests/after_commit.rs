@@ -2,6 +2,10 @@
 include!("common/commit_fixture.rs");
 use symphony_board::{rpc, sys};
 
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "common/test_channel.rs"]
+mod test_channel;
+
 #[path = "after_commit/delivery.rs"]
 mod delivery;
 #[path = "after_commit/publication_reports.rs"]
@@ -166,7 +170,7 @@ fn child_stages_are_forwarded_before_the_child_closes_its_output() {
     }
     // A pipe no git another test spawns meanwhile can keep: the relay's end comes with `child`'s.
     let (reader, mut child) = sys::pipe().unwrap();
-    let (send, receive) = std::sync::mpsc::channel();
+    let (send, receive) = crate::test_channel::channel();
     let forwarding = std::thread::spawn(move || {
         let mut saved = Vec::new();
         relay_output(
@@ -432,7 +436,7 @@ fn two_verdicts_race_without_lost_files_or_merge_commits() {
             .filter(|line| !line.is_empty())
             .map(str::to_owned)
             .collect();
-            changed.sort();
+            symphony_board::order::sort_by(&mut changed, &Ord::cmp);
             assert_eq!(changed, ["docs/a.md", "docs/b.md"]);
             f.clean_workers();
         },
@@ -2222,7 +2226,9 @@ fn a_journal_from_before_asks_and_an_ask_the_board_refuses_still_deliver_their_c
                 .fields(&["text"])
                 .unwrap();
             let mut rows = rows.as_array().unwrap().clone();
-            rows.sort_by(|a, b| a["text"].as_str().cmp(&b["text"].as_str()));
+            symphony_board::order::sort_by(&mut rows, &|a, b| {
+                a["text"].as_str().cmp(&b["text"].as_str())
+            });
             assert_eq!(
                 rows,
                 [

@@ -12,7 +12,7 @@ use super::reports::{Rollup, say};
 use crate::testing::board::{Fixture, NOW, report_board};
 use crate::testing::{Tree, repository};
 use std::path::Path;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 use symphony_api::{ReportDay, ReportHour};
 use symphony_board::recording::Gate;
 use symphony_board::reports::{DAY, HOUR, day_start};
@@ -300,7 +300,7 @@ fn a_private_server_keeps_no_day_files_and_the_shared_one_keeps_them_in_the_comm
         "the runs it rolls up are the recorder's, in the same folder"
     );
     // A roll-up that has not ended, as one stuck in git would be: the stop waits on none of it.
-    let (release, held) = mpsc::channel::<()>();
+    let (release, held) = crate::test_channel::channel::<()>();
     let stuck = std::thread::spawn(move || {
         let _ = held.recv();
     });
@@ -326,7 +326,7 @@ fn an_hour_that_comes_while_a_roll_up_runs_waits_for_it_and_then_rolls_up() {
     let hub = shared(&root, &folder, &clock);
     let log = fixture.store.database().queries();
     let (requests, _) = log.report(now());
-    let (release, held) = mpsc::channel::<()>();
+    let (release, held) = crate::test_channel::channel::<()>();
     let running = std::thread::spawn(move || {
         let _ = held.recv();
     });

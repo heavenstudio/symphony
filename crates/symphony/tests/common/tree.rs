@@ -46,12 +46,16 @@ impl Tree {
 
     /// The names in the folder `rel`, sorted: what a write left beside its file.
     pub fn names(&self, rel: &str) -> Vec<String> {
-        let mut names: Vec<String> = std::fs::read_dir(self.path(rel))
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
-            .collect();
-        names.sort();
-        names
+        // A set, not a sort: the web client's tests and the Mac app read this file by path, linking
+        // no shared sorter, refusing an `allow` and refusing no sort, where an `expect` goes
+        // unfulfilled. One folder's names are each once, so the set's order is the sort's.
+        let mut names = std::collections::BTreeSet::new();
+        names.extend(
+            std::fs::read_dir(self.path(rel))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string()),
+        );
+        names.into_iter().collect()
     }
 
     /// A file opened for reading before a write, and its permission bits, set to `mode` first.

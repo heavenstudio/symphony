@@ -820,7 +820,9 @@ impl Saves {
                 if let Some(refused) = held::not_held(passed.id, now.as_ref()) {
                     return Err(refused);
                 }
-                Some((store, passed))
+                // Marked, it is kept under the checkout it is written to: a later pass counts it.
+                let (into, _) = self.named(scope, string(payload, "path"))?;
+                Some((store, passed, Some(into).filter(|into| !into.is_empty())))
             }
             None => None,
         };
@@ -884,19 +886,39 @@ impl Saves {
         };
         // A pass whose words the document holds already, written by a press whose mark or commit
         // did not follow: nothing is written again, and the row is marked, its ask and callback
-        // following now, as that press's never did.
-        if let Some((store, passed)) = &passing {
-            let place = &passed.document;
-            let mut rows = store.held_on_document(&place.path, place.scope.as_deref())?;
-            // A card's message typed on a branch's page and written on main's card: main's rows
-            // count too.
-            let (written, _) = self.named(scope, string(payload, "path"))?;
-            if place.scope.as_deref().unwrap_or("") != written {
-                let written = Some(written).filter(|written| !written.is_empty());
-                rows.extend(store.held_on_document(&rel, written)?);
-            }
+        // following now, as that press's never did. The rows counted are those kept under the
+        // checkout it writes to: each one passed wrote into this file, from whichever page, and a
+        // worktree's are main's once a sweep removed it, all it held landed
+        // (`Store::held_landed`). Until then, or for a branch merged by hand whose worktree is
+        // never swept, the line a landed branch brought is no row of main's: a later pass of the
+        // same words onto main's card is marked without its own line, once too few. So is one in
+        // a landed branch reopened in a new worktree, whose rows went to main's with the old one.
+        //
+        // Three cases are left, each needing a press whose words went in and whose mark was
+        // refused, then another press of that comment; each leaves her words twice on one card:
+        // - typed on a branch's page that drew main's card, the first press wrote it there; the
+        //   branch then posts on the card, which its page draws as its own, and the next press
+        //   writes it on the branch's card: once on each, twice on main's once the branch lands;
+        // - typed on a branch's page that drew its own card, the first press wrote it there; main
+        //   then closes its copy after every line of the branch's (`branches::mains_card`), and
+        //   the next press writes it on main's card: twice once the branch lands (the branch
+        //   landing or going between the presses instead, it is found, or written once);
+        // - a pass of the same words wrote into a branch that went unlanded, and a branch of its
+        //   name is made again: that row counts against the new branch's file, so the press after
+        //   one into it writes them twice there. The product never deletes a branch that did not
+        //   land (a land deletes the one it landed, a sweep only landed ones), and a branch is
+        //   named for its task's slug, which one task holds: only a hand meets it.
+        //
+        // A hand also makes a moved row count a line main lacks, so that the press after one whose
+        // mark was refused writes the words twice on main's card: the pass's line discarded while
+        // uncommitted, or dropped by a reset or a rebase of the branch, before the sweep removes
+        // the clean tree. Two worktrees on one branch (`git worktree add --force`), the pass
+        // writing into the one that stays, would be another, but the sweep moves no row while
+        // another worktree holds the branch.
+        if let Some((store, passed, into)) = &passing {
+            let rows = store.held_on_document(&rel, *into)?;
             if held::written_already(&original, passed, &rows) {
-                store.pass_on_document(passed.id, actor.name())?;
+                store.pass_on_document_into(passed.id, actor.name(), *into)?;
                 let ask =
                     self.document_ask(route, payload, &root, &rel, &original, comment.as_ref());
                 let value = if pending {
@@ -1042,8 +1064,8 @@ impl Saves {
                 .map_err(|error| if pending { take_back(error) } else { error })?;
         }
         // Its words are in the file, or kept for its delivery: the board marks it passed.
-        if let Some((store, passed)) = &passing {
-            store.pass_on_document(passed.id, actor.name())?;
+        if let Some((store, passed, into)) = &passing {
+            store.pass_on_document_into(passed.id, actor.name(), *into)?;
         }
         if !tap.is_empty() {
             taps.push_back((

@@ -275,6 +275,10 @@ fn shared_watch_root_sort_preserves_all_equal_length_refs_and_reports_cpu_cost()
         .collect();
     let mut actual: Vec<_> = folders.iter().rev().collect();
     let mut expected = actual.clone();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the standard sort this test holds the shared sorter to"
+    )]
     let (_, old_cpu) = test_time::cpu::spent(|| expected.sort_by_key(|folder| folder.len()));
     let (_, new_cpu) = test_time::cpu::spent(|| {
         symphony_board::order::sort_by_key(&mut actual, &|folder| folder.len())

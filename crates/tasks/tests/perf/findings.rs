@@ -143,7 +143,7 @@ pub fn findings(plan: &Value) -> Vec<Finding> {
     let hashed = hashed(plan);
     let mut found = Vec::new();
     walk(plan, &hashed, None, &mut found);
-    found.sort();
+    symphony_board::order::sort_by(&mut found, &Ord::cmp);
     found.dedup();
     found
 }
@@ -196,7 +196,7 @@ pub fn whole_reads(plan: &Value) -> Vec<String> {
     }
     let mut found = Vec::new();
     walk(plan, &mut found);
-    found.sort();
+    symphony_board::order::sort_by(&mut found, &Ord::cmp);
     found.dedup();
     found
 }

@@ -1,9 +1,9 @@
 //! Words held for people ([`crate::held`]): a person's message held with the board's line that says
 //! so, a held message passed on, and the reads of a task's held messages, in the table of
 //! [`crate::schema::HELD`]; and beside them a person's comment on a document held, marked passed
-//! once its words are in the file, and the reads of a document's. A board without the step holds
-//! nothing: its reads find none, and a hold or a pass there is refused by the schema's guard
-//! before anything is written.
+//! once its words are in the file, kept under main's once the worktree it was passed into is swept,
+//! and the reads of a document's. A board without the step holds nothing: its reads find none, and
+//! a hold or a pass there is refused by the schema's guard before anything is written.
 
 use super::messages::{BOARD, Poster};
 use super::postgres::held as pg;
@@ -257,7 +257,30 @@ impl Store {
     /// who passed it), and a board without the step. Whether `by` may direct agents is its caller's
     /// to have checked, as every power is (`apps/symphony-server/src/powers.rs`).
     pub fn pass_on_document(&self, id: i64, by: &str) -> Result<OnDocument, Error> {
-        let vars = self.acting(
+        self.mark_on_document(id, by, None)
+    }
+
+    /// [`Store::pass_on_document`], the row then kept under the checkout `scope` its pass wrote to
+    /// (none: the project's own) in place of its page's: a message typed on a branch's page and
+    /// written on main's card is main's file's, where the count of a later pass reads it
+    /// (`crates/symphony/src/save/held.rs`). No page draws a passed comment, so it moves none.
+    pub fn pass_on_document_into(
+        &self,
+        id: i64,
+        by: &str,
+        scope: Option<&str>,
+    ) -> Result<OnDocument, Error> {
+        self.mark_on_document(id, by, Some(scope))
+    }
+
+    /// The pass of the held comment `id` by `by` recorded, its scope moved `into` the one given.
+    fn mark_on_document(
+        &self,
+        id: i64,
+        by: &str,
+        into: Option<Option<&str>>,
+    ) -> Result<OnDocument, Error> {
+        let mut vars = self.acting(
             by,
             self.now(),
             json!({
@@ -268,6 +291,10 @@ impl Store {
                 ),
             }),
         );
+        // An object, as a null variable is dropped: `{}` for the project's own checkout.
+        if let Some(scope) = into {
+            vars["into"] = json!({ "scope": scope });
+        }
         let body = || Statement::from(pg::pass_on_document()).naming(&pg::TABLES);
         self.retrying(|| self.transact(body(), vars.clone()))
     }
@@ -290,6 +317,28 @@ impl Store {
     /// The comments held on documents and not passed on, oldest first: what is told of them.
     pub fn held_on_documents(&self) -> Result<Vec<OnDocument>, Error> {
         self.held_documents(pg::unpassed(), json!({}))
+    }
+
+    /// The comments on documents passed into the checkout `scope` (a worktree's id) kept under the
+    /// project's own from now on, once a sweep removed its worktree (`crate::sweep`): it removes
+    /// one only when its HEAD is in main and it holds nothing that did not land, and moves its
+    /// rows only once no other worktree holds its branch, so every line a pass wrote into its
+    /// files is in main's, where the count of a later pass reads its row
+    /// (`crates/symphony/src/save/held.rs`). One still held stays where its page drew it. How many
+    /// moved: none, with nothing written, where none was passed into it, as on a board without the
+    /// step.
+    pub fn held_landed(&self, scope: &str) -> Result<u64, Error> {
+        let vars = json!({ "scope": scope });
+        let passed = self.retrying(|| {
+            let answer = self.request(Statement::from(pg::passed_into()), vars.clone());
+            let answer = answer.map_err(Failure::from)?;
+            Ok(answer.last().and_then(Value::as_u64).unwrap_or(0))
+        })?;
+        if passed == 0 {
+            return Ok(0);
+        }
+        let body = || Statement::from(pg::passed_into_main()).naming(&pg::TABLES);
+        self.retrying(|| self.transact(body(), vars.clone()))
     }
 
     /// The held comments the read `statement` answers with `vars`.

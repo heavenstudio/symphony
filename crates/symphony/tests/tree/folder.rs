@@ -291,7 +291,7 @@ fn a_listed_folder_says_the_queues_cards_under_it_the_sum_of_its_documents() {
         .queue
         .waiting;
     let mut slugs: Vec<_> = queue.iter().map(|card| card.slug.clone()).collect();
-    slugs.sort();
+    symphony_board::order::sort_by(&mut slugs, &Ord::cmp);
     assert_eq!(slugs, ["a", "b", "x"]);
     // A branch's proposal in a document main does not have yet, and a card in a folder whose
     // name only starts like lamps.

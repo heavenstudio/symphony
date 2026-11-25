@@ -7,6 +7,10 @@ mod fixture;
 #[path = "common/bash_env.rs"]
 mod bash_env;
 
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "common/test_channel.rs"]
+mod test_channel;
+
 #[expect(
     dead_code,
     reason = "Only the private database is needed by this HTTP fixture"

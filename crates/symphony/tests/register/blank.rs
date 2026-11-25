@@ -37,7 +37,7 @@ fn sort_register_keeps_every_line() {
             .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
             .cloned()
             .collect();
-        kept.sort();
+        symphony_board::order::sort_by(&mut kept, &Ord::cmp);
         kept
     };
     assert_eq!(kept(&out), kept(&lines(&text)));
