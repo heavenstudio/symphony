@@ -191,9 +191,8 @@ impl Pass {
     /// Lift the waiting mark from each task of `board` that carries it and is somebody's now,
     /// finished, or no longer the top of what waits.
     fn unmark_settled(&mut self, board: &Board, versions: &Versions) {
-        let decided: BTreeSet<&str> = (self.fenced.iter())
-            .filter_map(|f| f["slug"].as_str())
-            .collect();
+        let mut decided: BTreeSet<&str> = BTreeSet::new();
+        decided.extend((self.fenced.iter()).filter_map(|f| f["slug"].as_str()));
         let settled: Vec<&Task> = (board.tasks.iter())
             .filter(|t| orchestration::waiting(&t.fields).is_some())
             .filter(|t| !decided.contains(t.slug.as_str()))
@@ -530,9 +529,8 @@ impl Store {
             }
             at += 1;
         }
-        let wanted: BTreeSet<String> = (was.iter().chain(&under).chain(&moved))
-            .map(|s| (*s).to_owned())
-            .collect();
+        let mut wanted: BTreeSet<String> = BTreeSet::new();
+        wanted.extend((was.iter().chain(&under).chain(&moved)).map(|s| (*s).to_owned()));
         let wanted: Vec<String> = wanted.into_iter().collect();
         let (board, versions) = self.versions_of(&Which::Slugs(&wanted))?;
         let Some(to) = Owners::new(&board.tasks)

@@ -3,6 +3,7 @@
 use super::{Finished, Options, canonical, coalesce, git, sweep, trigger};
 use crate::{Store, cli::Env, sys};
 use std::borrow::Borrow;
+use std::collections::BTreeSet;
 
 /// What `tasks sweep` was asked.
 #[derive(Debug, Clone, Default)]
@@ -64,19 +65,16 @@ pub fn command_connect<S: Borrow<Store>>(
         // its branches.
         let only = if scoped {
             let listed = git::worktrees(&here)?;
-            Some(
-                listed
-                    .iter()
-                    .filter_map(|tree| {
-                        let path = canonical(&tree.path);
-                        let branch = tree
-                            .branch
-                            .as_deref()
-                            .and_then(|b| b.strip_prefix("refs/heads/"));
-                        finished.covers(&path, branch).then_some(path)
-                    })
-                    .collect(),
-            )
+            let mut covered = BTreeSet::new();
+            covered.extend(listed.iter().filter_map(|tree| {
+                let path = canonical(&tree.path);
+                let branch = tree
+                    .branch
+                    .as_deref()
+                    .and_then(|b| b.strip_prefix("refs/heads/"));
+                finished.covers(&path, branch).then_some(path)
+            }));
+            Some(covered)
         } else {
             None
         };

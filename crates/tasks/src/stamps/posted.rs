@@ -148,7 +148,8 @@ fn approval(main: &Path, tip: &str, deciders: &[String]) -> Option<Approval> {
     }
     let (slug, line) = approve?;
     let names: Vec<String> = posted.iter().map(|card| card.slug.clone()).collect();
-    let named: BTreeSet<String> = names.iter().cloned().collect();
+    let mut named: BTreeSet<String> = BTreeSet::new();
+    named.extend(names.iter().cloned());
     // A tip with no commit of its own past the base posted nothing.
     let Some(before) = first_other(main, tip, &base, &default_tip, &named, &folders)? else {
         return nothing();
@@ -405,7 +406,7 @@ impl Doc {
             by_name.entry(card.slug).or_default().push(copy);
         }
         for copies in by_name.values_mut() {
-            copies.sort();
+            crate::order::sort_by(copies, &Ord::cmp);
         }
         let mut other = Vec::new();
         let mut register = false;

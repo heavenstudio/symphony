@@ -3300,8 +3300,9 @@ impl Landing<'_> {
         let range = format!("^{base}");
         let brought = told(&self.main, &["rev-list", tip, &range])
             .map_err(|why| format!("the commits {slug} brings could not be listed: {why}"))?;
-        let brought = String::from_utf8_lossy(&brought.stdout).into_owned();
-        let brought: BTreeSet<&str> = brought.split_whitespace().collect();
+        let commits = String::from_utf8_lossy(&brought.stdout).into_owned();
+        let mut brought: BTreeSet<&str> = BTreeSet::new();
+        brought.extend(commits.split_whitespace());
         let mut left = Vec::new();
         for entry in listed {
             if entry.bare

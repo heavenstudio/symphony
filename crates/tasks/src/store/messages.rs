@@ -612,7 +612,9 @@ impl Store {
                 json!({"delivered": DELIVERED}),
             )
         })?;
-        Ok(slugs.into_iter().collect())
+        let mut landed = BTreeSet::new();
+        landed.extend(slugs);
+        Ok(landed)
     }
 }
 

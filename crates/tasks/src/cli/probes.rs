@@ -48,17 +48,17 @@ pub fn native_inventory(
     common: &Path,
     limit: Duration,
 ) -> Answer<Vec<u8>> {
-    let vars = env
-        .vars
-        .iter()
-        .filter(|(key, _)| {
-            matches!(
-                key.as_str(),
-                "PATH" | "LANG" | "LC_ALL" | "LLVM_PROFILE_FILE"
-            )
-        })
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
+    let mut vars = std::collections::BTreeMap::new();
+    vars.extend(
+        (env.vars.iter())
+            .filter(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    "PATH" | "LANG" | "LC_ALL" | "LLVM_PROFILE_FILE"
+                )
+            })
+            .map(|(key, value)| (key.clone(), value.clone())),
+    );
     let mut command = sys::command_with(reader, &vars);
     command
         .args(["machine-work", "--common-dir"])
@@ -206,7 +206,7 @@ fn places(dir: &Path, names: &[String], prefix: &str) -> Vec<PathBuf> {
             Some((seq.parse().ok().filter(|_| digits)?, name))
         })
         .collect();
-    found.sort_unstable();
+    crate::order::sort_by(&mut found, &Ord::cmp);
     found.into_iter().map(|(_, name)| dir.join(name)).collect()
 }
 

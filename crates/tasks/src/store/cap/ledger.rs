@@ -64,7 +64,8 @@ impl Observation {
         store: &Store,
         parent: Option<&str>,
     ) -> Result<(), Failure> {
-        let mut looked: BTreeSet<String> = self.rows.keys().cloned().collect();
+        let mut looked: BTreeSet<String> = BTreeSet::new();
+        looked.extend(self.rows.keys().cloned());
         for _ in 0..DEPTH {
             let above = self
                 .rows

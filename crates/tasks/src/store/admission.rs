@@ -476,7 +476,7 @@ impl Store {
             crate::Held::default()
         };
         let mut dependencies = read.dependencies;
-        dependencies.sort();
+        crate::order::sort_by(&mut dependencies, &Ord::cmp);
         dependencies.dedup();
         let facts = Facts {
             slug: task.slug.clone(),

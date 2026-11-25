@@ -185,13 +185,16 @@ fn project(
     let listed = |task: &symphony_api::Task| {
         symphony::taskview::listed_under_parent(&task.slug, task.instruction, &task.status)
     };
-    let ids: std::collections::BTreeSet<_> = tasks.tasks.iter().map(|t| t.slug.clone()).collect();
-    let parents: std::collections::BTreeSet<_> = tasks
-        .tasks
-        .iter()
-        .filter(|t| listed(t))
-        .filter_map(|t| t.parent.clone())
-        .collect();
+    let mut ids: std::collections::BTreeSet<_> = std::collections::BTreeSet::new();
+    ids.extend(tasks.tasks.iter().map(|t| t.slug.clone()));
+    let mut parents: std::collections::BTreeSet<_> = std::collections::BTreeSet::new();
+    parents.extend(
+        tasks
+            .tasks
+            .iter()
+            .filter(|t| listed(t))
+            .filter_map(|t| t.parent.clone()),
+    );
     tasks.tasks.retain(|task| {
         (!top_level || task.is_task())
             && (parent
@@ -245,7 +248,7 @@ fn project(
             )
         })
         .collect();
-    rows.sort_by(|a, b| a.0.compare(&b.0, order));
+    symphony_board::order::sort_by(&mut rows, &|a, b| a.0.compare(&b.0, order));
     let mut counts = std::collections::BTreeMap::<String, usize>::new();
     let mut lifecycle_counts = std::collections::BTreeMap::<String, usize>::new();
     let mut parent_index = 0_usize;

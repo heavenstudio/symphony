@@ -1834,7 +1834,7 @@ fn typed_anchors(value: &serde_json::Value) -> Vec<String> {
     }
     let mut ids = Vec::new();
     collect(value, &mut ids);
-    ids.sort();
+    symphony_board::order::sort_by(&mut ids, &Ord::cmp);
     ids.dedup();
     ids
 }

@@ -164,11 +164,14 @@ pub struct Reap<'a> {
 /// terminal is none either: a thread is launched only by a record that says where.
 pub fn presence(store: &Store, live: &[Object]) -> Result<Presence, Error> {
     let address = |t: &Object| Some(text_of(t, "address")).filter(|a| !a.is_empty());
-    let listed: BTreeSet<String> = live.iter().filter_map(address).collect();
-    let terminals: BTreeSet<String> = (live.iter())
-        .filter(|t| hc::agent(t) == Some("codex"))
-        .filter_map(address)
-        .collect();
+    let mut listed: BTreeSet<String> = BTreeSet::new();
+    listed.extend(live.iter().filter_map(address));
+    let mut terminals: BTreeSet<String> = BTreeSet::new();
+    terminals.extend(
+        (live.iter())
+            .filter(|t| hc::agent(t) == Some("codex"))
+            .filter_map(address),
+    );
     let (mut threads, mut held, mut launched) = Default::default();
     for record in store.codex_launches()? {
         let Some(thread) = record.claude_session.strip_prefix(crate::launch::CODEX) else {
@@ -187,7 +190,8 @@ pub fn presence(store: &Store, live: &[Object]) -> Result<Presence, Error> {
             }
         }
     }
-    let gone = launched.difference(&held).cloned().collect();
+    let mut gone = BTreeSet::new();
+    gone.extend(launched.difference(&held).cloned());
     Ok(Presence {
         terminals,
         threads,

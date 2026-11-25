@@ -48,8 +48,8 @@ impl Stood {
                 self.by_slug.insert(task.slug.clone(), key);
             }
         }
-        let kept: std::collections::BTreeSet<&str> =
-            board.tasks.iter().map(|t| t.slug.as_str()).collect();
+        let mut kept = std::collections::BTreeSet::new();
+        kept.extend(board.tasks.iter().map(|t| t.slug.as_str()));
         self.by_slug.retain(|slug, _| kept.contains(slug.as_str()));
         Ok(())
     }

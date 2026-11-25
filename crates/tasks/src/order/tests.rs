@@ -164,3 +164,43 @@ fn zero_sized_items_are_kept() {
     sort_by(&mut items, &|_, _| Ordering::Equal);
     assert_eq!(items, [(); 80]);
 }
+
+/// What an unstable sort taken to this one sorts: elements whose equal ones cannot be told apart
+/// (strings, numbers, paths, pairs of those), so the order of equals the stable sort gives is the
+/// only order there is, and the result is the unstable sort's.
+#[test]
+fn where_equal_elements_are_alike_the_sort_is_the_unstable_sorts() {
+    let words: Vec<String> = ["b", "a", "", "ab", "a", "b", "B"]
+        .map(String::from)
+        .to_vec();
+    let mut ours = words.clone();
+    let mut theirs = words;
+    sort_by(&mut ours, &Ord::cmp);
+    theirs.sort_unstable();
+    assert_eq!(ours, theirs);
+    // Newest first, as a folder of dated logs is read.
+    sort_by(&mut ours, &|a: &String, b: &String| b.cmp(a));
+    theirs.sort_unstable_by(|a, b| b.cmp(a));
+    assert_eq!(ours, theirs);
+
+    let mut ports: Vec<u16> = vec![8080, 22, 8080, 1, 65535, 22, 0];
+    let mut sorted = ports.clone();
+    sort_by(&mut ports, &Ord::cmp);
+    sorted.sort_unstable();
+    assert_eq!(ports, sorted);
+
+    let names = ["7.place".to_string(), "10.place".into(), "7.place".into()];
+    let mut numbered: Vec<(u64, &String)> = vec![(10, &names[1]), (7, &names[0]), (7, &names[2])];
+    let mut sorted = numbered.clone();
+    sort_by(&mut numbered, &Ord::cmp);
+    sorted.sort_unstable();
+    assert_eq!(numbered, sorted);
+
+    let mut paths: Vec<std::path::PathBuf> = ["b/x.log", "a.log", "b/x.log", "a"]
+        .map(std::path::PathBuf::from)
+        .to_vec();
+    let mut sorted = paths.clone();
+    sort_by(&mut paths, &Ord::cmp);
+    sorted.sort_unstable();
+    assert_eq!(paths, sorted);
+}

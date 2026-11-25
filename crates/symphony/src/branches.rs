@@ -118,26 +118,31 @@ fn is_finished(task: &symphony_board::Task) -> bool {
 /// ([`branch_tasks`]) is done or cancelled, so a branch named for a done task that a live task
 /// records as its own is not. Such a branch lists no card of its own.
 pub fn finished(board: &symphony_board::Board) -> BTreeSet<String> {
-    branch_tasks(board)
-        .into_iter()
-        .filter(|(_, tasks)| tasks.iter().copied().all(is_finished))
-        .map(|(branch, _)| branch.to_string())
-        .collect()
+    let mut finished = BTreeSet::new();
+    finished.extend(
+        (branch_tasks(board).into_iter())
+            .filter(|(_, tasks)| tasks.iter().copied().all(is_finished))
+            .map(|(branch, _)| branch.to_string()),
+    );
+    finished
 }
 
 /// The task each branch's cards are tagged with: the first live task the branch names
 /// ([`branch_tasks`]), else the first it names.
 pub fn names(board: &symphony_board::Board) -> BTreeMap<String, String> {
-    branch_tasks(board)
-        .into_iter()
-        .filter_map(|(branch, tasks)| {
-            let task = tasks
-                .iter()
-                .find(|task| !is_finished(task))
-                .or(tasks.first())?;
-            Some((branch.to_string(), task.slug.clone()))
-        })
-        .collect()
+    let mut names = BTreeMap::new();
+    names.extend(
+        branch_tasks(board)
+            .into_iter()
+            .filter_map(|(branch, tasks)| {
+                let task = tasks
+                    .iter()
+                    .find(|task| !is_finished(task))
+                    .or(tasks.first())?;
+                Some((branch.to_string(), task.slug.clone()))
+            }),
+    );
+    names
 }
 
 /// Recorded task names ([`names`]), with the branch slug used as the fallback when the board is
@@ -331,13 +336,13 @@ fn pages(tree: &Tree, project: &Project, args: &[&str]) -> Option<BTreeSet<Strin
     let folders = project.pathspecs();
     let mut all = args.to_vec();
     all.extend(folders.iter().map(String::as_str));
-    Some(
-        git(&tree.path, &all)?
-            .lines()
+    let mut pages = BTreeSet::new();
+    pages.extend(
+        (git(&tree.path, &all)?.lines())
             .filter(|name| project.is_page(name))
-            .map(str::to_string)
-            .collect(),
-    )
+            .map(str::to_string),
+    );
+    Some(pages)
 }
 
 /// The pages whose worktree file differs from the branch's HEAD commit: where the owner may have
@@ -837,7 +842,7 @@ fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> S
     let main = &project.default_branch;
     let in_main = merged(root, main);
     let specs: Option<Vec<String>> = registers(root, main, &project).map(|mut sorted| {
-        sorted.sort();
+        symphony_board::order::sort_by(&mut sorted, &Ord::cmp);
         sorted.iter().map(|n| format!("{main}:{n}")).collect()
     });
     let main_texts = specs.and_then(|specs| blobs(root, &specs));

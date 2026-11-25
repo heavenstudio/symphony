@@ -193,7 +193,7 @@ pub fn noted(machine: &Path) -> Option<(String, String)> {
         .filter_map(|entry| entry.file_name().into_string().ok())
         .filter(|name| order(name).is_some())
         .collect();
-    found.sort_by(|a, b| order(b).cmp(&order(a)));
+    symphony_board::order::sort_by(&mut found, &|a, b| order(b).cmp(&order(a)));
     found.into_iter().find_map(|name| {
         let text = fs::read_to_string(folder(machine, &name).join(NOTES)).ok()?;
         Some((name, text))
@@ -426,7 +426,7 @@ fn client_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     }
     let mut found = Vec::new();
     walk(root, root, &mut found)?;
-    found.sort();
+    symphony_board::order::sort_by(&mut found, &Ord::cmp);
     Ok(found)
 }
 

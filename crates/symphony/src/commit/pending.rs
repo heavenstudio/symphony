@@ -305,7 +305,7 @@ fn entries(root: &Path) -> Vec<(u64, QueuedPublication)> {
             saved.delivery.is_some().then_some((sequence, saved))
         })
         .collect();
-    found.sort_by_key(|(sequence, _)| *sequence);
+    symphony_board::order::sort_by_key(&mut found, &|(sequence, _)| *sequence);
     found
 }
 
@@ -835,10 +835,12 @@ fn group(
 /// once each of them may go ([`behind`]), and another's once each of them is kept and free.
 fn joining(root: &Path, leader: u64) -> Vec<(u64, QueuedPublication)> {
     let entries = entries(root);
-    let taken: std::collections::BTreeSet<u64> = (entries.iter())
-        .filter_map(|(_, saved)| saved.delivery.as_ref())
-        .flat_map(|delivery| delivery.members.iter().copied())
-        .collect();
+    let mut taken: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+    taken.extend(
+        (entries.iter())
+            .filter_map(|(_, saved)| saved.delivery.as_ref())
+            .flat_map(|delivery| delivery.members.iter().copied()),
+    );
     let free = |sequence: u64, delivery: &Delivery| {
         sequence > leader
             && !delivery.by.is_empty()

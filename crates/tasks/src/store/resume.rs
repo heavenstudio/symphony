@@ -56,7 +56,7 @@ impl Store {
             };
             let mut required = task.depends.clone();
             required.push(named.into());
-            required.sort();
+            crate::order::sort_by(&mut required, &Ord::cmp);
             required.dedup();
             let prerequisites: Vec<Prerequisite> = self.read(
                 Statement::from(pg::prerequisites()),

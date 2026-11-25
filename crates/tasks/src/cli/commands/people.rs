@@ -184,9 +184,11 @@ fn profile(c: &mut Context, name: &str) -> Result<(), Stop> {
 /// What `--display`, `--signin`, `--git`, `--email`, `--slack`, `--whatsapp` and `--notice` give a
 /// profile.
 fn given(c: &Context) -> Result<Given, Stop> {
-    let addresses = (ways::WAYS.into_iter())
-        .filter_map(|way| Some((way.to_string(), c.parsed.get(way)?.to_string())))
-        .collect();
+    let mut addresses = BTreeMap::new();
+    addresses.extend(
+        (ways::WAYS.into_iter())
+            .filter_map(|way| Some((way.to_string(), c.parsed.get(way)?.to_string()))),
+    );
     Ok(Given {
         display: c.parsed.get("display").map(str::to_string),
         signins: parsed_signins(c)?,
@@ -198,17 +200,17 @@ fn given(c: &Context) -> Result<Given, Stop> {
 
 /// The ways `--notice KIND=WAY` names, by kind: `KIND=` sends that kind by none.
 fn parsed_notices(c: &Context) -> Result<BTreeMap<String, String>, Stop> {
-    (c.parsed.all("notice").iter())
-        .map(|text| {
-            let (kind, way) = text.split_once('=').ok_or_else(|| {
-                Stop::Refused(
-                    "a notice is KIND=WAY, as card=slack, or KIND= for none: nothing was written"
-                        .into(),
-                )
-            })?;
-            Ok((kind.trim().to_string(), way.trim().to_string()))
-        })
-        .collect()
+    let mut notices = BTreeMap::new();
+    for text in c.parsed.all("notice") {
+        let (kind, way) = text.split_once('=').ok_or_else(|| {
+            Stop::Refused(
+                "a notice is KIND=WAY, as card=slack, or KIND= for none: nothing was written"
+                    .into(),
+            )
+        })?;
+        notices.insert(kind.trim().to_string(), way.trim().to_string());
+    }
+    Ok(notices)
 }
 
 /// A change's stop as the command's: a refusal exits 1, a failure 2, said with its cause, as the

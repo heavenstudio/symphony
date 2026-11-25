@@ -97,10 +97,11 @@ fn named_in<'a>(line: &str, slugs: &HashMap<char, Vec<&'a str>>) -> Vec<&'a str>
 pub fn history_in_prose(root: &Path) -> Result<Vec<Finding>, ReviewError> {
     let docs = scan(root)?;
     let project = crate::project::Project::of(root);
-    let slugs: BTreeSet<&str> = docs
-        .iter()
-        .flat_map(|doc| doc.decisions.iter().map(|d| d.slug.as_str()))
-        .collect();
+    let mut slugs: BTreeSet<&str> = BTreeSet::new();
+    slugs.extend(
+        docs.iter()
+            .flat_map(|doc| doc.decisions.iter().map(|d| d.slug.as_str())),
+    );
     if slugs.is_empty() {
         return Ok(Vec::new());
     }
@@ -109,8 +110,10 @@ pub fn history_in_prose(root: &Path) -> Result<Vec<Finding>, ReviewError> {
         .into_iter()
         .map(|slug| (re_escape(slug), slug))
         .collect();
-    ordered.sort();
-    ordered.sort_by_key(|(escaped, _)| std::cmp::Reverse(escaped.chars().count()));
+    symphony_board::order::sort_by(&mut ordered, &Ord::cmp);
+    symphony_board::order::sort_by_key(&mut ordered, &|(escaped, _)| {
+        std::cmp::Reverse(escaped.chars().count())
+    });
     let mut by_first: HashMap<char, Vec<&str>> = HashMap::new();
     for (_, slug) in &ordered {
         if let Some(first) = slug.chars().next() {
