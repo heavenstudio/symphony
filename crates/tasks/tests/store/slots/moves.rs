@@ -10,7 +10,7 @@ use super::{
 };
 use crate::common::{Fixture, refused, task};
 use serde_json::json;
-use std::sync::{Mutex, mpsc};
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use symphony_board::rows::TaskRow;
@@ -552,9 +552,9 @@ fn a_red_marked_as_the_owner_cancels_it_is_decided_again_and_a_claim_read_betwee
         seed = with(seed, slug, status, None, Some(O));
     }
     let f = Fixture::new(with(seed, UNDER, "in_progress", Some(RED), None));
-    let (read, owner_read) = mpsc::channel();
-    let (go, owner_go) = mpsc::channel();
-    let (finished, owner_finished) = mpsc::channel();
+    let (read, owner_read) = crate::test_channel::channel();
+    let (go, owner_go) = crate::test_channel::channel();
+    let (finished, owner_finished) = crate::test_channel::channel();
     let owner_go = Mutex::new(owner_go);
     // The owner's cancel reads the red unmarked, then waits.
     let owner = f.slow(move || {

@@ -4,6 +4,7 @@
 
 use super::Env;
 use super::agents::{Answer, Began, Pane, Probes, Process, ProcessScan, Run};
+use crate::channel::channel;
 use crate::git;
 use crate::launch::hc::{Binary, Hc};
 use crate::sys::{self, Command};
@@ -14,7 +15,6 @@ use std::fs::{self, File, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::sync::mpsc;
 use std::time::Duration;
 
 /// The project file's key naming the folder of the project's test-slot locks (`[board] slot_locks`,
@@ -320,7 +320,7 @@ pub(crate) fn within_fed(command: &mut Command, input: &[u8], limit: Duration) -
     }
     .map_err(|e| e.to_string())?;
     let pid = i64::from(child.id());
-    let (send, receive) = mpsc::channel();
+    let (send, receive) = channel();
     let input = input.to_vec();
     std::thread::spawn(move || {
         if let Some(mut stdin) = child.stdin.take() {

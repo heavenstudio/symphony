@@ -4,6 +4,10 @@
 #[path = "../support/children.rs"]
 mod children;
 
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "../support/test_channel.rs"]
+mod test_channel;
+
 mod amend;
 mod artifacts;
 mod asks;
@@ -47,6 +51,7 @@ mod fixture_script;
 mod gate_decisions;
 mod hand_over_outage;
 mod health;
+mod held_documents;
 mod held_settle;
 mod held_words;
 mod keyed;

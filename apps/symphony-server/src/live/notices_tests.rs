@@ -3,8 +3,9 @@
 //! the person at the machine and a reviewer's verdict reach each member of the thing's group once,
 //! by their way, and nobody else; a held message's line tells who may pass it on, of the task's
 //! group else of the board, never its author, and its pass, a person's line, tells no one, and a
-//! look that cannot read its held row tells it at the next that can; a board that names nobody
-//! tells no one; and the worker hands what a wake finds and ends at the stop.
+//! look that cannot read its held row tells it at the next that can; a comment held on a document
+//! tells who of its group may pass it on, with no word of it, as long as it waits; a board that
+//! names nobody tells no one; and the worker hands what a wake finds and ends at the stop.
 
 use super::super::Hub;
 use super::{Said, Turns};
@@ -367,6 +368,118 @@ fn a_held_message_tells_who_of_its_tasks_group_may_pass_it_never_its_author() {
             notice("question", "whatsapp", "+15551234567"),
         ]
     );
+}
+
+/// A comment held on a document (`symphony_board::held::OnDocument`) is told of as `held`, a link
+/// alone to its place on the document's page, to each of its document's group who may pass it on,
+/// never its author: none of its words goes in a notice. Once passed on, it tells no one again.
+#[test]
+fn a_comment_held_on_a_document_tells_who_of_its_group_may_pass_it_with_no_word_of_it() {
+    use symphony_board::held::{Block, Place as Left};
+    let telling = Telling::new(false);
+    telling.direct_agents(&["bo", "cy"]);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let place = |card: Option<&str>| Left {
+        path: DOC.into(),
+        scope: None,
+        kind: if card.is_some() {
+            "message"
+        } else {
+            "question"
+        }
+        .into(),
+        card: card.map(String::from),
+        block: card.is_none().then(|| Block {
+            key: "section:palette:0".into(),
+            line: 1,
+            text: "# Palette".into(),
+        }),
+    };
+    let ana = telling.f.other().for_person("ana");
+    let callout = (ana.hold_on_document("ana", "Too many swatches", &place(None))).unwrap();
+    let message = (ana.hold_on_document("ana", "Why grey?", &place(Some("old-grid")))).unwrap();
+    // On a branch's copy of the document, under its checkout's scope.
+    let branch = Left {
+        scope: Some("feature".into()),
+        ..place(None)
+    };
+    let branched = (ana.hold_on_document("ana", "And the reds", &branch)).unwrap();
+    passes.pass(&telling.hub);
+    let link = |id: i64| format!("{ORIGIN}/symphony/{DOC}#held-{id}");
+    let feature = format!("{ORIGIN}/symphony/@feature/{DOC}#held-{}", branched.id);
+    assert_eq!(
+        telling.told(),
+        [
+            (
+                "held".into(),
+                "email".into(),
+                BO_EMAIL.into(),
+                link(callout.id)
+            ),
+            (
+                "held".into(),
+                "email".into(),
+                BO_EMAIL.into(),
+                link(message.id)
+            ),
+            ("held".into(), "email".into(), BO_EMAIL.into(), feature),
+        ],
+        "bo alone: ana wrote them and cy is in engineering"
+    );
+    let told = std::fs::read_to_string(telling.tree.path("machine/notices/told")).unwrap();
+    assert!(
+        !told.contains("swatches") && !told.contains("grey"),
+        "{told}"
+    );
+    // Passed on, it tells no one again, and another look finds nothing new.
+    let bo = telling.f.other().for_person("bo");
+    (bo.pass_on_document(callout.id, "bo")).unwrap();
+    passes.pass(&telling.hub);
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 3);
+    let record = std::fs::read_to_string(telling.root.join("artifacts/notices.json")).unwrap();
+    assert!(!record.contains("swatches"), "{record}");
+}
+
+/// A look whose read of the comments held on documents fails tells nothing and says so once; the
+/// next look that reads them tells the held comment then.
+#[test]
+fn a_comment_held_on_a_document_whose_row_does_not_read_is_told_at_the_next_look_that_reads_it() {
+    use symphony_board::held::Place as Left;
+    let telling = Telling::new(false);
+    telling.direct_agents(&["bo"]);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let ana = telling.f.other().for_person("ana");
+    let message = Left {
+        path: DOC.into(),
+        scope: None,
+        kind: "message".into(),
+        card: Some("old-grid".into()),
+        block: None,
+    };
+    let held = (ana.hold_on_document("ana", "Why grey?", &message)).unwrap();
+    // A field no build knows: the comments held on documents do not read.
+    let row = || (telling.f.store.raw()).row("held_message", json!(["document", held.id]));
+    row().set(json!({"stray": true})).unwrap();
+    for _ in 0..2 {
+        passes.pass(&telling.hub);
+        assert!(telling.told().is_empty(), "{:?}", telling.told());
+    }
+    let said = passes.said.0.get("held").cloned().unwrap_or_default();
+    assert!(
+        said.starts_with("the comments held on documents: "),
+        "{said}"
+    );
+    row().set(json!({"stray": null})).unwrap();
+    passes.pass(&telling.hub);
+    let link = format!("{ORIGIN}/symphony/{DOC}#held-{}", held.id);
+    assert_eq!(
+        telling.told(),
+        [("held".into(), "email".into(), BO_EMAIL.into(), link)]
+    );
+    assert!(!passes.said.0.contains_key("held"), "the fault cleared");
 }
 
 /// With nobody of the task's group able to pass it on but its author, every person of the board

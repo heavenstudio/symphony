@@ -97,3 +97,73 @@ IF to_regclass('held_message') IS NOT NULL THEN
 END IF;",
     )
 }
+
+/// The key of the held comment on a document numbered `n` (a SQL expression): `["document", N]`,
+/// never a task's held message's, whose key is a number.
+fn document_key(n: &str) -> String {
+    format!("jsonb_build_array('document', ({n})::bigint)")
+}
+
+/// `v ->> 'author'`'s comment `v ->> 'text'` on the document place `v -> 'document'`, held: its
+/// row, numbered by the counter `held_document`, its answer.
+pub(in crate::store) fn hold_on_document() -> Pg<'static> {
+    let key = document_key("sid_");
+    Pg::script(format!(
+        "INSERT INTO counter (id, last, ts) VALUES ('\"held_document\"', 1, (v ->> 'now')::double precision)
+    ON CONFLICT (id) DO UPDATE SET last = counter.last + 1 RETURNING last INTO sid_;
+INSERT INTO held_message (id, doc) VALUES ({key}, jsonb_build_object(
+    'id', sid_, 'document', v -> 'document', 'author', v ->> 'author', 'text', v ->> 'text',
+    'at', (v ->> 'now')::double precision));
+board_answer := (SELECT doc FROM held_message WHERE id = {key});"
+    ))
+}
+
+/// The held comment `v ->> 'id'`, passed on by `v ->> 'by'`: refused where none is held by it or it
+/// was passed already, naming who passed it; else the row marked passed, its answer.
+pub(in crate::store) fn pass_on_document() -> Pg<'static> {
+    let key = document_key("v ->> 'id'");
+    Pg::script(format!(
+        "DECLARE held_ jsonb; BEGIN
+SELECT doc INTO held_ FROM held_message WHERE id = {key} FOR UPDATE;
+IF held_ IS NULL THEN RAISE EXCEPTION '%', v ->> 'none_held'; END IF;
+IF held_ ? 'passed' THEN
+    RAISE EXCEPTION '%', format(v ->> 'passed_already', held_ #>> '{{passed,by}}');
+END IF;
+UPDATE held_message SET doc = doc || jsonb_build_object('passed',
+        jsonb_build_object('by', v ->> 'by', 'at', (v ->> 'now')::double precision))
+    WHERE id = {key};
+board_answer := (SELECT doc FROM held_message WHERE id = {key});
+END;"
+    ))
+}
+
+/// The comments held on documents that `filter` (a condition on `doc`) keeps, oldest first: none on
+/// a board without the step.
+fn on_documents(filter: &str) -> Pg<'static> {
+    Pg::script(format!(
+        "board_answer := '[]'::jsonb;
+IF to_regclass('held_message') IS NOT NULL THEN
+    board_answer := coalesce((SELECT jsonb_agg(doc ORDER BY (doc ->> 'id')::bigint)
+        FROM held_message WHERE doc ? 'document' AND ({filter})), '[]'::jsonb);
+END IF;"
+    ))
+}
+
+/// The comments held on the document `v ->> 'path'` of the checkout `v ->> 'scope'` (null: the
+/// project's own), passed on or not.
+pub(in crate::store) fn on_document() -> Pg<'static> {
+    on_documents(
+        "doc #>> '{document,path}' = v ->> 'path' \
+         AND (doc #>> '{document,scope}') IS NOT DISTINCT FROM (v ->> 'scope')",
+    )
+}
+
+/// The held comment `v ->> 'id'`, in a list of one or none.
+pub(in crate::store) fn comment() -> Pg<'static> {
+    on_documents("(doc ->> 'id')::bigint = (v ->> 'id')::bigint")
+}
+
+/// The comments held on documents and not passed on.
+pub(in crate::store) fn unpassed() -> Pg<'static> {
+    on_documents("NOT doc ? 'passed'")
+}

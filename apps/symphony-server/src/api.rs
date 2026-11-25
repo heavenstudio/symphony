@@ -78,6 +78,7 @@ pub(crate) const READS: &[&str] = &[
     symphony_api::SETTINGS_PATH,
     symphony_api::PEOPLE_PATH,
     symphony_api::CARD_OWNERS_PATH,
+    symphony_api::DOCUMENT_HELD_PATH,
     symphony_api::workflow::WORKFLOW_PATH,
     symphony_api::workflow::WORKFLOW_ACTIONS_PATH,
     symphony_api::workflow::WORKFLOW_GUARDS_PATH,
@@ -377,6 +378,7 @@ fn arguments(asked: &Asked, request: &Request) -> Result<(), Box<Response>> {
             | "/api/diff"
             | "/api/asks"
             | symphony_api::CARD_OWNERS_PATH
+            | symphony_api::DOCUMENT_HELD_PATH
     ) {
         document_argument(request).map_err(bad)?;
     }
@@ -637,6 +639,7 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
         | symphony_api::TASK_TOKENS_PATH
         | symphony_api::TASK_COSTS_PATH
         | symphony_api::CARD_OWNERS_PATH
+        | symphony_api::DOCUMENT_HELD_PATH
         | "/api/task-history" => board_read(shared, hub, &asked, &request).await,
         _ => page_read(&hub, scope, path, named_reader(&request).as_deref()),
     }
@@ -810,6 +813,7 @@ async fn board_read(
         (name, crate::front::Admitted::machine(request.extensions()))
     };
     let document = query(request, "path").unwrap_or_default();
+    let (scope, rel) = (asked.scope.clone(), asked.rel.clone());
     let read = crate::spawn::blocking(move || {
         let path = path.as_str();
         if matches!(path, "/api/agents" | "/api/agent-page") {
@@ -879,6 +883,11 @@ async fn board_read(
                     .map(|owners| no_store(Json(owners)))
                     .map_err(|why| owners_failure(&why))
             }
+            // A hosted visitor reads them and passes none on, as it saves nothing here.
+            symphony_api::DOCUMENT_HELD_PATH => {
+                let passes = !hosted && passes(&store, asker.1, &asker.0);
+                document_held(&store, &scope, &rel, passes).map(|held| no_store(Json(held)))
+            }
             "/api/task-page" => store.get(&slug).map_err(task_failure).and_then(|record| {
                 let owner = symphony::owners::task(&store, &record, &asker.0, asker.1)
                     .map_err(|e| unavailable(&e.to_string(), ""))?;
@@ -915,6 +924,36 @@ async fn board_read(
 /// no one but the machine's person the control, whose press the route would refuse.
 fn passes(store: &symphony_board::Store, machine: bool, name: &str) -> bool {
     machine || (store.people()).is_ok_and(|people| crate::powers::may_pass(&people, name))
+}
+
+/// The comments held for people on the document `rel` of the checkout `scope` (empty: the
+/// project's own), not passed on yet, oldest first, and whether the one reading may pass them on
+/// (`passes`): what its page draws ([`symphony_api::DocumentHeld`]).
+fn document_held(
+    store: &symphony_board::Store,
+    scope: &str,
+    rel: &str,
+    passes: bool,
+) -> Result<symphony_api::DocumentHeld, Failed> {
+    let scope = Some(scope).filter(|scope| !scope.is_empty());
+    let held = store.held_on_document(rel.trim_start_matches('/'), scope);
+    let held = held.map_err(|e| unavailable(&e.to_string(), ""))?;
+    let held = (held.into_iter())
+        .filter(|held| held.passed.is_none())
+        .map(|held| {
+            let block = held.document.block;
+            symphony_api::HeldComment {
+                id: held.id,
+                author: held.author,
+                kind: held.document.kind,
+                text: held.text,
+                card: held.document.card,
+                key: block.as_ref().map(|block| block.key.clone()),
+                line: block.map(|block| block.line),
+            }
+        })
+        .collect();
+    Ok(symphony_api::DocumentHeld { held, passes })
 }
 
 /// A document's cards' owners refused: a route no page is, 404, as a document's read answers it,

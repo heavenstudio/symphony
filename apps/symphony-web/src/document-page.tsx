@@ -28,6 +28,7 @@ import { type Item, shown } from "./cache";
 import { documentItem } from "./cache-document";
 import { watchContents } from "./contents";
 import { folderPill, isSettled, partEdges, partForm } from "./document";
+import { HeldContext, HeldUnder, useHeld } from "./document-held";
 import { api, DocumentLive, documentLive, FolderLive, followFolder, named } from "./document-live";
 import { readDiff, readFragment, readVersions } from "./document-read";
 import { Editor, PageContext } from "./editor";
@@ -245,6 +246,7 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
   }, [scope, refreshed, orders]);
   const state = page.state;
   const owners = useCardOwners(path, scope, state?.latest ?? null, refreshed);
+  const held = useHeld(path, scope, state?.shown.sections ?? null, page.heldMoves, refreshed);
   const device = shown(page.freshness);
   const trouble = page.trouble;
   // An intro the server no longer has follows no feed: the folder's next read drops it.
@@ -327,26 +329,28 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
   return (
     <PageContext.Provider value={page}>
       <CardOwnersContext.Provider value={owners}>
-        <div
-          className="document-page"
-          data-ready={ready}
-          data-feed={page.stale ? "stale" : "live"}
-          data-cache={device ? "device" : undefined}
-          aria-busy={`${state === null && trouble === null && !missing}`}
-        >
-          {body}
-          {/* Until the document is shown, what kept it away is the block above's to say, once. */}
-          {!embedded && (
-            <PageNotices
-              reconnecting={page.stale && state !== null}
-              reconnect={RECONNECT}
-              error={state !== null ? (trouble ?? "") : ""}
-              documentRemoved={removed}
-              device={device}
-              composer
-            />
-          )}
-        </div>
+        <HeldContext.Provider value={held}>
+          <div
+            className="document-page"
+            data-ready={ready}
+            data-feed={page.stale ? "stale" : "live"}
+            data-cache={device ? "device" : undefined}
+            aria-busy={`${state === null && trouble === null && !missing}`}
+          >
+            {body}
+            {/* Until the document is shown, what kept it away is the block above's to say, once. */}
+            {!embedded && (
+              <PageNotices
+                reconnecting={page.stale && state !== null}
+                reconnect={RECONNECT}
+                error={state !== null ? (trouble ?? "") : ""}
+                documentRemoved={removed}
+                device={device}
+                composer
+              />
+            )}
+          </div>
+        </HeldContext.Provider>
       </CardOwnersContext.Provider>
     </PageContext.Provider>
   );
@@ -561,6 +565,7 @@ export const DocumentBody = memo(function DocumentBody({
                 </NearViewport>
               );
             })}
+            <HeldUnder sectionKey="" />
           </article>
         </Settle>
       </div>
@@ -756,6 +761,7 @@ function DocSection({
           <BlocksView blocks={thread.blocks} />
         </NearViewport>
       )}
+      <HeldUnder sectionKey={section.key} />
       {card !== null ? (
         <div className="doc-actions">
           {owner !== null && cardOwners !== null && card !== null && (

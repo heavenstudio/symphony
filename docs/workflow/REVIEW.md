@@ -545,6 +545,12 @@ them. A resolution looks like this:
 
 The owner's words are never edited or deleted. The resolution goes under them.
 
+A comment or a card's message from a person who may speak and may not direct agents is held
+for people instead: nothing is written to the file, and the page draws it where it was left,
+marked `held`, until someone who may passes it on, which writes it here under both names,
+`> [!question] ana · [passed on by bo] …`
+([TASKS](TASKS.md#words-held-for-people)).
+
 ## Asking
 
 **Ask** sits beside **Comment**. A comment is written into the document and

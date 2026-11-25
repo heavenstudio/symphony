@@ -27,6 +27,7 @@
 //! then the server's once it is ready ([`Handed::serving`]). The count takes a segment whose
 //! creator is that pid for the slot's own.
 
+use crate::channel::{RecvTimeoutError, channel};
 use crate::server::{ServerError, io};
 use crate::sys::{command, load_said, output, pid_alive};
 use std::collections::BTreeSet;
@@ -35,8 +36,8 @@ use std::io::{ErrorKind, Read as _};
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 use std::os::unix::fs::{DirBuilderExt as _, FileExt as _, MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 /// Where the machine's folder of slots is made, beside the boards' socket folders.
@@ -412,7 +413,7 @@ fn said(file: &File, pid: i64) {
 /// after `until`, is let go at once, so a thread left blocked holds nothing but its wait. An error
 /// is the answer only when every lock failed.
 fn first_granted(files: Vec<(usize, File)>, until: Instant) -> std::io::Result<Option<Locked>> {
-    let (said, heard) = mpsc::channel();
+    let (said, heard) = channel();
     let claimed = Arc::new(AtomicBool::new(false));
     let waits = files.len();
     for (index, file) in files {
@@ -456,7 +457,7 @@ fn first_granted(files: Vec<(usize, File)>, until: Instant) -> std::io::Result<O
                     return Err(failed.remove(0));
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
+            Err(RecvTimeoutError::Timeout) => {
                 if !claimed.swap(true, Ordering::AcqRel) {
                     return Ok(None);
                 }
@@ -469,7 +470,7 @@ fn first_granted(files: Vec<(usize, File)>, until: Instant) -> std::io::Result<O
                 }
                 return Ok(None);
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(RecvTimeoutError::Disconnected) => {
                 return Err(failed
                     .pop()
                     .unwrap_or_else(|| std::io::Error::other("no slot's wait answered")));

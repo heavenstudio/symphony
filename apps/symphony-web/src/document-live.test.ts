@@ -522,6 +522,16 @@ describe("an event of the document's feed", () => {
       changes: [{ region: "queue-item" }, { region: "queue-item-order" }, { region: "board" }],
     });
     expect(page.orders).toBe(2);
+    expect(page.heldMoves).toBe(0);
+  });
+
+  it("counts the comments held or passed on, for the page's held comments", () => {
+    const page = following();
+    const told = vi.fn();
+    page.subscribe(told);
+    page.heard({ version: 9, changes: [{ region: "held", data: {} }, { region: "held" }] });
+    expect([page.heldMoves, page.orders]).toEqual([2, 0]);
+    expect(told).toHaveBeenCalled();
   });
 
   it("applies its changes of this document alone, and the anchors they bring", () => {

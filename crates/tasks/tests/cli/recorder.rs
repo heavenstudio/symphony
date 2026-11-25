@@ -138,7 +138,7 @@ pub(crate) fn day_lines(work: &Path, runs: &Path, ends: usize) -> Vec<RunLine> {
         let lines: Vec<RunLine> = days
             .iter()
             .flat_map(|day| {
-                let text = fs::read_to_string(day).unwrap();
+                let text = day_text(day);
                 assert!(text.is_empty() || text.ends_with('\n'), "{text}");
                 text.lines()
                     .map(|line| {
@@ -160,6 +160,28 @@ pub(crate) fn day_lines(work: &Path, runs: &Path, ends: usize) -> Vec<RunLine> {
     let ended = lines.iter().filter(|line| line.end.is_some()).count();
     assert_eq!(ended, ends, "{lines:#?}");
     lines
+}
+
+/// What the day file at `day` holds: nothing once it is gone, as one listed may be by the time it
+/// is read. A recorder apart from its command appends its lines, and prunes the old day files
+/// after each, while its caller already reads what it appended (on macOS, once its command
+/// ended), so a file of a day past [`symphony_board::runs::KEPT_DAYS`] goes between the listing
+/// and the read, a day with no file to every reader of the runs ([`symphony_board::runs::rollup`]).
+fn day_text(day: &Path) -> String {
+    match fs::read_to_string(day) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        read => read.unwrap_or_else(|error| panic!("{}: {error}", day.display())),
+    }
+}
+
+#[test]
+fn a_day_file_gone_since_it_was_listed_reads_as_a_day_with_no_lines() {
+    let dir = scratch("recorder-day-text");
+    let day = dir.join("2000-01-01.jsonl");
+    fs::write(&day, "{}\n").unwrap();
+    assert_eq!(day_text(&day), "{}\n");
+    fs::remove_file(&day).unwrap();
+    assert_eq!(day_text(&day), "");
 }
 
 /// The backstop of the tests' own waits for what a run records: the 30 s they once gave it, as
@@ -427,7 +449,7 @@ impl Silent {
         let socket = folder.join(symphony_board::server::postgres::SOCKET_FILE);
         let listener = UnixListener::bind(&socket).unwrap();
         let address = format!("postgresql:{}", folder.display());
-        let (tell, heard) = mpsc::channel();
+        let (tell, heard) = crate::test_channel::channel();
         let held = Arc::new(Mutex::new(None));
         let holder = Arc::clone(&held);
         let let_go = Arc::new(AtomicBool::new(false));
@@ -609,7 +631,7 @@ fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_
         .to_vec();
     args.extend(until_asked(&accepted));
     let called = now();
-    let (tell, done) = mpsc::channel();
+    let (tell, done) = crate::test_channel::channel();
     std::thread::spawn(move || {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let _ = tell.send(crate::run(&env, &args, ""));
@@ -716,7 +738,7 @@ fn a_command_that_ends_while_the_board_is_asked_is_left_unreaped_until_its_recor
         pid.to_str().unwrap(),
     ]
     .map(String::from);
-    let (tell, done) = mpsc::channel();
+    let (tell, done) = crate::test_channel::channel();
     std::thread::spawn(move || {
         let args = args.each_ref().map(String::as_str);
         let _ = tell.send(crate::run(&env, &args, ""));

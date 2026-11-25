@@ -409,7 +409,7 @@ fn stopping(board: &Board) -> (Serving, symphony_board::pg::Client) {
 fn a_start_that_meets_a_stopping_server_waits_for_its_end_and_starts_its_own() {
     let board = Board::new("stopping");
     let (serving, client) = stopping(&board);
-    let (said, heard) = std::sync::mpsc::channel();
+    let (said, heard) = crate::test_channel::channel();
     let pg = board
         .home()
         .telling(move |line| {
@@ -677,7 +677,7 @@ fn a_start_that_meets_a_ready_server_whose_starter_has_ended_waits_for_its_end()
         Some("ready"),
         "{record}"
     );
-    let (said, heard) = std::sync::mpsc::channel();
+    let (said, heard) = crate::test_channel::channel();
     let pg = board
         .home()
         .telling(move |line| {

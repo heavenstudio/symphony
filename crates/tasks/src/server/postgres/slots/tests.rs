@@ -4,7 +4,6 @@
 //! from what `ipcs` says.
 
 use super::*;
-use std::sync::mpsc;
 
 /// A wait that only a stall reaches.
 const STALL: Duration = Duration::from_secs(120);
@@ -59,7 +58,7 @@ fn a_start_with_every_slot_held_says_so_once_and_takes_the_first_let_go() {
     let folder = Folder::new("waits");
     let slots = folder.slots(2);
     let held = [slots.take(quiet).unwrap(), slots.take(quiet).unwrap()];
-    let (said, heard) = mpsc::channel();
+    let (said, heard) = crate::test_channel::channel();
     let waiting = slots.clone();
     let third = std::thread::spawn(move || {
         waiting.take(move |line| {

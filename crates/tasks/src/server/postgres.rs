@@ -40,11 +40,11 @@
 use super::scratch::{Lifeline, scratch};
 use super::starters::Doing;
 use super::{Home, ServerError, io, last_argument_is};
+use crate::channel::channel;
 use crate::sys::{Command, Stdio, command, gone, load_said, output, pid_alive, wait_output};
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 
 mod lifecycle;
 pub use lifecycle::Holding;
@@ -539,7 +539,7 @@ impl Postgres {
             .map_err(io("could not start", &postgres))?;
         let slot = slot.map(Slot::handed);
         drop(passed);
-        let (said, heard) = mpsc::channel();
+        let (said, heard) = channel();
         std::thread::spawn(move || {
             let _ = said.send(wait_output(child));
         });

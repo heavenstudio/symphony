@@ -27,6 +27,7 @@
 
 use super::hc::Hc;
 use super::{LaunchError, git};
+use crate::channel::{Receiver, Sender, channel};
 use crate::execution::{
     Act, Adapter, Admission, Attempt, Continuation, Coordinator, Grant, Pacing, Refusal, Worked,
     board_scope,
@@ -35,7 +36,6 @@ use crate::{Error, Store, Task};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::Mutex;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 use symphony_plugin::execution::{
     Authorization, Call, Capabilities, ContentRef, ConversationId, Input, Observation, Operation,
@@ -381,8 +381,8 @@ impl<'a> Local<'a> {
         id: &str,
         serve: &mut dyn FnMut(&Call) -> Outcome,
     ) -> Result<Worked, Error> {
-        let (calls, asked) = mpsc::channel();
-        let (answer, answers) = mpsc::channel();
+        let (calls, asked) = channel();
+        let (answer, answers) = channel();
         let bridge = Bridge {
             calls: Mutex::new(Some(calls)),
             answers: Mutex::new(answers),
@@ -668,8 +668,8 @@ mod tests {
 
     #[test]
     fn a_bridge_with_no_one_answering_is_lost_contact() {
-        let (calls, asked) = mpsc::channel::<Call>();
-        let (answer, answers) = mpsc::channel::<Outcome>();
+        let (calls, asked) = channel::<Call>();
+        let (answer, answers) = channel::<Outcome>();
         let bridge = Bridge {
             calls: Mutex::new(Some(calls)),
             answers: Mutex::new(answers),
@@ -702,10 +702,17 @@ mod tests {
             bridge.execute(&call, &authorization, Instant::now()),
             lost.clone()
         );
-        assert_eq!(asked.try_iter().count(), 1);
-        // Hung up, or the receiving side gone: nothing is sent.
+        assert!(asked.recv_timeout(Duration::ZERO).is_ok());
+        assert_eq!(
+            asked.recv_timeout(Duration::ZERO).err(),
+            Some(crate::channel::RecvTimeoutError::Timeout)
+        );
+        // Hung up, or the receiving side gone: nothing is sent, and no sender is left.
         bridge.hang_up();
         assert_eq!(bridge.execute(&call, &authorization, Instant::now()), lost);
-        assert_eq!(asked.try_iter().count(), 0);
+        assert_eq!(
+            asked.recv_timeout(Duration::ZERO).err(),
+            Some(crate::channel::RecvTimeoutError::Disconnected)
+        );
     }
 }

@@ -52,7 +52,7 @@ The notices the Symphony gives today, the first three of which the Mac app shows
 - `card`: a card waits on the person.
 - `question`: an agent's question on a task waits on them.
 - `verdict`: a reviewer gave a verdict.
-- `held`: a person's words held on a task wait on them to pass on
+- `held`: a person's words held on a task or a document wait on them to pass on
   ([TASKS](../workflow/TASKS.md#words-held-for-people)). A profile chooses no way for it: it goes by
   the way chosen for questions.
 
@@ -121,8 +121,9 @@ replacement's first read. Its module doc is `apps/symphony-server/src/notices.rs
 
 - **What tells.** A card starting to wait on the main page's queue, an agent's question on a task
   to the person at the machine (a thread line to `owner` that no person wrote), a reviewer's
-  verdict, and the board's line of a held message, a line to `owner` whose number is a message's
-  held on its task. What stood when the server first looked at a project is taken as told.
+  verdict, the board's line of a held message, a line to `owner` whose number is a message's
+  held on its task, and a comment held on a document, not passed on yet. What stood when the
+  server first looked at a project is taken as told.
 - **Who is told.** Whose the thing is, by the board's map of places and the name written on it
   ([TASKS](../workflow/TASKS.md#which-group-a-thing-belongs-to)): each member of its group, or the
   person it is written to. The person at the machine has no profile, so a board that names nobody
@@ -130,7 +131,10 @@ replacement's first read. Its module doc is `apps/symphony-server/src/notices.rs
   its pass needs), never its author: those of whose the task is, else every person of the board
   who may, else no one, the person at the machine told by the page
   ([TASKS](../workflow/TASKS.md#words-held-for-people)). Its link is its place on the task page,
-  `/task/SLUG#message-N`.
+  `/task/SLUG#message-N`. A comment held on a document tells those of whose its card or its
+  document is who may pass it on, else every person of the board who may, never its author, once
+  while it waits, as a card does; its link is its place on the document's page, `/DOC#held-N`,
+  and no notice carries its words.
 - **By which way.** The way the person's profile chose for that kind, at their address for it, and
   for `held` the way chosen for questions. A person who chose none is not told, nor one whose way
   the machine names no program for.

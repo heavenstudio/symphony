@@ -6,7 +6,6 @@ use super::launch::Terminals;
 use std::sync::{
     Barrier,
     atomic::{AtomicBool, Ordering},
-    mpsc,
 };
 use std::time::{Duration, Instant};
 use symphony_board::{Beat, NewSession, Store};
@@ -43,7 +42,7 @@ fn create_and_launch_finish_under_32_beats_without_the_counter_board_conflict() 
         .collect();
     let stopped = AtomicBool::new(false);
     let start = Barrier::new(WRITERS + 1);
-    let (ready, began) = mpsc::channel();
+    let (ready, began) = crate::test_channel::channel();
     let stats = std::thread::scope(|threads| {
         let stop = Stop(&stopped);
         let workers: Vec<_> = writers

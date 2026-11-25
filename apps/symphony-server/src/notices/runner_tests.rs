@@ -93,11 +93,11 @@ fn owned_by(people: &People, name: &str) -> Owning {
 }
 
 fn card(people: &People, slug: &str, group: &str) -> Waiting {
-    Waiting {
-        key: format!("docs/design/palette.md#{slug}"),
-        page: format!("/docs/design/palette.md#{slug}"),
-        owning: owned_by(people, group),
-    }
+    Waiting::card(
+        format!("docs/design/palette.md#{slug}"),
+        format!("/docs/design/palette.md#{slug}"),
+        owned_by(people, group),
+    )
 }
 
 fn task_line(people: &People, id: i64, kind: Kind, group: &str) -> Line {
@@ -635,10 +635,12 @@ fn a_board_that_names_nobody_sends_nothing() {
     let tree = Tree::new();
     let nobody = People::default();
     let owning = ownership::owning(&nobody, &Map::default(), Some("design"), &[]);
-    let waiting = |slug: &str| Waiting {
-        key: format!("docs/a.md#{slug}"),
-        page: format!("/docs/a.md#{slug}"),
-        owning: owning.clone(),
+    let waiting = |slug: &str| {
+        Waiting::card(
+            format!("docs/a.md#{slug}"),
+            format!("/docs/a.md#{slug}"),
+            owning.clone(),
+        )
     };
     let mut runner = started(&tree, &nobody, vec![waiting("one")]);
     let line = Line {

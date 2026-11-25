@@ -132,7 +132,7 @@ mod tests {
             std::env::temp_dir().join(format!("symphony-sweep-coalesce-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let first = request(&dir, &[]).unwrap().unwrap();
-        let (tell, told) = std::sync::mpsc::channel();
+        let (tell, told) = crate::test_channel::channel();
         let threads: Vec<_> = (0..10)
             .map(|n| {
                 let common = dir.clone();

@@ -30,7 +30,7 @@ use crate::db::DbError;
 use crate::lock::Recovered as _;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak, mpsc};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 /// Why a hosted board did not answer, by kind.
@@ -194,12 +194,13 @@ impl Driver {
         })
     }
 
-    /// `work` run on the driver's thread, and its outcome waited for here.
+    /// `work` run on the driver's thread, and its outcome waited for here. Its channel carries that
+    /// one outcome alone, so its send never waits and the driver's thread never blocks on it.
     fn run<T: Send + 'static>(
         &self,
         work: impl Future<Output = T> + Send + 'static,
     ) -> Result<T, Refusal> {
-        let (done, outcome) = mpsc::sync_channel(1);
+        let (done, outcome) = crate::channel::channel();
         self.handle.spawn(async move {
             let _ = done.send(work.await);
         });
@@ -582,6 +583,25 @@ mod tests {
             assert_eq!(class(state), said);
         }
         assert!(correlation(12).starts_with("backend 12 at "));
+    }
+
+    #[test]
+    fn the_driver_hands_back_each_works_outcome_and_says_once_its_thread_has_ended() {
+        let mut driver = Driver::start().unwrap();
+        assert_eq!(driver.run(async { 7 }), Ok(7));
+        assert_eq!(
+            driver.run(async { "of another type" }),
+            Ok("of another type")
+        );
+        // Its thread ended, a work handed to it is dropped unrun, and with it the work's sender.
+        drop(driver.stop.take());
+        driver.thread.take().unwrap().join().unwrap();
+        assert_eq!(
+            driver.run(async { 7 }),
+            Err(Refusal::Unavailable(
+                "the thread that drives its connections ended"
+            ))
+        );
     }
 
     #[test]
