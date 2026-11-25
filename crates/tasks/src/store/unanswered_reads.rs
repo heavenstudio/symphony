@@ -120,7 +120,7 @@ fn launches_on_the_task_and_its_instructions_are_read_by_range() {
     let mut launched: Vec<_> = (read.launches.iter())
         .map(|l| (l.slug.as_str(), l.handle.as_str(), l.role.as_str()))
         .collect();
-    launched.sort_unstable();
+    crate::order::sort_by(&mut launched, &Ord::cmp);
     assert_eq!(
         launched,
         [
@@ -141,7 +141,7 @@ fn owing(f: &Fixture, handles: &[&str]) -> Vec<(String, String, i64)> {
     .into_iter()
     .map(|p| (p.handle, p.slug, p.post.id))
     .collect();
-    owed.sort();
+    crate::order::sort_by(&mut owed, &Ord::cmp);
     owed
 }
 
@@ -173,7 +173,7 @@ fn a_handle_owes_the_posts_of_the_threads_that_name_it_and_of_no_other_handle() 
         (worker.clone(), "work".to_string(), post.id),
         (worker.clone(), "work".to_string(), role.id),
     ];
-    expected.sort();
+    crate::order::sort_by(&mut expected, &Ord::cmp);
     assert_eq!(owing(&f, &[&worker]), expected);
     assert_eq!(
         owing(&f, &[&other]),

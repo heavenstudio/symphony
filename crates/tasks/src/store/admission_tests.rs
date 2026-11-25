@@ -93,7 +93,7 @@ pub(super) fn roles(f: &Fixture, slug: &str) -> Vec<(String, String)> {
     let mut roles: Vec<_> = (task.roles.iter())
         .map(|r| (r.handle.clone(), r.role.clone()))
         .collect();
-    roles.sort();
+    crate::order::sort_by(&mut roles, &Ord::cmp);
     roles
 }
 

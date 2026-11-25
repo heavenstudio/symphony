@@ -21,7 +21,7 @@ fn repository_seed() -> &'static Vec<File> {
         git(&folder.0, &["commit", "-q", "--allow-empty", "-m", "x"]);
         let mut files = Vec::new();
         read_files(&folder.0, &folder.0, &mut files);
-        files.sort_by(|a, b| a.path.cmp(&b.path));
+        symphony_board::order::sort_by(&mut files, &|a, b| a.path.cmp(&b.path));
         files
     })
 }

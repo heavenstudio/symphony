@@ -67,7 +67,7 @@ fn shells(ids: &[&str]) -> Vec<String> {
 /// Every file of the builds `ids`, sorted, as a folder's names are.
 fn names(ids: &[&str]) -> Vec<String> {
     let mut names: Vec<String> = ids.iter().flat_map(|id| files(id)).collect();
-    names.sort();
+    symphony_board::order::sort_by(&mut names, &Ord::cmp);
     names.dedup();
     names
 }

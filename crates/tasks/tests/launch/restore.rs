@@ -314,9 +314,9 @@ fn only_the_named_handle_is_restored_and_every_closed_one_by_default() {
         .into_iter()
         .map(|s| s.row.handle)
         .collect();
-    handles.sort();
+    symphony_board::order::sort_by(&mut handles, &Ord::cmp);
     let mut both = vec![a.handle, b.handle];
-    both.sort();
+    symphony_board::order::sort_by(&mut both, &Ord::cmp);
     assert_eq!(handles, both);
 }
 

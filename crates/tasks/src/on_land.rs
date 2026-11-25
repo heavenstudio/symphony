@@ -619,7 +619,7 @@ mod tests {
         let mut kept: Vec<String> = (fs::read_dir(dir.join(STARTS)).unwrap())
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        kept.sort();
+        crate::order::sort_by(&mut kept, &Ord::cmp);
         assert_eq!(kept.len(), KEPT_STARTS + 1, "{kept:?}");
         assert_eq!(
             kept[0],

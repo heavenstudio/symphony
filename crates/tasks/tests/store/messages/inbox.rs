@@ -193,7 +193,7 @@ fn concurrent_writers_leave_no_gap_or_duplicate_in_a_readers_inbox() {
         seen.push(*id);
     }
     f.store.ack(&reader, &ids).unwrap();
-    posted.sort_unstable();
+    symphony_board::order::sort_by(&mut posted, &Ord::cmp);
     assert_eq!(seen, posted);
     assert_eq!(seen.len(), 36);
     assert_eq!(seen.iter().collect::<BTreeSet<_>>().len(), 36);

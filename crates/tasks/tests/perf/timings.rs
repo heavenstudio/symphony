@@ -42,7 +42,7 @@ struct Runs {
 
 /// The middle of `values`, sorted.
 fn median(mut values: Vec<Duration>) -> Duration {
-    values.sort();
+    symphony_board::order::sort_by(&mut values, &Ord::cmp);
     values[values.len() / 2]
 }
 

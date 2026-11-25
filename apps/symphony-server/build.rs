@@ -65,6 +65,10 @@ fn generate(root: &Path) -> io::Result<String> {
     if present {
         files(root, root, &mut assets)?;
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a build script links no board and is in no binary"
+    )]
     assets.sort_by(|left, right| left.0.cmp(&right.0));
     if !assets.is_empty() && !assets.iter().any(|(name, _)| name == "index.html") {
         return Err(io::Error::other(format!(

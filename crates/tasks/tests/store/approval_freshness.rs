@@ -45,7 +45,7 @@ fn pending_store(store: &Store, handle: &str) -> Vec<Value> {
     let fields = ["key", "text", "attempts", "sequence", "delivered"];
     let mut rows = waiting.fields(&fields).unwrap().as_array().unwrap().clone();
     rows.retain(|row| row["delivered"] != json!(true));
-    rows.sort_by_key(|row| row["sequence"].as_i64());
+    symphony_board::order::sort_by_key(&mut rows, &|row| row["sequence"].as_i64());
     for row in &mut rows {
         row.as_object_mut().unwrap().remove("delivered");
     }

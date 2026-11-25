@@ -171,9 +171,9 @@ fn a_session_working_no_task_spends_on_none_in_its_kind_and_an_unbound_key_on_no
     let mut said: Vec<(&str, &str, i64)> = (none.iter())
         .map(|r| (r.handle.as_str(), r.role.as_str(), r.round))
         .collect();
-    said.sort_unstable();
+    symphony_board::order::sort_by(&mut said, &Ord::cmp);
     let mut expected = [("ochre-owl", "worker", 0), (idle.as_str(), "chat", 0)];
-    expected.sort_unstable();
+    symphony_board::order::sort_by(&mut expected, &Ord::cmp);
     assert_eq!(said, expected);
     assert!(f.store.spent_on(&["sim/jump"]).unwrap().is_empty());
     let by = f

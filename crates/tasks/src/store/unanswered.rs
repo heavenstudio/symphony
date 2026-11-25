@@ -384,6 +384,10 @@ impl Store {
             )
             .map_err(recovery_error)?;
         // As the board lists them, so the latest launch of a handle is its last.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a busy board path keeps std's in-place sort (crate::order): PULL's unanswered posts"
+        )]
         read.launches.sort_by(|a, b| {
             (a.started.total_cmp(&b.started))
                 .then_with(|| a.slug.cmp(&b.slug))

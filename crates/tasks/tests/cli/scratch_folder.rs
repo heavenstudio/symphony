@@ -60,7 +60,7 @@ fn names(dir: &Path) -> Vec<String> {
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
-    names.sort();
+    symphony_board::order::sort_by(&mut names, &Ord::cmp);
     names
 }
 

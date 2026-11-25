@@ -48,7 +48,7 @@ pub fn planned(logged: &Logged) -> BTreeMap<String, Planned> {
                     seen.plan = one.plan.clone();
                 }
                 seen.findings.extend(found);
-                seen.findings.sort();
+                symphony_board::order::sort_by(&mut seen.findings, &Ord::cmp);
                 seen.findings.dedup();
             }
             None => {
@@ -85,7 +85,7 @@ pub fn unplanned(requests: &[Request], planned: &BTreeMap<String, Planned>) -> V
         .filter(|step| planned_by_the_server(&step.sql) && !planned.contains_key(&step.sql))
         .map(|step| step.sql.clone())
         .collect();
-    missing.sort();
+    symphony_board::order::sort_by(&mut missing, &Ord::cmp);
     missing.dedup();
     missing
 }

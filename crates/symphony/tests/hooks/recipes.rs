@@ -791,7 +791,7 @@ fn the_board_and_reply_recipes_write_only_into_the_project() {
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        left.sort();
+        symphony_board::order::sort_by(&mut left, &Ord::cmp);
         assert_eq!(left, ["notes.txt"], "{args:?} wrote outside");
         assert_eq!(std::fs::read_to_string(&notes).unwrap(), card, "{args:?}");
     }

@@ -974,7 +974,7 @@ fn equal_queued_roots_match_the_original_full_sequence_before_pagination() {
         .map(|index| start(&format!("{index:x}"), "verify", TODAY + 20.0))
         .collect();
     write_day(&runs, TODAY, &lines, "");
-    lines.sort_by(|a, b| {
+    symphony_board::order::sort_by(&mut lines, &|a, b| {
         b.queued
             .total_cmp(&a.queued)
             .then_with(|| a.run.cmp(&b.run))
@@ -1065,6 +1065,10 @@ fn shared_found_order_matches_all_fields_and_reports_comparison_cpu_cost() {
             .total_cmp(&a.key.queued)
             .then_with(|| a.run.cmp(&b.run))
     };
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the standard sort this test holds the shared sorter to"
+    )]
     let (_, old_cpu) = test_time::cpu::spent(|| expected.sort_by(by));
     let calls = std::cell::Cell::new(0);
     let (_, new_cpu) = test_time::cpu::spent(|| {

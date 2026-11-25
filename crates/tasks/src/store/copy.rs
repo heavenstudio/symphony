@@ -610,8 +610,8 @@ mod placed {
             .map(|(_, table, _)| *table)
             .collect();
         let mut written = dumped();
-        read.sort_unstable();
-        written.sort_unstable();
+        crate::order::sort_by(&mut read, &Ord::cmp);
+        crate::order::sort_by(&mut written, &Ord::cmp);
         assert_eq!(read, written);
     }
 
@@ -628,8 +628,8 @@ mod placed {
         let mut read: Vec<&str> = (postgres::copy::DUMPED.iter())
             .map(|(name, _, _)| *name)
             .collect();
-        held.sort_unstable();
-        read.sort_unstable();
+        crate::order::sort_by(&mut held, &Ord::cmp);
+        crate::order::sort_by(&mut read, &Ord::cmp);
         assert_eq!(held, read);
         assert_eq!(Dump::from_json(&text.to_string()), Ok(dump));
     }

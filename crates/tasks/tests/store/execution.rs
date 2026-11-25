@@ -504,9 +504,9 @@ fn answers_that_settle_nothing_hold_the_attempt_for_a_person_who_alone_retries_i
         .iter()
         .map(|attempt| (attempt.id.as_str(), attempt.current))
         .collect();
-    lineage.sort();
+    symphony_board::order::sort_by(&mut lineage, &Ord::cmp);
     let mut expected = vec![(held.id.as_str(), false), (retry.id.as_str(), true)];
-    expected.sort();
+    symphony_board::order::sort_by(&mut expected, &Ord::cmp);
     assert_eq!(lineage, expected);
     assert_eq!(
         kinds(&c, &held.id).last().map(String::as_str),
@@ -924,9 +924,9 @@ fn run_due_steps_what_is_due_under_its_configuration_alone() {
             id
         })
         .collect();
-    stepped.sort();
+    symphony_board::order::sort_by(&mut stepped, &Ord::cmp);
     let mut admitted = vec![first.id, second.id];
-    admitted.sort();
+    symphony_board::order::sort_by(&mut admitted, &Ord::cmp);
     assert_eq!(stepped, admitted);
     assert!(
         c.run_due(10).unwrap().is_empty(),
@@ -1748,16 +1748,16 @@ fn concurrent_admissions_admit_one_per_request_key_lane_and_capacity_place() {
                 return false;
             };
             let mut full = full.clone();
-            full.sort();
+            symphony_board::order::sort_by(&mut full, &Ord::cmp);
             let mut expected = vec![first.id.clone(), admitted.id.clone()];
-            expected.sort();
+            symphony_board::order::sort_by(&mut expected, &Ord::cmp);
             full == expected
         },
     );
     let mut holders = reserved(&f, "pool");
-    holders.sort();
+    symphony_board::order::sort_by(&mut holders, &Ord::cmp);
     let mut expected = vec![first.id.clone(), last.id.clone()];
-    expected.sort();
+    symphony_board::order::sort_by(&mut expected, &Ord::cmp);
     assert_eq!(holders, expected, "no place reserved twice");
     assert_eq!(f.store.live_attempts("sim/fly").unwrap().len(), 2);
 }

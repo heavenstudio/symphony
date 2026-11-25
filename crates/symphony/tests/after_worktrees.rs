@@ -861,7 +861,7 @@ fn a_card_main_answered_since_the_fork_counts_as_mains_with_the_owners_line_from
                 .into_iter()
                 .filter(|slug| needs.contains(&format!("**{slug}**")))
                 .collect();
-            tidy_slugs.sort_unstable();
+            symphony_board::order::sort_by(&mut tidy_slugs, &Ord::cmp);
             assert_eq!(tidy_slugs, ["desktop-client", "reports-small-choices"]);
             // ... and so do the status, the board's header and progress, its queue and its pages.
             let status = common::status_ok(&tree.root, &[]);
@@ -879,7 +879,7 @@ fn a_card_main_answered_since_the_fork_counts_as_mains_with_the_owners_line_from
                 .iter()
                 .map(|c| (c.doc.as_str(), c.slug.as_str(), c.why.as_str()))
                 .collect();
-            waiting.sort_unstable();
+            symphony_board::order::sort_by(&mut waiting, &Ord::cmp);
             assert_eq!(
                 waiting,
                 [
@@ -2158,8 +2158,9 @@ fn apply(mut old: Document, delta: &DocumentChange) -> Document {
         (section.start, section.end, section.part) = (pos.start, pos.end, pos.part);
     }
     if let Some(order) = &delta.order {
-        old.sections
-            .sort_by_key(|s| order.iter().position(|k| k == &s.key).unwrap());
+        symphony_board::order::sort_by_key(&mut old.sections, &|s| {
+            order.iter().position(|k| k == &s.key).unwrap()
+        });
     }
     for (key, value) in &delta.threads {
         if let Some(value) = value {
@@ -2204,9 +2205,9 @@ fn delta_roundtrip(before: &Document, after: &Document) -> DocumentChange {
     assert!(zipped <= 4096, "delta is {zipped} bytes gzip");
     let wire: DocumentChange = serde_json::from_slice(&bytes).unwrap();
     let mut applied = apply(before.clone(), &wire);
-    applied.cards.sort_by(|a, b| a.slug.cmp(&b.slug));
+    symphony_board::order::sort_by(&mut applied.cards, &|a, b| a.slug.cmp(&b.slug));
     let mut wanted = after.clone();
-    wanted.cards.sort_by(|a, b| a.slug.cmp(&b.slug));
+    symphony_board::order::sort_by(&mut wanted.cards, &|a, b| a.slug.cmp(&b.slug));
     assert_eq!(
         serde_json::to_value(applied).unwrap(),
         serde_json::to_value(wanted).unwrap()

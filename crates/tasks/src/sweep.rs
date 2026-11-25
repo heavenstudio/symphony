@@ -770,6 +770,10 @@ impl<'a> Index<'a> {
         unbound: &BTreeSet<String>,
     ) -> Option<String> {
         let mut handles = self.sessions_at.get(path).cloned().unwrap_or_default();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a busy board path keeps std's in-place sort (crate::order): the sweep"
+        )]
         handles.sort_unstable();
         handles.dedup();
         if handles.is_empty() || self.bound(path, unbound) {

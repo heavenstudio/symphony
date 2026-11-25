@@ -726,7 +726,7 @@ mod closing {
         let gone = scan(&tree.root, Vec::new(), &[]);
         let open = store.asks(None).unwrap();
         let mut said = owner_asks::keep(&store, &open, &gone);
-        said.sort();
+        symphony_board::order::sort_by(&mut said, &Ord::cmp);
         assert_eq!(
             said,
             [
@@ -760,7 +760,7 @@ mod closing {
         // Found waiting again, the mark comes off; answered, it closes.
         let back = scan(&tree.root, vec![queued("ui-list-v1")], &["ui-list-v1"]);
         let mut said = owner_asks::keep(&store, &open, &back);
-        said.sort();
+        symphony_board::order::sort_by(&mut said, &Ord::cmp);
         assert_eq!(
             said,
             [

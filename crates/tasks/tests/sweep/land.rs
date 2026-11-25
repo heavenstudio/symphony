@@ -847,7 +847,7 @@ fn refusals_kept(r: &Repo) -> Vec<String> {
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|name| name.ends_with(".said"))
         .collect();
-    kept.sort();
+    symphony_board::order::sort_by(&mut kept, &Ord::cmp);
     kept
 }
 

@@ -171,7 +171,7 @@ fn inbox_rows(board: &Store, handle: &str) -> Vec<Value> {
         .fields(&fields)
         .unwrap();
     let mut rows = rows.as_array().unwrap().clone();
-    rows.sort_by_key(|row| {
+    symphony_board::order::sort_by_key(&mut rows, &|row| {
         let key = row["key"].as_str().unwrap_or_default();
         (row["sequence"].as_u64(), numbered(key))
     });

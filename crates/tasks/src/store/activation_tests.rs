@@ -1077,7 +1077,7 @@ fn the_activation_write_is_refused_as_stale_after_another_write_and_planned_agai
         digest: two.revision.digest.clone(),
     };
     let mut outcomes: Vec<_> = results.into_iter().map(Result::unwrap).collect();
-    outcomes.sort_by_key(|o| matches!(o, Followed::Unchanged(_)));
+    crate::order::sort_by_key(&mut outcomes, &|o| matches!(o, Followed::Unchanged(_)));
     assert_eq!(
         outcomes,
         vec![

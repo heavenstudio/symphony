@@ -50,7 +50,7 @@ impl Tree {
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
             .collect();
-        names.sort();
+        symphony_board::order::sort_by(&mut names, &Ord::cmp);
         names
     }
 

@@ -463,7 +463,7 @@ fn scratch_lines(root: &Path, prefix: &str, pid: u32) -> Vec<String> {
         })
         .map(|entry| entry.path())
         .collect();
-    folders.sort();
+    symphony_board::order::sort_by(&mut folders, &Ord::cmp);
     for folder in folders {
         logs_naming(&folder, root, LOG_DEPTH, pid, &mut found);
     }
@@ -475,7 +475,7 @@ fn logs_naming(dir: &Path, root: &Path, depth: usize, pid: u32, found: &mut Vec<
         return;
     };
     let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
-    entries.sort_by_key(fs::DirEntry::file_name);
+    symphony_board::order::sort_by_key(&mut entries, &fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path();
         // The entry's own type: a link is followed nowhere, and a FIFO is never opened.
@@ -522,7 +522,7 @@ fn tail(path: &Path) -> String {
 #[cfg(any(target_os = "macos", test))]
 fn ours(table: &str, test: u32, named: &str) -> Vec<String> {
     let mut rows: Vec<(u32, u32, &str)> = table.lines().filter_map(row).collect();
-    rows.sort_by_key(|(pid, _, _)| *pid != test);
+    symphony_board::order::sort_by_key(&mut rows, &|(pid, _, _)| *pid != test);
     let mut chosen: std::collections::HashSet<u32> = rows
         .iter()
         .filter(|(pid, _, line)| *pid == test || line.contains(named))

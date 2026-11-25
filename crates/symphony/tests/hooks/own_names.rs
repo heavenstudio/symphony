@@ -67,7 +67,7 @@ fn named(root: &Path) -> BTreeMap<String, usize> {
 fn strays(found: &BTreeMap<String, usize>, fenced: &BTreeMap<&str, usize>) -> Vec<String> {
     let mut files: Vec<&str> = found.keys().map(String::as_str).collect();
     files.extend(fenced.keys().copied());
-    files.sort_unstable();
+    symphony_board::order::sort_by(&mut files, &Ord::cmp);
     files.dedup();
     files
         .into_iter()
@@ -167,7 +167,7 @@ fn in_tree(root: &Path) -> Vec<String> {
         .filter(|path| !path.is_empty())
         .map(|path| String::from_utf8(path.to_vec()).expect("git lists paths in UTF-8"))
         .collect();
-    paths.sort_unstable();
+    symphony_board::order::sort_by(&mut paths, &Ord::cmp);
     let mut found = Vec::new();
     for path in paths {
         for (_, words) in in_text(&name, &path) {
@@ -213,7 +213,7 @@ fn old_names_stay_inside_their_fences() {
 #[test]
 fn every_fence_is_one_file_with_lines_and_a_reason() {
     let mut files: Vec<&str> = FENCES.iter().map(|(file, _, _)| *file).collect();
-    files.sort_unstable();
+    symphony_board::order::sort_by(&mut files, &Ord::cmp);
     files.dedup();
     assert_eq!(files.len(), FENCES.len(), "one fence per file");
     for (file, lines, why) in FENCES {

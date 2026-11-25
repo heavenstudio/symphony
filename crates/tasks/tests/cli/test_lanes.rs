@@ -578,7 +578,7 @@ fn every_lane_that_ran_is_listed_with_how_it_ended_and_named_lanes_run_alone() {
     let mut started: Vec<String> = (fs::read_dir(lanes.stand.join("started")).unwrap())
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    started.sort();
+    symphony_board::order::sort_by(&mut started, &Ord::cmp);
     assert_eq!(started, ["doc", "sweep"]);
     assert!(!lanes.stand.join("runner-fixture-args").exists());
     assert_eq!(
@@ -1410,7 +1410,7 @@ fn a_lanes_own_line_or_a_shared_target_whole_reruns_that_lane_alone_apart_from_t
         let mut started: Vec<String> = (fs::read_dir(lanes.stand.join("started")).unwrap())
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        started.sort();
+        symphony_board::order::sort_by(&mut started, &Ord::cmp);
         assert_eq!(started, [lane], "{args:?}");
         fs::remove_dir_all(lanes.stand.join("started")).unwrap();
         let apart = logs.join("alone");

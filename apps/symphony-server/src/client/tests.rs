@@ -98,7 +98,7 @@ fn shipped_shell_references_its_real_modules() {
         .keys()
         .map(String::as_str)
         .collect();
-    keys.sort_unstable();
+    symphony_board::order::sort_by(&mut keys, &Ord::cmp);
     // The kinds the committed build and the one regenerated from this tree both have.
     for kind in ["board", "docs", "overlay", "panel", "queue", "review"] {
         assert!(keys.contains(&kind), "no {kind} in {keys:?}");

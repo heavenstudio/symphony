@@ -64,7 +64,7 @@ fn a_timed_call_writes_its_seam_call_name_and_time_and_nothing_of_a_round_trip()
     assert_eq!(lines.len(), 1);
     let line = lines[0].as_object().unwrap();
     let mut keys: Vec<&str> = line.keys().map(String::as_str).collect();
-    keys.sort_unstable();
+    symphony_board::order::sort_by(&mut keys, &Ord::cmp);
     assert_eq!(
         keys,
         [

@@ -101,7 +101,7 @@ fn the_board_searches_by_words_alone_and_refuses_the_deleted_modes() {
         .iter()
         .map(|row| row["slug"].as_str().unwrap())
         .collect();
-    slugs.sort_unstable();
+    symphony_board::order::sort_by(&mut slugs, &Ord::cmp);
     assert_eq!(slugs, ["engine/jump", "engine/warp", "other/b"]);
 
     // The modes and the catch-up are gone from the command line, refused as any unknown word is.

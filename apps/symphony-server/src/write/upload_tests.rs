@@ -83,7 +83,7 @@ impl Fixture {
                     .collect()
             })
             .unwrap_or_default();
-        files.sort();
+        symphony_board::order::sort_by(&mut files, &Ord::cmp);
         files
     }
 }

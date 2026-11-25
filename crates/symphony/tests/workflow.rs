@@ -50,7 +50,7 @@ fn default_is_valid_and_omission_preserves_project_and_definition() {
     let d = default.definition();
     assert_eq!(d.initial, pair("ready", "available"));
     let mut columns: Vec<_> = d.phases.iter().filter(|p| p.column).collect();
-    columns.sort_by_key(|p| p.order);
+    symphony_board::order::sort_by_key(&mut columns, &|p| p.order);
     assert_eq!(
         columns.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
         symphony_board::PIPELINE
@@ -63,7 +63,7 @@ fn default_is_valid_and_omission_preserves_project_and_definition() {
         .iter()
         .filter(|p| !["blocked", "cancelled"].contains(&p.id.as_str()))
         .collect();
-    phone.sort_by_key(|p| p.phone_order);
+    symphony_board::order::sort_by_key(&mut phone, &|p| p.phone_order);
     let current_phone = include_str!("../../../apps/symphony-web/src/boardwait.tsx")
         .split_once("export const PHONE_STAGES = [")
         .unwrap()
@@ -1058,7 +1058,7 @@ fn authority_set_collection_preserves_variants_full_results_and_refusal_preceden
     let capability = "fixture_authority";
     assert!(!base.capabilities.iter().any(|name| name == capability));
     base.capabilities.push(capability.into());
-    base.capabilities.sort();
+    symphony_board::order::sort_by(&mut base.capabilities, &Ord::cmp);
     let index = base
         .edges
         .iter()
@@ -1110,7 +1110,7 @@ fn authority_set_collection_preserves_variants_full_results_and_refusal_preceden
                 format!("duplicate authority: {edge_id}")
             );
         } else {
-            definition.edges[index].authority.sort();
+            symphony_board::order::sort_by(&mut definition.edges[index].authority, &Ord::cmp);
             assert_eq!(
                 actual.unwrap().definition(),
                 &definition,

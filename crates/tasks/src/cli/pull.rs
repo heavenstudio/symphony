@@ -932,6 +932,10 @@ pub(crate) fn digest_on(
         }
     }
     for listed in found.values_mut() {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a busy board path keeps std's in-place sort (crate::order): PULL's digest"
+        )]
         listed.sort_unstable_by(|a, b| (a.priority, &a.slug).cmp(&(b.priority, &b.slug)));
     }
     // The project's limits as the file is now, read once for the whole digest.

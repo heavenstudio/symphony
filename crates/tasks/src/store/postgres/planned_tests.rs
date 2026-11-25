@@ -201,7 +201,7 @@ fn a_read_of_a_watched_table_by_no_index_is_found_however_deep_it_is_planned() {
          AND EXISTS (SELECT 1 FROM message m WHERE strpos(m.text, v ->> 'kind') > 0))",
     );
     let mut found = unindexed(&planned(&f, &scan, &json!({"kind": "worker"})));
-    found.sort();
+    crate::order::sort_by(&mut found, &Ord::cmp);
     assert_eq!(found, ["Seq Scan on message", "Seq Scan on session"]);
     // An index walked whole for its order, under a condition it does not serve.
     let walk = Pg::read(

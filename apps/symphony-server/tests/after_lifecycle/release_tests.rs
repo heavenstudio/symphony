@@ -196,7 +196,7 @@ fn a_start_runs_the_installed_release_which_serves_two_projects_whose_plugins_ar
     assert_eq!(status(port).pid, front.pid, "no start replaces a release");
     until("both projects to be served", || {
         let mut projects = status(port).projects;
-        projects.sort();
+        symphony_board::order::sort_by(&mut projects, &Ord::cmp);
         (projects == ["alpha", "pantry"]).then_some(())
     });
     for (id, root) in [("alpha", &repo.main), ("pantry", &pantry)] {
@@ -325,7 +325,7 @@ fn a_start_by_the_release_while_a_project_holds_the_switch_starts_nothing_and_na
     let mut ids: Vec<&str> = (registered.projects.iter())
         .map(|entry| entry.id.as_str())
         .collect();
-    ids.sort_unstable();
+    symphony_board::order::sort_by(&mut ids, &Ord::cmp);
     assert_eq!(ids, ["alpha", "pantry"]);
 }
 

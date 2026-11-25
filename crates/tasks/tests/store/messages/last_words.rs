@@ -19,7 +19,7 @@ fn read_from_every_message(board: &Fixture) -> BTreeMap<String, Message> {
     }
     let mut rows: Vec<MessageRow> = serde_json::from_value(value).unwrap();
     rows.retain(|row| matches!(row.kind.as_str(), "msg" | "verdict"));
-    rows.sort_by(|a, b| (a.id, &a.slug).cmp(&(b.id, &b.slug)));
+    symphony_board::order::sort_by(&mut rows, &|a, b| (a.id, &a.slug).cmp(&(b.id, &b.slug)));
     rows.into_iter()
         .map(|row| {
             let word = Message {

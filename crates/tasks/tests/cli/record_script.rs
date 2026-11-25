@@ -177,7 +177,7 @@ impl Setup {
     /// recorder of a command that ran first can keep its record after the next command's.
     fn history(&self, count: usize) -> Vec<Record> {
         let mut history = kept(&self.work, count);
-        history.sort_by(|a, b| began(a).total_cmp(&began(b)));
+        symphony_board::order::sort_by(&mut history, &|a, b| began(a).total_cmp(&began(b)));
         history
     }
 }
@@ -1101,7 +1101,9 @@ fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_o
         assert!(done.status.success(), "{recipe}: {done:?}");
     }
     let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 6));
-    lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
+    symphony_board::order::sort_by(&mut lines, &|one, other| {
+        one.queued.total_cmp(&other.queued)
+    });
     // Each line's parent by its label.
     let label = |run: &str| {
         (lines.iter())
@@ -1643,7 +1645,9 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
         "{tests}"
     );
     let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 15));
-    lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
+    symphony_board::order::sort_by(&mut lines, &|one, other| {
+        one.queued.total_cmp(&other.queued)
+    });
     let labels: Vec<&str> = (lines.iter())
         .filter(|line| line.step.is_none())
         .map(|line| line.label.as_str())

@@ -572,7 +572,7 @@ fn a_new_ledger_prunes_those_left_a_week_whose_transcript_is_gone() {
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    left.sort();
+    crate::order::sort_by(&mut left, &Ord::cmp);
     assert_eq!(
         left,
         [

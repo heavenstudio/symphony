@@ -44,7 +44,9 @@ fn lines(client: &Database) -> Vec<Writer> {
     )
     .writers()
     .unwrap();
-    lines.sort_by(|a, b| (&a.program, &a.host).cmp(&(&b.program, &b.host)));
+    symphony_board::order::sort_by(&mut lines, &|a, b| {
+        (&a.program, &a.host).cmp(&(&b.program, &b.host))
+    });
     lines
 }
 

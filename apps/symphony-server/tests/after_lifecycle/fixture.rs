@@ -18,6 +18,10 @@ use std::time::{Duration, Instant};
 use symphony_board::lock::Recovered as _;
 use symphony_board::sys::{Child, Command, Stdio};
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "symphony-chrome's harness file, read by path: a published package the shared sorter's rule leaves out"
+)]
 #[path = "../../../../crates/chrome-devtools/src/scratch.rs"]
 mod scratch;
 

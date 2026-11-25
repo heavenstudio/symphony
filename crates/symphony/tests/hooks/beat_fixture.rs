@@ -78,7 +78,7 @@ pub(crate) fn names(folder: &Path) -> Vec<String> {
         .flatten()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    found.sort();
+    symphony_board::order::sort_by(&mut found, &Ord::cmp);
     found
 }
 

@@ -961,7 +961,7 @@ new file mode 120000
 ";
     let parts = split(diff);
     let mut paths: Vec<&str> = parts.keys().map(String::as_str).collect();
-    paths.sort();
+    crate::order::sort_by(&mut paths, &Ord::cmp);
     assert_eq!(
         paths,
         ["src/a.rs", "src/link.rs", "src/spaced b/x.rs"],

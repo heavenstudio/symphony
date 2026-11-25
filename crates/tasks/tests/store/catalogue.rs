@@ -277,7 +277,7 @@ fn rows(db: &Database, catalogue: &str) -> BTreeMap<String, Vec<String>> {
                 })
                 .collect();
             rows.extend(marker.map(|sum| json!({"id": ["board"], "last": sum}).to_string()));
-            rows.sort();
+            symphony_board::order::sort_by(&mut rows, &Ord::cmp);
             (table.to_string(), rows)
         })
         .collect()

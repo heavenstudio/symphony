@@ -66,7 +66,7 @@ fn retaking_a_role_drops_a_left_double_and_keeps_a_live_one() {
         .take_role("scratch/both", "solar", "orchestrator")
         .unwrap();
     let mut held = task.holders("orchestrator");
-    held.sort_unstable();
+    symphony_board::order::sort_by(&mut held, &Ord::cmp);
     assert_eq!(held, ["cobalt", "solar"]);
     assert_eq!(f.said("scratch/both"), Vec::<String>::new());
     let task = f

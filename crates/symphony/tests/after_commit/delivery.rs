@@ -50,7 +50,7 @@ fn journal(root: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
-    names.sort();
+    symphony_board::order::sort_by(&mut names, &Ord::cmp);
     names
 }
 
@@ -428,7 +428,7 @@ pub(super) fn a_then_b_through_delivery_cancellation_and_restart(f: &Fixture) {
     assert_eq!(pending[3].state, State::Waiting, "{pending:?}");
     // A branch of each save but the refused one; a delivered one's is the sweep's to remove.
     let mut made = [a.clone(), b.clone(), c.clone(), d.clone()];
-    made.sort();
+    symphony_board::order::sort_by(&mut made, &Ord::cmp);
     assert_eq!(branches(&root), made);
     let later = git(&root, &["show", &format!("{d}:docs/a.md")]);
     assert!(later.contains("later"), "{later}");
@@ -969,7 +969,7 @@ pub(super) fn an_agents_saves_whose_turn_has_come_go_as_one_task(f: &Fixture) {
         (&State::Queued, &State::Waiting, &State::Waiting)
     );
     let mut made = vec![owner.clone(), batch.clone()];
-    made.sort();
+    symphony_board::order::sort_by(&mut made, &Ord::cmp);
     assert_eq!(branches(&root), made);
     assert_eq!(
         git(&root, &["rev-parse", &format!("{batch}^")]),
@@ -1152,7 +1152,7 @@ pub(super) fn a_tidys_saves_reach_main_in_one_commit_or_not_at_all(f: &Fixture) 
     // The reply goes alone: C's tidied page waits with its ledger entry, behind the first tidy.
     let alone = format!("docs/owner-save-{replied}");
     let mut made = vec![one.clone(), alone.clone()];
-    made.sort();
+    symphony_board::order::sort_by(&mut made, &Ord::cmp);
     assert_eq!(branches(&root), made);
     assert_eq!(
         git(&root, &["diff", "--name-only", "main", &alone]),

@@ -126,7 +126,7 @@ fn a_reading_reads_back_as_written_is_left_out_when_there_is_none_and_the_doc_na
     let mut readings: Vec<_> = (found.records.iter())
         .map(|(record, _)| (record.operation_id.as_str(), record.reading))
         .collect();
-    readings.sort_by_key(|(id, _)| *id);
+    crate::order::sort_by_key(&mut readings, &|(id, _)| *id);
     assert_eq!(readings, [(ONE, Some(reading())), (TWO, None)]);
     let text = fs::read_to_string(path(&dir, TWO)).unwrap();
     assert!(!text.contains("reading"), "{text}");

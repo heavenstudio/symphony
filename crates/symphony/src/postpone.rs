@@ -528,6 +528,10 @@ mod collection_tests {
             .collect();
         let mut expected = rows.clone();
         let (_, standard_cpu) = test_time::cpu::spent(|| {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the standard sort this test holds the shared sorter to"
+            )]
             expected.sort_by(|a, b| a.posted.cmp(&b.posted));
         });
         let comparisons = std::cell::Cell::new(0);

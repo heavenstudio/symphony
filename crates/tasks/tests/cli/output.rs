@@ -192,7 +192,7 @@ fn list_is_a_tree_of_aligned_rows() {
     c.ok(&orch, &["role", "sim/a", "orchestrator"]);
     // Roles taken at one moment come by handle.
     let mut held = [(&exe, "executor"), (&orch, "orchestrator")];
-    held.sort();
+    symphony_board::order::sort_by(&mut held, &Ord::cmp);
     let held: Vec<String> = held.iter().map(|(h, role)| format!("{role} {h}")).collect();
     // Every title starts one column after the longest slug, a child's indent counted.
     let long = "a-very-long-slug/that-overflows-the-column";
@@ -608,7 +608,7 @@ fn show_lists_the_sessions_launched_for_it() {
             ),
         ),
     ];
-    rows.sort(); // started together: by handle
+    symphony_board::order::sort_by(&mut rows, &Ord::cmp); // started together: by handle
     let rows: Vec<String> = rows.into_iter().map(|(_, row)| row).collect();
     assert_eq!(block, rows.join("\n"), "{shown}");
 }

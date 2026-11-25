@@ -451,7 +451,7 @@ impl Fixture {
                 .unwrap()
                 .map(|e| e.unwrap().file_name())
                 .collect();
-            names.sort();
+            symphony_board::order::sort_by(&mut names, &Ord::cmp);
             assert_eq!(names, ["next"]);
         }
     }
