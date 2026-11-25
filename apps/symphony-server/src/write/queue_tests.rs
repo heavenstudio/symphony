@@ -166,6 +166,14 @@ async fn a_later_its_undo_and_a_visit_are_refused_to_one_not_of_the_cards_owner_
         );
         assert!(!order.exists(), "{action}: nothing was written");
     }
+    // A card its document no longer holds is no one's to refuse: its Undo changes nothing.
+    let gone = postpone(DESIGN, "gone-card", "undo");
+    let (status, body) = post(&bo, LAPTOP, "/api/postpone", gone).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["changed"],
+        false
+    );
     let ana = served(&root, "ana");
     let (status, body) = post(
         &ana,

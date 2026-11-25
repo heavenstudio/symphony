@@ -358,3 +358,43 @@ fn a_named_readers_event_keeps_every_other_region_and_one_that_does_not_read_is_
     let bare = json!({"version": 9}).to_string();
     assert_eq!(sent_to(&bare, None, "bo"), bare);
 }
+
+#[test]
+fn a_spot_check_of_a_card_a_reader_decides_reaches_them_alone_keyed_by_its_link() {
+    let q = Queues::new(false);
+    let pages = q.hub.pages.read().recover();
+    let page = &pages[""];
+    let before = super::Waits::of(page);
+    let mut after = super::Waits::of(page);
+    after.queue.spot_check.push(symphony_api::QueueItem {
+        href: format!("/{DESIGN}#new-palette"),
+        path: DESIGN.into(),
+        slug: "new-palette".into(),
+        title: "Which palette?".into(),
+        kind: "spot".into(),
+        text: String::new(),
+        branch: None,
+        ask: None,
+    });
+    let regions = |name: &str| -> Vec<(String, Value)> {
+        (super::changes(&before, &after, name).into_iter())
+            .map(|change| {
+                (
+                    change["region"].as_str().unwrap().to_string(),
+                    change["data"].clone(),
+                )
+            })
+            .collect()
+    };
+    let ana = regions("ana");
+    let spot = ana
+        .iter()
+        .find(|(region, _)| region == "spot-check")
+        .unwrap();
+    assert_eq!(spot.1["key"], format!("/{DESIGN}#new-palette"));
+    assert!(
+        ana.iter()
+            .any(|(region, data)| region == "counts" && data["spot_check"] == 1)
+    );
+    assert_eq!(regions("bo"), [], "not his: nothing moved for him");
+}
