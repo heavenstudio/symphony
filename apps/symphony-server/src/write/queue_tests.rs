@@ -181,7 +181,7 @@ async fn the_person_at_the_machine_under_their_name_reads_every_card() {
     assert_eq!(board["counts"]["waiting"], 2);
     let (_, queue) = read(&shared, MACHINE, "/api/queue").await;
     let mut all = slugs(&queue["waiting"]);
-    all.sort_unstable();
+    symphony_board::order::sort_by(&mut all, &Ord::cmp);
     assert_eq!(all, ["new-build", "new-palette"]);
     let (_, pending) = read(&shared, MACHINE, "/api/pending").await;
     assert_eq!(pending["items"].as_array().unwrap().len(), 2, "{pending}");
