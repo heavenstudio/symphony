@@ -184,6 +184,16 @@ fn a_day_file_gone_since_it_was_listed_reads_as_a_day_with_no_lines() {
     assert_eq!(day_text(&day), "");
 }
 
+/// Only a file gone reads as no lines: any other error reading one is the test's to fail, naming
+/// the path, here a folder where a day file is listed.
+#[test]
+#[should_panic(expected = "2000-01-01.jsonl: Is a directory")]
+fn a_day_file_that_cannot_be_read_for_another_reason_fails_naming_it() {
+    let day = scratch("recorder-day-unreadable").join("2000-01-01.jsonl");
+    fs::create_dir(&day).unwrap();
+    day_text(&day);
+}
+
 /// The backstop of the tests' own waits for what a run records: the 30 s they once gave it, as
 /// `test_time::backstop` makes it (RULES.md `tests/no-test-fails-on-load`).
 pub(crate) fn patience() -> Duration {

@@ -56,4 +56,19 @@ mod tests {
         drop(woken);
         assert_eq!(send.try_send(()), Err(mpsc::TrySendError::Disconnected(())));
     }
+
+    /// Clippy reads the nearest clippy.toml alone: the crate's, which refuses std's channel past
+    /// [`channel`] and [`sync_channel`], must hold the workspace's settings whole before its own.
+    /// symphony-app's lib tests hold every crate's to that (crates/symphony/src/channel_tests.rs);
+    /// this holds the server's in the server's own run, which an edit to it alone is tested by.
+    #[test]
+    fn the_crates_clippy_settings_start_with_the_workspaces() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let ours = std::fs::read_to_string(manifest.join("clippy.toml")).unwrap();
+        let workspace = std::fs::read_to_string(manifest.join("../../clippy.toml")).unwrap();
+        assert!(
+            ours.starts_with(&workspace),
+            "apps/symphony-server/clippy.toml must start with the workspace's clippy.toml whole"
+        );
+    }
 }

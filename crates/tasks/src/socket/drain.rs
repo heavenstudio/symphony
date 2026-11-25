@@ -29,38 +29,32 @@ pub(crate) trait Pair: AsRawFd + Send + Sized + 'static {
     fn blocked_read(&self, wait: Duration) -> io::Result<usize>;
 }
 
-impl Pair for UnixStream {
-    fn pair() -> (Self, Self) {
-        UnixStream::pair().unwrap()
-    }
+/// Each kind's [`Pair`]: its own way to a connected pair, and the same copy and blocked read.
+macro_rules! pairs {
+    ($($kind:ty => $pair:block),+ $(,)?) => {$(
+        impl Pair for $kind {
+            fn pair() -> (Self, Self) $pair
 
-    fn copy(&self) -> Self {
-        self.try_clone().unwrap()
-    }
+            fn copy(&self) -> Self {
+                self.try_clone().unwrap()
+            }
 
-    fn blocked_read(&self, wait: Duration) -> io::Result<usize> {
-        let mut probe = self.try_clone()?;
-        probe.set_read_timeout(Some(wait))?;
-        probe.read(&mut [0; 1])
-    }
+            fn blocked_read(&self, wait: Duration) -> io::Result<usize> {
+                let mut probe = self.try_clone()?;
+                probe.set_read_timeout(Some(wait))?;
+                probe.read(&mut [0; 1])
+            }
+        }
+    )+};
 }
 
-impl Pair for TcpStream {
-    fn pair() -> (Self, Self) {
+pairs! {
+    UnixStream => { UnixStream::pair().unwrap() },
+    TcpStream => {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let ours = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         (ours, listener.accept().unwrap().0)
-    }
-
-    fn copy(&self) -> Self {
-        self.try_clone().unwrap()
-    }
-
-    fn blocked_read(&self, wait: Duration) -> io::Result<usize> {
-        let mut probe = self.try_clone()?;
-        probe.set_read_timeout(Some(wait))?;
-        probe.read(&mut [0; 1])
-    }
+    },
 }
 
 /// The calling thread's id, as [`waiting_in_the_kernel`] takes it.
