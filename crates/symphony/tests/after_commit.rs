@@ -436,7 +436,7 @@ fn two_verdicts_race_without_lost_files_or_merge_commits() {
             .filter(|line| !line.is_empty())
             .map(str::to_owned)
             .collect();
-            changed.sort();
+            symphony_board::order::sort_by(&mut changed, &Ord::cmp);
             assert_eq!(changed, ["docs/a.md", "docs/b.md"]);
             f.clean_workers();
         },
@@ -2226,7 +2226,9 @@ fn a_journal_from_before_asks_and_an_ask_the_board_refuses_still_deliver_their_c
                 .fields(&["text"])
                 .unwrap();
             let mut rows = rows.as_array().unwrap().clone();
-            rows.sort_by(|a, b| a["text"].as_str().cmp(&b["text"].as_str()));
+            symphony_board::order::sort_by(&mut rows, &|a, b| {
+                a["text"].as_str().cmp(&b["text"].as_str())
+            });
             assert_eq!(
                 rows,
                 [

@@ -255,7 +255,7 @@ fn keys_in_order(value: Value) -> Value {
     match value {
         Value::Object(map) => {
             let mut entries: Vec<(String, Value)> = map.into_iter().collect();
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            symphony_board::order::sort_by(&mut entries, &|a, b| a.0.cmp(&b.0));
             Value::Object(
                 (entries.into_iter())
                     .map(|(key, value)| (key, keys_in_order(value)))

@@ -114,7 +114,7 @@ fn an_html_candidate_in_the_row_is_a_mockup_item_not_a_broken_image() {
             other => panic!("{other:?}"),
         })
         .collect();
-    srcs.sort_unstable();
+    symphony_board::order::sort_by(&mut srcs, &Ord::cmp);
     // each of the line's three, once in the compare row and once in the thread
     assert_eq!(
         srcs,

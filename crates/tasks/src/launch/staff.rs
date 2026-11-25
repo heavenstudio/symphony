@@ -336,6 +336,10 @@ fn pass_inner(
         crate::store::workflow::position_held(&t.fields)
             || matches!(t.status.as_str(), "ready" | "review")
     });
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a busy board path keeps std's in-place sort (crate::order): the staff pass"
+    )]
     candidates.sort_unstable_by(|a, b| {
         a.priority
             .cmp(&b.priority)

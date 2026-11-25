@@ -64,7 +64,7 @@ fn every_line_the_owner_added_names_its_uploads_wherever_they_sit() {
         .into_iter()
         .map(|(s, n)| (path(s), png(n)))
         .collect();
-    want.sort();
+    symphony_board::order::sort_by(&mut want, &Ord::cmp);
     assert_eq!(found.into_iter().collect::<Vec<_>>(), want);
     assert_eq!(refused, Vec::<String>::new());
     assert!(
@@ -88,7 +88,7 @@ fn a_line_the_base_held_names_nothing_new_but_a_second_copy_does() {
         Vec::<&str>::new()
     );
     let mut want = vec![path(&again), path(&later)];
-    want.sort();
+    symphony_board::order::sort_by(&mut want, &Ord::cmp);
     assert_eq!(
         paths(&saved_uploads(&tree.root, &[edit(&base, &first), edit(&first, &second)]).0),
         want
@@ -182,7 +182,7 @@ fn only_a_regular_file_whose_bytes_are_its_name_and_within_the_cap_is_committed(
     let (found, refused) = saved_uploads(&tree.root, &[edit("", &(lines.join("\n") + "\n"))]);
     let at = |file: &str| format!("artifacts/uploads/{file}");
     let mut committed = vec![path(&kept), at(&at_cap)];
-    committed.sort();
+    symphony_board::order::sort_by(&mut committed, &Ord::cmp);
     assert_eq!(paths(&found), committed);
     assert_eq!(found[&at(&at_cap)].len(), MAX_BYTES);
     let not_the_upload = "the store holds a link or another kind of file there, not the upload";

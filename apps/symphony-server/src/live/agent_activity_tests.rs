@@ -975,7 +975,7 @@ fn day_files_more_than_90_days_old_are_removed_once_a_day_and_nothing_else() {
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
-    left.sort();
+    symphony_board::order::sort_by(&mut left, &Ord::cmp);
     let mut kept = vec![
         name(100.0),
         name(95.0),
@@ -984,7 +984,7 @@ fn day_files_more_than_90_days_old_are_removed_once_a_day_and_nothing_else() {
         format!("{}.jsonl", day(H)),
         "notes.txt".to_string(),
     ];
-    kept.sort();
+    symphony_board::order::sort_by(&mut kept, &Ord::cmp);
     assert_eq!(left, kept);
     // Once a day: a file grown old within the day stays until the next day's first write.
     fs::write(dir.join(name(92.0)), b"old\n").unwrap();

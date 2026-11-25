@@ -580,9 +580,9 @@ fn day_files_older_than_ninety_days_go_once_a_day_and_nothing_else_does() {
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
-    names.sort();
+    crate::order::sort_by(&mut names, &Ord::cmp);
     let mut kept = vec![old(95.0), old(90.0), old(1.0), "notes.txt".into()];
-    kept.sort();
+    crate::order::sort_by(&mut kept, &Ord::cmp);
     assert_eq!(names, kept, "a link named like an old day stays");
     // Pruned once a day: a file older than kept, put back the same day, stays until the next.
     fs::write(dir.path(&old(91.0)), "{}\n").unwrap();

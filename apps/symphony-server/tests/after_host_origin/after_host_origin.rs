@@ -484,7 +484,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                     let mut files: Vec<_> = dir
                         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
                         .collect();
-                    files.sort();
+                    symphony_board::order::sort_by(&mut files, &Ord::cmp);
                     files
                 })
                 .unwrap_or_default(),

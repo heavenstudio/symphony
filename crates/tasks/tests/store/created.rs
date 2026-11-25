@@ -132,14 +132,14 @@ fn a_task_is_made_with_its_links_waits_reservation_and_line() {
         .unwrap();
     assert_eq!(made, f.store.get("tools/base/child").unwrap());
     let mut shown = shape(&made);
-    shown["links"]
-        .as_array_mut()
-        .unwrap()
-        .sort_by_key(ToString::to_string);
-    shown["depends"]
-        .as_array_mut()
-        .unwrap()
-        .sort_by_key(ToString::to_string);
+    symphony_board::order::sort_by_key(
+        shown["links"].as_array_mut().unwrap(),
+        &ToString::to_string,
+    );
+    symphony_board::order::sort_by_key(
+        shown["depends"].as_array_mut().unwrap(),
+        &ToString::to_string,
+    );
     assert_eq!(
         shown,
         json!({

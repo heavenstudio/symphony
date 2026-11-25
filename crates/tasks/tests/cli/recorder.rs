@@ -134,7 +134,7 @@ pub(crate) fn day_lines(work: &Path, runs: &Path, ends: usize) -> Vec<RunLine> {
                     .collect()
             })
             .unwrap_or_default();
-        days.sort();
+        symphony_board::order::sort_by(&mut days, &Ord::cmp);
         let lines: Vec<RunLine> = days
             .iter()
             .flat_map(|day| {
@@ -2194,7 +2194,9 @@ fn runs_started_back_to_back_each_name_the_one_their_caller_ran_before() {
         .collect();
     assert_eq!(statuses, [Some(3), Some(0), Some(0), Some(0)]);
     let mut lines = symphony_api::fold(day_lines(&folders.work, &runs, 4));
-    lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
+    symphony_board::order::sort_by(&mut lines, &|one, other| {
+        one.queued.total_cmp(&other.queued)
+    });
     assert_eq!(lines[0].rerun_of, None);
     for pair in lines.windows(2) {
         assert_eq!(
@@ -2932,7 +2934,7 @@ fn a_steps_log_is_its_own_and_its_runs_log_holds_it_too() {
     // what the run writes once the step's command ended.
     let run = lines.iter().find(|line| line.step.is_none()).unwrap();
     let mut words: Vec<String> = read(run).lines().map(str::to_owned).collect();
-    words.sort_unstable();
+    symphony_board::order::sort_by(&mut words, &Ord::cmp);
     assert_eq!(words, ["after", "before", "inside"]);
     assert_ne!(run.log, step.log);
 }

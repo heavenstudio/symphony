@@ -189,7 +189,7 @@ fn a_reviewer_joins_beside_another_saying_why() {
         .take_role_beside("sim/jump", &third, "reviewer", Some("a third look"))
         .unwrap();
     let mut both = [&rev, &second];
-    both.sort();
+    symphony_board::order::sort_by(&mut both, &Ord::cmp);
     assert_eq!(
         f.said("sim/jump").last().unwrap(),
         &format!(

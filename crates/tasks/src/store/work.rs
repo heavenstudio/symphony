@@ -585,6 +585,10 @@ impl Store {
             .into_iter()
             .filter(|t| found.contains(t.slug.as_str()))
             .collect();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a busy board path keeps std's in-place sort (crate::order): the sweep's Store::descendants"
+        )]
         tasks.sort_by_key(|t| t.id);
         Ok(tasks)
     }

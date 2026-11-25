@@ -46,6 +46,10 @@ pub(super) fn parents(
         );
     }
     let mut parents: Vec<_> = tree.into_iter().collect();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a busy board path keeps std's in-place sort (crate::order): PULL's unanswered posts"
+    )]
     parents.sort_unstable();
     Ok(parents)
 }

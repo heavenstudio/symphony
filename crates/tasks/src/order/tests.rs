@@ -35,6 +35,10 @@ fn a_sort_by_is_the_standard_librarys_stable_sort_by() {
         let mut ours = pairs(count, keys);
         let mut theirs = ours.clone();
         sort_by(&mut ours, &by_key);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the standard sort this test holds the shared sorter to"
+        )]
         theirs.sort_by(by_key);
         assert_eq!(ours, theirs, "{count} pairs of {keys} keys");
     }
@@ -56,6 +60,10 @@ fn a_comparison_that_reverses_sorts_in_reverse_stably() {
     let mut theirs = ours.clone();
     let descending = |a: &(u32, usize), b: &(u32, usize)| b.0.cmp(&a.0);
     sort_by(&mut ours, &descending);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the standard sort this test holds the shared sorter to"
+    )]
     theirs.sort_by(descending);
     assert_eq!(ours, theirs);
 }
@@ -65,6 +73,10 @@ fn a_sort_by_key_and_a_sort_are_the_standard_librarys() {
     let mut keyed = pairs(200, 9);
     let mut expected = keyed.clone();
     sort_by_key(&mut keyed, &|pair| std::cmp::Reverse(pair.0));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the standard sort this test holds the shared sorter to"
+    )]
     expected.sort_by_key(|pair| std::cmp::Reverse(pair.0));
     assert_eq!(keyed, expected);
 
@@ -73,6 +85,10 @@ fn a_sort_by_key_and_a_sort_are_the_standard_librarys() {
         .to_vec();
     let mut sorted = words.clone();
     sort(&mut words);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the standard sort this test holds the shared sorter to"
+    )]
     sorted.sort();
     assert_eq!(words, sorted);
 }
@@ -97,6 +113,10 @@ fn floats_by_total_order() {
     let mut ours = vec![2.5, -0.0, f64::NAN, 0.0, -1.0, f64::INFINITY, 2.5];
     let mut theirs = ours.clone();
     sort_by(&mut ours, &f64::total_cmp);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the standard sort this test holds the shared sorter to"
+    )]
     theirs.sort_by(f64::total_cmp);
     let bits = |values: &[f64]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
     assert_eq!(bits(&ours), bits(&theirs));
@@ -176,16 +196,28 @@ fn where_equal_elements_are_alike_the_sort_is_the_unstable_sorts() {
     let mut ours = words.clone();
     let mut theirs = words;
     sort_by(&mut ours, &Ord::cmp);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the standard sort this test holds the shared sorter to"
+    )]
     theirs.sort_unstable();
     assert_eq!(ours, theirs);
     // Newest first, as a folder of dated logs is read.
     sort_by(&mut ours, &|a: &String, b: &String| b.cmp(a));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the standard sort this test holds the shared sorter to"
+    )]
     theirs.sort_unstable_by(|a, b| b.cmp(a));
     assert_eq!(ours, theirs);
 
     let mut ports: Vec<u16> = vec![8080, 22, 8080, 1, 65535, 22, 0];
     let mut sorted = ports.clone();
     sort_by(&mut ports, &Ord::cmp);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the standard sort this test holds the shared sorter to"
+    )]
     sorted.sort_unstable();
     assert_eq!(ports, sorted);
 
@@ -193,6 +225,10 @@ fn where_equal_elements_are_alike_the_sort_is_the_unstable_sorts() {
     let mut numbered: Vec<(u64, &String)> = vec![(10, &names[1]), (7, &names[0]), (7, &names[2])];
     let mut sorted = numbered.clone();
     sort_by(&mut numbered, &Ord::cmp);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the standard sort this test holds the shared sorter to"
+    )]
     sorted.sort_unstable();
     assert_eq!(numbered, sorted);
 
@@ -201,6 +237,10 @@ fn where_equal_elements_are_alike_the_sort_is_the_unstable_sorts() {
         .to_vec();
     let mut sorted = paths.clone();
     sort_by(&mut paths, &Ord::cmp);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the standard sort this test holds the shared sorter to"
+    )]
     sorted.sort_unstable();
     assert_eq!(paths, sorted);
 }

@@ -167,7 +167,7 @@ fn both_served(repo: &Repo, starter: &str) {
         front.plugins
     );
     let mut projects = front.projects.clone();
-    projects.sort();
+    symphony_board::order::sort_by(&mut projects, &Ord::cmp);
     assert_eq!(projects, ["alpha", "pantry"]);
     let registry = fs::read_to_string(repo.home.join("projects.json")).unwrap();
     assert!(

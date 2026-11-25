@@ -113,7 +113,7 @@ async fn each_person_reads_the_cards_they_decide_and_the_person_at_the_machine_e
     assert_eq!(board["counts"]["waiting"], 2);
     let (_, queue) = read(&bo, MACHINE, "/api/queue").await;
     let mut all = slugs(&queue["waiting"]);
-    all.sort_unstable();
+    symphony_board::order::sort_by(&mut all, &Ord::cmp);
     assert_eq!(all, ["new-build", "new-palette"]);
     let (_, folder) = read(&bo, MACHINE, "/api/folder?path=docs").await;
     assert_eq!(waiting(&folder, "docs/design"), 1);

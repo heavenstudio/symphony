@@ -357,7 +357,7 @@ fn a_project_justfile_by_any_name_just_reads_is_never_written() {
                 name.to_string(),
                 "symphony.just".to_string(),
             ];
-            names.sort();
+            symphony_board::order::sort_by(&mut names, &Ord::cmp);
             names
         });
         assert_eq!(tree.read(name), "build:\n    echo ours\n");
@@ -1095,7 +1095,7 @@ fn the_command_installs_and_reports_and_refuses_what_it_does_not_know() {
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        names.sort();
+        symphony_board::order::sort_by(&mut names, &Ord::cmp);
         names
     };
     for git_dir in [tree.path(".git"), bare.root.clone()] {
@@ -2398,8 +2398,8 @@ fn the_binaries_init_looks_for_are_the_ones_the_installed_recipes_run() {
             ran.push((recipe.unwrap(), binary));
         }
     }
-    ran.sort();
+    symphony_board::order::sort_by(&mut ran, &Ord::cmp);
     let mut runs = RUNS.to_vec();
-    runs.sort();
+    symphony_board::order::sort_by(&mut runs, &Ord::cmp);
     assert_eq!(ran, runs);
 }

@@ -308,7 +308,7 @@ fn the_ps_stand_in_asks_ps_of_each_process_alone_and_prints_one_calls_rows() {
     }
     let pids = [std::process::id()].into_iter().chain(named);
     let mut each: Vec<String> = pids.clone().map(|pid| pid.to_string()).collect();
-    each.sort();
+    symphony_board::order::sort_by(&mut each, &Ord::cmp);
     let all = pids
         .map(|pid| pid.to_string())
         .collect::<Vec<_>>()
@@ -335,7 +335,7 @@ fn the_ps_stand_in_asks_ps_of_each_process_alone_and_prints_one_calls_rows() {
             })
             .map(|rest| rest.split_once(' ').unwrap().0)
             .collect();
-        asked.sort_unstable();
+        symphony_board::order::sort_by(&mut asked, &Ord::cmp);
         assert_eq!(asked, each, "one /bin/ps for each process: {traced}");
         let one = symphony_board::sys::output(
             Command::new("/bin/ps").args(["-ww", "-p", &all, "-o", fields]),

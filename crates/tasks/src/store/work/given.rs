@@ -457,6 +457,7 @@ impl Store {
                 let mine = roles.filter(|r| r.handle == by && r.role != "orchestrator");
                 working.extend(mine.map(|r| (r.since, task.slug.as_str())));
             }
+            #[expect(clippy::disallowed_methods, reason = "a busy board path keeps std's in-place sort (crate::order): a filing's give_filed_saying")]
             working.sort_by(|a, b| b.0.total_cmp(&a.0));
             let owners = Owners::new(&board.tasks);
             for (_, task) in working {

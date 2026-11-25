@@ -597,7 +597,7 @@ fn many_words() -> Dump {
         line(53, "sim/b", "brisk-finch", "system"),
         line(54, "sim/b", "board", "system"),
     ]);
-    messages.sort_by(|a, b| (a.id, &a.slug).cmp(&(b.id, &b.slug)));
+    symphony_board::order::sort_by(&mut messages, &|a, b| (a.id, &a.slug).cmp(&(b.id, &b.slug)));
     seed.dump.messages = messages;
     seed.dump
 }

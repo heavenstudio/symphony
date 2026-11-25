@@ -170,13 +170,13 @@ fn work_in_review_loses_its_build_output_merged_or_not() {
     let done = sweep_at(&r, LATER, false);
     let said = text(&done);
     let mut gone = cleared(&done);
-    gone.sort();
+    symphony_board::order::sort_by(&mut gone, &Ord::cmp);
     let mut all: Vec<PathBuf> = merged_folders
         .iter()
         .chain(&unmerged_folders)
         .cloned()
         .collect();
-    all.sort();
+    symphony_board::order::sort_by(&mut all, &Ord::cmp);
     assert_eq!(gone, all, "{said}");
     for (wt, slug) in [(&merged, "sim/merged"), (&unmerged, "sim/unmerged")] {
         r.assert_kept(wt, &said);
@@ -736,12 +736,12 @@ fn a_link_never_leads_the_clear_out_of_the_worktree() {
 
     let done = sweep_at(&r, LATER, false);
     let mut gone = cleared(&done);
-    gone.sort();
+    symphony_board::order::sort_by(&mut gone, &Ord::cmp);
     let mut own = vec![
         through_symphony.join(".target"),
         through_target.join("symphony/.target"),
     ];
-    own.sort();
+    symphony_board::order::sort_by(&mut own, &Ord::cmp);
     assert_eq!(gone, own, "{}", text(&done));
     assert!(own.iter().all(|folder| !folder.exists()));
     for folder in &theirs {
@@ -776,9 +776,9 @@ fn what_a_seed_or_a_clear_left_goes_with_finished_work_once_its_process_is_gone(
 
     let done = sweep_at(&r, LATER, false);
     let mut gone = cleared(&done);
-    gone.sort();
+    symphony_board::order::sort_by(&mut gone, &Ord::cmp);
     let mut expected: Vec<PathBuf> = folders.iter().chain(&left).cloned().collect();
-    expected.sort();
+    symphony_board::order::sort_by(&mut expected, &Ord::cmp);
     assert_eq!(gone, expected, "{}", text(&done));
     assert!(expected.iter().all(|folder| !folder.exists()));
     assert!(running.join("debug/deps/libwork.rlib").is_file());

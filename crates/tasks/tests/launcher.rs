@@ -16,6 +16,10 @@
 mod children;
 
 // Each run's scratch in a folder of its own under the temp folder, swept when a killed run left it.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "symphony-chrome's harness file, read by path: a published package the shared sorter's rule leaves out"
+)]
 #[path = "../../chrome-devtools/src/harness_scratch.rs"]
 mod harness_scratch;
 // `tools/seed-target.sh`, which `tools/cargo.sh` runs before Cargo.

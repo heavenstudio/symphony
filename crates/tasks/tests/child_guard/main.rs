@@ -179,7 +179,7 @@ fn findings(said: &str) -> Vec<String> {
             format!("{file}:{at}: {method}")
         })
         .collect();
-    found.sort();
+    symphony_board::order::sort_by(&mut found, &Ord::cmp);
     found
 }
 
@@ -239,7 +239,7 @@ fn clippy_refuses_a_child_made_past_the_helpers_however_it_is_spelled() {
             })
         })
         .collect();
-    expected.sort();
+    symphony_board::order::sort_by(&mut expected, &Ord::cmp);
     assert_eq!(findings(&said), expected, "{said}");
     assert!(!said.contains("clippy.toml"), "{said}");
 }

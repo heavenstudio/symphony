@@ -3200,7 +3200,7 @@ mod tests {
                 .iter()
                 .map(|card| card.slug.as_str())
                 .collect();
-            queued.sort();
+            symphony_board::order::sort_by(&mut queued, &Ord::cmp);
             assert_eq!(queued, ["answered", "proposed", "waits"], "{scope}");
             assert_eq!(
                 (design, topic, pages[scope].board.progress.decisions_waiting),

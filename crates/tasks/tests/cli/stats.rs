@@ -454,7 +454,7 @@ fn stats_and_the_roll_up_count_the_same_tasks_done_on_each_day() {
         })
         .filter(|(_, done)| *done > 0)
         .collect();
-    stats.sort();
+    symphony_board::order::sort_by(&mut stats, &Ord::cmp);
     let read = c.store().report_records(d).unwrap();
     let days = [
         report_day("sim", d, d + DAY, now, &read),
@@ -487,7 +487,7 @@ fn stats_and_the_roll_up_count_the_same_tasks_done_on_each_day() {
             }
         }
     }
-    rolled.sort();
+    symphony_board::order::sort_by(&mut rolled, &Ord::cmp);
     assert_eq!(stats, rolled);
     assert_eq!(stats.iter().map(|(_, done)| done).sum::<u64>(), 3);
 }

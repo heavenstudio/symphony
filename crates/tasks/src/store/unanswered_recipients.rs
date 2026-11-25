@@ -97,6 +97,10 @@ pub(super) fn resolve(
         .filter(|role| !acquired.contains(&(role.handle.as_str(), role.role.as_str())))
         .collect();
     let mut ordered: Vec<_> = thread.iter().collect();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a busy board path keeps std's in-place sort (crate::order): PULL's unanswered posts"
+    )]
     ordered.sort_by_key(|post| post.id);
     let mut roles: BTreeMap<&str, Holders> = BTreeMap::new();
     let mut last_role: BTreeMap<&str, &str> = BTreeMap::new();

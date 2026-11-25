@@ -1478,7 +1478,9 @@ fn posted_card_pointer_groups_and_lazy_texts_match_the_original_reader() {
                 !named
             });
         }
-        posted.sort_by_key(|card| cards.iter().position(|c| std::ptr::eq(*c, *card)));
+        symphony_board::order::sort_by_key(&mut posted, &|card| {
+            cards.iter().position(|c| std::ptr::eq(*c, *card))
+        });
         posted
     }
     let a = card("docs/A.md", "x");
@@ -1611,7 +1613,7 @@ fn check_history_preserves_total_float_order_and_equal_timestamp_input_order() {
             )
         })
         .collect();
-    expected.sort_by(|a, b| a.0.total_cmp(&b.0));
+    symphony_board::order::sort_by(&mut expected, &|a, b| a.0.total_cmp(&b.0));
     let actual = check("check", "tools/x", Some(TIP), &records).past;
     assert_eq!(actual.len(), expected.len());
     for (actual, (at, by, commit, detail)) in actual.iter().zip(expected) {

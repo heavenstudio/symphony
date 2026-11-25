@@ -537,7 +537,7 @@ fn a_pair_key_orders_as_the_pair_does() {
     let mut positions = pairs.to_vec();
     ordered(&mut positions, pair_key);
     let mut sorted = pairs.to_vec();
-    sorted.sort();
+    crate::order::sort_by(&mut sorted, &Ord::cmp);
     assert_eq!(positions, sorted);
 }
 
@@ -640,7 +640,7 @@ fn an_authority_key_orders_as_the_authority_does() {
     let mut keyed = all.to_vec();
     ordered(&mut keyed, authority_key);
     let mut sorted = all.to_vec();
-    sorted.sort();
+    crate::order::sort_by(&mut sorted, &Ord::cmp);
     assert_eq!(keyed, sorted);
 }
 

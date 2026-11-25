@@ -1006,6 +1006,10 @@ fn agent_page_order_study_preserves_full_payload_filters_and_pagination() {
             });
             let total = expected.agents.len();
             let mut candidate = expected.agents.clone();
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the standard sort this test holds the shared sorter to"
+            )]
             expected.agents.sort_by(|a, b| a.handle.cmp(&b.handle));
             symphony_board::order::sort_by(
                 &mut candidate,
@@ -1065,6 +1069,10 @@ fn activity_order_study_preserves_full_payload_stable_ties_and_truncate_boundary
         let mut live = symphony_api::Activity {
             items: original.clone(),
         };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the standard sort this test holds the shared sorter to"
+        )]
         original.sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
         original.truncate(40);
         symphony_board::order::sort_by(
@@ -1119,7 +1127,7 @@ fn activity_order_study_keeps_native_forty_plus_forty_merge_and_refresh_payload(
     assert_eq!(tasks.len(), 40, "the board's bounded owner-message input");
     expected.extend(tasks);
     assert_eq!(expected.len(), 80);
-    expected.sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
+    symphony_board::order::sort_by(&mut expected, &|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
     expected.truncate(40);
     observe(&hub, &f.store, &["amber"]);
     assert_eq!(hub.pages.read().unwrap()[""].activity.items, expected);

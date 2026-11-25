@@ -46,7 +46,7 @@ fn it_follows_every_task_below_the_ones_it_orchestrates() {
     let mut expected: Vec<String> = (0..3)
         .flat_map(|i| ["", "/a", "/a/b"].map(|tail| format!("sim/t{i}{tail}")))
         .collect();
-    expected.sort();
+    symphony_board::order::sort_by(&mut expected, &Ord::cmp);
     assert_eq!(seen.statuses.keys().cloned().collect::<Vec<_>>(), expected);
 }
 

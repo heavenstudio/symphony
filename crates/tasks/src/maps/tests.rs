@@ -85,7 +85,7 @@ fn ordered_store_payloads_keep_last_values_and_report_collection_cost() {
     fn compare<V: Clone>(name: &str, pairs: Vec<(String, V)>, fingerprint: impl Fn(&V) -> String) {
         for reversed in [false, true] {
             let mut input = pairs.clone();
-            input.sort_by(|a, b| a.0.cmp(&b.0));
+            crate::order::sort_by(&mut input, &|a, b| a.0.cmp(&b.0));
             if reversed {
                 input.reverse();
             }
@@ -176,7 +176,7 @@ fn outer_thread_slot_and_descendant_payload_maps_keep_complete_values_and_report
         for count in [0, 1, 32, 512] {
             for reversed in [false, true] {
                 let mut input = pairs[..count].to_vec();
-                input.sort_by(|a, b| a.0.cmp(&b.0));
+                crate::order::sort_by(&mut input, &|a, b| a.0.cmp(&b.0));
                 if reversed {
                     input.reverse();
                 }

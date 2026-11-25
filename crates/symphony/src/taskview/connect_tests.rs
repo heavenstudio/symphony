@@ -49,7 +49,7 @@ fn sources(root: &Path, dir: &Path, found: &mut Vec<PathBuf>) {
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect();
-    entries.sort();
+    symphony_board::order::sort_by(&mut entries, &Ord::cmp);
     for path in entries {
         if path.is_dir() {
             sources(root, &path, found);

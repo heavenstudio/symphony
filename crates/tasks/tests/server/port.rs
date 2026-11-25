@@ -124,7 +124,7 @@ fn a_child_whose_port_is_taken_on_every_start_is_given_up_on_with_what_the_last_
         format!("start {last}: Address already in use (os error 48)\n")
     );
     let mut ports: Vec<u16> = given.iter().map(SocketAddr::port).collect();
-    ports.sort_unstable();
+    symphony_board::order::sort_by(&mut ports, &Ord::cmp);
     ports.dedup();
     assert_eq!(ports.len(), ATTEMPTS, "a port was tried twice: {given:?}");
     assert_eq!(

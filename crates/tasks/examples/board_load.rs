@@ -657,7 +657,7 @@ fn rounded(value: f64) -> f64 {
 /// `tasks` processes, in milliseconds.
 fn summary(ran: &[&Ran]) -> Value {
     let mut walls: Vec<f64> = ran.iter().map(|one| milliseconds(one.wall)).collect();
-    walls.sort_by(f64::total_cmp);
+    symphony_board::order::sort_by(&mut walls, &f64::total_cmp);
     let cpu: f64 = ran.iter().map(|one| milliseconds(one.cpu)).sum();
     let at = |q: f64| quantile(&walls, q).map(rounded);
     json!({
@@ -694,7 +694,7 @@ fn failures(ran: &[Ran]) -> Vec<Value> {
         }
     }
     let mut counted: Vec<_> = texts.into_iter().collect();
-    counted.sort_by_key(|(_, times)| std::cmp::Reverse(*times));
+    symphony_board::order::sort_by_key(&mut counted, &|(_, times)| std::cmp::Reverse(*times));
     counted
         .into_iter()
         .take(10)
@@ -708,7 +708,7 @@ fn failures(ran: &[Ran]) -> Vec<Value> {
 /// its highest when the run ends, after the last sample.
 fn memory(opened: Option<f64>, samples: &[f64], after: Option<f64>) -> Value {
     let mut sorted = samples.to_vec();
-    sorted.sort_by(f64::total_cmp);
+    symphony_board::order::sort_by(&mut sorted, &f64::total_cmp);
     let peak = (samples.iter().copied())
         .chain(opened)
         .chain(after)

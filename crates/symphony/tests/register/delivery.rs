@@ -100,7 +100,7 @@ fn journal(root: &Path) -> Vec<Value> {
     let mut names: Vec<_> = std::fs::read_dir(folder)
         .map(|read| read.map(|entry| entry.unwrap().path()).collect())
         .unwrap_or_default();
-    names.sort();
+    symphony_board::order::sort_by(&mut names, &Ord::cmp);
     names
         .iter()
         .map(|path| serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap())

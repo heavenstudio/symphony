@@ -1124,14 +1124,14 @@ mod tests {
         assert_eq!(named, helped);
         // The top help lists each once, with `help` and the commands read before this table.
         let mut listed: Vec<&str> = usage::names().collect();
-        listed.sort_unstable();
+        crate::order::sort_by(&mut listed, &Ord::cmp);
         let mut every: Vec<&str> = named
             .iter()
             .copied()
             .chain(usage::BEFORE_TABLE)
             .chain([HELP])
             .collect();
-        every.sort_unstable();
+        crate::order::sort_by(&mut every, &Ord::cmp);
         assert_eq!(listed, every);
         for name in usage::names() {
             assert!(

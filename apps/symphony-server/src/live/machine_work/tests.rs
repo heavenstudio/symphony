@@ -714,7 +714,7 @@ fn guidance_and_signoff_map_payloads_keep_last_values_and_report_cost() {
         for count in [0, 1, 32, 512] {
             for reversed in [false, true] {
                 let mut input = pairs[..count].to_vec();
-                input.sort_by(|a, b| a.0.cmp(&b.0));
+                symphony_board::order::sort_by(&mut input, &|a, b| a.0.cmp(&b.0));
                 if reversed {
                     input.reverse();
                 }

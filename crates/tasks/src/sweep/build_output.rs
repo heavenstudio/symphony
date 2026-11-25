@@ -216,6 +216,10 @@ fn folders(path: &Path, alive: &dyn Fn(i64) -> bool) -> Vec<Folder> {
             .map(|entry| entry.path())
             .filter(|aside| within(path, aside))
             .collect();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a busy board path keeps std's in-place sort (crate::order): the sweep"
+        )]
         left.sort_unstable();
         found.extend(left.into_iter().map(Folder::Cargo));
     }
@@ -304,6 +308,10 @@ fn build_locks(folder: &Path) -> Vec<PathBuf> {
         .flat_map(|dir| LOCKS.map(|lock| dir.join(lock)))
         .filter(|lock| fs::symlink_metadata(lock).is_ok_and(|meta| meta.is_file()))
         .collect();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a busy board path keeps std's in-place sort (crate::order): the sweep"
+    )]
     locks.sort_unstable();
     locks
 }

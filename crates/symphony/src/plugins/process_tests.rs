@@ -2196,11 +2196,11 @@ fn lines_logged_by_threads_at_once_are_each_whole() {
             said
         })
         .collect();
-    said.sort_unstable();
+    symphony_board::order::sort_by(&mut said, &Ord::cmp);
     let mut every: Vec<String> = (0..8)
         .flat_map(|thread| (0..100).map(move |line| format!("thread {thread} line {line}")))
         .collect();
-    every.sort_unstable();
+    symphony_board::order::sort_by(&mut every, &Ord::cmp);
     assert_eq!(said, every);
 }
 
