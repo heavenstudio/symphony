@@ -4,6 +4,8 @@ import {
   type AskDraft,
   AskForm,
   Asks,
+  AsksDrawn,
+  type AsksDrawnProps,
   AskThread,
   concerns,
   type Draft,
@@ -161,9 +163,24 @@ const ask = (overrides: Partial<Ask> = {}): Ask => ({
   ...overrides,
 });
 
+/** The questions of `docs/a.md` as drawn once a read said `fields`: none asked, and Ask offered. */
+const drawn = (fields: Partial<AsksDrawnProps> = {}) =>
+  renderToStaticMarkup(
+    <AsksDrawn
+      path="docs/a.md"
+      scope=""
+      asks={[]}
+      recipient={null}
+      mayAsk={true}
+      trouble={null}
+      onSent={() => {}}
+      {...fields}
+    />,
+  );
+
 describe("a document's questions", () => {
   it("offer a new question, its draft kept on this device", () => {
-    const empty = renderToStaticMarkup(<Asks path="docs/a.md" scope="" />);
+    const empty = drawn();
     expect(empty).toContain(
       '<section class="asks" id="asks" aria-label="Questions about this document"><h2>Ask about this document</h2>',
     );
@@ -175,8 +192,11 @@ describe("a document's questions", () => {
     expect(empty).toContain('<form data-attach="review-ask:/docs/a.md">');
     expect(empty).toContain('<label for="new-ask">Question</label>');
     expect(empty).toMatch(/<button[^>]*type="submit"[^>]*disabled=""[^>]*>Ask<\/button>/);
+    expect(drawn({ recipient: "teal-lynx" })).toContain(
+      '<p class="muted">Chat goes to teal-lynx.</p>',
+    );
     storage.setItem("review-ask:@task/docs/a.md", "A typed question");
-    const drafted = renderToStaticMarkup(<Asks path="docs/a.md" scope="@task" />);
+    const drafted = drawn({ scope: "@task" });
     expect(drafted).toContain(">A typed question</textarea>");
     expect(drafted).toMatch(/<button[^>]*type="submit"[^>]*>Ask<\/button>/);
     expect(drafted).not.toMatch(/<button[^>]*type="submit"[^>]*disabled=""/);
@@ -185,8 +205,38 @@ describe("a document's questions", () => {
   it("wait to be sent while the page may be out of date", () => {
     storage.setItem("review-ask:/docs/a.md", "A typed question");
     STALE.set(true);
-    const html = renderToStaticMarkup(<Asks path="docs/a.md" scope="" />);
+    const html = drawn();
     expect(html).toMatch(new RegExp(`<button[^>]*disabled=""[^>]*>${CHECKING}</button>`));
+  });
+
+  it("are offered to one who may ask once a read says so, its label alone before", () => {
+    const before = renderToStaticMarkup(<Asks path="docs/a.md" scope="" />);
+    expect(before).toBe(
+      '<section class="asks-shell"><section class="asks" id="asks" aria-label="Questions about this document"><h2>Questions about this document</h2></section></section>',
+    );
+    const failed = drawn({ mayAsk: null, trouble: "the disk is full" });
+    expect(failed).toContain(
+      '<h2>Questions about this document</h2><p role="status">Questions could not be refreshed: the disk is full</p></section>',
+    );
+    expect(failed).not.toContain("<form");
+  });
+
+  it("are the threads alone for one who may not ask, and nothing where there are none", () => {
+    storage.setItem("review-ask:/docs/a.md", "A typed question");
+    storage.setItem("review-ask-reply:7", "More, please");
+    const read = drawn({ mayAsk: false, asks: [ask()], recipient: "teal-lynx" });
+    expect(read).toContain(
+      '<section class="asks" id="asks" aria-label="Questions about this document"><h2>Questions about this document</h2><article class="ask-thread card" id="ask-7"',
+    );
+    expect(read).toContain("Why this way?");
+    for (const control of ["<form", "<button", "<textarea", "Chat goes to", "A typed question"]) {
+      expect(read).not.toContain(control);
+    }
+    expect(drawn({ mayAsk: false })).toBe("");
+    // Why a read failed is said to them too, there being questions or not.
+    expect(drawn({ mayAsk: false, trouble: "the disk is full" })).toContain(
+      '<h2>Questions about this document</h2><p role="status">Questions could not be refreshed: the disk is full</p></section>',
+    );
   });
 
   it("are each a thread: its place, its quote, its messages and a follow-up", () => {
@@ -212,6 +262,17 @@ describe("a document's questions", () => {
     expect(html).not.toContain("<blockquote>");
     expect(html).toContain(">More, please</textarea>");
     expect(html).not.toMatch(/disabled=""[^>]*>Send follow-up<\/button>/);
+  });
+
+  it("offer no follow-up to one who may not ask", () => {
+    storage.setItem("review-ask-reply:7", "More, please");
+    const html = renderToStaticMarkup(
+      <AskThread ask={ask()} scope="" onSent={() => {}} replies={false} />,
+    );
+    expect(html).toContain('<p class="muted">Question 7 · open</p>');
+    expect(html).toContain("Why this way?");
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain("More, please");
   });
 });
 
@@ -316,6 +377,7 @@ const ENDPOINT = "/api/asks?format=blocks&path=docs%2Fa.md";
 const shownOf = () => ({
   asks: vi.fn<(asks: Ask[]) => void>(),
   recipient: vi.fn<(recipient: string | null) => void>(),
+  mayAsk: vi.fn<(may: boolean) => void>(),
   trouble: vi.fn<(trouble: string | null) => void>(),
 });
 
@@ -328,10 +390,11 @@ describe("a read of a document's asks", () => {
     const done = readAsksUntilAnswered(ENDPOINT, new AbortController().signal, shown);
     await asking(asked, 1);
     expect(asked[0]?.url).toBe(ENDPOINT);
-    asked[0]?.answer(reply(200, { asks: [ask()], recipient: "teal-lynx" }));
+    asked[0]?.answer(reply(200, { asks: [ask()], recipient: "teal-lynx", may_ask: false }));
     await done;
     expect(shown.asks).toHaveBeenCalledWith([ask()]);
     expect(shown.recipient).toHaveBeenCalledWith("teal-lynx");
+    expect(shown.mayAsk.mock.calls).toEqual([[false]]);
     expect(shown.trouble.mock.calls).toEqual([[null]]);
   });
 

@@ -1536,8 +1536,9 @@ Each step can ship alone, and a machine with one person sees none of them.
    it was left on the document's page and told to those who may pass it on, and passed on with one
    press under both names, as an ask, after its block found again or refused with nothing written;
    and the note beside a verdict written with it, by one who may decide and not direct agents.
-   Not yet: a held ask, and the two cards above on what an agent is told of a document's held
-   comments and where they wait.
+   Not yet: a held ask, which [its card](#held-ask) asks of the owner, while the document's page
+   draws its questions' Ask and Follow up for those who may ask alone; and the two cards above on
+   what an agent is told of a document's held comments and where they wait.
    Personal agents, as far as any agent reaches a board: every session that reaches one runs on
    its machine, under its account and on its credits, since the board's commands write its
    database there and none reaches a hosted board yet
@@ -1565,6 +1566,29 @@ Each step can ship alone, and a machine with one person sees none of them.
    its handle and whose it is, a [later round's](#later-rounds), after step 7's agent
    credentials: until then no record ties a session to a person, as one claimed by hand would say
    what no session on the machine is.
+
+- [ ] **held-ask** — A person who may speak and may not direct agents is refused an ask about a document, its follow-up and the `+` sheet's chat, since asking is directing an agent. They can already leave a held question after any block, which an agent answers once someone passes it on. Should their ask also be held and passed on like a comment? A: no, it stays refused. B: held, drawn in the asks panel, and passed on as an ask under both names. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#The way from one owner]]
+  [2026-11-25 08:39] agent — Posted for the board task `app/held-asks-on-documents`, a question your A on **words-without-agent-reach** leaves open for asks. Nothing that depends on it is built. Under either answer the document's page draws Ask and Follow up only for someone who may ask.
+
+    **Base (today).** An ask is a question to the agent that answers chat. It reaches that agent at once and changes no file. Someone who may speak and may not direct agents is refused it, its follow-up and the `+` sheet's chat. Their question after a block is held: everyone reading the page sees it, those who may pass it on are told, and once passed it becomes an ask an agent answers, under both names.
+
+    **A, it stays refused.**
+    - They ask about a place in a document by leaving a held question there.
+    - The page draws them the asks' threads and no Ask or Follow up.
+
+    **B, held and passed on.**
+    - Their ask is kept by the board and drawn in the asks panel, marked held, with Pass on for those who may.
+    - Passed on, it becomes the passer's ask under both names, and an agent answers it.
+    - Their follow-up on a thread waits the same way, and so does each line of their chat in the `+` sheet.
+
+    **Why A.** The held question already does it: it hangs on the place it asks about and becomes an ask once passed on. Only an agent answers an ask, so a held one is a question nobody answers until it is passed, and whoever passes it could ask it themselves. B costs a second held kind in the asks panel and the chat, and a chat whose every line waits for someone is no chat.
+
+    **Earlier verdicts checked.**
+    - **words-without-agent-reach** (A) says no agent sees their words until someone passes them on. It rules out letting them ask outright, and does not say whether they may ask at all.
+    - **held-on-document-agent-told** and **held-on-document-waits-where** (open) are about held comments, not asks.
+
+    Neither decides this.
+
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
    saves through the same writes as local ones. Then the Symphony's own sign-in service, a
    separate program in front.

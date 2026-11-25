@@ -67,11 +67,23 @@ pub(crate) fn refused(name: &str, held: &Powers, needs: Needs) -> Option<String>
         .map(|power| format!("Forbidden: {name} may not {} on this board", power.said()))
 }
 
+/// Whether `name`, a person of the board `people`, may write to `route`. The person at the machine
+/// always may, and is no row here.
+fn may(people: &People, name: &str, route: &str) -> bool {
+    refused(name, &people.powers_of(name), needs(route)).is_none()
+}
+
 /// Whether `name`, a person of the board `people`, may pass a held message on: they hold what
-/// `symphony_api::TASK_PASS_ROUTE` needs. The person at the machine always may, and is no row here.
+/// `symphony_api::TASK_PASS_ROUTE` needs.
 pub(crate) fn may_pass(people: &People, name: &str) -> bool {
-    let needs = needs(symphony_api::TASK_PASS_ROUTE);
-    refused(name, &people.powers_of(name), needs).is_none()
+    may(people, name, symphony_api::TASK_PASS_ROUTE)
+}
+
+/// Whether `name`, a person of the board `people`, may ask about a document and follow an ask up:
+/// they hold what `/api/ask` needs, as `/api/ask-reply` needs the same. A page draws its Ask and
+/// Follow up for them alone. Filing a task (`/api/quick-task`) is not this, whatever it needs.
+pub(crate) fn may_ask(people: &People, name: &str) -> bool {
+    may(people, name, "/api/ask")
 }
 
 #[cfg(test)]

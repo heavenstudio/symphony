@@ -5796,9 +5796,10 @@
         }
       ],
       "listening": true,
-      "recipient": "amber-heron"
+      "recipient": "amber-heron",
+      "may_ask": true
     },
-    "noAsks": { "asks": [], "listening": false, "recipient": null }
+    "noAsks": { "asks": [], "listening": false, "recipient": null, "may_ask": false }
   },
   "carried": [
     {

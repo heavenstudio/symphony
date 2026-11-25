@@ -145,10 +145,9 @@ fn a_refusal_names_the_person_and_the_first_power_they_lack() {
     }
 }
 
-/// Who may pass a held message on, by what the pass route needs: speak and direct agents, their
-/// own or a group's; a name the board holds no person by never may.
-#[test]
-fn one_may_pass_a_held_message_holding_speak_and_direct_agents_by_themselves_or_a_group() {
+/// A board naming ana (speak and direct agents), bo (speak), cy (direct agents), di (speak, and
+/// direct agents by the group leads) and ed (every power).
+fn people() -> symphony_board::people::People {
     use symphony_board::people::{Group, Member, People};
     let member = |name: &str, groups: &[&str], powers: &[Power]| Member {
         name: name.into(),
@@ -156,7 +155,7 @@ fn one_may_pass_a_held_message_holding_speak_and_direct_agents_by_themselves_or_
         powers: powers.to_vec(),
         revision: 0,
     };
-    let people = People {
+    People {
         members: vec![
             member("ana", &[], &[Power::Speak, Power::DirectAgents]),
             member("bo", &[], &[Power::Speak]),
@@ -170,10 +169,32 @@ fn one_may_pass_a_held_message_holding_speak_and_direct_agents_by_themselves_or_
             revision: 0,
         }],
         revision: 1,
-    };
-    let passing: Vec<&str> = ["ana", "bo", "cy", "di", "ed", "owner", "zed"]
+    }
+}
+
+/// The names of [`people`], the person at the machine's word and a name the board holds no person
+/// by, that `may` holds for.
+fn those_who(may: fn(&symphony_board::people::People, &str) -> bool) -> Vec<&'static str> {
+    let people = people();
+    ["ana", "bo", "cy", "di", "ed", "owner", "zed"]
         .into_iter()
-        .filter(|name| may_pass(&people, name))
-        .collect();
-    assert_eq!(passing, ["ana", "di", "ed"]);
+        .filter(|name| may(&people, name))
+        .collect()
+}
+
+/// Who may pass a held message on, by what the pass route needs: speak and direct agents, their
+/// own or a group's; a name the board holds no person by never may.
+#[test]
+fn one_may_pass_a_held_message_holding_speak_and_direct_agents_by_themselves_or_a_group() {
+    assert_eq!(those_who(may_pass), ["ana", "di", "ed"]);
+}
+
+/// Who may ask about a document and follow an ask up, by what the ask needs: speak and direct
+/// agents, their own or a group's. Speaking alone, or directing agents alone, is not asking, and a
+/// name the board holds no person by never may. The follow-up needs what the ask does, so one
+/// word says both.
+#[test]
+fn one_may_ask_and_follow_up_holding_speak_and_direct_agents_by_themselves_or_a_group() {
+    assert_eq!(those_who(may_ask), ["ana", "di", "ed"]);
+    assert_eq!(needs("/api/ask-reply"), needs("/api/ask"));
 }

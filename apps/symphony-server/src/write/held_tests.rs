@@ -712,3 +712,35 @@ async fn the_note_beside_her_verdict_is_written_with_it_and_asks() {
     assert_eq!(asks(&root), [("verdict".into(), Some("one".into()))]);
     assert_eq!(held(&ana, LAPTOP).await["held"], json!([]), "nothing held");
 }
+
+/// The asks read says whether its reader may ask about the document and follow an ask up, which
+/// its page draws Ask and Follow up for alone: not ana, who may speak and may not direct agents;
+/// stefano, who may both, from his laptop as from the machine; and a revoke holds from the next
+/// read, as it does from the next write.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_asks_read_says_whether_its_reader_may_ask_as_the_board_reads_it_then() {
+    use symphony_board::people::Holder;
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", DOC, PAGE);
+    let _board = named(&root);
+    let may_ask = async |shared: &std::sync::Arc<crate::front::Shared>, client: &str| {
+        let (status, read) =
+            read(shared, client, "/api/asks?format=blocks&path=docs/TOPIC.md").await;
+        assert_eq!(status, StatusCode::OK, "{read}");
+        assert_eq!(read["asks"], json!([]), "{read}");
+        read["may_ask"].clone()
+    };
+    let ana = as_person(&root, "ana");
+    assert_eq!(may_ask(&ana, LAPTOP).await, false);
+    let stefano = as_person(&root, "stefano");
+    assert_eq!(may_ask(&stefano, LAPTOP).await, true);
+    assert_eq!(may_ask(&stefano, MACHINE).await, true);
+    (Board::store(&root).revoke(Holder::Person("stefano"), &[Power::DirectAgents], "owner"))
+        .unwrap();
+    assert_eq!(may_ask(&stefano, LAPTOP).await, false);
+    assert_eq!(
+        may_ask(&stefano, MACHINE).await,
+        true,
+        "the person at the machine always may"
+    );
+}
