@@ -586,6 +586,25 @@ mod tests {
     }
 
     #[test]
+    fn the_driver_hands_back_each_works_outcome_and_says_once_its_thread_has_ended() {
+        let mut driver = Driver::start().unwrap();
+        assert_eq!(driver.run(async { 7 }), Ok(7));
+        assert_eq!(
+            driver.run(async { "of another type" }),
+            Ok("of another type")
+        );
+        // Its thread ended, a work handed to it is dropped unrun, and with it the work's sender.
+        drop(driver.stop.take());
+        driver.thread.take().unwrap().join().unwrap();
+        assert_eq!(
+            driver.run(async { 7 }),
+            Err(Refusal::Unavailable(
+                "the thread that drives its connections ended"
+            ))
+        );
+    }
+
+    #[test]
     fn clients_of_one_board_share_its_pool_and_another_board_has_its_own() {
         let dir = secret::tests::temp("pools");
         let settings = secret::tests::settings("");
