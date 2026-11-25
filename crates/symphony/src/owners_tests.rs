@@ -380,7 +380,11 @@ fn a_branchs_proposal_is_owned_as_its_worktrees_file_holds_it_its_written_name_r
              {cards}<!-- register:end -->\n"
         )
     };
-    tree.write("main/docs/design/palette.md", &register(""));
+    // Main's file holds a card written for bo that the worktree's does not.
+    tree.write(
+        "main/docs/design/palette.md",
+        &register("- [ ] **kept** — *For:* bo. Which grid?\n"),
+    );
     git(&main, &["init", "-q"]);
     git(&main, &["add", "."]);
     git(&main, &["commit", "-qm", "main"]);
@@ -413,8 +417,10 @@ fn a_branchs_proposal_is_owned_as_its_worktrees_file_holds_it_its_written_name_r
             card(proposed, "handed"),
             card(proposed, "plain"),
             // A proposal of main's card its worktree does not hold: as main's file holds it.
-            card(proposed, "new-palette"),
-            // A branch with no worktree: main's file, then the card's places.
+            card(proposed, "kept"),
+            // A branch with no worktree: as main's file holds the card.
+            card("@gone~branch/docs/design/palette.md", "kept"),
+            // A card neither file holds: by its places alone.
             card("@gone~branch/docs/design/palette.md", "written"),
         ],
     );
@@ -427,8 +433,10 @@ fn a_branchs_proposal_is_owned_as_its_worktrees_file_holds_it_its_written_name_r
             ("engineering", Kind::Group, By::Named),
             ("bo", Kind::Person, By::Named),
             ("design", Kind::Group, By::Map),
+            ("bo", Kind::Person, By::Named),
+            ("bo", Kind::Person, By::Named),
             ("design", Kind::Group, By::Map),
-            ("design", Kind::Group, By::Map),
-        ]
+        ],
+        "the worktree's file, then main's, then the places: each case says which it read"
     );
 }
