@@ -19,7 +19,7 @@
 
 use super::Hub;
 use crate::notices::hand::{self, Bounds, Running};
-use crate::notices::runner::{Line, Look, Runner, Waiting};
+use crate::notices::runner::{HELD, Line, Look, Runner, Waiting};
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -56,8 +56,8 @@ struct Read {
     /// The board's people revision and its map's.
     people: i64,
     map: i64,
-    /// The comments held on documents and not passed on, by number.
-    held: Vec<i64>,
+    /// The comments held on documents and not passed on, by number; none where they did not read.
+    held: Option<Vec<i64>>,
 }
 
 /// What a pass said that went wrong, by where: said again only once it changes.
@@ -221,7 +221,8 @@ impl Hub {
     /// One pass of the turns' runner: a look, where what it reads moved since the last, then the
     /// hand of what is due. A machine folder, a board or profiles that cannot be read leaves the
     /// record as it was, said once; programs that are refused send nothing, said once, and the
-    /// look goes on.
+    /// look goes on; comments held on documents that cannot be read are left out of it, said
+    /// once, and what stands of them stands, while the rest is told and handed.
     fn notice_pass(&self, turns: &mut Turns) {
         let Turns {
             project,
@@ -273,11 +274,12 @@ impl Hub {
         let held = match store.held_on_documents() {
             Ok(held) => {
                 said.clear("held");
-                held
+                Some(held)
             }
             Err(error) => {
                 let why = format!("the comments held on documents: {error}");
-                return said.once(project, "held", why);
+                said.once(project, "held", why);
+                None
             }
         };
         let page = {
@@ -294,7 +296,7 @@ impl Hub {
             page: page.as_ref().map(|(version, _)| *version),
             people: people.revision,
             map: map.revision,
-            held: held.iter().map(|held| held.id).collect(),
+            held: (held.as_ref()).map(|held| held.iter().map(|held| held.id).collect()),
         };
         let now = (self.clock)();
         if last.as_ref() != Some(&read) {
@@ -323,13 +325,15 @@ impl Hub {
                 let cards = (cards.into_iter().zip(owners)).map(|((doc, slug, href), owning)| {
                     Waiting::card(format!("{doc}#{slug}"), href, owning)
                 });
+                let held = held.as_deref().unwrap_or_default();
                 cards
-                    .chain(held_waiting(people, map, &self.root, &held))
+                    .chain(held_waiting(people, map, &self.root, held))
                     .collect()
             });
             let look = Look {
                 people,
                 cards,
+                held_read: held.is_some(),
                 lines,
                 latest,
             };
@@ -460,7 +464,7 @@ fn held_waiting(
     let owners = symphony::owners::waiting(people, map, root, &docs);
     (held.iter().zip(docs).zip(owners))
         .map(|((held, (doc, _)), owning)| Waiting {
-            key: format!("held:{}", held.id),
+            key: format!("{HELD}{}", held.id),
             page: format!("/{doc}#held-{}", held.id),
             told: Some(passers(people, &owning, &held.author)),
             owning,

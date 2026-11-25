@@ -136,6 +136,7 @@ fn look(
     let look = Look {
         people,
         cards,
+        held_read: true,
         lines,
         latest,
     };
@@ -247,6 +248,7 @@ fn origins_asked(
     let look = Look {
         people,
         cards: Some(cards),
+        held_read: true,
         lines,
         latest,
     };
@@ -562,6 +564,56 @@ fn a_notice_whose_way_address_or_program_moved_since_it_was_made_is_dropped_unha
     assert!(hands.log.borrow()[0].ends_with("dropped: no program is named for its way now"));
 }
 
+/// A look whose held comments did not read keeps what was told of them as it stands, so none is
+/// told again once they read, while the cards it did read are told as ever; a first look without
+/// them waits for one that has them.
+#[test]
+fn a_look_whose_held_comments_did_not_read_keeps_what_was_told_of_them() {
+    let tree = Tree::new();
+    let people = people();
+    let (mut runner, _) = opened(&tree);
+    let held = Waiting {
+        key: format!("{HELD}4"),
+        page: "/docs/design/palette.md#held-4".into(),
+        owning: owned_by(&people, "design"),
+        kind: Kind::Held,
+        told: Some(vec!["bo".into()]),
+    };
+    let without = |runner: &mut Runner, cards: Vec<Waiting>| {
+        let look = Look {
+            people: &people,
+            cards: Some(cards),
+            held_read: false,
+            lines: vec![],
+            latest: 10,
+        };
+        let mut origin = || ORIGIN.to_string();
+        (runner.look(&look, &profiles(), &programs(), 0.0, &mut origin)).unwrap();
+    };
+    without(&mut runner, vec![card(&people, "a", "design")]);
+    assert_eq!(runner.cursor(), None, "a first look without them waits");
+    look(&mut runner, &people, Some(vec![held.clone()]), vec![], 10);
+    assert_eq!(runner.cursor(), Some(10), "the first look that has them");
+    without(&mut runner, vec![card(&people, "a", "design")]);
+    let told: Vec<(&str, &str)> = (record(&runner).pending.iter())
+        .map(|notice| (notice.kind.as_str(), notice.person.as_str()))
+        .collect();
+    assert_eq!(told, [("card", "ana"), ("card", "bo")]);
+    assert_eq!(
+        record(&runner).cards.get(&held.key),
+        Some(&["bo".to_string()].into()),
+        "its spell stands"
+    );
+    look(
+        &mut runner,
+        &people,
+        Some(vec![card(&people, "a", "design"), held]),
+        vec![],
+        10,
+    );
+    assert_eq!(record(&runner).pending.len(), 2, "nobody told again");
+}
+
 /// A held message's notice goes by the way each person chose for questions, as no profile chooses
 /// one for it: made by it, handed as `held`, and dropped once that way moved, whatever the way
 /// chosen for another kind. Who it tells is the line's alone, here ana and not bo.
@@ -586,6 +638,7 @@ fn a_held_messages_notice_goes_by_the_way_chosen_for_questions_to_whom_its_line_
     let look_at = Look {
         people: &people,
         cards: None,
+        held_read: true,
         lines: vec![held.clone()],
         latest: 11,
     };

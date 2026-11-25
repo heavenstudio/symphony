@@ -16,10 +16,12 @@
 //! holds the words.
 
 use serde_json::{Value, json};
-use symphony_board::held::{Block, MESSAGE, OnDocument, Place};
+use symphony_board::held::{Block, MESSAGE, OnDocument, Place, passed_text};
 use symphony_board::people::Power;
 
 use super::{Failure, string};
+use crate::register::{self, Who};
+use crate::{clock, edit};
 
 /// Whether the comment or card message `name`, a person a board named, writes on the board `store`
 /// is held for people: the board names someone and does not give them direct agents. A board that
@@ -122,10 +124,84 @@ fn heading(key: &str) -> &str {
     key.rsplit_once(':').map_or(key, |(heading, _)| heading)
 }
 
+/// Whether what a pass of `held` writes stands in `text`, the document as its page shows it, more
+/// often than the rows of that document passed already (`passed`) put there: a pass whose words
+/// went in and whose mark did not, so the next press writes nothing again and marks the row. Only
+/// what a pass writes counts, its author's words with a passer first
+/// ([`symphony_board::held::passed_text`]), whoever passed them: a callout of its kind and author
+/// whose title and body are those words, a message of its author on its card. The author's own
+/// words, written as hers once she may direct agents, never do.
+pub(super) fn written_already(text: &str, held: &OnDocument, passed: &[OnDocument]) -> bool {
+    let place = &held.document;
+    let before = (passed.iter())
+        .filter(|row| {
+            row.id != held.id
+                && row.passed.is_some()
+                && (&row.author, &row.text) == (&held.author, &held.text)
+                && (&row.document.kind, &row.document.card) == (&place.kind, &place.card)
+        })
+        .count();
+    standing(text, held) > before
+}
+
+/// How many times what a pass of `held` writes stands in `text`, whoever passed it: each read as
+/// the save would write it, so the two are told apart by its words alone.
+fn standing(text: &str, held: &OnDocument) -> usize {
+    let words = passed_text(Who::Owner.as_str(), &held.text);
+    let lines = crate::text::splitlines(text);
+    match &held.document.card {
+        None => {
+            let wanted = edit::split_message(&words).ok().and_then(|(title, body)| {
+                let kind = &held.document.kind;
+                let one = edit::insert_comment_by("x\n", 1, kind, &title, &body, &held.author);
+                crate::callouts::parse_comments(&crate::text::splitlines(&one.ok()?)).pop()
+            });
+            let Some(wanted) = wanted else {
+                return 0;
+            };
+            (crate::callouts::parse_comments(&lines).iter())
+                .filter(|found| {
+                    (&found.kind, &found.by, &found.body)
+                        == (&wanted.kind, &wanted.by, &wanted.body)
+                        && passed_words(&found.title).is_some()
+                        && passed_words(&found.title) == passed_words(&wanted.title)
+                })
+                .count()
+        }
+        Some(card) => {
+            let one = format!("- [ ] **{card}** — x\n");
+            let now = clock::now_stamp();
+            let one = edit::add_message_by(&one, card, &words, &now, &held.author, None);
+            let wanted = (one.ok())
+                .and_then(|one| register::parse_decisions(&crate::text::splitlines(&one)).pop())
+                .and_then(|card| card.entries().pop());
+            let Some(wanted) = wanted else {
+                return 0;
+            };
+            (register::parse_decisions(&lines).iter())
+                .filter(|found| found.slug == *card)
+                .flat_map(register::Decision::entries)
+                .filter(|found| {
+                    (&found.name, &found.verdict) == (&wanted.name, &None)
+                        && passed_words(&found.text).is_some()
+                        && passed_words(&found.text) == passed_words(&wanted.text)
+                })
+                .count()
+        }
+    }
+}
+
+/// The words a passed line carries after its passer (`[passed on by NAME] WORDS`,
+/// [`symphony_board::held::passed_text`]): none for a line no pass wrote.
+fn passed_words(line: &str) -> Option<&str> {
+    let (_, words) = line.strip_prefix("[passed on by ")?.split_once("] ")?;
+    Some(words)
+}
+
 /// The save a pass of `held` by `by` makes: the route its words take and its payload, as its
 /// author's own save would send it, the passer first in its words.
 pub(super) fn passed_save(held: &OnDocument, by: &str) -> (&'static str, Value) {
-    let text = symphony_board::held::passed_text(by, &held.text);
+    let text = passed_text(by, &held.text);
     let place = &held.document;
     match &place.card {
         Some(card) => (
@@ -344,6 +420,158 @@ mod tests {
                     "text": "[passed on by owner] Lamps\nToo many"})
             )
         );
+    }
+
+    /// [`PAGE`] with the callout of `kind` by `by`, its title `title`, after its first prose.
+    fn commented(page: &str, kind: &str, by: &str, title: &str, body: &str) -> String {
+        edit::insert_comment_by(page, 3, kind, title, body, by).unwrap()
+    }
+
+    #[test]
+    fn a_callout_a_pass_wrote_stands_once_more_than_the_rows_passed_before_it_put_there() {
+        let mine = held(None, None);
+        let passed = |by: &str| format!("[passed on by {by}] Lamps");
+        let wrote = |page: &str| commented(page, "comment", "ana", &passed("bo"), "Too many");
+        assert!(!written_already(PAGE, &mine, &[]), "nothing written yet");
+        assert!(
+            written_already(&wrote(PAGE), &mine, &[]),
+            "its mark never followed"
+        );
+        let by_owner = commented(PAGE, "comment", "ana", &passed("owner"), "Too many");
+        assert!(written_already(&by_owner, &mine, &[]), "whoever passed it");
+        // Its own row counts for nothing; another like it, passed, put one there.
+        let itself = held(None, Some("bo"));
+        assert!(written_already(&wrote(PAGE), &mine, &[itself]));
+        let other = OnDocument {
+            id: 5,
+            ..held(None, Some("bo"))
+        };
+        let before = std::slice::from_ref(&other);
+        assert!(!written_already(&wrote(PAGE), &mine, before));
+        assert!(written_already(&wrote(&wrote(PAGE)), &mine, before));
+        // A row unpassed, or of other words, author, kind or card, put none there.
+        for row in [
+            OnDocument {
+                id: 5,
+                ..held(None, None)
+            },
+            OnDocument {
+                id: 5,
+                text: "Lamps".into(),
+                ..held(None, Some("bo"))
+            },
+            OnDocument {
+                id: 5,
+                author: "cy".into(),
+                ..held(None, Some("bo"))
+            },
+            OnDocument {
+                id: 5,
+                ..held(Some("one"), Some("bo"))
+            },
+        ] {
+            assert!(
+                written_already(&wrote(PAGE), &mine, std::slice::from_ref(&row)),
+                "{row:?}"
+            );
+        }
+        // Her own words, written as hers, and lines no pass of hers wrote, are none of its.
+        for (what, page) in [
+            (
+                "her own",
+                commented(PAGE, "comment", "ana", "Lamps", "Too many"),
+            ),
+            (
+                "its kind",
+                commented(PAGE, "question", "ana", &passed("bo"), "Too many"),
+            ),
+            (
+                "its author",
+                commented(PAGE, "comment", "cy", &passed("bo"), "Too many"),
+            ),
+            (
+                "its body",
+                commented(PAGE, "comment", "ana", &passed("bo"), "Too few"),
+            ),
+            (
+                "its title",
+                commented(
+                    PAGE,
+                    "comment",
+                    "ana",
+                    "[passed on by bo] Lights",
+                    "Too many",
+                ),
+            ),
+            (
+                "its body gone",
+                commented(PAGE, "comment", "ana", &passed("bo"), ""),
+            ),
+        ] {
+            assert!(!written_already(&page, &mine, &[]), "{what}: {page}");
+        }
+        // A row of a kind no save writes, or of no name, stands nowhere.
+        let place = |kind: &str| Place {
+            kind: kind.into(),
+            ..mine.document.clone()
+        };
+        let unwritable = [
+            OnDocument {
+                document: place("nonsense"),
+                ..mine.clone()
+            },
+            OnDocument {
+                author: "Ana Lima".into(),
+                ..mine.clone()
+            },
+        ];
+        for row in unwritable {
+            assert!(!written_already(&wrote(PAGE), &row, &[]), "{row:?}");
+        }
+    }
+
+    #[test]
+    fn a_cards_message_a_pass_wrote_stands_on_its_card_alone() {
+        let mine = held(Some("one"), None);
+        let cards = "# Topic\n\n- [ ] **one** — proposal.\n- [ ] **two** — another.\n";
+        let said = |card: &str, by: &str, words: &str| {
+            edit::add_message_by(cards, card, words, "2026-11-25 10:00", by, None).unwrap()
+        };
+        let passed = passed_text("owner", &mine.text);
+        assert!(!written_already(cards, &mine, &[]));
+        assert!(written_already(&said("one", "ana", &passed), &mine, &[]));
+        let by_bo = passed_text("bo", &mine.text);
+        assert!(written_already(&said("one", "ana", &by_bo), &mine, &[]));
+        let before = OnDocument {
+            id: 5,
+            ..held(Some("one"), Some("bo"))
+        };
+        assert!(!written_already(
+            &said("one", "ana", &passed),
+            &mine,
+            &[before]
+        ));
+        for (what, page) in [
+            ("her own", said("one", "ana", &mine.text)),
+            ("another card", said("two", "ana", &passed)),
+            ("another author", said("one", "cy", &passed)),
+        ] {
+            assert!(!written_already(&page, &mine, &[]), "{what}: {page}");
+        }
+    }
+
+    #[test]
+    fn a_passed_lines_words_follow_its_passer_and_no_other_line_has_any() {
+        assert_eq!(passed_words("[passed on by bo] Lamps"), Some("Lamps"));
+        assert_eq!(passed_words(&passed_text("owner", "a] b")), Some("a] b"));
+        for line in [
+            "Lamps",
+            "[passed on by bo]Lamps",
+            "passed on by bo] Lamps",
+            "",
+        ] {
+            assert_eq!(passed_words(line), None, "{line}");
+        }
     }
 
     #[test]
