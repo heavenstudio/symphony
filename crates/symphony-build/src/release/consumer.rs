@@ -872,28 +872,35 @@ enum Held<'a> {
 }
 
 /// A guard read as [`Held`]: a `use` declaration, over as many lines as `rustfmt` wraps it on, is
-/// the full path of each name its tree imports ([`paths`]), not a line.
+/// the full path of each name its tree imports ([`paths`]), not a line. One that never closes (no
+/// line of it, to the end of the guard, ends in `;` once its comment is cut) is its lines as
+/// written, each a [`Held::Line`], so a call among them is still compared.
 fn holds(guard: &str) -> Vec<Held<'_>> {
     let mut held = Vec::new();
-    let mut tree: Option<String> = None;
+    // The tree read so far, and its lines as written.
+    let mut tree: Option<(String, Vec<&str>)> = None;
     for line in guard.lines() {
         let code = uncommented(line);
-        if let Some(tree) = tree.as_mut() {
+        if let Some((tree, lines)) = tree.as_mut() {
+            lines.push(line);
             if let Some(code) = code {
                 tree.push(' ');
                 tree.push_str(code);
             }
         } else if let Some(rest) = code.and_then(|code| code.strip_prefix("use ")) {
-            tree = Some(rest.to_string());
+            tree = Some((rest.to_string(), vec![line]));
         } else {
             held.push(Held::Line(line));
         }
-        if let Some(whole) = tree.as_deref().and_then(|tree| tree.strip_suffix(';')) {
+        if let Some(whole) = tree.as_ref().and_then(|(tree, _)| tree.strip_suffix(';')) {
             let mut named = Vec::new();
             paths("", whole, &mut named);
             held.extend(named.into_iter().map(Held::Path));
             tree = None;
         }
+    }
+    if let Some((_, lines)) = tree {
+        held.extend(lines.into_iter().map(Held::Line));
     }
     held
 }

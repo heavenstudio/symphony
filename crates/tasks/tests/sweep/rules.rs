@@ -775,16 +775,13 @@ fn a_merged_branch_worktree_goes_and_its_branch_with_it() {
     assert_eq!(r.branch("sim/done"), "", "{said}");
 }
 
-/// The comments a pass wrote into a removed worktree's documents, all in main now, are kept under
-/// main's from then on (`Store::held_landed`); a dry run moves none, and a worktree that stays
-/// keeps its own.
-#[test]
-fn a_removed_worktrees_passed_comments_are_kept_under_mains() {
-    let r = Repo::new();
+/// Ana's comment on a card of docs/a.md held and passed on into each checkout of `scopes`: their
+/// ids, in order.
+fn passed_into<const N: usize>(r: &Repo, scopes: [&str; N]) -> [i64; N] {
     let store = &r.board.store;
     (store.add_person("ana", &[], &[Power::Speak], "owner")).unwrap();
     let ana = r.board.other().for_person("ana");
-    let passed = |scope: &str| {
+    scopes.map(|scope| {
         let place = Place {
             path: "docs/a.md".into(),
             scope: Some(scope.into()),
@@ -795,12 +792,31 @@ fn a_removed_worktrees_passed_comments_are_kept_under_mains() {
         let held = ana.hold_on_document("ana", "Look again", &place).unwrap();
         let passed = store.pass_on_document_into(held.id, "owner", Some(scope));
         passed.unwrap().id
-    };
-    let (landed, open) = (passed("sim~done"), passed("sim~open"));
+    })
+}
+
+/// The checkout the comment `id` is kept under: none for main's.
+fn kept_under(r: &Repo, id: i64) -> Option<String> {
+    r.board
+        .store
+        .held_comment(id)
+        .unwrap()
+        .unwrap()
+        .document
+        .scope
+}
+
+/// The comments a pass wrote into a removed worktree's documents, all in main now, are kept under
+/// main's from then on (`Store::held_landed`); a dry run moves none, and a worktree that stays
+/// keeps its own.
+#[test]
+fn a_removed_worktrees_passed_comments_are_kept_under_mains() {
+    let r = Repo::new();
+    let [landed, open] = passed_into(&r, ["sim~done", "sim~open"]);
     let wt = r.merged("named", "sim/done");
     let stays = r.add("open", Some("sim/open"), "main");
     r.commit(&stays, "extends RefCounted\n# open\n");
-    let scope = |id: i64| store.held_comment(id).unwrap().unwrap().document.scope;
+    let scope = |id: i64| kept_under(&r, id);
     let dry = text(&r.sweep_with(|o| o.dry_run = true));
     assert_eq!(scope(landed).as_deref(), Some("sim~done"), "{dry}");
     let said = r.sweep();
@@ -808,6 +824,44 @@ fn a_removed_worktrees_passed_comments_are_kept_under_mains() {
     r.assert_kept(&stays, &said);
     assert_eq!(scope(landed), None, "{said}");
     assert_eq!(scope(open).as_deref(), Some("sim~open"), "{said}");
+}
+
+/// Two worktrees on one branch (`git worktree add --force`) share its id, so a pass may have
+/// written into the one that stays: removing the other moves none of the branch's passed comments,
+/// whose line main would then lack. The last of them to go moves them, in a later sweep, or in the
+/// same one where both go.
+#[test]
+fn a_removed_worktrees_passed_comments_stay_while_another_worktree_holds_its_branch() {
+    for later in [true, false] {
+        let r = Repo::new();
+        let [passed] = passed_into(&r, ["sim~done"]);
+        let wt = r.merged("named", "sim/done");
+        let other = r.dir.join("again");
+        let at = other.to_str().unwrap();
+        git(
+            &r.root,
+            &["worktree", "add", "-q", "--force", at, "sim/done"],
+        );
+        if later {
+            // The pass's line, not landed, in the one that stays.
+            write(&other, "docs/a.md", "Look again\n");
+            let said = r.sweep();
+            r.assert_removed(&wt, &said);
+            r.assert_kept(&other, &said);
+            assert_eq!(
+                kept_under(&r, passed).as_deref(),
+                Some("sim~done"),
+                "{said}"
+            );
+            std::fs::remove_file(other.join("docs/a.md")).unwrap();
+        }
+        let said = r.sweep();
+        r.assert_removed(&other, &said);
+        if !later {
+            r.assert_removed(&wt, &said);
+        }
+        assert_eq!(kept_under(&r, passed), None, "later={later}: {said}");
+    }
 }
 
 /// A move the board refuses (one whose record lacks the held step) is said, its refusal and not

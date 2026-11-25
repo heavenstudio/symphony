@@ -875,6 +875,35 @@ fn a_fault_is_said_once_until_it_changes_or_clears() {
     assert!(said.0.is_empty());
 }
 
+/// Words standing under one place are not said again under another, as one failure two places
+/// meet: each place keeps them and clears alone, and they are said again only once no place
+/// holds them, or as other words.
+#[test]
+fn a_fault_standing_under_another_place_is_not_said_again() {
+    let mut said = Said::default();
+    said.once("symphony", "look", "unwritten".into());
+    said.once("symphony", "record", "unwritten".into());
+    assert_eq!(said.1, ["unwritten"]);
+    assert_eq!(
+        (said.0["look"].as_str(), said.0["record"].as_str()),
+        ("unwritten", "unwritten")
+    );
+    said.clear("look");
+    said.once("symphony", "look", "unwritten".into());
+    assert_eq!(said.1, ["unwritten"], "the record's words still stand");
+    said.once("symphony", "record", "refused".into());
+    said.once("symphony", "record", "unwritten".into());
+    assert_eq!(
+        said.1,
+        ["unwritten", "refused"],
+        "the look's words still stand"
+    );
+    said.clear("look");
+    said.clear("record");
+    said.once("symphony", "record", "unwritten".into());
+    assert_eq!(said.1, ["unwritten", "refused", "unwritten"]);
+}
+
 #[test]
 fn a_replacement_tells_nothing_until_its_gate_opens_then_tells_from_the_record_as_it_stands() {
     let telling = Telling::new(false);
@@ -1301,6 +1330,46 @@ fn a_look_whose_record_cannot_be_written_is_said_once_and_tells_once_it_writes()
     assert!(telling.told().is_empty(), "{:?}", telling.told());
     passes.pass(&telling.hub);
     assert!(!passes.said.0.contains_key("look"), "the fault cleared");
+    assert_eq!(
+        told_after(&telling, 0),
+        [card_for("slack", ANA_SLACK), card_for("email", BO_EMAIL)]
+    );
+}
+
+/// A record that cannot be written while a notice is due is said once by a pass: the look, moved
+/// by a line, meets it first, in its own place, and the hand of what is due meets the same words in
+/// the record's, where they stand unsaid; the next pass says nothing. Once the record writes, both
+/// clear and what was due is handed. Before, the first pass said the same line twice.
+#[test]
+fn a_record_that_cannot_be_written_with_a_notice_due_is_said_once() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let chmod = |path: &Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    let telling = Telling::new(false);
+    let mut passes = turns();
+    due_again(&telling, &mut passes);
+    let before = passes.said.1.len();
+    let store = &telling.f.store;
+    (store.say("app/x", "worker", "Carrying on.", Some("@orchestrator"))).unwrap();
+    telling.hub.observe(store);
+    let artifacts = telling.root.join("artifacts");
+    chmod(&artifacts, 0o555);
+    let mut said = Vec::new();
+    for _ in 0..2 {
+        passes.pass(&telling.hub);
+        said.push(passes.said.1[before..].to_vec());
+    }
+    let places = passes.said.0.clone();
+    chmod(&artifacts, 0o755);
+    let unwritten = places.get("record").cloned().unwrap_or_default();
+    assert!(unwritten.contains("notices.json"), "{places:?}");
+    assert_eq!(places.get("look"), Some(&unwritten), "the look met it too");
+    assert_eq!(said, [[unwritten.clone()], [unwritten]]);
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    passes.pass(&telling.hub);
+    assert!(!passes.said.0.contains_key("look"), "{:?}", passes.said.0);
+    assert!(!passes.said.0.contains_key("record"), "{:?}", passes.said.0);
     assert_eq!(
         told_after(&telling, 0),
         [card_for("slack", ANA_SLACK), card_for("email", BO_EMAIL)]

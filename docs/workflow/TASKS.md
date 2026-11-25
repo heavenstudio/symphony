@@ -2979,7 +2979,8 @@ In-process agents work only in their own `agent-ID` worktree; a different direct
 is not bound by their agent id. Full sessions register from the worktree they use. Each removal
 says what the worktree held on disk, and the summary what the sweep freed. The comments on
 documents a pass wrote into a removed worktree are kept under main's from then on, where a later
-pass's count reads them; a board that refuses that is said, the sweep going on. A sweep started
+pass's count reads them, once no other worktree holds its branch; a board that refuses that is
+said, the sweep going on. A sweep started
 detached (a land's, work finishing's) writes them to `symphony/tasks/sweep.log` under a line saying when
 and why.
 A board `TASKS_SERVER` names (a test's) starts no sweep unless

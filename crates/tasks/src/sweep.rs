@@ -82,18 +82,18 @@
 //! reads the branch's tip, [`crate::land::reopenable`]), each said as `kept branch`; and each
 //! `worktree-agent-*` branch merged into main, or squashed into it, that no
 //! worktree holds is deleted, only if it still points where it did when listed and no live or stale
-//! session still binds its agent's detached worktree. The comments on documents a pass wrote into
-//! a removed worktree's files, all in main now, are kept under main's from then on
-//! ([`Store::held_landed`]), where the count of a later pass reads them; a board that refuses it is
-//! said, the sweep going on. In-process agents must use their own
-//! `agent-ID` worktree; their id does not bind an arbitrarily named checkout. One sweep runs at a
-//! time (`symphony/tasks/sweep.lock` in the git common dir). Contenders append a request and exit
-//! before connecting to the board; the holder runs another pass for requests received during its
-//! pass. Positive witnesses or bounded complete clean inventories reuse unchanged metadata/policy;
-//! unknown inputs rescan. Cache hits stat saved entries without walking. Both final status guards
-//! remain fresh; an early unavailable HEAD/removal guard retains the tree before lookup. Foreground
-//! `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for a detached
-//! full pass.
+//! session still binds its agent's detached worktree. The comments on documents a pass wrote into a
+//! removed worktree's files, all in main now, are kept under main's from then on
+//! ([`Store::held_landed`]), where the count of a later pass reads them, once no other listed
+//! worktree holds its branch; a board that refuses it is said, the sweep going on. In-process
+//! agents must use their own `agent-ID` worktree; their id does not bind an arbitrarily named
+//! checkout. One sweep runs at a time (`symphony/tasks/sweep.lock` in the git common dir).
+//! Contenders append a request and exit before connecting to the board; the holder runs another
+//! pass for requests received during its pass. Positive witnesses or bounded complete clean
+//! inventories reuse unchanged metadata/policy; unknown inputs rescan. Cache hits stat saved
+//! entries without walking. Both final status guards remain fresh; an early unavailable
+//! HEAD/removal guard retains the tree before lookup. Foreground `--task` cleanup visits only its
+//! finished worktrees, guarded per tree, and asks for a detached full pass.
 //!
 //! Of the worktrees that stay, it then removes the build output of work past its executor: a
 //! worktree's build folders ([`build_output::FOLDERS`], and what git ignores in
@@ -1062,8 +1062,15 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
                 }
             };
             // Gone, all it held in main: the comments passed into its documents, kept under its id
-            // (its branch, `/` spelled `~`, as the Symphony names a worktree), are main's now.
+            // (its branch, `/` spelled `~`, as the Symphony names a worktree), are main's now. Not
+            // while another listed worktree holds its branch (`git worktree add --force`), whose
+            // id they share: a pass may have written into that one, and a line main lacks would
+            // count as main's. The last of them to go moves them.
+            let shared = (trees.iter().zip(&paths)).any(|(other, at)| {
+                at != path && !gone.contains(at) && other.branch == entry.branch
+            });
             if !o.dry_run
+                && !shared
                 && let Some(branch) = branch
                 && let Err(error) = store.held_landed(&branch.replace('/', "~"))
             {
