@@ -90,7 +90,7 @@ impl Checkout {
             // And the board's beat waits a day for each answer, never its own two seconds, which
             // a loaded machine's server can take to start a connection: the beat would give up on
             // it without a word.
-            .env("TASKS_BEAT_WAIT", "86400")
+            .env(symphony_board::BEAT_WAIT_VAR, "86400")
             // A clock that never passes: the beat ends when the board's binary does, never at the
             // hook's limit on a loaded machine's clock.
             .env(
