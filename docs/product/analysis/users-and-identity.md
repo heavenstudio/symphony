@@ -1323,6 +1323,31 @@ people on a board there are two kinds:
 On one machine with one person every agent is both at once: started by them, on their machine,
 directed by them. Nothing changes there.
 
+- [ ] **machine-agents-whose** — On a board that names other people, every agent on it still runs on your machine, on your credits: each is yours, and those holding a task's role are the board's shared agents too. What is left is whose words reach your agents there. A: every session on your machine is both, so anyone the board lets direct agents reaches any of them, as today. B: only a session holding a role on a task (its orchestrator, executor or reviewer) is shared; any other session is yours alone, and someone else's words to it come to you, not to the agent. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Agents beside people]]
+  [2026-11-24 21:45] agent — Posted for the board task `app/personal-agents`, step 5's last part. A concept: nothing is built by this card.
+
+    **Base (today).** Every agent that reaches a board runs on that board's machine: the board's commands write its database there, and no command reaches a hosted board yet. So every session is yours. Someone the board named who may speak and direct agents (`bo`) reaches every session as you do: on a task's thread, by an ask or a comment, and through the quick chat, which goes to whoever holds the chat.
+
+    **A, every session is both.**
+    - Your agents work for anyone the board lets direct agents, as they do today.
+    - "Their words reach its person, not the agent" first matters for an agent from another machine, once one can show a board whose it is (a later round).
+    - Nothing to build.
+
+    **B, only a session holding a task's role is shared.**
+    - Its orchestrator, executor or reviewer is the board's. Any other session is yours alone.
+    - bo's message to such a session, and bo's quick chat while the chat's session holds no task's role, come to you, and no agent is handed them until you pass them on.
+
+    **Under both** a session never decides a card or gives the `owner` stamp, and its own words are never held: it stands where you stand.
+
+    **Why A.** Giving bo the power to direct agents already lets bo set your machine's agents to work on your credits. B keeps the sessions you run for yourself to yourself, at the cost of a second rule for whose words reach a session, and of bo's quick chat coming to you instead of an agent.
+
+    **Earlier verdicts checked.**
+    - **review-not-own-agent** (A) has a personal agent stand where its person stands, and any fresh session review. It does not say which of your machine's sessions are personal and which shared.
+    - **task-acts-who** (A) says starting an agent on a task needs the power to direct agents. It does not say whose words reach an agent already running.
+    - **words-without-agent-reach** (A) holds the words of someone who may not direct agents. It is about whose words are held, not which agents the words of someone who may reach.
+
+    None of them decides this.
+
 Left for a later round: who hosts a board's shared agents and what a host may limit, beside the
 proposed execution providers, where a project's provider owns its runtime identity and
 credentials ([its analysis](../../engineering/analysis/remote-execution-attempts.md)); and how an
