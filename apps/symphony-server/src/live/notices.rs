@@ -68,10 +68,7 @@ struct Read {
 /// be written, by the look and the hand of one pass). Each place keeps its own words all the same,
 /// so each clears as before. In a test, the lines it said, in order.
 #[derive(Default)]
-struct Said(
-    BTreeMap<&'static str, String>,
-    #[cfg(test)] Vec<String>,
-);
+struct Said(BTreeMap<&'static str, String>, #[cfg(test)] Vec<String>);
 
 impl Said {
     fn once(&mut self, project: &str, place: &'static str, why: String) {

@@ -884,13 +884,20 @@ fn a_fault_standing_under_another_place_is_not_said_again() {
     said.once("symphony", "look", "unwritten".into());
     said.once("symphony", "record", "unwritten".into());
     assert_eq!(said.1, ["unwritten"]);
-    assert_eq!((said.0["look"].as_str(), said.0["record"].as_str()), ("unwritten", "unwritten"));
+    assert_eq!(
+        (said.0["look"].as_str(), said.0["record"].as_str()),
+        ("unwritten", "unwritten")
+    );
     said.clear("look");
     said.once("symphony", "look", "unwritten".into());
     assert_eq!(said.1, ["unwritten"], "the record's words still stand");
     said.once("symphony", "record", "refused".into());
     said.once("symphony", "record", "unwritten".into());
-    assert_eq!(said.1, ["unwritten", "refused"], "the look's words still stand");
+    assert_eq!(
+        said.1,
+        ["unwritten", "refused"],
+        "the look's words still stand"
+    );
     said.clear("look");
     said.clear("record");
     said.once("symphony", "record", "unwritten".into());

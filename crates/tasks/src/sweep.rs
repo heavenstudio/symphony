@@ -1066,8 +1066,9 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             // while another listed worktree holds its branch (`git worktree add --force`), whose
             // id they share: a pass may have written into that one, and a line main lacks would
             // count as main's. The last of them to go moves them.
-            let shared = (trees.iter().zip(&paths))
-                .any(|(other, at)| at != path && !gone.contains(at) && other.branch == entry.branch);
+            let shared = (trees.iter().zip(&paths)).any(|(other, at)| {
+                at != path && !gone.contains(at) && other.branch == entry.branch
+            });
             if !o.dry_run
                 && !shared
                 && let Some(branch) = branch

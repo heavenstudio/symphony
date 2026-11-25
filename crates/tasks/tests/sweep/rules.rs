@@ -797,7 +797,13 @@ fn passed_into<const N: usize>(r: &Repo, scopes: [&str; N]) -> [i64; N] {
 
 /// The checkout the comment `id` is kept under: none for main's.
 fn kept_under(r: &Repo, id: i64) -> Option<String> {
-    r.board.store.held_comment(id).unwrap().unwrap().document.scope
+    r.board
+        .store
+        .held_comment(id)
+        .unwrap()
+        .unwrap()
+        .document
+        .scope
 }
 
 /// The comments a pass wrote into a removed worktree's documents, all in main now, are kept under
@@ -832,14 +838,21 @@ fn a_removed_worktrees_passed_comments_stay_while_another_worktree_holds_its_bra
         let wt = r.merged("named", "sim/done");
         let other = r.dir.join("again");
         let at = other.to_str().unwrap();
-        git(&r.root, &["worktree", "add", "-q", "--force", at, "sim/done"]);
+        git(
+            &r.root,
+            &["worktree", "add", "-q", "--force", at, "sim/done"],
+        );
         if later {
             // The pass's line, not landed, in the one that stays.
             write(&other, "docs/a.md", "Look again\n");
             let said = r.sweep();
             r.assert_removed(&wt, &said);
             r.assert_kept(&other, &said);
-            assert_eq!(kept_under(&r, passed).as_deref(), Some("sim~done"), "{said}");
+            assert_eq!(
+                kept_under(&r, passed).as_deref(),
+                Some("sim~done"),
+                "{said}"
+            );
             std::fs::remove_file(other.join("docs/a.md")).unwrap();
         }
         let said = r.sweep();
