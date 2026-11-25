@@ -26,11 +26,14 @@ pub(crate) fn again_after(hands: u32) -> f64 {
     doubled.min(LONGEST_AGAIN)
 }
 
+/// What the key of a comment held on a document begins with, `held:N` ([`Waiting::key`]).
+pub(crate) const HELD: &str = "held:";
+
 /// A thing waiting now, as a look sees it: a card waiting on its group, or a comment held on a
 /// document waiting for someone to pass it on.
 #[derive(Clone, Debug)]
 pub(crate) struct Waiting {
-    /// `DOC#SLUG` for a card, `held:N` for a held comment, as the record keeps it.
+    /// `DOC#SLUG` for a card, `held:N` ([`HELD`]) for a held comment, as the record keeps it.
     pub key: String,
     /// Its page under the project: `/DOC#SLUG`, a held comment's `/DOC#held-N`.
     pub page: String,
@@ -80,6 +83,9 @@ pub(crate) struct Look<'a> {
     pub people: &'a People,
     /// The cards waiting now; none where the documents are not read yet, and the spells stand.
     pub cards: Option<Vec<Waiting>>,
+    /// Whether `cards` holds the comments held on documents: where they did not read, it holds
+    /// none of them, and theirs stand as the record has them.
+    pub held_read: bool,
     /// The lines after [`Runner::cursor`], through `latest`.
     pub lines: Vec<Line>,
     /// The board's newest line now.
@@ -158,7 +164,7 @@ impl Runner {
     /// `profiles` by a way `programs` names a program for; `origin` (`http://HOST:PORT`) begins
     /// each link, asked once by a look that makes one and never by one that makes none. The first
     /// look makes none: what waits then, and the lines before it, are told already. A first look
-    /// with no cards read waits for one that has them.
+    /// with no cards read, or no held comments, waits for one that has them.
     ///
     /// # Errors
     ///
@@ -172,7 +178,7 @@ impl Runner {
         origin: &mut dyn FnMut() -> String,
     ) -> Result<(), String> {
         let Some(before) = &self.record else {
-            let Some(cards) = &look.cards else {
+            let Some(cards) = look.cards.as_ref().filter(|_| look.held_read) else {
                 return Ok(());
             };
             let record = Record {
@@ -233,6 +239,12 @@ impl Runner {
                     }
                 }
                 spells.insert(card.key.clone(), spell);
+            }
+            // The held comments did not read: each stands as told, so none is told again once
+            // they read.
+            if !look.held_read {
+                let held = std::mem::take(&mut record.cards).into_iter();
+                spells.extend(held.filter(|(key, _)| key.starts_with(HELD)));
             }
             record.cards = spells;
         }
