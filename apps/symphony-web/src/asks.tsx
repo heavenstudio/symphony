@@ -1,6 +1,9 @@
 // A document's questions, each tied to a place in it, as the Dioxus client's asks.rs drew them.
 // Drafts stay on this device; only a send posts a question or a follow-up. A read replaces the
-// threads, never a half-typed answer: each draft is its composer's own.
+// threads, never a half-typed answer: each draft is its composer's own. Ask and Follow up are
+// drawn once the read says the one reading may ask (`may_ask`): one who may not, as a person who
+// may speak and may not direct agents, is shown the threads alone, and nothing where there are
+// none, as the server refuses their question (docs/workflow/TASKS.md, "People").
 
 import { useEffect, useState } from "react";
 import { type Attach, AttachControls, useAttach } from "./attach";
@@ -58,10 +61,12 @@ export function selection(): [string, string] {
   return [anchor, [...quote].slice(0, 4000).join("")];
 }
 
-/** What a read of a document's asks shows: its threads, the chat's recipient, and why it failed. */
+/** What a read of a document's asks shows: its threads, the chat's recipient, whether the one
+ * reading may ask, and why it failed. */
 export interface AsksShown {
   asks: (asks: Ask[]) => void;
   recipient: (recipient: string | null) => void;
+  mayAsk: (may: boolean) => void;
   trouble: (trouble: string | null) => void;
 }
 
@@ -84,6 +89,7 @@ export async function readAsksUntilAnswered(
       if (read === null) throw new Error("The server's asks could not be read");
       shown.asks(read.asks);
       shown.recipient(read.recipient);
+      shown.mayAsk(read.mayAsk);
       shown.trouble(null);
       return;
     } catch (error) {
@@ -184,6 +190,7 @@ export function Asks({ path, scope }: AsksProps) {
 function AsksBody({ path, scope }: AsksProps) {
   const [asks, setAsks] = useState<Ask[]>([]);
   const [recipient, setRecipient] = useState<string | null>(null);
+  const [mayAsk, setMayAsk] = useState<boolean | null>(null);
   const [trouble, setTrouble] = useState<string | null>(null);
   const [heard, setHeard] = useState(0);
   const [sent, setSent] = useState(0);
@@ -206,6 +213,7 @@ function AsksBody({ path, scope }: AsksProps) {
     void readAsksUntilAnswered(endpoint, reading.signal, {
       asks: (read) => setAsks((now) => (JSON.stringify(now) === JSON.stringify(read) ? now : read)),
       recipient: setRecipient,
+      mayAsk: setMayAsk,
       trouble: setTrouble,
     });
     return () => reading.abort();
@@ -219,17 +227,58 @@ function AsksBody({ path, scope }: AsksProps) {
   }, [endpoint, sent]);
   const onSent = () => setSent((count) => count + 1);
   return (
+    <AsksDrawn
+      path={path}
+      scope={scope}
+      asks={asks}
+      recipient={recipient}
+      mayAsk={mayAsk}
+      trouble={trouble}
+      onSent={onSent}
+    />
+  );
+}
+
+export interface AsksDrawnProps extends AsksProps {
+  asks: Ask[];
+  recipient: string | null;
+  /** Whether the one reading may ask, as the last read said: none before the first answered. */
+  mayAsk: boolean | null;
+  trouble: string | null;
+  onSent: () => void;
+}
+
+/**
+ * The document's questions as its reads left them. Until the first read says whether the one
+ * reading may ask, the section is its label alone, with why a read failed. One who may asks: the
+ * chat's recipient, a new question and each thread's follow-up. One who may not reads the threads
+ * alone under the label, and is drawn nothing where there are none.
+ */
+export function AsksDrawn({
+  path,
+  scope,
+  asks,
+  recipient,
+  mayAsk,
+  trouble,
+  onSent,
+}: AsksDrawnProps) {
+  if (mayAsk === false && asks.length === 0 && trouble === null) return null;
+  const may = mayAsk === true;
+  return (
     <section className="asks" id="asks" aria-label="Questions about this document">
-      <h2>Ask about this document</h2>
-      <p className="muted">
-        {recipient !== null
-          ? `Chat goes to ${recipient}.`
-          : "Nobody is registered to receive chat; your question is queued."}
-      </p>
+      <h2>{may ? "Ask about this document" : "Questions about this document"}</h2>
+      {may && (
+        <p className="muted">
+          {recipient !== null
+            ? `Chat goes to ${recipient}.`
+            : "Nobody is registered to receive chat; your question is queued."}
+        </p>
+      )}
       {trouble !== null && <p role="status">{`Questions could not be refreshed: ${trouble}`}</p>}
-      <NewAsk path={path} scope={scope} onSent={onSent} />
+      {may && <NewAsk path={path} scope={scope} onSent={onSent} />}
       {asks.map((ask) => (
-        <AskThread key={ask.id} ask={ask} scope={scope} onSent={onSent} />
+        <AskThread key={ask.id} ask={ask} scope={scope} onSent={onSent} replies={may} />
       ))}
     </section>
   );
@@ -359,7 +408,19 @@ function NewAsk({ path, scope, onSent }: AsksProps & { onSent: () => void }) {
   );
 }
 
-export function AskThread({ ask, scope, onSent }: { ask: Ask; scope: string; onSent: () => void }) {
+/** One question's thread: its place, its quote and its messages, with a follow-up where `replies`,
+ * the one reading may ask. */
+export function AskThread({
+  ask,
+  scope,
+  onSent,
+  replies = true,
+}: {
+  ask: Ask;
+  scope: string;
+  onSent: () => void;
+  replies?: boolean;
+}) {
   const [shown, watch] = useVisibility();
   const key = `review-ask-reply:${ask.id}`;
   const draft = useAskDraft(key, onSent);
@@ -381,13 +442,15 @@ export function AskThread({ ask, scope, onSent }: { ask: Ask; scope: string; onS
               <BlocksView blocks={message.blocks ?? []} />
             </div>
           ))}
-          <AskForm
-            draft={draft}
-            id={`reply-${ask.id}`}
-            label="Follow up"
-            word="Send follow-up"
-            onSend={send}
-          />
+          {replies && (
+            <AskForm
+              draft={draft}
+              id={`reply-${ask.id}`}
+              label="Follow up"
+              word="Send follow-up"
+              onSend={send}
+            />
+          )}
         </>
       )}
     </article>

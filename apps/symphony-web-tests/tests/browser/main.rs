@@ -36,6 +36,7 @@ mod chrome;
 mod common;
 mod components;
 mod desktop_stub;
+mod document_asks;
 mod document_cards;
 mod document_gallery;
 mod document_landing;

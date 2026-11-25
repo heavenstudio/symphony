@@ -137,12 +137,17 @@ describe("a document's reads", () => {
 });
 
 describe("the asks' read", () => {
-  it("is the asks and the chat's recipient, which is a name or none", () => {
+  it("is the asks, the chat's recipient, which is a name or none, and whether one may ask", () => {
     const asks = sample("asks");
-    expect(readAsks(asks)).toEqual({ asks: asks.asks, recipient: "amber-heron" });
-    expect(readAsks(sample("noAsks"))).toEqual({ asks: [], recipient: null });
-    expect(readAsks({ asks: [] })).toEqual({ asks: [], recipient: null });
-    expect(readAsks({ asks: [], recipient: 7 })).toEqual({ asks: [], recipient: null });
+    expect(readAsks(asks)).toEqual({ asks: asks.asks, recipient: "amber-heron", mayAsk: true });
+    expect(readAsks(sample("noAsks"))).toEqual({ asks: [], recipient: null, mayAsk: false });
+    // A server that does not say who may ask drew Ask for everyone, as it still is.
+    expect(readAsks({ asks: [] })).toEqual({ asks: [], recipient: null, mayAsk: true });
+    expect(readAsks({ asks: [], recipient: 7 })).toEqual({
+      asks: [],
+      recipient: null,
+      mayAsk: true,
+    });
     expect(readAsks(null)).toBeNull();
     expect(readAsks([[]])).toBeNull();
   });
@@ -155,6 +160,8 @@ describe("the asks' read", () => {
     ["a message whose seq is text", ["asks", 0, "messages", 0, "seq"], "1"],
     ["a message's blocks it cannot read", ["asks", 0, "messages", 0, "blocks"], [{ type: 7 }]],
     ["a message with no author", ["asks", 0, "messages", 1, "by"], undefined],
+    ["a may_ask that is no flag", ["may_ask"], "yes"],
+    ["a may_ask of null", ["may_ask"], null],
   ])("refuses %s", (_, path, to) => {
     expect(readAsks(edited(sample("asks"), path, to))).toBeNull();
   });

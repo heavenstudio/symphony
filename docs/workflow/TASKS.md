@@ -2408,7 +2408,11 @@ as it did before. That person stays `owner`, with every power, once others are n
   people needs `administer`, and a profile's write from the People page and a hand-over
   ([below](#which-group-a-thing-belongs-to)) being on the board; anything else is the person at
   the machine's alone. A refusal is a 403 naming the power,
-  `Forbidden: ana may not decide on this board`, and nothing is written.
+  `Forbidden: ana may not decide on this board`, and nothing is written. A document's asks read
+  (`/api/asks`) says `may_ask` for whoever may ask and follow an ask up (the person at the
+  machine, a person holding `speak` and `direct_agents`, never a hosted visitor), and the page
+  draws Use selected passage, the question and each thread's Follow up for them alone; anyone else
+  reads the threads alone, and nothing where there are none.
 - **Deciding a thing is its owner's** ([below](#which-group-a-thing-belongs-to)): a card's
   verdict and its Later (with its Undo, and the visit that clears its mark), a task's priority,
   field, cancel, action and workflow edge, and a setting (the Settings

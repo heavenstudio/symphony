@@ -213,6 +213,10 @@
 .asks-shell {
   min-height: 160px;
 }
+/* A reader who may not ask, of a document with no questions, is drawn nothing in it. */
+.asks-shell:empty {
+  min-height: 0;
+}
 .ask-thread {
   content-visibility: auto;
   contain-intrinsic-size: auto 220px;

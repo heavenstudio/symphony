@@ -927,6 +927,22 @@ fn passes(store: &symphony_board::Store, machine: bool, name: &str) -> bool {
     machine || (store.people()).is_ok_and(|people| crate::powers::may_pass(&people, name))
 }
 
+/// Whether who asks `request` may ask about a document and follow an ask up, which its page draws
+/// Ask and Follow up for: the person at the machine, or a person holding what `/api/ask` needs
+/// ([`crate::powers::may_ask`]). Never a hosted visitor, who saves nothing here, and no one but the
+/// machine's person on a board whose people cannot be read, as the route would refuse their press.
+fn may_ask(shared: &Shared, hub: &Hub, request: &Request) -> bool {
+    if crate::hosted::admission(request).is_some() {
+        return false;
+    }
+    if crate::front::Admitted::machine(request.extensions()) {
+        return true;
+    }
+    let actor = crate::front::Admitted::actor(shared, request.extensions());
+    (hub.on_reader(symphony_board::Store::people))
+        .is_ok_and(|people| crate::powers::may_ask(&people, actor.name()))
+}
+
 /// The comments held for people on the document `rel` of the checkout `scope` (empty: the
 /// project's own), not passed on yet, oldest first, and whether the one reading may pass them on
 /// (`passes`): what its page draws ([`symphony_api::DocumentHeld`]).
@@ -1120,8 +1136,14 @@ fn document_response(
                 .ok()
                 .and_then(|board| board.chat_recipient().ok().flatten())
         });
-        return match ask_response(&render, rel, scope, request, path == "/api/asks", recipient) {
-            Ok(value) => no_store(Json(value)),
+        let list = path == "/api/asks";
+        return match ask_response(&render, rel, scope, request, list, recipient) {
+            Ok(mut value) => {
+                if list {
+                    value["may_ask"] = json!(may_ask(shared, hub, request));
+                }
+                no_store(Json(value))
+            }
             Err((status, why)) => error(status, why),
         };
     }
