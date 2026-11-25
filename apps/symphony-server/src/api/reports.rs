@@ -259,7 +259,7 @@ pub(crate) fn page(
                         .lines()
                         .filter(|line| line.contains("\"type\":\"hour\""))
                     {
-                        if let Ok(hour) = serde_json::from_str::<AgentHour>(line)
+                        if let Ok(hour) = serde_json::from_slice::<AgentHour>(line.as_bytes())
                             && let Some(at) = place(hour.start)
                         {
                             sums[at].agents.push(hour);
@@ -274,7 +274,7 @@ pub(crate) fn page(
                 Ok(None) => {}
                 Ok(Some(text)) => {
                     for line in text.lines() {
-                        if let Ok(hour) = serde_json::from_str::<HealthHour>(line)
+                        if let Ok(hour) = serde_json::from_slice::<HealthHour>(line.as_bytes())
                             && let Some(at) = place(hour.start)
                         {
                             sums[at].health(&hour);
@@ -459,7 +459,7 @@ fn report_day(
             return None;
         }
     };
-    let report = match serde_json::from_str::<ReportDay>(&text) {
+    let report = match serde_json::from_slice::<ReportDay>(text.as_bytes()) {
         Ok(report) => report,
         Err(e) => {
             unread.push(format!("{}: {e}", path.display()));

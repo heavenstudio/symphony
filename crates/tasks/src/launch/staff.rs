@@ -55,7 +55,7 @@ fn config(env: &Env) -> Result<Config, Error> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
         Err(e) => return Err(refused(format!("{}: {e}", path.display()))),
     };
-    let config: Config = serde_json::from_str(&read).map_err(refused)?;
+    let config: Config = serde_json::from_slice(read.as_bytes()).map_err(refused)?;
     if !config.min_free_memory_gib.is_finite() || config.min_free_memory_gib < 0.0 {
         return Err(refused(
             "min_free_memory_gib must be finite and nonnegative",

@@ -61,7 +61,7 @@ impl Record {
         match std::fs::File::open(path).and_then(|mut file| file.read_to_string(&mut text)) {
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(symphony::text::os_error(&error, path)),
-            Ok(_) => serde_json::from_str(&text)
+            Ok(_) => serde_json::from_slice(text.as_bytes())
                 .map(Some)
                 .map_err(|error| format!("{}: {error}", path.display())),
         }

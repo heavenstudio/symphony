@@ -49,7 +49,7 @@ impl Dump {
     /// A dump as `tasks-copy --board --out` writes it, refused whole if it has a table or a column the copy
     /// does not know, naming it: the copy would drop it.
     pub fn from_json(text: &str) -> Result<Dump, String> {
-        let tables: Map<String, Value> = serde_json::from_str(text)
+        let tables: Map<String, Value> = serde_json::from_slice(text.as_bytes())
             .map_err(|e| format!("the dump is not a board's JSON: {e}"))?;
         Dump::from_tables(tables)
     }

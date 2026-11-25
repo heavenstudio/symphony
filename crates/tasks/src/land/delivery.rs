@@ -358,7 +358,7 @@ impl Receipt {
             Err(error) => return Err(unread(error.to_string())),
         };
         let receipt: Receipt =
-            serde_json::from_str(&text).map_err(|error| unread(error.to_string()))?;
+            serde_json::from_slice(text.as_bytes()).map_err(|error| unread(error.to_string()))?;
         if receipt.slug != slug {
             return Err(unread(format!("it names {}", receipt.slug)));
         }

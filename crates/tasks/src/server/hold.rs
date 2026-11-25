@@ -60,7 +60,9 @@ impl Home {
             pid: 0,
         };
         match fs::read_to_string(&path) {
-            Ok(text) => Some(serde_json::from_str(&text).unwrap_or_else(|e| unreadable(&e))),
+            Ok(text) => {
+                Some(serde_json::from_slice(text.as_bytes()).unwrap_or_else(|e| unreadable(&e)))
+            }
             Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => None,
             Err(problem) => Some(unreadable(&problem)),
         }

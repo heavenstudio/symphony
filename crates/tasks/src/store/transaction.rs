@@ -317,7 +317,7 @@ pub(super) fn on_postgres(
             postgres::joined(&lists, rest).into()
         }
     };
-    serde_json::from_str(&text).map_err(|e| {
+    serde_json::from_slice(text.as_bytes()).map_err(|e| {
         DbError::Failed(format!(
             "PostgreSQL answered what is not JSON ({e}): {text}"
         ))

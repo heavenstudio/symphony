@@ -42,7 +42,7 @@ pub struct Seen {
 impl Seen {
     /// Older staffing records have no canonical count; they need a fresh observation once.
     pub(crate) fn open_slots(&self) -> Option<usize> {
-        serde_json::from_str::<(String, usize)>(&self.staffing)
+        serde_json::from_slice::<(String, usize)>(self.staffing.as_bytes())
             .ok()
             .map(|(_, count)| count)
     }

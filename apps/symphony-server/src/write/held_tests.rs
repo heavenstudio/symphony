@@ -462,6 +462,155 @@ async fn a_message_typed_on_a_branchs_page_is_drawn_there_and_passed_on_mains_ca
     assert_eq!(ids(&held(&ana, LAPTOP).await), Vec::<Value>::new());
 }
 
+/// Her one message typed three times, on main's page, on a branch's page that draws main's card
+/// and on main's page again: each pass writes it on main's card, so each counts what the passes
+/// before it wrote there, whichever page each was typed on, and the card holds it three times.
+#[tokio::test(flavor = "multi_thread")]
+async fn each_pass_onto_mains_card_counts_the_passes_that_wrote_there_from_either_page() {
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", DOC, PAGE);
+    let worktree = tree.path("wt");
+    git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "pic/x",
+            worktree.to_str().unwrap(),
+        ],
+    );
+    let _board = named(&root);
+    let ana = with_hub(as_person(&root, "ana"), &root);
+    ana.api.get().unwrap().refresh_docs(None).unwrap();
+    let id = |answer: Value| answer["held"].clone();
+    let mut typed = Vec::new();
+    for route in ["/api/message", "/@pic~x/api/message", "/api/message"] {
+        typed.push(id(ok(post(&ana, LAPTOP, route, message()).await)));
+    }
+    ana.saves.get().unwrap().close();
+    let stefano = as_person(&root, "stefano");
+    for (n, held) in typed.into_iter().enumerate() {
+        ok(post(&stefano, MACHINE, "/api/document-pass", json!({"id": held})).await);
+        assert_eq!(written(&root)[2], n + 1, "pass {}", n + 1);
+    }
+    stefano.saves.get().unwrap().close();
+    assert_eq!(written(&worktree), [0, 0, 0]);
+}
+
+/// Her message typed twice on a branch's page that posted on the card: the first pass writes it on
+/// the branch's card. The branch then goes, unlanded, and the card is main's: the second pass
+/// writes on main's card, and its mark is refused. A press after it finds its words there and
+/// counts none of the first pass's, whose line went with the branch: it marks and writes nothing
+/// again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pass_counts_no_line_another_file_holds_so_a_refused_mark_writes_once() {
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", DOC, PAGE);
+    let worktree = tree.path("wt");
+    let wt = worktree.to_str().unwrap();
+    git(&root, &["worktree", "add", "-q", "-b", "pic/x", wt]);
+    let posted = PAGE.replace(
+        "proposal.\n",
+        "proposal.\n  [2026-11-25 10:00] owner — Look again.\n",
+    );
+    std::fs::write(worktree.join(DOC), posted).unwrap();
+    git(
+        &worktree,
+        &["commit", "-qam", "the branch posts on the card"],
+    );
+    let _board = named(&root);
+    let ana = with_hub(as_person(&root, "ana"), &root);
+    ana.api.get().unwrap().refresh_docs(None).unwrap();
+    let id = |answer: Value| answer["held"].as_i64().unwrap();
+    let first = id(ok(
+        post(&ana, LAPTOP, "/@pic~x/api/message", message()).await
+    ));
+    let second = id(ok(
+        post(&ana, LAPTOP, "/@pic~x/api/message", message()).await
+    ));
+    ana.saves.get().unwrap().close();
+    let stefano = as_person(&root, "stefano");
+    ok(post(
+        &stefano,
+        MACHINE,
+        "/api/document-pass",
+        json!({"id": first}),
+    )
+    .await);
+    assert_eq!(written(&worktree)[2], 1, "on the branch's card");
+    assert_eq!(written(&root)[2], 0);
+    git(&root, &["worktree", "remove", "--force", wt]);
+    git(&root, &["branch", "-qD", "pic/x"]);
+    rekey(&root, second, second + 100);
+    for press in 1..=2 {
+        let (status, said) = post(
+            &stefano,
+            MACHINE,
+            "/api/document-pass",
+            json!({"id": second}),
+        )
+        .await;
+        assert_ne!(status, StatusCode::OK, "press {press}: {said}");
+        assert_eq!(written(&root)[2], 1, "press {press}");
+    }
+    rekey(&root, second + 100, second);
+    ok(post(
+        &stefano,
+        MACHINE,
+        "/api/document-pass",
+        json!({"id": second}),
+    )
+    .await);
+    stefano.saves.get().unwrap().close();
+    assert_eq!(written(&root)[2], 1);
+}
+
+/// The held comment `from` of the board at `root` kept under the key of `to`: its number finds it,
+/// and the mark of its pass is refused, as a board that fails at the mark leaves it.
+fn rekey(root: &Path, from: i64, to: i64) {
+    let store = Board::store(root);
+    let (raw, key) = (store.raw(), |n: i64| json!(["document", n]));
+    let doc = raw.row("held_message", key(from)).get().unwrap();
+    raw.row("held_message", key(from)).delete().unwrap();
+    raw.row("held_message", key(to)).create(doc).unwrap();
+}
+
+/// Her message passed on a checkout that delivers by pull request: the pass keeps its words for
+/// delivery, and its mark is refused. Once the row is right, a press finds them in what the page
+/// shows, marks it and answers pending, as a pass that kept them would, with nothing kept again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pass_whose_words_wait_for_delivery_marks_on_them_and_answers_pending() {
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", DOC, PAGE);
+    tree.write(
+        "main/symphony.toml",
+        "[land]\ndelivery = [\"symphony-github\", \"deliver\"]\n",
+    );
+    git(&root, &["add", "symphony.toml"]);
+    git(&root, &["commit", "-qm", "deliver by pull request"]);
+    let _board = named(&root);
+    let ana = as_person(&root, "ana");
+    let on_card = ok(post(&ana, LAPTOP, "/api/message", message()).await)["held"].clone();
+    ana.saves.get().unwrap().close();
+    let n = on_card.as_i64().unwrap();
+    rekey(&root, n, n + 100);
+    let stefano = as_person(&root, "stefano");
+    let (status, said) = post(&stefano, MACHINE, "/api/document-pass", json!({"id": n})).await;
+    assert_ne!(status, StatusCode::OK, "{said}");
+    assert!(said.contains(&format!("no comment #{n} is held")), "{said}");
+    rekey(&root, n + 100, n);
+    let answer = ok(post(&stefano, MACHINE, "/api/document-pass", json!({"id": n})).await);
+    assert_eq!(answer, json!({"ok": true, "delivery": "pending"}));
+    stefano.saves.get().unwrap().close();
+    assert_eq!(std::fs::read_to_string(root.join(DOC)).unwrap(), PAGE);
+    let shown = symphony::commit::pending::shown(&root, DOC, PAGE.into());
+    let passed = format!("] ana — [passed on by owner] And why {TOKEN}?");
+    assert_eq!(shown.matches(&passed).count(), 1, "{shown}");
+    assert_eq!(held(&stefano, MACHINE).await["held"], json!([]), "marked");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_held_comment_on_a_checkout_that_delivers_by_pull_request_keeps_nothing_to_deliver() {
     let tree = Tree::new();

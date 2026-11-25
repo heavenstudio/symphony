@@ -125,7 +125,7 @@ pub fn recorded(common: &Path) -> Recorded {
     let Ok(text) = std::fs::read_to_string(record) else {
         return Recorded::None;
     };
-    serde_json::from_str::<serde_json::Value>(&text)
+    serde_json::from_slice::<serde_json::Value>(text.as_bytes())
         .ok()
         .and_then(|record| port_of(record.get("addr")?.as_str()?))
         .map_or(Recorded::Unreadable, Recorded::Port)

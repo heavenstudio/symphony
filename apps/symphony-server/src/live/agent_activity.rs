@@ -58,7 +58,7 @@ pub(crate) use symphony_api::agent_activity::{
 /// lines and reads only their hours (`api/reports.rs`); the tests read every line back.
 #[cfg(test)]
 pub(crate) fn read_line(text: &str) -> Option<Line> {
-    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(text.as_bytes()).ok()?;
     let line = match value.get("type")?.as_str()? {
         "start" => Line::Start(serde_json::from_value(value).ok()?),
         "seen" => Line::Seen(serde_json::from_value(value).ok()?),

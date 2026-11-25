@@ -42,7 +42,7 @@ impl Handover {
         let path = machine.join(HANDOVER);
         let text = std::fs::read_to_string(&path).ok()?;
         let _ = std::fs::remove_file(&path);
-        let request: Handover = match serde_json::from_str(&text) {
+        let request: Handover = match serde_json::from_slice(text.as_bytes()) {
             Ok(request) => request,
             Err(e) => return Some(Err(format!("{}: {e}", path.display()))),
         };
