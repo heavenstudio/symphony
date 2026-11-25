@@ -172,6 +172,12 @@ fn constants() -> String {
     for (name, value) in constants {
         let _ = writeln!(out, "export const {name} = {value};");
     }
+    page_constants(&mut out);
+    out
+}
+
+/// The Symphony's own routes and its pages' names, after the other constants in wire.ts.
+fn page_constants(out: &mut String) {
     let _ = writeln!(
         out,
         "export const SYMPHONY_ROUTES = {} as const;",
@@ -190,7 +196,6 @@ fn constants() -> String {
         "PROJECTS": api::page_names::PROJECTS,
     });
     let _ = writeln!(out, "export const PAGE_NAMES = {pages} as const;");
-    out
 }
 
 /// The types the client reads, in wire.ts's order.
