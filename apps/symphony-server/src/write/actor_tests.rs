@@ -121,8 +121,8 @@ async fn a_visitor_a_board_added_saves_as_themselves_and_one_it_did_not_writes_n
 }
 
 /// A person the board gives speak and no decide is refused a decision with nothing written, the
-/// refusal naming the power; given decide, the same save is hers; and a comment, which speaks to
-/// the agents, is refused her, as she may not direct agents.
+/// refusal naming the power; given decide, the same save is hers; and her comment, as she may not
+/// direct agents, is held for people with nothing written.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_person_is_refused_each_write_whose_power_she_lacks_and_nothing_is_written() {
     let ana = Actor::new(
@@ -145,14 +145,13 @@ async fn a_person_is_refused_each_write_whose_power_she_lacks_and_nothing_is_wri
         std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap(),
         PAGE
     );
-    let comment = r#"{"path":"docs/TOPIC.md","slug":"one","text":"Wider?"}"#;
+    let comment = r#"{"path":"docs/TOPIC.md","after_line":1,"kind":"comment","text":"Wider?"}"#;
     let (status, body) = posted(&shared, "/api/comment", comment).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains(r#""held":"#), "{body}");
     assert_eq!(
-        (status, body.as_str()),
-        (
-            StatusCode::FORBIDDEN,
-            r#"{"error":"Forbidden: ana may not direct agents on this board"}"#
-        )
+        std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap(),
+        PAGE
     );
     // Powers are read as each write arrives: given decide now, the same save is hers.
     let store = Board::store(&root);
