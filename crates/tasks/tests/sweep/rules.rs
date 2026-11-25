@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::SystemTime;
 use symphony_board::health::LIVE_SECONDS;
+use symphony_board::held::{MESSAGE, Place};
+use symphony_board::people::Power;
 use symphony_board::rows::SessionRow;
 use symphony_board::sweep::process;
 use symphony_board::{NewLaunch, NewSession, sweep, sys};
@@ -770,6 +772,41 @@ fn a_merged_branch_worktree_goes_and_its_branch_with_it() {
     let said = r.sweep();
     r.assert_removed(&wt, &said);
     assert_eq!(r.branch("sim/done"), "", "{said}");
+}
+
+/// The comments a pass wrote into a removed worktree's documents, all in main now, are kept under
+/// main's from then on (`Store::held_landed`); a dry run moves none, and a worktree that stays
+/// keeps its own.
+#[test]
+fn a_removed_worktrees_passed_comments_are_kept_under_mains() {
+    let r = Repo::new();
+    let store = &r.board.store;
+    (store.add_person("ana", &[], &[Power::Speak], "owner")).unwrap();
+    let ana = r.board.other().for_person("ana");
+    let passed = |scope: &str| {
+        let place = Place {
+            path: "docs/a.md".into(),
+            scope: Some(scope.into()),
+            kind: MESSAGE.into(),
+            card: Some("one".into()),
+            block: None,
+        };
+        let held = ana.hold_on_document("ana", "Look again", &place).unwrap();
+        let passed = store.pass_on_document_into(held.id, "owner", Some(scope));
+        passed.unwrap().id
+    };
+    let (landed, open) = (passed("sim~done"), passed("sim~open"));
+    let wt = r.merged("named", "sim/done");
+    let stays = r.add("open", Some("sim/open"), "main");
+    r.commit(&stays, "extends RefCounted\n# open\n");
+    let scope = |id: i64| store.held_comment(id).unwrap().unwrap().document.scope;
+    let dry = text(&r.sweep_with(|o| o.dry_run = true));
+    assert_eq!(scope(landed).as_deref(), Some("sim~done"), "{dry}");
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    r.assert_kept(&stays, &said);
+    assert_eq!(scope(landed), None, "{said}");
+    assert_eq!(scope(open).as_deref(), Some("sim~open"), "{said}");
 }
 
 #[test]
