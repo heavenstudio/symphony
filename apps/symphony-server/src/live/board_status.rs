@@ -32,7 +32,8 @@ impl Hub {
                 }
                 super::measured("people tick", || self.people_read(store));
                 // The board moved, or may have, and its people are looked at: the notices look
-                // again, by that look ([`super::notices`]).
+                // again, by that look, so only after it ([`super::notices`]). A tick that fails
+                // wakes none, and leaves the look failed ([`Hub::board_error`]).
                 self.wake_notices();
                 Ok(())
             },
@@ -150,8 +151,10 @@ impl Hub {
 
     /// A failed board read or reconnect: pages hear that the board went, whether it is slow, and
     /// hear again only when a gone board turns from slow to unreachable or back. Its task counts go
-    /// once, when it goes.
+    /// once, when it goes. The notices tell by no look until a tick reads the board's people again
+    /// ([`Hub::people_unread`]).
     pub(super) fn board_error(&self, error: String) {
+        self.people_unread(error.clone());
         let slow = symphony_board::rpc::slow(&error);
         // A panic under these locks leaves at worst an older board observation, or some pages
         // without one event: each a whole value, and the next board read publishes what changed
