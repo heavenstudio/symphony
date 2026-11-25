@@ -84,13 +84,21 @@ impl Socket {
 
     /// The socket ready for `events` (an end or an error included) before `by`, or `EAGAIN`, as
     /// a blocking socket's timeout says it. No `by` is a wait longer than the clock counts: none.
+    /// A `by` already past is `EAGAIN` before any `poll`, so a socket `poll` calls ready while its
+    /// read or write still would wait never keeps the operation past the client's wait.
     fn ready(&self, events: libc::c_short, by: Option<Instant>) -> io::Result<()> {
         loop {
-            let within = by.map_or(-1, |by| {
-                let left = by.saturating_duration_since(Instant::now());
-                libc::c_int::try_from(left.as_nanos().div_ceil(1_000_000))
-                    .unwrap_or(libc::c_int::MAX)
-            });
+            let within = match by {
+                None => -1,
+                Some(by) => {
+                    let left = by.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return Err(io::Error::from_raw_os_error(libc::EAGAIN));
+                    }
+                    libc::c_int::try_from(left.as_nanos().div_ceil(1_000_000))
+                        .unwrap_or(libc::c_int::MAX)
+                }
+            };
             let mut asked = libc::pollfd {
                 fd: self.socket.as_raw_fd(),
                 events,
@@ -294,25 +302,90 @@ mod tests {
         assert_eq!(echo.join().unwrap().unwrap(), vec![b'y'; 1 << 20]);
     }
 
-    /// A socket pair's first end, drained, and its peer: a thread blocks in a read of one
-    /// descriptor of it while another descriptor of `/dev/null` is put in that descriptor's place
-    /// (`dup2`, so the number is never free for another test's file). A replacement that came
-    /// before the read began drained nothing, and is made again on a pair of its own.
+    #[test]
+    fn a_socket_poll_calls_ready_whose_operation_still_would_wait_meets_its_wait() {
+        let (ours, _peer) = UnixStream::pair().unwrap();
+        // An empty socket is always ready to write: poll answers at once every time.
+        let socket = Socket::waiting(ours, SHORT).unwrap();
+        let tries = bounded("an operation that always would wait", move || {
+            let mut tries = 0u64;
+            let said = socket.waited(libc::POLLOUT, |_| {
+                tries += 1;
+                Err::<(), _>(io::ErrorKind::WouldBlock.into())
+            });
+            (said, tries)
+        });
+        let why = tries.0.unwrap_err();
+        assert!(eagain(&why), "{why}");
+        assert!(tries.1 > 1, "poll answered ready, and it was tried again");
+    }
+
+    /// How many pairs [`drained`] makes before it fails: a read the reader thread waits in is
+    /// drained by the first, and another try is for a reader waiting somewhere else at that look.
+    #[cfg(target_vendor = "apple")]
+    const DRAIN_TRIES: u32 = 100;
+
+    /// `PROC_PIDTHREADID64INFO` (`sys/proc_info.h`), which the libc crate does not name: a thread
+    /// of a process by its id, as `pthread_threadid_np` gives it.
+    #[cfg(target_vendor = "apple")]
+    const PROC_PIDTHREADID64INFO: libc::c_int = 15;
+
+    /// Whether the thread of this process whose id is `id` waits in the kernel now.
+    #[cfg(target_vendor = "apple")]
+    fn waiting_in_the_kernel(id: u64) -> bool {
+        // SAFETY: proc_threadinfo is integers and a byte array, for which zero is a value.
+        let mut info: libc::proc_threadinfo = unsafe { std::mem::zeroed() };
+        let size = libc::c_int::try_from(size_of_val(&info)).expect("its size fits an int");
+        // SAFETY: info is writable for size bytes, the size given, and outlives the call.
+        let got = unsafe {
+            libc::proc_pidinfo(
+                libc::getpid(),
+                PROC_PIDTHREADID64INFO,
+                id,
+                (&raw mut info).cast(),
+                size,
+            )
+        };
+        got == size && info.pth_run_state == libc::TH_STATE_WAITING
+    }
+
+    /// A socket pair's first end, drained, and its peer. A thread reads one descriptor of it,
+    /// which has nothing to read; once that thread waits in the kernel, which is its read, a
+    /// descriptor of `/dev/null` is put in that descriptor's place (`dup2`, so the number is never
+    /// free for another test's file), and that close, the read holding the descriptor, drains the
+    /// socket. A try whose reader waited somewhere else at that look drained nothing, and is made
+    /// again on a pair of its own, up to [`DRAIN_TRIES`].
     #[cfg(target_vendor = "apple")]
     fn drained() -> (UnixStream, UnixStream) {
         use std::os::fd::AsRawFd as _;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU64, Ordering};
         let null = std::fs::File::open("/dev/null").unwrap();
-        let backstop = test_time::backstop(Duration::from_secs(10));
-        test_time::until("a socket drained", backstop, || {
+        for _ in 0..DRAIN_TRIES {
             let (held, peer) = UnixStream::pair().unwrap();
             let kept = held.try_clone().unwrap();
             let fd = held.as_raw_fd();
+            let id = Arc::new(AtomicU64::new(0));
+            let said = Arc::clone(&id);
             let reader = thread::spawn(move || {
+                let mut mine = 0u64;
+                // SAFETY: mine is writable, and pthread_self is this thread.
+                assert_eq!(
+                    unsafe { libc::pthread_threadid_np(libc::pthread_self(), &raw mut mine) },
+                    0
+                );
+                said.store(mine, Ordering::SeqCst);
                 let mut byte = 0u8;
                 // SAFETY: fd stays open until this thread is joined: held keeps it, and the dup2
                 // below only puts another file in its place.
                 unsafe { libc::read(fd, (&raw mut byte).cast(), 1) }
             });
+            let backstop = test_time::backstop(Duration::from_secs(10));
+            test_time::until_true("the reader waits in its read", backstop, || {
+                let id = id.load(Ordering::SeqCst);
+                id != 0 && waiting_in_the_kernel(id)
+            })
+            .unwrap_or_else(|stall| panic!("{stall}"));
             // SAFETY: both descriptors are open; fd is held's, which owns what dup2 puts there.
             assert_ne!(unsafe { libc::dup2(null.as_raw_fd(), fd) }, -1);
             reader.join().unwrap();
@@ -321,9 +394,11 @@ mod tests {
             probe
                 .set_read_timeout(Some(Duration::from_millis(1)))
                 .unwrap();
-            let drained = (&probe).read(&mut [0; 1]).err()?.raw_os_error() == Some(libc::EBADF);
-            drained.then_some((kept, peer))
-        })
-        .unwrap_or_else(|stall| panic!("{stall}"))
+            let read = (&probe).read(&mut [0; 1]);
+            if read.is_err_and(|why| why.raw_os_error() == Some(libc::EBADF)) {
+                return (kept, peer);
+            }
+        }
+        panic!("no socket drained in {DRAIN_TRIES} pairs");
     }
 }
