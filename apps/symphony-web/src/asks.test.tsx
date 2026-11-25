@@ -192,7 +192,9 @@ describe("a document's questions", () => {
     expect(empty).toContain('<form data-attach="review-ask:/docs/a.md">');
     expect(empty).toContain('<label for="new-ask">Question</label>');
     expect(empty).toMatch(/<button[^>]*type="submit"[^>]*disabled=""[^>]*>Ask<\/button>/);
-    expect(drawn({ recipient: "teal-lynx" })).toContain('<p class="muted">Chat goes to teal-lynx.</p>');
+    expect(drawn({ recipient: "teal-lynx" })).toContain(
+      '<p class="muted">Chat goes to teal-lynx.</p>',
+    );
     storage.setItem("review-ask:@task/docs/a.md", "A typed question");
     const drafted = drawn({ scope: "@task" });
     expect(drafted).toContain(">A typed question</textarea>");
