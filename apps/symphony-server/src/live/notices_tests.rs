@@ -42,8 +42,8 @@ fn page_holding(card: &str) -> String {
     )
 }
 
-/// A project, its board, its machine folder and its hub, the hub's main page and board read, and
-/// its server generation's recording gate, open.
+/// A project, its board, its machine folder and its hub, the hub's main page and board read and
+/// its people looked at, as a tick does, and its server generation's recording gate, open.
 struct Telling {
     tree: Tree,
     root: PathBuf,
@@ -101,6 +101,7 @@ impl Telling {
         hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
         hub.refresh_page("", &root).unwrap();
         hub.observe(&f.store);
+        hub.people_read(&f.store);
         let gate = Arc::new(Gate::default());
         hub.gate_recorders(Arc::clone(&gate));
         Telling {
@@ -259,12 +260,14 @@ fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_b
 }
 
 impl Telling {
-    /// Gives each of `names` the direct agents power, as the person at the machine.
+    /// Gives each of `names` the direct agents power, as the person at the machine, and the
+    /// board's people are looked at again, as the next tick does.
     fn direct_agents(&self, names: &[&str]) {
         for name in names {
             let holder = symphony_board::people::Holder::Person(name);
             (self.f.store.grant(holder, &[Power::DirectAgents], "owner")).unwrap();
         }
+        self.hub.people_read(&self.f.store);
     }
 
     /// Names a program for WhatsApp too, cy's way.
@@ -709,6 +712,7 @@ fn a_replacement_tells_nothing_until_its_gate_opens_then_tells_from_the_record_a
     ask_everything(&telling);
     replacement.refresh_page("", &telling.root).unwrap();
     replacement.observe(&telling.f.store);
+    replacement.people_read(&telling.f.store);
     new.pass(&replacement);
     assert!(new.runner.is_none(), "a held gate reads no record");
     old.pass(&telling.hub);
@@ -775,4 +779,77 @@ fn a_branchs_proposal_written_for_one_person_tells_them_alone_as_its_verdict_rea
         ("card", "email", BO_EMAIL)
     );
     assert!(link.ends_with("#proposed"), "{link}");
+}
+
+/// A tick's look at the board's people and map is the one read of them: the pass it wakes reads
+/// neither again. Measured before, on the same board: the tick's look made 2 requests and the
+/// pass 2 more (4) where people are named, and 1 and 2 (3) on a board that names nobody.
+#[test]
+fn a_tick_and_the_pass_it_wakes_read_the_boards_people_once() {
+    for (nobody, look) in [(false, 2), (true, 1)] {
+        let telling = Telling::new(nobody);
+        let mut passes = turns();
+        passes.pass(&telling.hub);
+        let queries = telling.f.store.database().queries();
+        let count = || queries.within(&(i64::MIN..=i64::MAX)).0.count;
+        let before = count();
+        telling.hub.people_read(&telling.f.store);
+        assert_eq!(
+            count() - before,
+            look,
+            "the people, and the map where it names any"
+        );
+        passes.pass(&telling.hub);
+        assert_eq!(
+            count() - before,
+            look,
+            "nobody={nobody}: the pass reads no more"
+        );
+    }
+}
+
+/// A pass tells by the board's people as its tick's last look read them: before any look it looks
+/// at nothing; where the last look could not read them it looks at nothing and says so once; and
+/// a change of the people waits for the look that reads it.
+#[test]
+fn a_pass_tells_by_the_ticks_look_at_the_people_and_where_it_failed_says_so_once() {
+    let telling = Telling::new(false);
+    *telling.hub.people.lock().unwrap() = Default::default();
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    assert_eq!(passes.cursor(), None, "no look before the tick's");
+    telling.hub.people_read(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert!(passes.cursor().is_some(), "the first look");
+    // A field no build knows: the board's people do not read.
+    let row = || telling.f.store.raw().row("people", "ana");
+    row().set(json!({"stray": true})).unwrap();
+    telling.hub.people_read(&telling.f.store);
+    ask_everything(&telling);
+    for _ in 0..2 {
+        passes.pass(&telling.hub);
+        assert!(telling.told().is_empty(), "{:?}", telling.told());
+    }
+    let said = passes.said.0.get("board").cloned().unwrap_or_default();
+    assert!(said.starts_with("the board's people: "), "{said}");
+    row().set(json!({"stray": null})).unwrap();
+    telling.hub.people_read(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 6, "{:?}", telling.told());
+    assert!(!passes.said.0.contains_key("board"), "the fault cleared");
+    // cy joins design: the card waiting on design is told him once a look reads him there.
+    (telling.f.store.join_group("cy", "design", "owner")).unwrap();
+    telling.whatsapp();
+    passes.pass(&telling.hub);
+    assert_eq!(
+        telling.told().len(),
+        6,
+        "the look has not read him in design"
+    );
+    telling.hub.people_read(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(
+        told_after(&telling, 6),
+        [notice("card", "whatsapp", "+15551234567")]
+    );
 }

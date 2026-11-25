@@ -31,6 +31,9 @@ impl Hub {
                     return Err(());
                 }
                 super::measured("people tick", || self.people_read(store));
+                // The board moved, or may have, and its people are looked at: the notices look
+                // again, by that look ([`super::notices`]).
+                self.wake_notices();
                 Ok(())
             },
         );
