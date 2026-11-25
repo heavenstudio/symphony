@@ -2,7 +2,7 @@
 //! the connection, each wait the one it was given, and a socket macOS drained no reason to fail.
 
 use super::{PATIENT, READ_PATIENCE, one_reply, read_request};
-use crate::rpc::{exchange, exchanged, parse_response};
+use crate::rpc::exchange;
 use std::io::Read;
 use std::time::Duration;
 
@@ -56,6 +56,7 @@ fn an_exchange_a_server_never_answers_meets_its_wait_as_eagain() {
 #[cfg(target_vendor = "apple")]
 #[test]
 fn an_exchange_on_a_socket_macos_drained_gets_the_servers_answer() {
+    use crate::rpc::{exchanged, parse_response};
     use crate::socket::drain;
     use std::io::Write;
     use std::net::TcpStream;
