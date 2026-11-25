@@ -195,52 +195,87 @@ pub fn document(
 
 /// Whose each of the waiting cards `cards` is, in their order, on `people` and `map`: each the
 /// review queue's document (`docs/…/X.md`, or `@scope/docs/…/X.md` for a branch's proposal) and its
-/// slug, owned as main's file of that document holds the card ([`card_owning`]), with the saves
-/// still waiting on their delivery merged onto it; a card main's file does not hold (a new
-/// proposal, a document gone) by its places alone, a name written on it unread. Each document is
-/// read once. What a notice of the card tells ([`ownership::told`]).
+/// slug, owned as the file a verdict on it reads holds the card ([`card_owning`]), a name written
+/// on it (`*For:*`) included: a branch's proposal as its worktree's file holds it, as its page and
+/// a verdict there read it, and any other card, or a proposal its worktree does not hold, as main's
+/// file holds it, with the saves still waiting on their delivery merged onto it. A card neither
+/// holds (a document gone, a branch whose worktree went) by its places alone, a name written on it
+/// unread. The worktrees are listed once, where a proposal waits, and each document is read once.
+/// What a notice of the card tells ([`ownership::told`]) and what waits on each reader
+/// ([`theirs`]).
 pub fn waiting(
     people: &People,
     map: &Map,
     root: &std::path::Path,
     cards: &[(String, String)],
 ) -> Vec<Owning> {
-    let mut read: BTreeMap<String, Vec<Decision>> = BTreeMap::new();
+    let mut read: BTreeMap<(String, String), Vec<Decision>> = BTreeMap::new();
+    let mut trees: Option<Vec<crate::branches::Tree>> = None;
     let mut owners = Vec::new();
     for (doc, slug) in cards {
-        let route = main_route(doc);
-        let decisions = read.entry(route.to_string()).or_insert_with(|| {
-            let Ok(path) = crate::docview::target(root, route, true) else {
-                return Vec::new();
-            };
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                return Vec::new();
-            };
-            let file = crate::project::Project::of(root).file(route);
-            let text = crate::commit::pending::shown(root, &file, text);
-            crate::register::parse_decisions(&crate::text::splitlines(&text))
-        });
-        let owning = match decisions.iter().find(|card| card.slug == *slug) {
-            Some(card) => card_owning(people, map, route, card),
-            None => {
-                let thing = Thing::Card {
-                    slug: slug.clone(),
-                    route: route.to_string(),
-                };
-                ownership::owning(people, map, None, &thing.places())
-            }
+        let (scope, route) = split_route(doc);
+        let mut held = |scope: &str| -> Option<Owning> {
+            let decisions = read
+                .entry((scope.to_string(), route.to_string()))
+                .or_insert_with(|| {
+                    if scope.is_empty() {
+                        return decisions_on_main(root, route);
+                    }
+                    let trees = trees.get_or_insert_with(|| crate::branches::trees(root));
+                    (trees.iter().find(|tree| tree.id() == scope))
+                        .map(|tree| decisions_in(&tree.path, route))
+                        .unwrap_or_default()
+                });
+            (decisions.iter())
+                .find(|card| card.slug == *slug)
+                .map(|card| card_owning(people, map, route, card))
         };
+        let proposed = (!scope.is_empty()).then(|| held(scope)).flatten();
+        let owning = proposed.or_else(|| held("")).unwrap_or_else(|| {
+            let thing = Thing::Card {
+                slug: slug.clone(),
+                route: route.to_string(),
+            };
+            ownership::owning(people, map, None, &thing.places())
+        });
         owners.push(owning);
     }
     owners
 }
 
-/// The route of main's copy of the queue's document `doc`: a branch proposal's `@scope/` taken off.
-fn main_route(doc: &str) -> &str {
+/// The cards of the document of route `route` in main's checkout at `root`, with the saves still
+/// waiting on their delivery merged onto its file as its page shows it; none where it is no page.
+fn decisions_on_main(root: &std::path::Path, route: &str) -> Vec<Decision> {
+    let Some(text) = page_text(root, route) else {
+        return Vec::new();
+    };
+    let file = crate::project::Project::of(root).file(route);
+    let text = crate::commit::pending::shown(root, &file, text);
+    crate::register::parse_decisions(&crate::text::splitlines(&text))
+}
+
+/// The cards of the document of route `route` as the checkout at `root` (a branch's worktree)
+/// holds its file; none where it is no page there.
+fn decisions_in(root: &std::path::Path, route: &str) -> Vec<Decision> {
+    let Some(text) = page_text(root, route) else {
+        return Vec::new();
+    };
+    crate::register::parse_decisions(&crate::text::splitlines(&text))
+}
+
+/// The text of the file the route `route` names in the checkout at `root`, as a page reads it.
+fn page_text(root: &std::path::Path, route: &str) -> Option<String> {
+    let path = crate::docview::target(root, route, true).ok()?;
+    std::fs::read_to_string(path).ok()
+}
+
+/// The queue's document `doc` as the branch it is on and its route: a branch proposal's `@scope/`
+/// taken off and named, and main's (no scope) for any other.
+fn split_route(doc: &str) -> (&str, &str) {
     let doc = doc.trim_start_matches('/');
     match doc.split_once('/') {
-        Some((scope, rest)) if scope.starts_with('@') => rest,
-        _ => doc,
+        Some((scope, rest)) if scope.starts_with('@') => (&scope[1..], rest),
+        _ => ("", doc),
     }
 }
 

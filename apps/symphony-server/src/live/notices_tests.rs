@@ -708,3 +708,30 @@ fn old_cursor(path: &std::path::Path) -> Option<i64> {
     let record: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     record["line"].as_i64()
 }
+
+#[test]
+fn a_branchs_proposal_written_for_one_person_tells_them_alone_as_its_verdict_reads_it() {
+    let telling = Telling::new(false);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let worktree = telling.tree.path("proposal");
+    let add = ["worktree", "add", "-q", "-b", "design/policy"];
+    crate::testing::git(
+        &telling.root,
+        &[&add[..], &[worktree.to_str().unwrap()]].concat(),
+    );
+    // In design's folder, written for bo: design's members but him are not told.
+    let card = "- [ ] **proposed** — *For:* bo. Which palette for the policy?\n";
+    std::fs::write(worktree.join(DOC), page_holding(card)).unwrap();
+    crate::testing::git(&worktree, &["commit", "-qam", "Propose"]);
+    telling.hub.refresh_docs(None).unwrap();
+    passes.pass(&telling.hub);
+    let told = telling.told();
+    assert_eq!(told.len(), 1, "{told:?}");
+    let (kind, way, address, link) = &told[0];
+    assert_eq!(
+        (kind.as_str(), way.as_str(), address.as_str()),
+        ("card", "email", BO_EMAIL)
+    );
+    assert!(link.ends_with("#proposed"), "{link}");
+}

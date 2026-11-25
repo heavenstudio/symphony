@@ -2423,9 +2423,11 @@ as it did before. That person stays `owner`, with every power, once others are n
   board's first cards and counts (`/api/board`, Home), the postponed list, the pending list, a
   folder's count and a project's row in the machine's list hold those alone, on main's page and a
   branch's, and the feed sends a person no other card's key, words, count or place. Who decides
-  each card is read as a notice of it reads it, main's file with the saves still waiting merged,
-  on the people and map the board's last look read, so a person put in a group or a place mapped
-  reaches each reader's queue within that look, as one event. What is postponed is one order, the
+  each card is read as its verdict and a notice of it read it, a name written on it included: a
+  branch's proposal from its worktree's file, any other card from main's with the saves still
+  waiting merged. It is read on the people and map the board's last look read, so a person put
+  in a group, a place mapped or a card handed over reaches each reader's queue within that look,
+  as one event. What is postponed is one order, the
   board's, each person shown their cards of it. The person at the machine, a hosted page's
   visitor and every reader of a board that names nobody are shown every card, as before, and
   their feed carries nothing more.

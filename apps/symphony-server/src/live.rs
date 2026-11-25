@@ -1010,7 +1010,7 @@ impl Hub {
         ))
     }
 
-    fn refresh_docs(&self, dirty: Option<&BTreeSet<PathBuf>>) -> Result<(), String> {
+    pub(crate) fn refresh_docs(&self, dirty: Option<&BTreeSet<PathBuf>>) -> Result<(), String> {
         let listing = branches::listed(&self.root);
         if listing.is_none() {
             eprintln!("branch worktrees not listed: the owner's asks on a branch wait");

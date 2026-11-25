@@ -283,3 +283,138 @@ async fn the_feed_sends_a_person_no_byte_of_a_card_they_do_not_decide_and_the_ma
     let (_, board) = read(&ana, LAPTOP, "/api/board").await;
     assert_eq!(slugs(&board["next"]), ["new-palette", "brand-new"]);
 }
+
+/// The scope of the branch whose worktree proposes cards in design's document.
+const BRANCH: &str = "design~policy";
+
+/// [`project`] with a worktree in `proposal` on the branch `design/policy`, whose copy of design's
+/// document adds `cards` after main's, committed there where there are any: the repository's root.
+fn proposing(tree: &Tree, cards: &str) -> PathBuf {
+    let root = project(tree);
+    let worktree = tree.path("proposal");
+    git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "design/policy",
+            worktree.to_str().unwrap(),
+        ],
+    );
+    if !cards.is_empty() {
+        propose(tree, cards);
+    }
+    root
+}
+
+/// The branch's copy of design's document, `cards` after main's, committed there.
+fn propose(tree: &Tree, cards: &str) {
+    tree.write(
+        &format!("proposal/{DESIGN}"),
+        &PALETTE.replace(
+            "<!-- register:end -->",
+            &format!("{cards}<!-- register:end -->"),
+        ),
+    );
+    git(&tree.path("proposal"), &["commit", "-qam", "Propose"]);
+}
+
+/// The servers admitting the laptop as ana and as bo, sharing one hub, its documents and
+/// branches read and the board's people looked at, so each reader's feed counts the same
+/// versions.
+fn readers(root: &Path) -> (Arc<Shared>, Arc<Shared>, Arc<crate::live::Hub>) {
+    let hub = Arc::new(crate::live::Hub::new(root, &root.join("build/client")));
+    hub.refresh_docs(None).unwrap();
+    hub.people_read(&Board::store(root));
+    let (ana, bo) = (as_person(root, "ana"), as_person(root, "bo"));
+    for shared in [&ana, &bo] {
+        assert!(shared.api.set(Arc::clone(&hub)).is_ok());
+    }
+    (ana, bo, hub)
+}
+
+/// Whether `shared`'s reader decides the card `slug` of design's document on the branch's page.
+async fn decides_on_branch(shared: &Arc<Shared>, slug: &str) -> Value {
+    let uri = format!("/@{BRANCH}/api/card-owners?path={DESIGN}");
+    let (status, owners) = read(shared, LAPTOP, &uri).await;
+    assert_eq!(status, StatusCode::OK, "{owners}");
+    owners["cards"][slug]["decides"].clone()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proposal_written_for_another_group_waits_on_its_people_alone_as_its_verdict_does() {
+    const WRITTEN: &str = "Which build tool for the palette?";
+    let tree = Tree::new();
+    let root = proposing(&tree, "");
+    let _board = named(&root);
+    let (ana, bo, hub) = readers(&root);
+    let since = hub.cursor("").unwrap();
+    // In design's folder, written for engineering by its author.
+    propose(
+        &tree,
+        &format!("- [ ] **written** — *For:* engineering. {WRITTEN}\n"),
+    );
+    hub.refresh_docs(None).unwrap();
+    let key = format!("@{BRANCH}/{DESIGN}");
+    let (_, queue) = read(&bo, LAPTOP, "/api/queue").await;
+    assert_eq!(slugs(&queue["waiting"]), ["new-build", "written"]);
+    assert_eq!(queue["waiting"][1]["doc"], key);
+    let (_, queue) = read(&ana, LAPTOP, "/api/queue").await;
+    let hers = queue.to_string();
+    assert_eq!(slugs(&queue["waiting"]), ["new-palette"]);
+    assert!(
+        !hers.contains("written") && !hers.contains(WRITTEN),
+        "{hers}"
+    );
+    let (_, board) = read(&ana, LAPTOP, "/api/board").await;
+    assert_eq!(board["counts"]["waiting"], 1);
+    // Its verdict and its Later are bo's alone on its page, as the queue says.
+    assert_eq!(decides_on_branch(&bo, "written").await, true);
+    assert_eq!(decides_on_branch(&ana, "written").await, false);
+    let his = fed(&bo, LAPTOP, since).await.concat();
+    assert!(his.contains("written") && his.contains(WRITTEN), "{his}");
+    let hers = fed(&ana, LAPTOP, since).await.concat();
+    for leak in ["written", WRITTEN, "\"region\":\"counts\""] {
+        assert!(!hers.contains(leak), "{leak} in {hers}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proposal_handed_over_on_its_branch_page_leaves_one_queue_for_its_new_owners() {
+    const PROPOSED: &str = "A branch proposal of a palette.";
+    let tree = Tree::new();
+    let root = proposing(&tree, &format!("- [ ] **proposed** — {PROPOSED}\n"));
+    let _board = named(&root);
+    let (ana, bo, hub) = readers(&root);
+    let (_, queue) = read(&ana, LAPTOP, "/api/queue").await;
+    assert_eq!(slugs(&queue["waiting"]), ["new-palette", "proposed"]);
+    let (_, queue) = read(&bo, LAPTOP, "/api/queue").await;
+    assert_eq!(slugs(&queue["waiting"]), ["new-build"]);
+    let since = hub.cursor("").unwrap();
+    // Design's by its folder: ana hands it to engineering on the branch's page.
+    let hand = json!({"path": DESIGN, "slug": "proposed", "to": "engineering"});
+    let (status, body) = post(&ana, LAPTOP, &format!("/@{BRANCH}/api/card-hand"), hand).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    ana.saves.get().unwrap().close();
+    let page = std::fs::read_to_string(tree.path(&format!("proposal/{DESIGN}"))).unwrap();
+    assert!(
+        page.contains("**proposed** — *For:* engineering."),
+        "{page}"
+    );
+    // The board's next look at its people and map, which the hand-over moved.
+    hub.people_read(&Board::store(&root));
+    let (_, queue) = read(&bo, LAPTOP, "/api/queue").await;
+    assert_eq!(slugs(&queue["waiting"]), ["new-build", "proposed"]);
+    let (_, queue) = read(&ana, LAPTOP, "/api/queue").await;
+    assert_eq!(slugs(&queue["waiting"]), ["new-palette"]);
+    assert_eq!(decides_on_branch(&bo, "proposed").await, true);
+    assert_eq!(decides_on_branch(&ana, "proposed").await, false);
+    let his = fed(&bo, LAPTOP, since).await.concat();
+    assert!(his.contains("proposed") && his.contains(PROPOSED), "{his}");
+    // She is told it went, by its key alone.
+    let hers = fed(&ana, LAPTOP, since).await.concat();
+    assert!(hers.contains(r#""removed":true"#), "{hers}");
+    assert!(!hers.contains(PROPOSED), "{hers}");
+}
