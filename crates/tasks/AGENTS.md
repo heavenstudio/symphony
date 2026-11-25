@@ -37,8 +37,8 @@ targets are the folders of `tests/` with a `main.rs` that says what each holds (
   `store/postgres/`'s ([below](#the-stores-statements-live-in-one-place)).
   `schema.rs` is the tables, the indexes, the version and its steps; `live.rs` which builds may
   move a live board; `pg.rs` the client, `db.rs` what it answers in (`DbError`, `plain`), and
-  `rpc.rs` and `cbor.rs` the SurrealDB client kept for consumers, whose `rpc::Client` names the
-  address a store opens ([its contracts](#its-contracts)).
+  `rpc.rs` the address a store opens (`rpc::Client`, [its contracts](#its-contracts)) and the
+  one HTTP request a command sends a server on this machine (`rpc::exchange`).
   `store/reading.rs` holds the variables of a read of tasks, which its statements name.
 - **Reaching a board**: `project.rs`, `git.rs`, `folders.rs` (the state folders, named once),
   `builds.rs`, `confine.rs` (where an unasked recipe's path may lead), `launch/bounds.rs`.
@@ -153,13 +153,12 @@ there. The Rust names consumers call are held by `tests/consumer_api.rs` and cha
 [two-release rule](../../docs/workflow/CHECKS.md#consumer-api-changes), a rule apart from the `tasks api`
 version.
 
-A consuming project's code still names the SurrealDB client, so it stays until that code moves:
-`rpc::Client` (`rpc.rs`, `rpc/read.rs`, `rpc/descriptor.rs`, `cbor.rs`) and `rpc::healthy`,
-unchanged. `Store::open`, `Store::with`, `Store::opening` and `Store::reading` still take an
-`rpc::Client` as the board's address: a `postgresql:SOCKET` one opens the board, and a SurrealDB
-`HOST:PORT` is refused. `Store::client()` is kept and panics, as every board is on PostgreSQL;
-`cli::board_client`, `DbError`, `server::FOLDER`, `server::Running` and `server::Home::recovery`
-keep their names.
+`rpc::Client` is a board's address alone, and sends nothing: `Store::open`, `Store::with`,
+`Store::opening` and `Store::reading` take it, a `postgresql:SOCKET` one opens the board, and a
+SurrealDB `HOST:PORT` is refused. A consumer's raw query goes through the store's PostgreSQL
+client (`Store::database`, `pg::Client::request`) and answers in `db::DbError`;
+`cli::board_client`, `server::FOLDER`, `server::Running` and `server::Home::recovery` keep their
+names.
 
 ### A write decides on what it read
 
