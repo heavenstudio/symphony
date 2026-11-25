@@ -895,6 +895,49 @@ What follows:
   [2026-11-21 17:28] agent — Recorded, A. The words of someone who may speak and may not direct agents are kept by the board and shown to people; no agent is handed them until someone who may direct agents passes them on. What follows is written out in [[analysis/users-and-identity#Words without agent reach]]. One consequence the card did not state: a verdict is written on its card in the file, where agents read it, so a person who decides still moves agents by what they decide. Whether the note beside such a verdict is held is listed for a later round.
   [2026-11-21 17:29] agent · resolved
 
+- [ ] **held-on-document-agent-told** — A comment held on a document is in no file and on no thread, so an agent working there cannot tell it exists. Should it be told? A: no; an agent sees nothing of it until it is passed on. B: when an agent is handed that card's or that document's ask, it is told how many comments are held there, never what they say. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+  [2026-11-24 21:40] agent — Posted for the board task `app/held-words-on-documents`, a question your A on **words-without-agent-reach** leaves open for documents. Nothing that depends on it is built.
+
+    **Base (today).** A held message on a task's thread leaves a line agents read, `a message is held for people: #4`, so an agent never answers as though the thread were complete. A document has no thread, and a held comment is not written into its file.
+
+    **A, nothing.**
+    - The file is what agents read, and it holds only words that were passed on.
+    - An agent answering a card may answer it without the held message on it, until someone passes that message on.
+
+    **B, a count.**
+    - When an agent is handed a card's ask or a document's comment, the callback adds `2 held here`.
+    - It still cannot read them. It can say it answered without them.
+    - Nothing is written into the file, so an agent reading the file alone is told nothing.
+
+    **Why A.** B tells only an agent handed a callback, and a count it cannot read gives it nothing to act on. Whoever may pass a comment on sees it beside the card and decides whether an agent should read it.
+
+    **Earlier verdicts checked.**
+    - **words-without-agent-reach** (A) holds the words, and its text says a thread's reader is shown that messages are held. It says nothing of a document, which has no thread.
+    - **verdict-note-reach** (B) is about the note beside a verdict, which is written with it.
+
+    Neither decides this.
+
+- [ ] **held-on-document-waits-where** — When someone who may not direct agents comments on a document, their words wait for someone to pass them on. Where do you see them waiting? A: on the document's page alone, and those who may pass them on are sent a notice. B: also in the review queue, beside the cards waiting for you. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+  [2026-11-24 21:40] agent — Posted for the board task `app/held-words-on-documents`, a question your A on **words-without-agent-reach** leaves open for documents. Nothing that depends on it is built.
+
+    **Base (today).** A held message on a task's thread waits on you as an agent's question does, where your questions show, until someone passes it on. A document has no thread, so a held comment has no such line.
+
+    **A, on its page.**
+    - The comment shows on the document's page, marked held, with Pass on.
+    - The members of its group who may pass it on are sent a notice by the way each chose.
+    - You see it when you open that document.
+
+    **B, in the queue too.**
+    - As A, and the review queue lists each held comment beside the cards waiting, linking to it, until it is passed on.
+
+    **Why B.** On a board where nobody else may pass a comment on, you are the only one who can, and no notice reaches you by mail or chat. Under A such a comment waits until you happen to open its document. B costs the queue one more kind of row.
+
+    **Earlier verdicts checked.**
+    - **words-without-agent-reach** (A) says the people concerned are told. It does not say where you see held words waiting.
+    - **notice-sender** (B) says the page and the Mac app show every notice. It does not say where on the page a held comment waits.
+
+    Neither decides this.
+
 ### The note beside a verdict
 
 Written with the verdict ([its card](#verdict-note-reach), B). This is about a
