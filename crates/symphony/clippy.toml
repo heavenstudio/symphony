@@ -80,28 +80,28 @@ reason = "a channel of this crate's code is crate::channel's, which every item t
 # that one against std's, under an `#[expect]` saying so.
 [[disallowed-methods]]
 path = "slice::sort"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's keeps std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_by"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's keeps std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_by_key"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's keeps std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_by_cached_key"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's keeps std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_unstable"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's keeps std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_unstable_by"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's keeps std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_unstable_by_key"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's keeps std's, under an #[expect] saying so"

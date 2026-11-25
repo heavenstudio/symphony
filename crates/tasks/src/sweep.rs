@@ -1069,7 +1069,11 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             // (its branch, `/` spelled `~`, as the Symphony names a worktree), are main's now. Not
             // while another listed worktree holds its branch (`git worktree add --force`), whose
             // id they share: a pass may have written into that one, and a line main lacks would
-            // count as main's. The last of them to go moves them.
+            // count as main's. They move when a sweep removes the last listed worktree on the
+            // branch. Where that one leaves it otherwise (its folder deleted by hand and pruned,
+            // or switched to another branch), nothing moves them: they stay under the branch's id
+            // and a later pass counts once too few, as for a branch merged by hand (the count in
+            // crates/symphony/src/save.rs).
             let shared = (trees.iter().zip(&paths)).any(|(other, at)| {
                 at != path && !gone.contains(at) && other.branch == entry.branch
             });
