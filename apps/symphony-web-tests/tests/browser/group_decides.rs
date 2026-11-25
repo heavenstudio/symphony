@@ -123,7 +123,14 @@ fn a_tasks_deciding_controls_are_drawn_for_one_who_decides_it_and_its_priority_a
         for at in SCREENS {
             let (_, width, height, mobile) = at;
             screen(&mut chrome, width, height, mobile);
-            open(&mut chrome, &site, TASK, "[data-ready=task] .task-head");
+            // The owner's line is a chunk of its own, its place held by a bar until it comes
+            // (task-page.tsx's `OwnerPart`): the page is read once it has.
+            open(
+                &mut chrome,
+                &site,
+                TASK,
+                "[data-ready=task] .task-head .owner-name",
+            );
             if decides {
                 assert!(
                     chrome.wait_for(
