@@ -413,10 +413,7 @@ impl Hub {
             );
         }
         agents.machine_work.guidance = guidance;
-        self.update_board(store, snapshot, agents)?;
-        // The board moved, or may have: the notices look again ([`super::notices`]).
-        self.wake_notices();
-        Ok(())
+        self.update_board(store, snapshot, agents)
     }
 
     /// A round of the idle sweep began, on the hub's clocks ([`super::presence`]).
