@@ -1,11 +1,12 @@
 //! Who decides a thing (docs/product/analysis/users-and-identity.md, "Who in a group decides",
 //! "Who acts on a task", "Who changes settings"), through the real router, by visitors the board
 //! named who each hold decide: ana, of design, whose group owns the documents, the area `app` and
-//! the Settings page, answers a card, moves, prioritizes, approves and cancels a task, and changes
-//! a setting; bo, of engineering, holding decide as well, is refused each with nothing written, in
-//! the board's words, reads that he decides none of them and is offered no setting to write; the
-//! person at the machine acts as before. On a board that names people and maps nothing, every
-//! thing is the person at the machine's, and a person's refusal says the way out.
+//! the Settings page, answers a card, moves, prioritizes, approves and cancels a task, passes the
+//! group with a field of it, and changes a setting; bo, of engineering, holding decide as well, is
+//! refused each with nothing written, in the board's words, reads that he decides none of them and
+//! is offered no setting to write; the person at the machine acts as before. On a board that names
+//! people and maps nothing, every thing is the person at the machine's, and a person's refusal says
+//! the way out.
 
 use crate::front::{Shared, router};
 use crate::testing::{Board, LAPTOP, Tree, laptop_with, repository_holding};
@@ -185,6 +186,12 @@ async fn a_member_moves_a_task_of_their_group_and_a_non_member_is_refused_with_n
         store.create(&filed).unwrap();
     }
     let before = (store.get("app/x").unwrap(), store.thread("app/x").unwrap());
+    // The plugins' fields of the task `slug`, without the board's own marks: none written yet.
+    let fields = |slug: &str| {
+        let mut fields = store.get(slug).unwrap().fields;
+        fields.remove(symphony_board::red::FIELDS);
+        fields
+    };
     let approve = |slug: &str| {
         json!({"slug": slug, "action": symphony::gates::stamps::OWNER_APPROVE,
                "payload": "c0ffee1", "note": ""})
@@ -213,11 +220,26 @@ async fn a_member_moves_a_task_of_their_group_and_a_non_member_is_refused_with_n
         (task.status.as_str(), task.priority),
         ("ready", before.0.priority)
     );
+    assert!(fields("app/x").is_empty(), "{:?}", task.fields);
     assert_eq!(store.thread("app/x").unwrap().len(), before.1.len());
 
     let ana = as_person(&root, "ana");
     let (_, page) = read(&ana, LAPTOP, "/api/task-page?slug=app/x").await;
     assert_eq!(page["owner"]["decides"], true);
+    // A field is hers to set as well: she passes the group and meets the board's own refusal, as
+    // no plugin of this project declares the field, and nothing is written.
+    let field = json!({"slug": "app/x", "name": "effort", "value": 3});
+    let (status, said) = post(&ana, LAPTOP, "/api/task-field", field).await;
+    assert_eq!(
+        (status, said),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "no plugin of this project declares a board field \"effort\""})
+                .to_string()
+        )
+    );
+    assert!(fields("app/x").is_empty(), "{:?}", fields("app/x"));
+    assert_eq!(store.thread("app/x").unwrap().len(), before.1.len());
     for (route, body) in [
         (
             "/api/task-priority",

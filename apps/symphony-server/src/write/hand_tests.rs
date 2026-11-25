@@ -2,9 +2,10 @@
 //! named (docs/workflow/TASKS.md, "Which group a thing belongs to"): ana, of design, reads whose a
 //! card and a task are and whom she may hand each to, and hands each on; a thing of a group she is
 //! no member of is refused her with nothing written; a card handed again to the name written on it
-//! writes nothing, and one whose file is not written leaves no line on the board; a hosted visitor
-//! is offered no one to hand to; and on a board that names nobody the person at the machine reads no
-//! owner at all.
+//! writes nothing, and one whose file is not written leaves no line on the board, as one whose save
+//! for delivery by pull request is not kept leaves nothing for a restart to take up; a hosted
+//! visitor is offered no one to hand to; and on a board that names nobody the person at the machine
+//! reads no owner at all.
 
 use crate::front::{Shared, router};
 use crate::testing::{Board, LAPTOP, Tree, laptop_with, repository_holding};
@@ -292,6 +293,81 @@ async fn a_card_handed_whose_file_is_not_written_leaves_no_line_on_the_board() {
     assert!(body.contains("ermission denied"), "{body}");
     assert_eq!(store.ownership_log().unwrap(), lines, "the line taken back");
     assert_eq!(std::fs::read_to_string(&page).unwrap(), PAGE);
+    let (_, owners) = read(&shared, LAPTOP, "/api/card-owners?path=docs/TOPIC.md").await;
+    assert_eq!(
+        (
+            &owners["cards"]["one"]["name"],
+            &owners["cards"]["one"]["by"]
+        ),
+        (&json!("design"), &json!("map"))
+    );
+}
+
+/// The branches of the repository at `root`, one full name a line, sorted.
+fn heads(root: &Path) -> String {
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
+            .args(["for-each-ref", "--format=%(refname)", "refs/heads"])
+            .current_dir(root),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    String::from_utf8_lossy(&done.stdout).into_owned()
+}
+
+/// A card's hand-over in a project that delivers by pull request writes no file: it is kept as a
+/// save for delivery (`symphony::commit::pending`). One that cannot be kept (the journal that
+/// holds those saves made read-only) keeps nothing. The board's line is taken back, no save waits
+/// for delivery, the page reads as it did, and a restarted server has nothing to take up again:
+/// it starts no committer, makes no branch, and the card is still its first group's by the map.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_card_handed_whose_save_is_not_kept_for_delivery_leaves_nothing_to_take_up_again() {
+    use std::os::unix::fs::PermissionsExt;
+    let tree = Tree::new();
+    let root = super::pending_tests::delivering(&tree);
+    let _board = named(&root);
+    let store = Board::store(&root);
+    store
+        .map_place(&Place::Folder("docs".into()), "design", "owner")
+        .unwrap();
+    let (lines, main, branches) = (
+        store.ownership_log().unwrap(),
+        super::pending_tests::tip(&root, "main"),
+        heads(&root),
+    );
+    let journal = (root.join(".git").join(symphony_board::folders::SERVER))
+        .join("verdict-publications");
+    std::fs::create_dir_all(&journal).unwrap();
+    let set = |mode: u32| {
+        std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    set(0o555);
+    let shared = Shared::new(1, 8123, &root, None, ana_at(&root));
+    let hand = json!({"path": "docs/TOPIC.md", "slug": "one", "to": "engineering"});
+    let (status, body) = post(&shared, LAPTOP, "/api/card-hand", hand).await;
+    set(0o755);
+    shared.saves.get().unwrap().close();
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("ermission denied"), "{body}");
+    assert_eq!(store.ownership_log().unwrap(), lines, "the line taken back");
+    let kept: Vec<_> = std::fs::read_dir(&journal).unwrap().collect();
+    assert!(kept.is_empty(), "nothing kept, not even in part: {kept:?}");
+    assert!(!symphony::commit::pending::kept(&root));
+    assert_eq!(symphony::commit::pending::note(&root, "docs/TOPIC.md"), None);
+    assert_eq!(
+        std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap(),
+        PAGE
+    );
+
+    // The server again, as it starts: what follows its first read takes up the saves kept, and
+    // there are none.
+    drop(shared);
+    let shared = Shared::new(1, 8123, &root, None, ana_at(&root));
+    crate::api::settling(&shared)();
+    assert!(shared.saves.get().is_none(), "nothing taken up again");
+    assert_eq!(super::pending_tests::tip(&root, "main"), main, "main moved");
+    assert_eq!(heads(&root), branches, "no branch made for a save");
+    assert_eq!(store.ownership_log().unwrap(), lines);
     let (_, owners) = read(&shared, LAPTOP, "/api/card-owners?path=docs/TOPIC.md").await;
     assert_eq!(
         (
