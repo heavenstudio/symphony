@@ -641,8 +641,21 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
         | symphony_api::CARD_OWNERS_PATH
         | symphony_api::DOCUMENT_HELD_PATH
         | "/api/task-history" => board_read(shared, hub, &asked, &request).await,
-        _ => page_read(&hub, scope, path),
+        _ => page_read(&hub, scope, path, named_reader(&request).as_deref()),
     }
+}
+
+/// The reader a board named who asks `request`, by short name, to whom what waits is said as
+/// theirs alone (`crate::live::theirs`): the visitor a gate let in on the board, not the person at
+/// the machine, whatever name they write under. None for anyone else (the person at the machine,
+/// a request a test hands a route past every gate, a hosted visitor, a principal no board names),
+/// each told it whole.
+pub(crate) fn named_reader(request: &Request) -> Option<String> {
+    if crate::hosted::admission(request).is_some() {
+        return None;
+    }
+    let admitted = request.extensions().get::<crate::front::Admitted>()?;
+    (!admitted.machine).then(|| admitted.actor.name().to_string())
 }
 
 /// A task's execution attempts, the board's own read, the same for every branch: the actor this
@@ -1007,17 +1020,27 @@ fn agents(hub: &Hub, hosted: bool, page: Option<(AgentsAsked, bool)>) -> Result<
     })))
 }
 
-/// A region the hub keeps of the page of the worktree `scope`, as its last read left it.
-fn page_read(hub: &Hub, scope: &str, path: &str) -> Response {
+/// A region the hub keeps of the page of the worktree `scope`, as its last read left it: what of
+/// it waits as `reader`, a person a board named, is shown it (`crate::live::theirs`), and whole to
+/// anyone else.
+fn page_read(hub: &Hub, scope: &str, path: &str, reader: Option<&str>) -> Response {
     let pages = hub.pages.read().recover();
     let Some(page) = pages.get(scope) else {
         return error(StatusCode::NOT_FOUND, "this worktree was removed");
     };
+    let theirs = reader.map(|name| {
+        let deciders = page.deciders.as_deref();
+        crate::live::theirs::shown(&page.board, &page.queue, &page.pending, deciders, name)
+    });
+    let (board, queue, pending) = match &theirs {
+        Some(shown) => (&shown.board, &shown.queue, &shown.pending),
+        None => (&page.board, &page.queue, &page.pending),
+    };
     match path {
-        "/api/board" => no_store(Json(&page.board)),
-        "/api/queue" | "/queue" => no_store(Json(&page.queue)),
+        "/api/board" => no_store(Json(board)),
+        "/api/queue" | "/queue" => no_store(Json(queue)),
         "/api/postponed" => no_store(Json(
-            page.queue
+            queue
                 .waiting
                 .iter()
                 .filter(|card| card.postponed)
@@ -1032,7 +1055,7 @@ fn page_read(hub: &Hub, scope: &str, path: &str) -> Response {
                 .map(|card| &card.slug)
                 .collect::<Vec<_>>(),
         )),
-        "/api/pending" => no_store(Json(&page.pending)),
+        "/api/pending" => no_store(Json(pending)),
         "/api/activity" => no_store(Json(&page.activity)),
         _ => error(StatusCode::NOT_FOUND, "no such API route"),
     }
@@ -1132,14 +1155,16 @@ fn document_response(
                 json!(doc)
             }
         }),
-        "/api/folder" => hub.folder(scope, rel).map(|mut folder| {
-            if query(request, "view").as_deref() == Some("outline") {
-                folder.intro = folder
-                    .intro
-                    .map(|doc| symphony::docview::outline(doc).document);
-            }
-            json!(folder)
-        }),
+        "/api/folder" => hub
+            .folder(scope, rel, named_reader(request).as_deref())
+            .map(|mut folder| {
+                if query(request, "view").as_deref() == Some("outline") {
+                    folder.intro = folder
+                        .intro
+                        .map(|doc| symphony::docview::outline(doc).document);
+                }
+                json!(folder)
+            }),
         "/api/section" if query(request, "keys").is_some() => {
             let keys = match serde_json::from_str::<Vec<String>>(
                 &query(request, "keys").unwrap_or_default(),
@@ -1599,6 +1624,8 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
     let hosted = crate::hosted::admission(&request).cloned();
     let show_notices = hosted.is_none();
     let hide_machine = hosted.is_some();
+    // A person a board named is sent what waits as theirs alone (`crate::live::theirs`).
+    let reader = named_reader(&request);
     let notices = hub.server_notice.subscribe();
     let notices =
         futures_util::stream::unfold((notices, true), |(mut notices, first)| async move {
@@ -1618,53 +1645,62 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
             tokio::time::Instant::now() + ping_after,
             document_filter,
         ),
-        move |(hub, scope, mut since, mut receiver, mut pending, mut deadline, document_filter)| async move {
-            loop {
-                if let Some(event) = pending.pop_front() {
-                    since = event.version;
-                    let data = filtered_document_event(&event.json, &document_filter);
-                    let data = if hide_machine {
-                        match crate::hosted::project_feed(&data) {
-                            Some(data) => data,
-                            None => continue,
-                        }
-                    } else {
-                        data
-                    };
-                    let item = Said::delta(since, data);
-                    deadline = tokio::time::Instant::now() + ping_after;
-                    return Some((
-                        item,
-                        (
-                            hub,
-                            scope,
-                            since,
-                            receiver,
-                            pending,
-                            deadline,
-                            document_filter,
-                        ),
-                    ));
-                }
-                match tokio::time::timeout_at(deadline, receiver.changed()).await {
-                    Ok(Ok(())) => match events_since(&hub, &scope, since) {
-                        Ok(events) => pending = events,
-                        Err(_) => return None,
-                    },
-                    Ok(Err(_)) => return None,
-                    Err(_) => {
+        move |(hub, scope, mut since, mut receiver, mut pending, mut deadline, document_filter)| {
+            let reader = reader.clone();
+            async move {
+                loop {
+                    if let Some(event) = pending.pop_front() {
+                        since = event.version;
+                        let data = filtered_document_event(&event.json, &document_filter);
+                        let data = match &reader {
+                            Some(name) => {
+                                crate::live::theirs::sent_to(&data, event.waits.as_ref(), name)
+                            }
+                            None => data,
+                        };
+                        let data = if hide_machine {
+                            match crate::hosted::project_feed(&data) {
+                                Some(data) => data,
+                                None => continue,
+                            }
+                        } else {
+                            data
+                        };
+                        let item = Said::delta(since, data);
+                        deadline = tokio::time::Instant::now() + ping_after;
                         return Some((
-                            Said::ping(),
+                            item,
                             (
                                 hub,
                                 scope,
                                 since,
                                 receiver,
                                 pending,
-                                tokio::time::Instant::now() + ping_after,
+                                deadline,
                                 document_filter,
                             ),
                         ));
+                    }
+                    match tokio::time::timeout_at(deadline, receiver.changed()).await {
+                        Ok(Ok(())) => match events_since(&hub, &scope, since) {
+                            Ok(events) => pending = events,
+                            Err(_) => return None,
+                        },
+                        Ok(Err(_)) => return None,
+                        Err(_) => {
+                            return Some((
+                                Said::ping(),
+                                (
+                                    hub,
+                                    scope,
+                                    since,
+                                    receiver,
+                                    pending,
+                                    tokio::time::Instant::now() + ping_after,
+                                    document_filter,
+                                ),
+                            ));
+                        }
                     }
                 }
             }

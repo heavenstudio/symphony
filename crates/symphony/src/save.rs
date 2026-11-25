@@ -480,7 +480,7 @@ impl Saves {
         // held comment's pass tells the comment it wrote, its author's words.
         let mut told: Option<Told> = None;
         let result = match route {
-            "/api/postpone" => self.postpone(scope, payload, order),
+            "/api/postpone" => self.postpone(actor, scope, payload, order),
             "/api/decision" | "/api/comment" | "/api/message" | symphony_api::CARD_HAND_ROUTE => {
                 self.document(actor, scope, route, payload, None)
                     .map(|(value, ask)| {
@@ -588,12 +588,43 @@ impl Saves {
         ))
     }
 
+    /// Why the person `actor` may not move the card `slug` of the document `rel` (its file
+    /// `target` in the checkout at `root`) in the queue: the refusal of its verdict, read from the
+    /// document as its page shows it. None for a card the document does not hold, which the order
+    /// answers in its own words.
+    fn postpone_refused(
+        &self,
+        actor: &Actor,
+        root: &Path,
+        rel: &str,
+        target: &Path,
+        slug: &str,
+    ) -> Result<(), Failure> {
+        let text = std::fs::read_to_string(target).map_err(|e| e.to_string())?;
+        let text = if root == self.root && commit::on_main(root) && commit::delivers(root) {
+            let file = crate::project::Project::of(root).file(rel);
+            commit::pending::shown(root, &file, text)
+        } else {
+            text
+        };
+        let cards = register::parse_decisions(&crate::text::splitlines(&text));
+        let Some(card) = cards.iter().find(|card| card.slug == slug) else {
+            return Ok(());
+        };
+        let store = self.store_by(actor.name())?;
+        deciding(crate::owners::refused_card(&store, rel, card, actor))
+    }
+
     /// A card postponed, brought back or visited for the owner: `payload`'s `action` on the card
     /// `slug` of its page, by the decisions its reader was shown (`order`). A Later is judged
     /// against the waiting cards, read now where its reader was shown none, and answers where the
-    /// next waiting card is; an Undo or a visit reads no document.
+    /// next waiting card is; an Undo or a visit reads no document. The order is the board's one,
+    /// so each of the three moves the card in the queue of every one who decides it: a person a
+    /// board named who is not of its owner is refused it as its verdict is
+    /// ([`crate::owners::refused_card`]), with nothing written.
     fn postpone(
         &self,
+        actor: &Actor,
         scope: &str,
         payload: &Value,
         order: Option<&crate::postpone::View>,
@@ -601,8 +632,11 @@ impl Saves {
         use crate::postpone::{OWNER, now};
         let failed = |e: crate::ReviewError| Failure::from(e.to_string());
         let (root, rel) = self.scope(scope, string(payload, "path"))?;
-        Self::target(&root, &rel)?;
+        let target = Self::target(&root, &rel)?;
         let (action, slug) = (string(payload, "action"), string(payload, "slug"));
+        if crate::owners::person(actor).is_some() {
+            self.postpone_refused(actor, &root, &rel, &target, slug)?;
+        }
         let page = self.page(&root, &rel, "")?;
         let page = page.trim_start_matches('/');
         if action != "later" {

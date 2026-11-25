@@ -1,5 +1,7 @@
-//! The owner's queue order, kept outside the design documents. The app currently has one
-//! owner identity across all devices; the file keeps identities separate for future callers.
+//! The owner's queue order, kept outside the design documents. It is the board's one order
+//! ([`OWNER`]'s, across all devices): a person a board named postpones only a card they decide, and
+//! is shown their cards of it ([`crate::owners::theirs`]). The file keeps identities separate for
+//! future callers.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};

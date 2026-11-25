@@ -515,6 +515,9 @@ mod decide_tests;
 mod held_tests;
 
 #[cfg(test)]
+mod queue_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
