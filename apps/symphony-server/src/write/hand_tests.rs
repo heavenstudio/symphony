@@ -335,8 +335,8 @@ async fn a_card_handed_whose_save_is_not_kept_for_delivery_leaves_nothing_to_tak
         super::pending_tests::tip(&root, "main"),
         heads(&root),
     );
-    let journal = (root.join(".git").join(symphony_board::folders::SERVER))
-        .join("verdict-publications");
+    let journal =
+        (root.join(".git").join(symphony_board::folders::SERVER)).join("verdict-publications");
     std::fs::create_dir_all(&journal).unwrap();
     let set = |mode: u32| {
         std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(mode)).unwrap();
@@ -353,7 +353,10 @@ async fn a_card_handed_whose_save_is_not_kept_for_delivery_leaves_nothing_to_tak
     let kept: Vec<_> = std::fs::read_dir(&journal).unwrap().collect();
     assert!(kept.is_empty(), "nothing kept, not even in part: {kept:?}");
     assert!(!symphony::commit::pending::kept(&root));
-    assert_eq!(symphony::commit::pending::note(&root, "docs/TOPIC.md"), None);
+    assert_eq!(
+        symphony::commit::pending::note(&root, "docs/TOPIC.md"),
+        None
+    );
     assert_eq!(
         std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap(),
         PAGE
