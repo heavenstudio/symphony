@@ -228,7 +228,7 @@ fn standing(path: &Path) -> Answer<bool> {
 /// Who a slot or place file says holds it, if it reads as a JSON object.
 fn holder(path: &Path) -> Option<serde_json::Map<String, Value>> {
     let text = fs::read_to_string(path).ok()?;
-    match serde_json::from_str(text.trim()).ok()? {
+    match serde_json::from_slice(text.trim().as_bytes()).ok()? {
         Value::Object(info) => Some(info),
         _ => None,
     }

@@ -22,7 +22,7 @@ impl Store {
             let encoded = row["body"]["encoded"]
                 .as_str()
                 .ok_or_else(|| Error::Db("invalid artifact ledger envelope".into()))?;
-            row["body"] = serde_json::from_str(encoded)
+            row["body"] = serde_json::from_slice(encoded.as_bytes())
                 .map_err(|error| Error::Db(format!("invalid artifact ledger JSON: {error}")))?;
             Ok(row)
         })

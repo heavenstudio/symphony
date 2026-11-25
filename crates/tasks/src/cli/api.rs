@@ -143,7 +143,8 @@ pub(super) fn run_in<F: FnOnce() -> Result<Store, String>>(
         .read_to_string(&mut text)
         .map_err(|e| format!("cannot read the call: {e}"))
         .and_then(|_| {
-            serde_json::from_str::<Value>(&text).map_err(|e| format!("the call is not JSON: {e}"))
+            serde_json::from_slice::<Value>(text.as_bytes())
+                .map_err(|e| format!("the call is not JSON: {e}"))
         });
     let (answer, code) = match calls {
         Ok(Value::Array(calls)) => (
@@ -184,7 +185,7 @@ pub(super) fn serve_in<F: FnOnce() -> Result<Store, String>>(
                 "error": format!("cannot read the call: {e}"),
             }),
             Ok(line) if line.trim().is_empty() => continue,
-            Ok(line) => match serde_json::from_str::<Value>(&line) {
+            Ok(line) => match serde_json::from_slice::<Value>(line.as_bytes()) {
                 Ok(Value::Array(calls)) => {
                     Value::Array(calls.into_iter().map(|c| answer(c, &mut board)).collect())
                 }

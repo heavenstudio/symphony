@@ -174,7 +174,8 @@ fn inherited(
     let Ok(text) = var(INHERITED.name) else {
         return Ok(None);
     };
-    let transfer = serde_json::from_str::<Transfer>(&text).map_err(|e| e.to_string())?;
+    let transfer =
+        serde_json::from_slice::<Transfer>(text.as_bytes()).map_err(|e| e.to_string())?;
     Ok((transfer.parent == parent).then_some(transfer))
 }
 

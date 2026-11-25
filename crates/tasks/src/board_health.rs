@@ -620,7 +620,7 @@ impl Report {
     /// The record at `path`; none when there is none.
     pub fn read(path: &Path) -> Result<Option<Report>, String> {
         match std::fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text)
+            Ok(text) => serde_json::from_slice(text.as_bytes())
                 .map(Some)
                 .map_err(|e| format!("{}: {e}", path.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),

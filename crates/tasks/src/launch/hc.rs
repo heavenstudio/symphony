@@ -93,7 +93,7 @@ pub trait Hc {
         let at = args.iter().position(|a| *a == "--").unwrap_or(args.len());
         all.insert(at, "--json");
         let out = self.run(&all)?;
-        serde_json::from_str(out.trim())
+        serde_json::from_slice(out.trim().as_bytes())
             .map_err(|why| LaunchError(format!("hc {} printed no JSON: {why}", words(args))))
     }
 
@@ -230,7 +230,7 @@ pub trait Hc {
     /// answers while the window does not.
     fn layout(&self) -> Result<Vec<Object>, LaunchError> {
         let window = self.app(&["ls"]).and_then(|out| {
-            serde_json::from_str::<Value>(out.trim())
+            serde_json::from_slice::<Value>(out.trim().as_bytes())
                 .map_err(|_| LaunchError("herdr-app ls printed no JSON".into()))
         });
         let layout = match window {
@@ -256,7 +256,7 @@ pub trait Hc {
         ];
         let out = self.feed(&["connect"], &format!("{}\n", calls.join("\n")))?;
         out.lines()
-            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter_map(|line| serde_json::from_slice::<Value>(line.as_bytes()).ok())
             .find(|answer| answer.get("id") == Some(&Value::from(2)))
             .and_then(|answer| answer.get("result")?.get("value").cloned())
             .filter(Value::is_object)
@@ -267,7 +267,7 @@ pub trait Hc {
     fn rename(&self, what: &str, id: &str, name: &str) -> Result<(), LaunchError> {
         let command = format!("{what}.rename");
         let out = self.app(&["do", &command, "--id", id, "--name", name])?;
-        match serde_json::from_str::<Value>(out.trim()) {
+        match serde_json::from_slice::<Value>(out.trim().as_bytes()) {
             Ok(Value::Object(said)) if said.get("error").is_some() => Err(LaunchError(format!(
                 "herdr-app do {command}: {}",
                 text(said.get("error"))
@@ -512,7 +512,7 @@ fn answer(tool: &str, args: &[&str], done: std::process::Output) -> Result<Strin
     let why = [&stderr, &stdout]
         .into_iter()
         .find_map(|said| {
-            let error = serde_json::from_str::<Value>(said)
+            let error = serde_json::from_slice::<Value>(said.as_bytes())
                 .ok()?
                 .get("error")?
                 .clone();

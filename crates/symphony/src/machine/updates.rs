@@ -214,8 +214,8 @@ impl Ledger {
             }
             Err(error) => return Err(format!("{}: {error}", path.display())),
         };
-        let ledger: Ledger =
-            serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+        let ledger: Ledger = serde_json::from_slice(text.as_bytes())
+            .map_err(|error| format!("{}: {error}", path.display()))?;
         if ledger.version > VERSION {
             return Err(format!(
                 "{}: format {} is a later build's; this one reads {VERSION}",

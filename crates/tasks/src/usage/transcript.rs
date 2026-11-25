@@ -254,7 +254,7 @@ fn read(transcript: &Path, kept: &mut Kept) -> std::io::Result<Vec<Spent>> {
 fn inherited_until(transcript: &Path) -> Option<String> {
     let name = transcript.file_name()?.to_str()?.strip_suffix(".jsonl")?;
     let meta = fs::read_to_string(transcript.with_file_name(format!("{name}.meta.json"))).ok()?;
-    let meta: Value = serde_json::from_str(&meta).ok()?;
+    let meta: Value = serde_json::from_slice(meta.as_bytes()).ok()?;
     let call = meta["toolUseId"].as_str().filter(|call| !call.is_empty())?;
     (meta["isFork"] == true).then(|| call.to_string())
 }
@@ -267,7 +267,7 @@ fn answers(line: &[u8], call: &str) -> bool {
     if !text.contains(call) || !text.contains("\"tool_result\"") {
         return false;
     }
-    let Ok(line) = serde_json::from_str::<Value>(text) else {
+    let Ok(line) = serde_json::from_slice::<Value>(text.as_bytes()) else {
         return false;
     };
     let content = &line["message"]["content"];
@@ -291,7 +291,7 @@ fn message(line: &[u8]) -> Option<(String, Spent)> {
     if !line.contains("\"assistant\"") || !line.contains("\"usage\"") {
         return None;
     }
-    let line: Value = serde_json::from_str(line).ok()?;
+    let line: Value = serde_json::from_slice(line.as_bytes()).ok()?;
     let (message, usage) = (&line["message"], &line["message"]["usage"]);
     if line["type"] != "assistant" || !usage.is_object() {
         return None;

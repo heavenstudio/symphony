@@ -169,3 +169,38 @@ fn the_registry_is_written_whole_and_one_that_does_not_read_is_never_written_ove
         (0, None)
     );
 }
+
+#[test]
+fn a_malformed_registry_is_refused_in_the_words_and_at_the_place_serde_json_from_str_gives() {
+    // The registry is read through the crate's one JSON reader, of bytes (`from_slice`): for any
+    // text, the same error, words and line and column, as `from_str` of that text.
+    let tree = Tree::new();
+    let dir = tree.path("machine");
+    let path = dir.join(PROJECTS);
+    let malformed = [
+        "",
+        "  \n\t",
+        "{\"projects\": [",
+        "{\"projects\": 3}",
+        "{\"projects\": []} and more",
+        "{\"projects\": [{\"id\": \"a\\q\"}]}",
+        "{\n  \"projects\": [\n    {\"id\": 1}\n  ]\n}",
+        "{\"projects\": [], \"projects\": []}",
+        "{\"projects\": [{}]}",
+        "{\"projects\": [{\"id\": \"\\ud800\"}]}",
+        "{\"projects\": 1e400}",
+        "\u{feff}{\"projects\": []}",
+        "{\"projects\": [{\"id\": \"a\", \"name\": \"b\", \"root\": \"c\", \"pin\": -1}]}",
+    ];
+    for text in malformed {
+        tree.write("machine/projects.json", text);
+        let before = serde_json::from_str::<Registry>(text).unwrap_err();
+        assert_eq!(
+            Registry::read(&dir),
+            Err(format!("{}: {before}", path.display())),
+            "{text:?}"
+        );
+    }
+    let deep = serde_json::from_str::<Registry>(malformed[6]).unwrap_err();
+    assert_eq!(deep.line(), 3, "one error is past the first line");
+}

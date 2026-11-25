@@ -132,7 +132,7 @@ impl Home {
                 path.display()
             )));
         }
-        let identity: Identity = serde_json::from_str(&text).map_err(|why| {
+        let identity: Identity = serde_json::from_slice(text.as_bytes()).map_err(|why| {
             ServerError::Io(format!(
                 "{} is not a known backend identity: {why}",
                 path.display()

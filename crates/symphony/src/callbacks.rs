@@ -209,7 +209,7 @@ fn flush(path: &Path, root: &Path) -> Result<bool, String> {
     let store = crate::taskview::connect(root)?;
     for Record { id, text, ask } in records {
         let ask: Option<symphony_board::NewAsk> = ask
-            .map(|ask| serde_json::from_str(&ask))
+            .map(|ask| serde_json::from_slice(ask.as_bytes()))
             .transpose()
             .map_err(|e| format!("journal record {id}'s ask: {e}"))?;
         let event = format!("{key}-{id}");

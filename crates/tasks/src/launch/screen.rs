@@ -24,7 +24,8 @@ impl Screen {
     /// What `herdr-app status` printed, read: an error naming what it does not say.
     pub fn of(said: &str) -> Result<Screen, LaunchError> {
         let fail = |why: &str| LaunchError(format!("herdr-app status {why}"));
-        let Ok(Value::Object(said)) = serde_json::from_str::<Value>(said.trim()) else {
+        let Ok(Value::Object(said)) = serde_json::from_slice::<Value>(said.trim().as_bytes())
+        else {
             return Err(fail("printed no JSON object"));
         };
         match said.get("errors") {

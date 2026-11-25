@@ -492,7 +492,7 @@ pub fn serve_main(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
             Err(_) => return 2,
         }
         let _in_hand = IN_HAND.lock().recover();
-        let answer = match serde_json::from_str::<Value>(&line) {
+        let answer = match serde_json::from_slice::<Value>(line.as_bytes()) {
             Ok(request) => match request.get("cwd").and_then(Value::as_str) {
                 Some(dir) if std::env::set_current_dir(dir).is_err() => {
                     json!({"error": "value", "message": format!("no directory {dir:?} to work from")})
