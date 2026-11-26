@@ -168,44 +168,10 @@ pub fn insert_comment_by(
         )));
     }
     let lines = splitlines(text);
-    let Some(at) = usize::try_from(after_line)
-        .ok()
-        .filter(|at| (1..=lines.len()).contains(at))
-    else {
-        return Err(EditError(format!(
-            "line {after_line} is outside the document ({} lines)",
-            lines.len()
-        )));
-    };
-    if let Some((start, end)) = register::regions(&lines)
-        .into_iter()
-        .find(|(start, end)| (*start..*end).contains(&(at - 1)))
-    {
-        return Err(EditError(format!(
-            "line {at} is inside the decision register (lines {} to {}), which holds cards only: a comment there would stop every later verdict on its cards. Say it on the card itself (its Verdict / message), or comment on a block outside the register",
-            start + 1,
-            end + 1
-        )));
+    if let Some(refused) = comment_refused_after(&lines, after_line) {
+        return Err(refused);
     }
-    // The line commented on and the one after it are one card's: the callout would part them.
-    let carded = register::carded(&lines);
-    let within = carded[at - 1]
-        && lines
-            .get(at)
-            .is_some_and(|next| carded[at] && card_line(next).is_none());
-    if within {
-        let first = (0..at)
-            .rev()
-            .find(|index| card_line(lines[*index]).is_some())
-            .unwrap_or(at - 1);
-        let slug = card_line(lines[first]).map_or("", |card| card.slug);
-        return Err(EditError(format!(
-            "line {at} is inside the card {} (lines {} to {}): a comment there would cut the lines under it from the card. Say it on the card itself (its Verdict / message), or comment on a block outside the card",
-            repr(slug),
-            first + 1,
-            card_end(&lines, first)
-        )));
-    }
+    let at = usize::try_from(after_line).expect("a line inside the document");
     let title = if by == Who::Owner.as_str() {
         format!("> [!{kind}] {}", strip(title))
     } else {
@@ -227,6 +193,52 @@ pub fn insert_comment_by(
     }
     out.extend(tail.iter().map(|line| line.to_string()));
     Ok(out.join("\n") + "\n")
+}
+
+/// Why a callout may not go after the line `at` (1-based) of `lines`, as [`insert_comment`] refuses
+/// it: a line outside the document, one inside a decision register (after its start marker, or
+/// after any line before its end marker), and one inside a card that sits inline, whose lines under
+/// it the callout would cut away. None where one may.
+pub fn comment_refused_after(lines: &[&str], after_line: i64) -> Option<EditError> {
+    let Some(at) = usize::try_from(after_line)
+        .ok()
+        .filter(|at| (1..=lines.len()).contains(at))
+    else {
+        return Some(EditError(format!(
+            "line {after_line} is outside the document ({} lines)",
+            lines.len()
+        )));
+    };
+    if let Some((start, end)) = register::regions(lines)
+        .into_iter()
+        .find(|(start, end)| (*start..*end).contains(&(at - 1)))
+    {
+        return Some(EditError(format!(
+            "line {at} is inside the decision register (lines {} to {}), which holds cards only: a comment there would stop every later verdict on its cards. Say it on the card itself (its Verdict / message), or comment on a block outside the register",
+            start + 1,
+            end + 1
+        )));
+    }
+    // The line commented on and the one after it are one card's: the callout would part them.
+    let carded = register::carded(lines);
+    let within = carded[at - 1]
+        && lines
+            .get(at)
+            .is_some_and(|next| carded[at] && card_line(next).is_none());
+    if within {
+        let first = (0..at)
+            .rev()
+            .find(|index| card_line(lines[*index]).is_some())
+            .unwrap_or(at - 1);
+        let slug = card_line(lines[first]).map_or("", |card| card.slug);
+        return Some(EditError(format!(
+            "line {at} is inside the card {} (lines {} to {}): a comment there would cut the lines under it from the card. Say it on the card itself (its Verdict / message), or comment on a block outside the card",
+            repr(slug),
+            first + 1,
+            card_end(lines, first)
+        )));
+    }
+    None
 }
 
 /// Set a card's verdict and append a dated owner entry; regroup the register if it has one, as the

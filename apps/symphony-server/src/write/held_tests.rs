@@ -3,10 +3,10 @@
 //! leaves a callout and a card's message, and neither reaches a clone (no file, commit, branch,
 //! ask or chat journal carries her words, on a checkout that delivers by pull request too) while
 //! the document's held read shows them, with Pass on for one who may. A pass writes each as hers,
-//! the passer first in its words, after its block found again once the file moved, or refuses in
-//! plain words with nothing written; then the ask and the callback follow, once. Asks stay hers to
-//! make only with direct agents. The note beside her verdict is written with it
-//! ("The note beside a verdict").
+//! the passer first in its words, after its block found again once the file moved, or at the end of
+//! its section once its words changed, where the held read draws it; then the ask and the callback
+//! follow, once. Asks stay hers to make only with direct agents. The note beside her verdict is
+//! written with it ("The note beside a verdict").
 
 use super::decide_tests::{MACHINE, as_person, post, read, with_hub};
 use crate::testing::{Board, LAPTOP, Tree, git, repository_holding};
@@ -231,7 +231,7 @@ async fn held_words_reach_no_clone_and_a_pass_writes_them_as_hers_under_both_nam
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_pass_finds_its_block_once_the_file_moved_or_refuses_with_nothing_written() {
+async fn a_pass_finds_its_block_once_the_file_moved_or_goes_at_its_sections_end_once_it_changed() {
     let tree = Tree::new();
     let root = repository_holding(&tree, "main", DOC, PAGE);
     let _board = named(&root);
@@ -255,6 +255,8 @@ async fn a_pass_finds_its_block_once_the_file_moved_or_refuses_with_nothing_writ
         json!({"id": moved}),
     )
     .await);
+    // Its commit done before the file is edited again by hand.
+    stefano.saves.get().unwrap().close();
     let page = std::fs::read_to_string(root.join(DOC)).unwrap();
     let at = page
         .lines()
@@ -267,35 +269,38 @@ async fn a_pass_finds_its_block_once_the_file_moved_or_refuses_with_nothing_writ
             .starts_with("> [!question] ana · [passed on by owner]"),
         "{page}"
     );
-    // Its block's words changed: refused, the file as it was and the comment still held.
+    // Its block's words changed: drawn, and passed, at its section's end. Its heading's last
+    // blocks are the register's, and a callout may follow its end marker alone: the file's end.
     let edited = page.replace("Some prose about lamps.", "Some prose about lights.");
     std::fs::write(root.join(DOC), &edited).unwrap();
     git(&root, &["commit", "-qam", "its words changed"]);
-    let (status, said) = post(
+    let stefano = as_person(&root, "stefano");
+    let last = i64::try_from(edited.lines().count()).unwrap();
+    assert_eq!(edited.lines().last(), Some("<!-- register:end -->"));
+    let drawn = held(&stefano, MACHINE).await["held"].clone();
+    assert_eq!(
+        (drawn[0]["id"].as_i64(), &drawn[0]["key"], &drawn[0]["line"]),
+        (Some(changed), &json!("section:topic:7"), &json!(last)),
+        "{drawn}"
+    );
+    ok(post(
         &stefano,
         MACHINE,
         "/api/document-pass",
         json!({"id": changed}),
     )
-    .await;
-    assert_eq!(
-        (status, said),
-        (
-            StatusCode::CONFLICT,
-            json!({"error": "the block this comment was left after has changed or is gone: \
-                nothing was written"})
-            .to_string()
-        )
-    );
+    .await);
     stefano.saves.get().unwrap().close();
-    assert_eq!(std::fs::read_to_string(root.join(DOC)).unwrap(), edited);
-    let still: Vec<i64> = (held(&stefano, MACHINE).await["held"]
-        .as_array()
-        .unwrap()
-        .iter())
-    .map(|held| held["id"].as_i64().unwrap())
-    .collect();
-    assert_eq!(still, [changed]);
+    let page = std::fs::read_to_string(root.join(DOC)).unwrap();
+    assert_eq!(
+        page.strip_prefix(edited.as_str()),
+        Some(&*format!(
+            "\n> [!question] ana · [passed on by owner] Too many {TOKEN}s\n\
+             > Show the thirty that matter.\n"
+        )),
+        "{page}"
+    );
+    assert_eq!(held(&stefano, MACHINE).await["held"], json!([]));
 }
 
 /// How many times [`DOC`] holds her question and her message as a pass writes them, and as her

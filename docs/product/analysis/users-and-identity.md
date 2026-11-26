@@ -1541,7 +1541,8 @@ Each step can ship alone, and a machine with one person sees none of them.
    ([TASKS](../../workflow/TASKS.md#words-held-for-people)). On a document, such a person's
    callout or card message held the same way, reaching no clone, no ask and no agent, drawn where
    it was left on the document's page and told to those who may pass it on, and passed on with one
-   press under both names, as an ask, after its block found again or refused with nothing written;
+   press under both names, as an ask, after its block found again, else at the end of its section
+   ([its card](#held-callout-block-changed)), or refused with nothing written where it stands twice;
    and the note beside a verdict written with it, by one who may decide and not direct agents.
    Not yet: a held ask, which [its card](#held-ask) asks of the owner, while the document's page
    draws its questions' Ask and Follow up for those who may ask alone; and the two cards above on
