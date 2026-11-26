@@ -13,7 +13,9 @@
 //   length inside it once it is BAR_WORDS_PX wide; a runs lane's name says its counts, and where
 //   the recorder keeps no runs (before `runs_from`) the lanes are hatched (`NotKept`). With
 //   messages, each role's lane and the board's and others' carry a line at their foot (`rail`),
-//   on which timeline.tsx draws each message as a tick at its sender's lane.
+//   on which timeline.tsx draws each message as a tick at its sender's lane. Given a view (a part
+//   of the hours, timeline-zoom.ts), every part is placed in it and its words fitted to it, while
+//   whether a part is drawn at all is the whole hours' (`Scale`).
 //
 // A run's words for a pointer resting on it and for its focus (`runTitle`) name its command, its
 // wait to start and its run time, each apart.
@@ -75,8 +77,10 @@ export const BAR_WORDS_PX = 30;
 /** The room the not-kept hatch's words take beside them: their inset and their padding. */
 const NOT_KEPT_PAD_PX = 22;
 
-/** The hours between the wide view's ticks: the first that draws no more than eight. */
-const TICK_HOURS = [1, 2, 3, 4, 6, 8, 12, 24, 72, 168];
+/** The seconds between the wide view's ticks: the first that draws no more than eight, from an
+ * hour up; zoomed, from a minute up. */
+const TICK_HOURS = [1, 2, 3, 4, 6, 8, 12, 24, 72, 168].map((hours) => hours * 3600);
+const ZOOMED_TICKS = [1, 2, 5, 10, 15, 30].map((minutes) => minutes * 60).concat(TICK_HOURS);
 
 /** Statuses a task ends in: an instant on the timeline, with no time of its own. */
 const CLOSED = ["done", "cancelled"];
@@ -986,10 +990,8 @@ export function fitted(long: string, short: string, room: number): Fit[] {
   return fittedFirst([long, short], room);
 }
 
-/** A segment of a lane, placed in percent of the hours drawn. */
-export interface Seg {
-  left: number;
-  width: number;
+/** A segment of a lane, placed in percent of the hours shown. */
+export interface Seg extends Placed {
   tone: string;
   look: Look;
   /** Its words, at the widths that hold them. */
@@ -1021,7 +1023,7 @@ export interface Lane {
 }
 
 /** Where the recorder keeps no runs of the task: from its making to `runs_from`, in percent of
- * the hours drawn, over the builds' and the tests' lanes; its words where they fit. */
+ * the hours shown, over the builds' and the tests' lanes; its words where they fit. */
 export interface NotKept {
   left: number;
   width: number;
@@ -1029,10 +1031,8 @@ export interface NotKept {
   title: string;
 }
 
-/** A gate's state over the hours it held, placed in percent of the hours drawn. */
-export interface GateBar {
-  left: number;
-  width: number;
+/** A gate's state over the hours it held, placed in percent of the hours shown. */
+export interface GateBar extends Placed {
   state: GateState;
   /** Its state's word, at the widths that hold it. */
   word: Fit | null;
@@ -1045,7 +1045,7 @@ export interface GateRow {
   spans: GateBar[];
 }
 
-/** An hour marked on the wide view's axis, in percent of the hours drawn. */
+/** An hour marked on the wide view's axis, in percent of the hours shown. */
 export interface Tick {
   left: number;
   label: string;
@@ -1070,15 +1070,43 @@ export function stops(lanes: Lanes): number {
   return segs + lanes.gates.reduce((count, gate) => count + gate.spans.length, 0);
 }
 
-/** The hours drawn: from the local hour the task was made in to the timeline's end, now beside
- * them. */
+/** A part of the hours, in seconds: the window a zoomed view shows (timeline-zoom.ts). */
+export interface View {
+  from: number;
+  to: number;
+}
+
+/** Where a part is drawn in the hours shown, in percent, clamped to them; its own instants; and
+ * whether none of it is in the hours shown (`out`), where it is kept, unseen, for the keyboard. */
+export interface Placed {
+  left: number;
+  width: number;
+  from: number;
+  to: number;
+  out: boolean;
+}
+
+/**
+ * The hours drawn: from the local hour the task was made in to the timeline's end, now beside
+ * them; given a `view`, the part of them it shows (`from`, `to`), which everything is placed in.
+ * Whether a part is drawn at all (`spans`) is the whole hours', so a zoom never adds or takes away
+ * the keyboard's stops.
+ */
 export class Scale {
   readonly start: number;
   readonly span: number;
   readonly end: number;
   readonly now: number;
+  /** The hours shown: the whole of them, or the view's. */
+  readonly from: number;
+  readonly to: number;
+  readonly shown: number;
+  readonly zoomed: boolean;
 
-  constructor(readonly timeline: TaskTimeline) {
+  constructor(
+    readonly timeline: TaskTimeline,
+    view?: View | null,
+  ) {
     const created = (timeline.history?.messages ?? []).reduce(
       (first, message) => Math.min(first, message.at),
       timeline.created,
@@ -1091,14 +1119,40 @@ export class Scale {
     );
     this.span = Math.max(this.end - this.start, 60);
     this.now = timeline.now;
+    this.zoomed = view !== undefined && view !== null && view.to > view.from;
+    this.from = this.zoomed ? (view as View).from : this.start;
+    this.to = this.zoomed ? (view as View).to : this.end;
+    this.shown = this.zoomed ? this.to - this.from : this.span;
   }
 
   at(at: number): number {
-    return clamp(((at - this.start) / this.span) * 100, 0, 100);
+    return clamp(((at - this.from) / this.shown) * 100, 0, 100);
   }
 
   width(from: number, to: number): number {
     return this.at(to) - this.at(from);
+  }
+
+  /** Whether `from` to `to` takes any of the whole hours: a part drawn at every zoom. */
+  spans(from: number, to: number): boolean {
+    const at = (time: number) => clamp(((time - this.start) / this.span) * 100, 0, 100);
+    return at(to) - at(from) > 0;
+  }
+
+  /** Whether any of `from` to `to` is in the hours shown. */
+  shows(from: number, to: number): boolean {
+    return to >= this.from && from <= this.from + this.shown;
+  }
+
+  /** `from` to `to` placed in the hours shown. */
+  place(from: number, to: number): Placed {
+    return {
+      left: this.at(from),
+      width: this.width(from, to),
+      from,
+      to,
+      out: !this.shows(from, to),
+    };
   }
 
   clock(at: number): string {
@@ -1108,18 +1162,24 @@ export class Scale {
   /**
    * The hours marked: the step's multiples from local midnight (midnight itself for a step of a
    * day or more), so a change of day is always marked, by its date; while the task is `open`,
-   * none so near now that its label would meet now's.
+   * none so near now that its label would meet now's. The whole hours are marked from the hour
+   * up; a zoom marks minutes too.
    */
   ticks(open: boolean): Tick[] {
     const step =
-      TICK_HOURS.map((hours) => hours * 3600).find((step) => this.span / step <= 8) ?? 168 * 3600;
+      (this.zoomed ? ZOOMED_TICKS : TICK_HOURS).find((step) => this.shown / step <= 8) ??
+      168 * 3600;
     const every = Math.trunc(step / 60);
-    const first = local(this.start, offsetAt(this.timeline, this.start));
-    let tick = this.start + remEuclid(-first, Math.min(every, 1440)) * 60;
+    const offset = offsetAt(this.timeline, this.from);
+    const first = local(this.from, offset);
+    // The local minute the hours shown start in, which a zoom's need not start on.
+    let tick = first * 60 - offset + remEuclid(-first, Math.min(every, 1440)) * 60;
+    if (tick < this.from) tick += step;
+    const nowAt = this.now <= this.from + this.shown ? this.at(this.now) : Number.POSITIVE_INFINITY;
     const ticks: Tick[] = [];
-    while (tick <= this.end) {
+    while (tick <= this.to) {
       const left = this.at(tick);
-      if (!open || this.at(this.now) - left >= 4) {
+      if (!open || nowAt - left >= 4) {
         const offset = offsetAt(this.timeline, tick);
         const midnight = remEuclid(local(tick, offset), 1440) === 0;
         ticks.push({ left, label: midnight ? date(tick, offset) : clock(tick, offset) });
@@ -1157,16 +1217,16 @@ function stageSegs(timeline: TaskTimeline, scale: Scale, costs?: Costs): Seg[] {
   for (const [index, stage] of timeline.stages.entries()) {
     if (closed(stage)) continue;
     const to = stage.to ?? scale.now;
-    const width = scale.width(stage.from, to);
-    if (!(width > 0)) continue;
+    if (!scale.spans(stage.from, to)) continue;
+    const placed = scale.place(stage.from, to);
+    const width = placed.width;
     const approved = stage.approved === true;
     const word = approved ? "waiting to land" : stage.status.replaceAll("_", " ");
     const length = took(to - stage.from);
     const cost = stageCost(timeline, costs, index);
     const spent = cost.figure === null ? "" : ` ${cost.figure}`;
     segs.push({
-      left: scale.at(stage.from),
-      width,
+      ...placed,
       tone: statusTone(stage.status),
       look: approved ? "waiting" : "solid",
       // Its word, its time and its cost; else its time and its cost; else its time alone.
@@ -1183,13 +1243,13 @@ function stageSegs(timeline: TaskTimeline, scale: Scale, costs?: Costs): Seg[] {
 /** A place lane: each stretch of the task's places that shares one phase, or one state (`key`). */
 function placeSegs(timeline: TaskTimeline, scale: Scale, key: "phase" | "state"): Seg[] {
   return stretches(timeline, key).flatMap((stretch): Seg[] => {
-    const width = scale.width(stretch.from, stretch.to);
-    if (!(width > 0)) return [];
+    if (!scale.spans(stretch.from, stretch.to)) return [];
+    const placed = scale.place(stretch.from, stretch.to);
+    const width = placed.width;
     const length = took(stretch.to - stretch.from);
     return [
       {
-        left: scale.at(stretch.from),
-        width,
+        ...placed,
         tone: statusTone(stretch.status),
         look: "solid",
         text: fitted(`${stretch.label} ${length}`, length, width),
@@ -1207,13 +1267,13 @@ function placeSegs(timeline: TaskTimeline, scale: Scale, key: "phase" | "state")
 function claimSegs(timeline: TaskTimeline, scale: Scale, one: boolean): Seg[] {
   return timeline.claims.map((claim: Claim, index) => {
     const to = claim.to ?? scale.now;
-    const width = scale.width(claim.from, to);
+    const placed = scale.place(claim.from, to);
+    const width = placed.width;
     const length = took(to - claim.from);
     const word = one ? (index === 0 ? "claimed" : "") : claim.by;
     const long = word === "" ? length : `${word} ${length}`;
     return {
-      left: scale.at(claim.from),
-      width,
+      ...placed,
       tone: "primary",
       look: "solid",
       text: fitted(long, length, width),
@@ -1239,7 +1299,9 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
       last: next === undefined,
     };
     const verdict = round.verdict ?? null;
-    const word = verdict === null ? null : label(verdictWord(verdict), room);
+    // Said after its round's end, and only where that end is in the hours shown.
+    const word =
+      verdict === null || !scale.shows(to, to) ? null : label(verdictWord(verdict), room);
     const after: [Fit, string, Room] | null =
       verdict === null || word === null ? null : [word, verdictTone(verdict), room];
     const name = `round ${round.round}`;
@@ -1250,11 +1312,11 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
       taken === null
         ? `${name}: waited ${wait} for a reviewer${said}`
         : `${name}: waited ${wait} for a reviewer, then ${by} took ${took(to - taken)}${said}`;
-    const waiting = scale.width(round.from, taken ?? to);
-    if (waiting > 0 || taken === null) {
+    if (scale.spans(round.from, taken ?? to) || taken === null) {
+      const placed = scale.place(round.from, taken ?? to);
+      const waiting = placed.width;
       segs.push({
-        left: scale.at(round.from),
-        width: waiting,
+        ...placed,
         tone: "question",
         look: "waiting",
         text: taken === null ? fitted(name, "", waiting) : [],
@@ -1265,10 +1327,10 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
       });
     }
     if (taken !== null) {
-      const width = scale.width(taken, to);
+      const placed = scale.place(taken, to);
+      const width = placed.width;
       segs.push({
-        left: scale.at(taken),
-        width,
+        ...placed,
         tone: "question",
         look: "solid",
         text: fitted(name, "", width),
@@ -1317,10 +1379,10 @@ function runSegs(runs: Run[], scale: Scale): [Seg[], number] {
     const length = lasted(began === null ? waited(run, now) : ran(run, now));
     const said = `${runWords(run)} · ${length}`;
     const title = runTitle(run, now);
-    const queue = scale.width(run.queued, started);
+    const queued = scale.place(run.queued, started);
+    const queue = queued.width;
     segs.push({
-      left: scale.at(run.queued),
-      width: queue,
+      ...queued,
       tone: "primary",
       look: "waiting",
       text: began === null ? barFit(said, queue) : [],
@@ -1330,10 +1392,10 @@ function runSegs(runs: Run[], scale: Scale): [Seg[], number] {
       stop: began === null,
     });
     if (began !== null) {
-      const width = scale.width(began, run.ended ?? now);
+      const placed = scale.place(began, run.ended ?? now);
+      const width = placed.width;
       segs.push({
-        left: scale.at(began),
-        width,
+        ...placed,
         tone: resultTone(run.result),
         look: run.result === "running" ? "running" : "solid",
         text: barFit(said, width),
@@ -1354,7 +1416,8 @@ export function runCounts(runs: Run[]): string {
 }
 
 /** The time no run is kept of: from the task's making to `runs_from`, where the recorder's history
- * begins after it; none where it keeps them all, or where the task has no runs lane. */
+ * begins after it; none where it keeps them all, where the task has no runs lane, or where none of
+ * it is in the hours shown. */
 function notKept(timeline: TaskTimeline, scale: Scale): NotKept | null {
   const from = timeline.runs_from ?? null;
   const title = keptTitle(timeline);
@@ -1379,14 +1442,13 @@ function gateRows(timeline: TaskTimeline, scale: Scale): GateRow[] {
     name: lane.name,
     spans: lane.states.flatMap((span, index) => {
       const to = lane.states[index + 1]?.from ?? scale.end;
-      const width = scale.width(span.from, to);
-      if (!(width > 0)) return [];
-      const from = widthFor(span.state, width, PAD_PX);
+      if (!scale.spans(span.from, to)) return [];
+      const placed = scale.place(span.from, to);
+      const from = widthFor(span.state, placed.width, PAD_PX);
       const detail = span.detail === "" ? "" : `: ${span.detail}`;
       return [
         {
-          left: scale.at(span.from),
-          width,
+          ...placed,
           state: span.state,
           word: from === undefined ? null : { text: span.state, from, to: null },
           title: `${lane.name} ${span.state} from ${scale.clock(span.from)}${detail}`,
@@ -1398,9 +1460,9 @@ function gateRows(timeline: TaskTimeline, scale: Scale): GateRow[] {
 
 /** The wide view of `timeline`: the stage lane always, the executor's, the reviewer's, the builds'
  * and the tests' (every run not a build's) once there is something to draw in them, and a row per
- * gate. */
-export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
-  const scale = new Scale(timeline);
+ * gate; over the whole hours, or the part of them `view` shows. */
+export function lanes(timeline: TaskTimeline, costs?: Costs, view?: View | null): Lanes {
+  const scale = new Scale(timeline, view);
   const open = timeline.closed === undefined || timeline.closed === null;
   const executors = eachOnce(timeline.claims.map((claim) => claim.by));
   const reviewers = eachOnce(
@@ -1438,12 +1500,13 @@ export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
     const roles = timeline.history.roles.filter((role) => role.role === "orchestrator");
     const segs: Seg[] = roles.map((role) => {
       // Uncertain boundaries are instants, never a corrected or invented duration.
-      const width = role.uncertain
-        ? 0
-        : scale.width(role.from, role.to ?? timeline.closed ?? timeline.now);
+      const placed = scale.place(
+        role.from,
+        role.uncertain ? role.from : (role.to ?? timeline.closed ?? timeline.now),
+      );
+      const width = placed.width;
       return {
-        left: scale.at(role.from),
-        width,
+        ...placed,
         tone: "resolved",
         look: "waiting",
         text: fitted(role.by, "", width),
@@ -1521,7 +1584,10 @@ export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
   }
   return {
     ticks: scale.ticks(open),
-    now: open ? { left: scale.at(scale.now), label: `now ${scale.clock(scale.now)}` } : null,
+    now:
+      open && scale.shows(scale.now, scale.now)
+        ? { left: scale.at(scale.now), label: `now ${scale.clock(scale.now)}` }
+        : null,
     lanes: drawn,
     gates: gateRows(timeline, scale),
     notKept: notKept(timeline, scale),

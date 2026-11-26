@@ -47,6 +47,7 @@ import {
   lookClass,
   machineSeconds,
   nextRead,
+  type Placed as PartPlaced,
   placeTotals,
   type Row,
   readTimeline,
@@ -60,8 +61,18 @@ import {
   took,
   totalParts,
   totals,
+  type View,
 } from "./timeline-layout";
 import { MessagePanel, type MessageSelection, type ThreadAccess } from "./timeline-messages";
+import {
+  LANES_ID,
+  type LanesHandlers,
+  type Navigation,
+  OverviewStrip,
+  useNavigation,
+  ZoomBar,
+} from "./timeline-navigate";
+import { clampView, revealed, wholeOf, zoomable } from "./timeline-zoom";
 // biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: readAgain reads the timeline again each period while the task is open, where the feed's event of a change, or a clock tick for the times shown, is the wait
 import { sleep } from "./timing";
 import { NOT_IN_TIME } from "./trouble";
@@ -306,17 +317,32 @@ export function stopsOf(
 /**
  * The attributes and handlers of the lanes' part `index` of `count`: one stop of one arrow-key
  * group (the first, until another is chosen), its words for assistive technology, and its whole
- * detail shown in the legend's place under the lanes while it has the focus.
+ * detail shown in the legend's place under the lanes while it has the focus. A part outside the
+ * hours shown (`part`) comes into view as it takes the focus (`reveal`).
  */
-function stopOf(index: number, count: number, title: string, at: Stops) {
+function stopOf(
+  index: number,
+  count: number,
+  title: string,
+  at: Stops,
+  part?: PartPlaced,
+  reveal?: (from: number, to: number) => void,
+) {
   return {
     id: `tl-stop-${index}`,
     tabIndex: at.active === index ? 0 : -1,
     role: "img",
     "aria-label": title,
-    onFocus: () => at.focus(index, title),
+    onFocus: () => {
+      at.focus(index, title);
+      if (part?.out) reveal?.(part.from, part.to);
+    },
     onBlur: () => at.blur(),
-    onKeyDown: (event: KeyboardEvent<HTMLElement>) => at.key(event, index, count),
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      // A key that keeps the focus where it is (Home on the first) brings it into view too.
+      if (part?.out && stopFor(event.key, index, count) === index) reveal?.(part.from, part.to);
+      at.key(event, index, count);
+    },
   };
 }
 
@@ -415,7 +441,19 @@ function RowView({
   );
 }
 
-function SegView({ seg, stop }: { seg: Seg; stop: object }) {
+/** A part outside the hours shown: kept for the keyboard, unseen and untouched. */
+const outClass = (part: PartPlaced, names: string) => (part.out ? `${names} tl-out` : names);
+
+function SegView({
+  seg,
+  stop,
+  zooms,
+}: {
+  seg: Seg;
+  stop: object;
+  /** Whether a double click zooms to it (a stage's), which says its instants for it. */
+  zooms?: boolean;
+}) {
   const right = seg.left + seg.width;
   const placed = style({
     "--c": `var(--${seg.tone})`,
@@ -425,7 +463,14 @@ function SegView({ seg, stop }: { seg: Seg; stop: object }) {
   });
   return (
     <>
-      <span className={lookClass(seg.look)} style={placed} title={seg.title} {...stop}>
+      <span
+        className={outClass(seg, lookClass(seg.look))}
+        style={placed}
+        title={seg.title}
+        data-from={zooms ? seg.from : undefined}
+        data-to={zooms ? seg.to : undefined}
+        {...stop}
+      >
         {seg.text.map((fit, at) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: a segment's words have no identity but their place
           <FitView key={at} fit={fit} />
@@ -566,21 +611,48 @@ function AddressArrow({ selected, at }: { selected: TimelineMessage; at: number 
   );
 }
 
+interface LanesProps {
+  lanes: Lanes;
+  at: Stops;
+  timeline: TaskTimeline;
+  selection?: MessageSelection | undefined;
+}
+
+/** The lanes of a task long enough to zoom into: what a wheel, a pointer, a touch and a key do to
+ * the view (`nav`), and the band a drag across the hours draws. */
+function NavigableLanes(props: LanesProps & { nav: Navigation }) {
+  const root = useRef<HTMLDivElement>(null);
+  const { band, handlers } = useNavigation(root, props.nav);
+  return <LanesView {...props} root={root} band={band} handlers={handlers} />;
+}
+
 function LanesView({
   lanes,
   at,
   timeline,
   selection,
-}: {
-  lanes: Lanes;
-  at: Stops;
-  timeline: TaskTimeline;
-  selection?: MessageSelection | undefined;
+  nav,
+  root,
+  band,
+  handlers,
+}: LanesProps & {
+  /** The view and how to change it, where the task is long enough to zoom into. */
+  nav?: Navigation | undefined;
+  root?: Ref<HTMLDivElement> | undefined;
+  /** A drag across the hours, from and to as fractions of the hours shown. */
+  band?: [number, number] | null | undefined;
+  handlers?: LanesHandlers | undefined;
 }) {
-  const scale = new Scale(timeline);
-  const selected = selection?.messages.find((m) => m.id === selection.selected);
+  const view = nav?.view ?? null;
+  const scale = new Scale(timeline, view);
+  const found = selection?.messages.find((m) => m.id === selection.selected);
+  // A message chosen outside the hours shown has no tick drawn to point from.
+  const selected = found && scale.shows(found.at, found.at) ? found : undefined;
   const count = stops(lanes);
   const notKept = lanes.notKept;
+  const reveal = nav
+    ? (from: number, to: number) => nav.set(revealed(nav.view, nav.whole, from, to))
+    : undefined;
   let index = 0;
   const next = () => index++;
   const laneRows = lanes.lanes.map((lane) => (
@@ -611,25 +683,34 @@ function LanesView({
             // biome-ignore lint/suspicious/noArrayIndexKey: a lane's segments have no identity but their place
             key={place}
             seg={seg}
-            stop={seg.stop ? stopOf(next(), count, seg.title, at) : { "aria-hidden": "true" }}
+            stop={
+              seg.stop
+                ? stopOf(next(), count, seg.title, at, seg, reveal)
+                : { "aria-hidden": "true" }
+            }
+            zooms={nav !== undefined && lane.key === "stage"}
           />
         ))}
         {lane.rail && <span className="tl-rail" aria-hidden="true" />}
         {lane.rail &&
           selection?.messages
             .filter((m) => endpointLane(m.from, m.sender) === lane.key)
-            .map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                className="tl-message-mark"
-                data-message={m.id}
-                style={{ left: percent(scale.at(m.at)) }}
-                aria-label={`Message #${m.id}: ${address(m)}`}
-                aria-pressed={selection.selected === m.id}
-                onClick={() => selection.choose(m.id)}
-              />
-            ))}
+            .map((m) => {
+              const out = !scale.shows(m.at, m.at);
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={out ? "tl-message-mark tl-out" : "tl-message-mark"}
+                  data-message={m.id}
+                  style={{ left: percent(scale.at(m.at)) }}
+                  aria-label={`Message #${m.id}: ${address(m)}`}
+                  aria-pressed={selection.selected === m.id}
+                  onClick={() => selection.choose(m.id)}
+                  onFocus={out ? () => reveal?.(m.at, m.at) : undefined}
+                />
+              );
+            })}
       </span>
     </div>
   ));
@@ -642,10 +723,10 @@ function LanesView({
           <span
             // biome-ignore lint/suspicious/noArrayIndexKey: a gate's states have no identity but their place
             key={spanAt}
-            className={`tl-g tl-g-${span.state}`}
+            className={outClass(span, `tl-g tl-g-${span.state}`)}
             style={style({ left: percent(span.left), width: percent(span.width) })}
             title={span.title}
-            {...stopOf(next(), count, span.title, at)}
+            {...stopOf(next(), count, span.title, at, span, reveal)}
           >
             {span.word && <FitView fit={span.word} />}
           </span>
@@ -655,7 +736,25 @@ function LanesView({
   ));
   return (
     // biome-ignore lint/a11y/useSemanticElements: a group of the lanes' parts, as the Dioxus page draws it
-    <div className="tl-lanes" role="group" aria-label="Lanes">
+    <div
+      className={nav ? "tl-lanes tl-zoomable" : "tl-lanes"}
+      id={nav ? LANES_ID : undefined}
+      role="group"
+      aria-label="Lanes"
+      ref={root}
+      {...handlers}
+    >
+      {band && (
+        <div className="tl-band-track" aria-hidden="true">
+          <span
+            className="tl-band"
+            style={style({
+              left: percent(Math.min(...band) * 100),
+              width: percent(Math.abs(band[1] - band[0]) * 100),
+            })}
+          />
+        </div>
+      )}
       <div className="tl-hours" aria-hidden="true">
         {lanes.ticks.map((tick, at) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: an hour's line has no identity but its place
@@ -727,6 +826,15 @@ export interface DrawnProps {
   selection?: MessageSelection | undefined;
   /** The phone list stays readable by assistive technology wide, without invisible tab stops. */
   wide?: boolean;
+  /** The part of the hours the lanes show and how to change it: none draws the whole task with no
+   * toolbar, as a task too short to zoom into is drawn. */
+  zoom?: Zoom | undefined;
+}
+
+/** The view the lanes show (none for the whole task), and what sets it. */
+export interface Zoom {
+  view: View | null;
+  set: (view: View | null) => void;
 }
 
 /**
@@ -745,7 +853,14 @@ export function TimelineDrawn({
   body,
   selection,
   wide = false,
+  zoom,
 }: DrawnProps) {
+  const whole = wholeOf(timeline);
+  const nav: Navigation | undefined =
+    zoom && zoomable(whole)
+      ? { whole, view: clampView(zoom.view, whole), set: zoom.set }
+      : undefined;
+  const view = nav?.view ?? null;
   const [first, machine] = totals(timeline);
   const [length, rest] = totalParts(timeline);
   // A task that took no tokens says no cost anywhere, and draws as one whose tokens are not read.
@@ -763,7 +878,7 @@ export function TimelineDrawn({
     ["States", placeTotals(timeline, "state")],
   ] as const;
   const steps = rowLayout(timeline, costs);
-  const drawn = laneLayout(timeline, costs);
+  const drawn = laneLayout(timeline, costs, view);
   const running = timeline.runs.some((run) => run.result === "running");
   return (
     <div className={drawnClass(all, clipped)} data-selected={selection?.selected ?? undefined}>
@@ -827,7 +942,19 @@ export function TimelineDrawn({
             />
           ))}
         </ol>
-        <LanesView lanes={drawn} at={at} timeline={timeline} selection={selection} />
+        {nav && <ZoomBar timeline={timeline} nav={nav} />}
+        {nav && view && <OverviewStrip timeline={timeline} view={view} nav={nav} />}
+        {nav ? (
+          <NavigableLanes
+            lanes={drawn}
+            at={at}
+            timeline={timeline}
+            selection={selection}
+            nav={nav}
+          />
+        ) : (
+          <LanesView lanes={drawn} at={at} timeline={timeline} selection={selection} />
+        )}
       </div>
       <div className="tl-foot">
         <ul className="tl-legend">
@@ -881,7 +1008,9 @@ export interface ViewProps {
 
 /**
  * The timeline drawn and measured: after each draw, each crossing of 900 px and each "Show all"
- * or "Show the latest", whether its steps overflow the box, and the height it took.
+ * or "Show the latest", whether its steps overflow the box, and the height it took, kept only
+ * while the whole task is shown, as each visit opens on it. Its view is its own: the whole task
+ * until the reader zooms, a message chosen outside the hours shown bringing it into view.
  */
 export function TimelineView({
   timeline,
@@ -891,6 +1020,7 @@ export function TimelineView({
   details,
 }: ViewProps): JSX.Element {
   const [selected, setSelected] = useState<number | null>(null);
+  const [view, setView] = useState<View | null>(null);
   const [loading, setLoading] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -924,6 +1054,8 @@ export function TimelineView({
   const projected = timeline.history
     ? { ...timeline, history: { ...timeline.history, messages } }
     : timeline;
+  const shownAt = useRef(view);
+  shownAt.current = view;
   // Thread reads remain in the page's store. Read one existing cursor at a time, until the
   // selected entry is present; failed or unchanging cursors stop with an explicit retry.
   const entries = thread?.entries;
@@ -961,11 +1093,18 @@ export function TimelineView({
   // chunk comes.
   useLayoutEffect(putStyle, []);
   useEffect(() => watchCrossings(() => setCrossings((count) => count + 1)), []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a message chosen comes into view once, when it is chosen; the reader may move away from it after
+  useEffect(() => {
+    const chosen = messages.find((m) => m.id === selected);
+    if (chosen === undefined) return;
+    const whole = wholeOf(projected);
+    setView((shown) => revealed(clampView(shown, whole), whole, chosen.at, chosen.at));
+  }, [selected]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: measured again for each answer drawn and each crossing of 900 px
   useLayoutEffect(() => {
-    const over = measured(body.current, all, clipped, (wide, natural) =>
-      said.current?.(wide, natural),
-    );
+    const over = measured(body.current, all, clipped, (wide, natural) => {
+      if (shownAt.current === null) said.current?.(wide, natural);
+    });
     if (over !== null) setClipped(over);
   }, [timeline, crossings, all, clipped]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: history updates, width crossings, collapse and expansion reflow the selected row
@@ -1020,6 +1159,7 @@ export function TimelineView({
         stops={stopsOf(active, setActive, setDetail)}
         toggle={() => setAll((shown) => !shown)}
         body={body}
+        zoom={{ view, set: setView }}
       />
       {panel && details ? createPortal(panel, details) : panel}
     </>
