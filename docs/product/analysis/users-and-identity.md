@@ -874,6 +874,32 @@ and may not direct agents. A person who may direct agents writes as the owner do
     Neither decides this.
   [2026-11-26 08:08] owner · approved — B
 
+- [ ] **held-callout-block-twice** — A held comment is written after the block it was left on when it is passed on. Where that block's words stand twice, under its heading or twice elsewhere and nowhere under it, every Pass on is refused until one copy goes, so the comment can wait for good. Where should it go? A: at the end of its section, as a changed block's does. B: after the copy nearest the line it was left after. C: where it was left, with no Pass on while its block stands twice. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+  [2026-11-26 09:46] agent — Posted for the board task `app/held-comment-block-follow-ups`, a question **held-callout-block-changed** leaves open once a block's words stand twice. Nothing that depends on it is built.
+
+    **Base (today).** A pass finds the block again by its words: under its own heading, else anywhere they stand once. Where they stand twice under its heading, or twice elsewhere and nowhere under it, the pass is refused with "the block this comment was left after now stands in several places: nothing was written". The comment stays held, drawn where it was left, with a Pass on that is refused every time until the document holds those words once. A comment left after words that already stood twice under its heading is refused from its first press.
+
+    **A, placed at its section's end.**
+    - Pass on is seen at the end of its section, after the last block under the heading it was left under, as for a block that changed.
+    - It moves there even where nothing in the document changed since it was left.
+
+    **B, after the nearest copy.**
+    - Pass on is seen after the copy nearest the line it was left after, under its heading where a copy stands there. Of two as near, the first.
+    - Where nothing above it changed, that is the block it was left after.
+    - Where blocks were added above it, it may be the other copy. The page draws it there before the press, so whoever passes it on sees where it goes.
+
+    **C, no Pass on while it stands twice.**
+    - It stays drawn where it was left, with no Pass on, until one copy goes.
+    - Nothing says why, and a comment left after words that already stood twice waits until someone edits the document.
+
+    **Why B.** It keeps the comment where it was left whenever the document has not moved, which A does not, and it needs nobody to come back, which C does. As with B on **held-callout-block-changed**, the person passing it on sees where it goes and decides that it still applies.
+
+    **Earlier verdicts checked.**
+    - **held-callout-block-changed** (B) puts a comment whose block changed or is gone at its section's end. Here the words still stand, twice, so it does not say which copy.
+    - **words-without-agent-reach** (A) says a pass writes the words into the file. It does not say where once they stand twice.
+
+    Neither decides this.
+
 What follows:
 
 - **The board holds two kinds of words** where it held one: those in the record, which every
@@ -1542,7 +1568,8 @@ Each step can ship alone, and a machine with one person sees none of them.
    callout or card message held the same way, reaching no clone, no ask and no agent, drawn where
    it was left on the document's page and told to those who may pass it on, and passed on with one
    press under both names, as an ask, after its block found again, else at the end of its section
-   ([its card](#held-callout-block-changed)), or refused with nothing written where it stands twice;
+   ([its card](#held-callout-block-changed)), or refused with nothing written where it stands twice,
+   which [its card](#held-callout-block-twice) asks of the owner;
    and the note beside a verdict written with it, by one who may decide and not direct agents.
    Not yet: a held ask, which [its card](#held-ask) asks of the owner, while the document's page
    draws its questions' Ask and Follow up for those who may ask alone; and the two cards above on

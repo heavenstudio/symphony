@@ -945,9 +945,9 @@ fn may_ask(shared: &Shared, hub: &Hub, request: &Request) -> bool {
 
 /// The comments held for people on the document `rel` of the checkout `scope` (empty: the
 /// project's own) at `root`, not passed on yet, oldest first, each where its pass would write it
-/// now ([`symphony::save::drawn_held`]), against the document as its page shows it, read where a
-/// callout is held; and whether the one reading may pass them on (`passes`): what its page draws
-/// ([`symphony_api::DocumentHeld`]).
+/// now ([`symphony::save::drawn_held`]), against the document as its page shows it, read and keyed
+/// once where a callout is held; and whether the one reading may pass them on (`passes`): what its
+/// page draws ([`symphony_api::DocumentHeld`]).
 fn document_held(
     store: &symphony_board::Store,
     root: &std::path::Path,
@@ -966,9 +966,7 @@ fn document_held(
         .then(|| symphony::docview::source(root, rel, scope).ok())
         .flatten()
         .map(|(_, text, _)| text);
-    let held = (held.into_iter())
-        .map(|held| symphony::save::drawn_held(text.as_deref(), held))
-        .collect();
+    let held = symphony::save::drawn_held(text.as_deref(), held);
     Ok(symphony_api::DocumentHeld { held, passes })
 }
 

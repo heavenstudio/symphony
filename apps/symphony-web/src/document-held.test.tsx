@@ -5,6 +5,7 @@ import {
   HeldOne,
   HeldUnder,
   type HeldValue,
+  heldCopy,
   passOn,
   placeHeld,
   readHeld,
@@ -107,6 +108,31 @@ describe("where each held comment is drawn", () => {
     const placed = placeHeld([lost, cardless, { ...lost, id: 9, key: null, line: null }], sections);
     expect(placed.get("")?.map((comment) => comment.id)).toEqual([7, 8, 9]);
     expect(placed.size).toBe(1);
+  });
+});
+
+describe("when the held comments are read again as the document's copy moves", () => {
+  it("reads again once the copy moves past the one asked at, while any is held", () => {
+    expect(heldCopy(5, 5, true)).toEqual([5, false]);
+    expect(heldCopy(5, 6, true)).toEqual([5, true]);
+    expect(heldCopy(5, 6, false)).toEqual([5, false]);
+  });
+
+  it("keeps a move made while the first read was out for the read that holds any", () => {
+    // Asked at 5; the copy moved to 6 before it answered, holding none yet.
+    const [at] = heldCopy(5, 6, false);
+    expect(heldCopy(at, 6, true)).toEqual([5, true]);
+  });
+
+  it("takes a read asked before the copy was known as read at the first one known", () => {
+    expect(heldCopy(null, null, true)).toEqual([null, false]);
+    const [at, again] = heldCopy(null, 7, true);
+    expect([at, again]).toEqual([7, false]);
+    expect(heldCopy(at, 8, true)).toEqual([7, true]);
+  });
+
+  it("reads nothing again while the copy is not known", () => {
+    expect(heldCopy(5, null, true)).toEqual([5, false]);
   });
 });
 
