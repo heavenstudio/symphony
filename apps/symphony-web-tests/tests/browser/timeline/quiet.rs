@@ -278,17 +278,17 @@ fn a_task_with_no_quiet_stretch_draws_no_band_and_no_switch() {
 }
 
 /// On a phone the card's quiet stretch is a row of its list, its length, its ends and why, in the
-/// box's width; no toolbar, no switch.
+/// box's width and over the list's rail, its colour opaque; no toolbar, no switch.
 #[test]
 fn on_a_phone_the_quiet_stretch_is_a_row_of_its_list() {
     let site = guards_on(site());
     let Some(mut chrome) = chrome() else { return };
     open_drawn(&mut chrome, &site, 390);
     tap(&mut chrome, ".tl-more");
-    let row = chrome.eval("(() => { const r = document.querySelector('.tl-list .tl-quiet'); r.scrollIntoView({block: 'center'}); const box = document.querySelector('.tl-drawn').getBoundingClientRect(), b = r.getBoundingClientRect(); return {words: [...r.children].map(e => e.textContent), title: r.title, inside: b.left >= box.left && b.right <= box.right, whole: [...r.children].every(e => e.scrollWidth <= e.clientWidth + 1), shown: r.getClientRects().length > 0}; })()");
+    let row = chrome.eval("(() => { const r = document.querySelector('.tl-list .tl-quiet'); r.scrollIntoView({block: 'center'}); const box = document.querySelector('.tl-drawn').getBoundingClientRect(), b = r.getBoundingClientRect(); return {words: [...r.children].map(e => e.textContent), title: r.title, inside: b.left >= box.left && b.right <= box.right, whole: [...r.children].every(e => e.scrollWidth <= e.clientWidth + 1), shown: r.getClientRects().length > 0, opaque: getComputedStyle(r).backgroundColor.startsWith('rgb(')}; })()");
     assert_eq!(
         row,
-        json!({"words": ["10 h 54 m quiet, 14:03 → 11-20 00:57", "Task done, nothing recorded"], "title": "10 h 54 m quiet, 14:03 → 11-20 00:57: task done, nothing recorded", "inside": true, "whole": true, "shown": true})
+        json!({"words": ["10 h 54 m quiet, 14:03 → 11-20 00:57", "Task done, nothing recorded"], "title": "10 h 54 m quiet, 14:03 → 11-20 00:57: task done, nothing recorded", "inside": true, "whole": true, "shown": true, "opaque": true})
     );
     assert!(!drawn(&mut chrome, ".tl-zoom"));
     assert!(!drawn(&mut chrome, ".tl-skip"));

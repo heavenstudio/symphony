@@ -234,7 +234,8 @@
   padding: 8px 10px;
   border: 1px dashed var(--muted-foreground);
   border-radius: 8px;
-  background: var(--muted);
+  /* Over the rail: the muted tint is see-through, so it lies on the card's own colour. */
+  background: linear-gradient(var(--muted), var(--muted)) var(--card);
 }
 .tl-quiet b {
   font-weight: 600;

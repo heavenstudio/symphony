@@ -3812,25 +3812,6 @@ and its arrow keys, Page Up, Page Down, Home and End move. The height the box ke
 visit is the whole task's. A phone's list is not zoomed. Assistive technology hears the hours
 shown after a press or a key, never at each step of a wheel, a drag or a pinch.
 
-A quiet stretch is an hour or more in which the task's records hold nothing (`timeline-quiet.ts`):
-measured between two records, never before the first or after the last, and only where its
-history is whole and from the time its runs are kept. Each run, claim, taken round, role held
-(the orchestrator's but at its start and its end), change of stage, ask for a round, message,
-gate state and place is a record. The wide lanes open with each one skipped, as
-[the timeline's analysis](../design/analysis/timeline-navigation.md#the-choice) chose: a band
-through every lane, 3.3 % of the track (36 px at 1440 wide, all of a task's bands 30 % at most;
-`timeline-cut.ts`), its edges zigzagged and its words down it ("quiet · task done, nothing
-recorded"), its length over it on the hours line ("+10 h 54 m") with the day it ends on after
-that where a day changed in it, and the stretch's ends in its hover and its label; the work about
-it gets the width. No hour is marked in a band, an hour's line going with its label where that
-gives way to a band's words, and a verdict after a round stops before a band. The readout adds
-"· 10 h 54 m skipped" while a band is in view. A zoom halves the work a track holds and leaves a
-band as wide, and a move keeps the zoom across it. **Skip quiet stretches**, ticked after the
-readout as the page opens, says how many and how long ("1 · 10 h 54 m") and switches every
-stretch at once; a press on a band draws its stretch on the true clock, the focus it had going to
-the switch. A task with no quiet stretch draws neither. A phone's list says each as a row of its
-own: "10 h 54 m quiet, 14:03 → 11-20 00:57" over "Task done, nothing recorded".
-
 - [ ] **timeline-drag-band** — A mouse dragged across the hours of a task's wide timeline zooms to the hours dragged, and the mockup leaves open what the drag shows while the button is held. As built, a band in the accent colour, faint with a solid edge at each end, covers the hours dragged across every lane, the bars showing through it, and goes when the button is let go. Approve, or comment.
   [2026-11-26 16:18] agent — Posted for the board task `app/timeline-zoom`, at 1440 wide, a drag held from 08:00 to 12:30. ![A drag held across the hours, light](../design/analysis/timeline-navigation/drag-band.webp) ![A drag held across the hours, dark](../design/analysis/timeline-navigation/drag-band-dark.webp)
 
@@ -3854,6 +3835,28 @@ own: "10 h 54 m quiet, 14:03 → 11-20 00:57" over "Task done, nothing recorded"
   [2026-11-17 12:28] agent — Time already runs horizontally on the wide timeline: each bar is positioned by its recorded times. The vertical pile comes from a layout rule that gives runs separate rows not only when they overlap, but also when they are close together (within 0.5% of the whole time range). Across five days that is 36 minutes, so even sequential short tests get stacked. That avoids bars visually joining, but creates the height problem this proposal then tries to hide. Your suggestion addresses the cause: keep sequential runs on the same horizontal time axis, reserve extra rows for actual overlap, and let a closer time view reveal short runs at their real duration. The proposal should explore that before folding bursts; A/B/C overlooked it. The phone view is a separate chronological list because of its narrower width.
   [2026-11-17 12:35] owner · rejected — yes. rework the proposal to be more horizontal based.
   [2026-11-17 12:35] agent — Revised proposal: keep Builds and Tests on a shared horizontal time axis. Sequential runs reuse the same row; only genuinely overlapping queued/running intervals need another row. Each run keeps its actual start, end and duration, with waiting distinguished from execution. For a dense period, zoom into that time range and pan horizontally, with a clear return to the whole task; every lane uses the same scale so comparisons remain meaningful. Selecting a run shows its full command, exact times and result without adding a row per run. Very short runs stay individually reachable by keyboard and selection, without stretching their duration to fit a label. This replaces the vertical stacking, inner scrolling and folded-burst proposals above. The earlier pictures illustrate rejected options, not this revision; the revised layout still needs visual validation, including a narrow-screen treatment consistent with your existing phone-height decision.
+
+A quiet stretch is an hour or more in which the task's records hold nothing (`timeline-quiet.ts`):
+measured between two records, never before the first or after the last, and only where its
+history is whole and from the time its runs are kept. Each run, claim, taken round, role held
+(the orchestrator's but at its start and its end), change of stage, ask for a round, message,
+gate state and place is a record. The wide lanes open with each one skipped, as
+[the timeline's analysis](../design/analysis/timeline-navigation.md#the-choice) chose: a band
+through every lane, 3.3 % of the track (36 px at 1440 wide, all of a task's bands 30 % at most;
+`timeline-cut.ts`), its edges zigzagged and its words down it ("quiet · task done, nothing
+recorded"), its length over it on the hours line ("+10 h 54 m") with the day it ends on after
+that where a day changed in it, the stretch's ends in its hover and its label, and its key in the
+legend; the work about it gets the width. No hour is marked in a band, an hour's line going with its label where that
+gives way to a band's words, and a verdict after a round stops before a band. The readout adds
+"· 10 h 54 m skipped" while a band is in view. A zoom halves the work a track holds and leaves a
+band as wide, and a move keeps the zoom across it. **Skip quiet stretches**, ticked after the
+readout as the page opens, says how many and how long ("1 · 10 h 54 m") and switches every
+stretch at once; a press on a band draws its stretch on the true clock, the focus it had going to
+the switch. A task with no quiet stretch draws neither. A phone's list says each as a row of its
+own: "10 h 54 m quiet, 14:03 → 11-20 00:57" over "Task done, nothing recorded".
+
+- [ ] **timeline-quiet-words** — The approved pictures leave two words of a quiet stretch to the build. As built, while a band is in view the range readout says the time skipped after the hours shown, "11-19 01:00 → 11-20 04:34 · 1 d 3 h · 10 h 54 m skipped", where the whole task's picture reads no more than its length. A phone's quiet row says under its length and its ends the band's own words, "Task done, nothing recorded", where its picture lists what the rule counts, "Task done. No role held, no run, message or change recorded.", which a page leaves to the product docs. Approve, or comment.
+  [2026-11-26 18:07] agent — Posted for the board task `app/timeline-quiet-bands`, the whole task with its quiet stretch skipped, at 1440 wide and on a phone. ![The readout with a band in view, light](../design/analysis/timeline-navigation/quiet-words.webp) ![The readout with a band in view, dark](../design/analysis/timeline-navigation/quiet-words-dark.webp) ![The quiet row on a phone, light](../design/analysis/timeline-navigation/quiet-row.webp) ![The quiet row on a phone, dark](../design/analysis/timeline-navigation/quiet-row-dark.webp)
 
 ## Links with the documents
 
