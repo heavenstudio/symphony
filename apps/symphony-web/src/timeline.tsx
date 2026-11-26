@@ -383,14 +383,14 @@ function BarView({ bar, word }: { bar: Bar; word: [string, string] | null }) {
       {bar.wait > 0 && (
         <span
           className="tl-wait"
-          aria-hidden="true"
+          aria-hidden
           style={style({ "--c": `var(--${bar.waitTone})`, width: percent(bar.wait) })}
         />
       )}
       {bar.work > 0 && (
         <span
           className={bar.running ? "tl-work tl-running" : "tl-work"}
-          aria-hidden="true"
+          aria-hidden
           style={style({ width: percent(bar.work) })}
         />
       )}
@@ -450,7 +450,7 @@ function RowView({
         tabIndex={told ? -1 : undefined}
       >
         <span className="tl-at">{row.at}</span>
-        <span className="tl-mark" aria-hidden="true" />
+        <span className="tl-mark" aria-hidden />
         {row.message !== undefined ? (
           <button
             type="button"
@@ -470,7 +470,7 @@ function RowView({
         )}
         {row.bar !== null && <BarView bar={row.bar} word={row.word} />}
         {told && (
-          <span className="tl-facts" aria-hidden="true">
+          <span className="tl-facts" aria-hidden>
             {row.title}
           </span>
         )}
@@ -518,7 +518,7 @@ function SegView({
       {seg.after && (
         <span
           className={`tl-after ${fitClass(seg.after[0])}`}
-          aria-hidden="true"
+          aria-hidden
           style={style({
             "--c": `var(--${seg.after[1]})`,
             left: percent(right),
@@ -617,7 +617,7 @@ function AddressArrow({ selected, at }: { selected: TimelineMessage; at: number 
   const upper =
     arrow === null ? 0 : same ? arrow.from - RING_CLEAR : Math.min(arrow.from, arrow.to);
   return (
-    <div className="tl-address-track" aria-hidden="true" ref={root}>
+    <div className="tl-address-track" aria-hidden ref={root}>
       {arrow && (
         <>
           <span
@@ -669,7 +669,7 @@ const ZIGZAG = "tl-zigzag";
 function BreaksView({ breaks, open }: { breaks: Break[]; open: LanesProps["open"] }) {
   return (
     <div className="tl-breaks">
-      <svg className="tl-zigzags" aria-hidden="true" width="0" height="0">
+      <svg className="tl-zigzags" aria-hidden width="0" height="0">
         <defs>
           <pattern id={ZIGZAG} width="6" height="8" patternUnits="userSpaceOnUse">
             <path className="tl-zigzag" d="M1 0L5 4L1 8" fill="none" />
@@ -689,7 +689,7 @@ function BreaksView({ breaks, open }: { breaks: Break[]; open: LanesProps["open"
           onClick={(event: MouseEvent<HTMLButtonElement>) => open?.(band, event.currentTarget)}
         >
           {["tl-edge-start", "tl-edge-end"].map((edge) => (
-            <svg key={edge} className={`tl-edge ${edge}`} aria-hidden="true">
+            <svg key={edge} className={`tl-edge ${edge}`} aria-hidden>
               <rect width="100%" height="100%" fill={`url(#${ZIGZAG})`} />
             </svg>
           ))}
@@ -754,7 +754,7 @@ function LanesView({
         {notKept && RUNS.includes(lane.key) && (
           <span
             className="tl-notkept"
-            aria-hidden="true"
+            aria-hidden
             title={notKept.title}
             style={style({ left: percent(notKept.left), width: percent(notKept.width) })}
           >
@@ -767,14 +767,12 @@ function LanesView({
             key={place}
             seg={seg}
             stop={
-              seg.stop
-                ? stopOf(next(), count, seg.title, at, seg, reveal)
-                : { "aria-hidden": "true" }
+              seg.stop ? stopOf(next(), count, seg.title, at, seg, reveal) : { "aria-hidden": true }
             }
             zooms={nav !== undefined && lane.key === "stage"}
           />
         ))}
-        {lane.rail && <span className="tl-rail" aria-hidden="true" />}
+        {lane.rail && <span className="tl-rail" aria-hidden />}
         {lane.rail &&
           selection?.messages
             .filter((m) => endpointLane(m.from, m.sender) === lane.key)
@@ -828,7 +826,7 @@ function LanesView({
       {...handlers}
     >
       {band && (
-        <div className="tl-band-track" aria-hidden="true">
+        <div className="tl-band-track" aria-hidden>
           <span
             className="tl-band"
             style={style({
@@ -838,7 +836,7 @@ function LanesView({
           />
         </div>
       )}
-      <div className="tl-hours" aria-hidden="true">
+      <div className="tl-hours" aria-hidden>
         {lanes.ticks.map((tick, at) => (
           // An hour's line shows where its label does.
           <span
@@ -851,7 +849,7 @@ function LanesView({
         {lanes.now && <span className="tl-now" style={style({ left: percent(lanes.now.left) })} />}
       </div>
       {lanes.breaks.length > 0 && <BreaksView breaks={lanes.breaks} open={open} />}
-      <div className="tl-lane tl-axis" aria-hidden="true">
+      <div className="tl-lane tl-axis" aria-hidden>
         <span className="tl-name" />
         <span className="tl-track">
           {lanes.ticks.map((tick, at) => (
@@ -1074,7 +1072,7 @@ export function TimelineDrawn({
           )}
         </p>
         {spent && (
-          <p className="tl-note tl-cost-said" aria-hidden="true">
+          <p className="tl-note tl-cost-said" aria-hidden>
             {words}
           </p>
         )}
@@ -1141,7 +1139,7 @@ export function TimelineDrawn({
         {/* Only while a part of the lanes has the focus, in the legend's place: a line of its own
             would grow the box and move what is under it. */}
         {detail !== "" && (
-          <p className="tl-detail tl-wide" aria-hidden="true">
+          <p className="tl-detail tl-wide" aria-hidden>
             {detail}
           </p>
         )}

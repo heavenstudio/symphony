@@ -254,7 +254,7 @@ export function ZoomBar({
           aria-pressed={quiet.on}
           onClick={quiet.press}
         >
-          <span className="tl-skip-box" aria-hidden="true" />
+          <span className="tl-skip-box" aria-hidden />
           Skip quiet stretches
           <span className="tl-skip-count">{quietCount(quiet.count, quiet.total)}</span>
         </Button>
@@ -318,7 +318,7 @@ export function OverviewStrip({
           // biome-ignore lint/suspicious/noArrayIndexKey: a stage's mark has no identity but its place
           key={at}
           className="tl-ov-stage"
-          aria-hidden="true"
+          aria-hidden
           style={marked(mark.tone, mark.left, mark.width)}
         />
       ))}
@@ -327,7 +327,7 @@ export function OverviewStrip({
           // biome-ignore lint/suspicious/noArrayIndexKey: a run's mark has no identity but its place
           key={at}
           className="tl-ov-run"
-          aria-hidden="true"
+          aria-hidden
           style={marked(mark.tone, mark.left)}
         />
       ))}
@@ -335,16 +335,12 @@ export function OverviewStrip({
         <span
           key={band.left}
           className="tl-ov-break"
-          aria-hidden="true"
+          aria-hidden
           style={{ left: percent(band.left), width: percent(band.width) }}
         />
       ))}
-      <span className="tl-ov-dim" aria-hidden="true" style={{ left: 0, width: percent(left) }} />
-      <span
-        className="tl-ov-dim"
-        aria-hidden="true"
-        style={{ left: percent(left + width), right: 0 }}
-      />
+      <span className="tl-ov-dim" aria-hidden style={{ left: 0, width: percent(left) }} />
+      <span className="tl-ov-dim" aria-hidden style={{ left: percent(left + width), right: 0 }} />
       <span
         className="tl-ov-window"
         role="scrollbar"
@@ -363,8 +359,8 @@ export function OverviewStrip({
         onPointerCancel={up}
         onKeyDown={key}
       >
-        <span className="tl-ov-edge tl-ov-start" data-hold="start" aria-hidden="true" />
-        <span className="tl-ov-edge tl-ov-end" data-hold="end" aria-hidden="true" />
+        <span className="tl-ov-edge tl-ov-start" data-hold="start" aria-hidden />
+        <span className="tl-ov-edge tl-ov-end" data-hold="end" aria-hidden />
       </span>
     </div>
   );
