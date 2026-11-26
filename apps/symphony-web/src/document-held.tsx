@@ -94,11 +94,26 @@ export interface HeldValue {
 export const HeldContext = createContext<HeldValue | null>(null);
 
 /**
+ * The copy of a document the held comments read at its copy `asked` stand for once it is at
+ * `version`, and whether they are read again: where they hold any and the copy moved past that
+ * one, which moves where a pass writes them. A read asked before the copy was known (`null`)
+ * stands for the first one known.
+ */
+export function heldCopy(
+  asked: number | null,
+  version: number | null,
+  holding: boolean,
+): [number | null, boolean] {
+  const at = asked ?? version;
+  return [at, holding && version !== null && version !== at];
+}
+
+/**
  * The held comments of the document `path` of the checkout `scope`, placed among its `sections`:
  * read at once, again each time `moved` (the feed's count of held comments moved) or `refreshed`
  * (the frame's) changes, after a pass from this page, and as the document's copy `version` moves
- * while any is held, which moves where its pass writes it. None until read, and none where nothing
- * is held. A failed read draws none; the next move reads it again.
+ * past the one the last read was asked at while any is held ([`heldCopy`]). None until read, and
+ * none where nothing is held. A failed read draws none; the next move reads it again.
  */
 export function useHeld(
   path: string,
@@ -113,16 +128,19 @@ export function useHeld(
   const [copies, setCopies] = useState(0);
   const holding = (read?.held.length ?? 0) > 0;
   const seen = useRef(version);
+  const asked = useRef<number | null>(null);
   useEffect(() => {
-    if (version === seen.current) return;
     seen.current = version;
-    if (holding) setCopies((count) => count + 1);
+    const [at, again] = heldCopy(asked.current, version, holding);
+    asked.current = at;
+    if (again) setCopies((count) => count + 1);
   }, [version, holding]);
   useEffect(() => {
     void moved;
     void refreshed;
     void passed;
     void copies;
+    asked.current = seen.current;
     const reading = new AbortController();
     getJson(api(scope, DOCUMENT_HELD_PATH, path), reading.signal).then(
       (value) => {

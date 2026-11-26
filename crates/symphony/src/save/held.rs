@@ -98,35 +98,24 @@ pub(super) fn place(
 /// else, that heading gone, after the document's last such block. Refused, with nothing written,
 /// where the document holds none.
 pub fn goes_after(text: &str, block: &Block) -> Result<(String, i64), Failure> {
-    let blocks = crate::render::keyed_blocks(text);
-    let same: Vec<&(String, crate::render::Block)> = (blocks.iter())
-        .filter(|(_, found)| found.text == block.text)
-        .collect();
-    let mine: Vec<&(String, crate::render::Block)> = (same.iter().copied())
-        .filter(|(key, _)| heading(key) == heading(&block.key))
-        .collect();
-    let found = match (mine.as_slice(), same.as_slice()) {
-        ([one], _) | ([], [one]) => *one,
-        (_, []) => return section_end(text, &blocks, heading(&block.key)),
-        _ => {
-            return Err(Failure {
-                status: 409,
-                error: "the block this comment was left after now stands in several places: \
-                        nothing was written"
-                    .into(),
-            });
-        }
-    };
-    Ok(after(found))
+    Keyed::of(text).goes_after(block)
 }
 
-/// The held comment `held` as its document's page draws it: a callout under the block its pass
-/// would write it after in `text`, the document as that page shows it ([`goes_after`]), else,
-/// that refused or the document not read, under the block it was left after, by its key and line
-/// then; a card's message on its card.
-pub fn drawn_held(text: Option<&str>, held: OnDocument) -> symphony_api::HeldComment {
+/// The held comments `held` of one document as its page draws them, in their order: a callout
+/// under the block its pass would write it after in `text`, the document as that page shows it
+/// ([`goes_after`]), keyed once for them all, else, that refused or the document not read, under
+/// the block it was left after, by its key and line then; a card's message on its card.
+pub fn drawn_held(text: Option<&str>, held: Vec<OnDocument>) -> Vec<symphony_api::HeldComment> {
+    let keyed = text.map(Keyed::of);
+    (held.into_iter())
+        .map(|held| drawn(keyed.as_ref(), held))
+        .collect()
+}
+
+/// The held comment `held` as [`drawn_held`] draws it, against the document `keyed`.
+fn drawn(keyed: Option<&Keyed>, held: OnDocument) -> symphony_api::HeldComment {
     let left = held.document.block;
-    let now = (left.as_ref().zip(text)).and_then(|(block, text)| goes_after(text, block).ok());
+    let now = (left.as_ref().zip(keyed)).and_then(|(block, keyed)| keyed.goes_after(block).ok());
     let (key, line) = match (now, left) {
         (Some((key, line)), _) => (Some(key), Some(line)),
         (None, left) => (
@@ -150,28 +139,62 @@ pub(super) fn found_again(text: &str, block: &Block) -> Result<i64, Failure> {
     goes_after(text, block).map(|(_, line)| line)
 }
 
-/// The last of `blocks`, those of `text`, under the heading `under` (`section:ANCHOR`) that a
-/// callout may follow, else the document's last such: its key and last line.
-fn section_end(
-    text: &str,
-    blocks: &[(String, crate::render::Block)],
-    under: &str,
-) -> Result<(String, i64), Failure> {
-    let lines = crate::text::splitlines(text);
-    let takes = |(_, block): &&(String, crate::render::Block)| {
-        let end = i64::try_from(block.end).unwrap_or(i64::MAX);
-        edit::comment_refused_after(&lines, end).is_none()
-    };
-    let last = (blocks.iter().rev())
-        .filter(|(key, _)| heading(key) == under)
-        .find(takes)
-        .or_else(|| blocks.iter().rev().find(takes));
-    last.map(after).ok_or_else(|| Failure {
-        status: 409,
-        error: "the block this comment was left after is gone, and no block of the document may \
-                take it: nothing was written"
-            .into(),
-    })
+/// A document's text as a held callout's block is found in it: its blocks by key and its lines,
+/// read once for every callout placed in it.
+struct Keyed<'a> {
+    blocks: Vec<(String, crate::render::Block)>,
+    lines: Vec<&'a str>,
+}
+
+impl<'a> Keyed<'a> {
+    fn of(text: &'a str) -> Self {
+        Keyed {
+            blocks: crate::render::keyed_blocks(text),
+            lines: crate::text::splitlines(text),
+        }
+    }
+
+    /// [`goes_after`] in this document.
+    fn goes_after(&self, block: &Block) -> Result<(String, i64), Failure> {
+        let same: Vec<&(String, crate::render::Block)> = (self.blocks.iter())
+            .filter(|(_, found)| found.text == block.text)
+            .collect();
+        let mine: Vec<&(String, crate::render::Block)> = (same.iter().copied())
+            .filter(|(key, _)| heading(key) == heading(&block.key))
+            .collect();
+        let found = match (mine.as_slice(), same.as_slice()) {
+            ([one], _) | ([], [one]) => *one,
+            (_, []) => return self.section_end(heading(&block.key)),
+            _ => {
+                return Err(Failure {
+                    status: 409,
+                    error: "the block this comment was left after now stands in several places: \
+                            nothing was written"
+                        .into(),
+                });
+            }
+        };
+        Ok(after(found))
+    }
+
+    /// The last block under the heading `under` (`section:ANCHOR`) that a callout may follow,
+    /// else the document's last such: its key and last line.
+    fn section_end(&self, under: &str) -> Result<(String, i64), Failure> {
+        let takes = |(_, block): &&(String, crate::render::Block)| {
+            let end = i64::try_from(block.end).unwrap_or(i64::MAX);
+            edit::comment_refused_after(&self.lines, end).is_none()
+        };
+        let last = (self.blocks.iter().rev())
+            .filter(|(key, _)| heading(key) == under)
+            .find(takes)
+            .or_else(|| self.blocks.iter().rev().find(takes));
+        last.map(after).ok_or_else(|| Failure {
+            status: 409,
+            error: "the block this comment was left after is gone, and no block of the document \
+                    may take it: nothing was written"
+                .into(),
+        })
+    }
 }
 
 /// A block's key and its last line, which a callout after it goes after.
@@ -512,7 +535,7 @@ mod tests {
     #[test]
     fn a_held_callout_is_drawn_where_its_pass_writes_it_else_where_it_was_left() {
         let drawn = |page: Option<&str>, row: OnDocument| {
-            let held = drawn_held(page, row);
+            let [held] = <[_; 1]>::try_from(drawn_held(page, vec![row])).expect("one drawn");
             (held.key, held.line)
         };
         let row = || held(None, None);
@@ -538,10 +561,10 @@ mod tests {
         for page in [Some(twice.as_str()), None] {
             assert_eq!(drawn(page, row()), at("section:topic:1", 3), "{page:?}");
         }
-        let message = drawn_held(Some(PAGE), held(Some("one"), None));
+        let message = drawn_held(Some(PAGE), vec![held(Some("one"), None)]);
         assert_eq!(
             message,
-            symphony_api::HeldComment {
+            [symphony_api::HeldComment {
                 id: 4,
                 author: "ana".into(),
                 kind: MESSAGE.into(),
@@ -549,8 +572,46 @@ mod tests {
                 card: Some("one".into()),
                 key: None,
                 line: None,
-            }
+            }]
         );
+    }
+
+    #[test]
+    fn the_held_comments_of_one_read_are_each_drawn_where_their_own_pass_writes_them() {
+        let left = |id: i64, key: &str, line: i64, text: &str| OnDocument {
+            id,
+            document: Place {
+                block: Some(block(key, line, text)),
+                ..held(None, None).document
+            },
+            ..held(None, None)
+        };
+        let grown = PAGE.replace("# Topic\n\n", "# Topic\n\nNew.\n\nNew.\n\n");
+        let rows = vec![
+            left(1, "section:lamps:2", 9, "Other prose."),
+            held(Some("one"), None),
+            left(2, "section:topic:1", 3, "Gone."),
+            left(3, "section:topic:1", 3, "New."),
+            left(5, "section:lamps:1", 7, "Some prose."),
+        ];
+        let drawn: Vec<_> = (drawn_held(Some(&grown), rows).into_iter())
+            .map(|held| (held.id, held.key, held.line))
+            .collect();
+        let at = |id: i64, key: &str, line: i64| (id, Some(key.to_string()), Some(line));
+        assert_eq!(
+            drawn,
+            [
+                at(1, "section:lamps:2", 13),
+                (4, None, None),
+                // Changed: its section's end, Lamps under a heading of its own.
+                at(2, "section:topic:3", 7),
+                // Its lines twice under its heading: where it was left.
+                at(3, "section:topic:1", 3),
+                at(5, "section:lamps:1", 11),
+            ],
+            "each its own, in the order read, the message on its card"
+        );
+        assert!(drawn_held(Some(PAGE), Vec::new()).is_empty());
     }
 
     #[test]
