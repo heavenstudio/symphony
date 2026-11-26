@@ -1,9 +1,9 @@
 # The Symphony's own sign-in service
 
-`symphony-sign-in` stands in front of the server and signs each visitor in with Google. It keeps
-what signing in needs, the client secret and the session. It passes every request on to the server
-with the one signed header the server verifies ([SIGNED_IN](SIGNED_IN.md)), naming the person
-Google signed in. It is a program of its own, apart from the core: nothing links it, and the server
+`symphony-sign-in` stands in front of the server and signs each visitor in with Google or GitHub. It
+keeps what signing in needs, the client secrets and the session. It passes every request on to the
+server with the one signed header the server verifies ([SIGNED_IN](SIGNED_IN.md)), naming the
+person the provider signed in. It is a program of its own, apart from the core: nothing links it, and the server
 knows it only by its public key. Any other service that signs the same header replaces it
 ([what the Symphony ships for signing in](../product/analysis/users-and-identity.md#what-the-symphony-ships-for-signing-in)).
 
@@ -14,17 +14,21 @@ machine.
 
 - **Google**, by OpenID Connect. A visitor signs in with their Google account, and is the person
   whose profile holds their Google subject, `google:SUBJECT`.
-- **GitHub waits.** It is not built yet.
+- **GitHub**, by OAuth 2, as an OAuth app. A visitor signs in with their GitHub account, and is
+  the person whose profile holds its numeric id, `github:ID`.
+- **Either or both.** With one set, a visitor is sent straight to it. With both, a visitor is
+  offered the two, as two links.
 - **Sessions live in the service's memory.** A restart of the service signs every visitor out,
-  and the next page they open sends them to Google again, which usually signs them straight back
-  in.
+  and the next page they open sends them to sign in again, which the provider usually does
+  straight away.
 - **It speaks plain HTTP.** For an `https://` origin, something in front of it ends TLS: Caddy, a
   load balancer, a tunnel ([below](#setting-it-up)).
 
 ## What it needs
 
-- **A Google OAuth client** of the type Web application: its client id and its secret.
-- **`curl` on `PATH`**, which it reaches Google's token endpoint through. macOS has one; most
+- **A Google OAuth client** of the type Web application, **a GitHub OAuth app**, or both: each
+  one's client id and secret.
+- **`curl` on `PATH`**, which it reaches each provider through. macOS has one; most
   Linux systems too.
 - **Rust**, to build it: the toolchain this repository's `rust-toolchain.toml` names.
 - **For an `https://` origin, a TLS terminator** in front of it, with a certificate for the
@@ -61,7 +65,8 @@ The service keeps its two files there, beside the server's `sign-in.toml`. The e
    origin = "https://board.example.com"
    ```
 
-4. **Make the Google client.** In the Google Cloud console, under APIs & Services:
+4. **Make the Google client**, to sign in with Google. In the Google Cloud console, under APIs &
+   Services:
    - set up the OAuth consent screen (Google Auth Platform, Branding and Audience);
    - under Clients, create a client of the type Web application;
    - add the authorized redirect URI: the origin, then `/.sign-in/callback`
@@ -71,8 +76,18 @@ The service keeps its two files there, beside the server's `sign-in.toml`. The e
    The service asks for the scope `openid` alone, so no consent screen scope needs adding. Google
    allows an `http://` redirect URI on `localhost` alone.
 
+   **Make the GitHub OAuth app**, to sign in with GitHub. In GitHub's Settings, under Developer
+   settings, OAuth Apps, register a new application:
+   - the homepage URL is the origin;
+   - the authorization callback URL is the origin, then `/.sign-in/github-callback`
+     (`https://board.example.com/.sign-in/github-callback`);
+   - generate a client secret, and copy it and the client id.
+
+   The service asks for no scope: what it reads, the account's id, is public. GitHub's consent
+   screen asks for nothing more than that.
+
 5. **Write its settings** to the machine folder's `sign-in-service.toml`, the file its owner's
-   alone (mode 600), as it holds the client secret:
+   alone (mode 600), as it holds the client secrets:
 
    ```toml
    listen = "127.0.0.1:8766"
@@ -82,12 +97,17 @@ The service keeps its two files there, beside the server's `sign-in.toml`. The e
    [google]
    client-id = "1234-….apps.googleusercontent.com"
    client-secret = "GOCSPX-…"
+
+   [github]
+   client-id = "Ov23li…"
+   client-secret = "…"
    ```
 
    - **`listen`** is where the service takes requests: an address and a port, plain HTTP.
    - **`upstream`** is the server behind it: an address and a port.
    - **`origin`** is `sign-in.toml`'s, by the same rule.
-   - **`client-id`** and **`client-secret`** are the Google client's.
+   - **`[google]`** and **`[github]`** are the providers visitors sign in with: either, or both.
+     Each holds its `client-id` and `client-secret`. A file that names neither is refused.
 
    On macOS:
 
@@ -119,13 +139,16 @@ The service keeps its two files there, beside the server's `sign-in.toml`. The e
    server holding another key would refuse every request the service signs.
 
 8. **Give each person their sign-in.** A visitor signed in opens `/.sign-in/` on the origin
-   (`https://board.example.com/.sign-in/`). It says whom they are signed in as, `google:` and
-   their Google subject, a number. They send that to the person at the machine, who gives it to
-   their profile and a board's powers ([TASKS](../workflow/TASKS.md#people)):
+   (`https://board.example.com/.sign-in/`). It says whom they are signed in as: `google:` and
+   their Google subject, or `github:` and their GitHub account's id, each a number. They send that
+   to the person at the machine, who gives it to their profile and a board's powers
+   ([TASKS](../workflow/TASKS.md#people)):
 
    ```sh
    just tasks-people add ana --display "Ana Lima" --signin google:110248495921238986420 --power speak --as HANDLE
    ```
+
+   A person who signs in with both is given both sign-ins.
 
    Until then the server takes them as nobody's, and they see no board.
 
@@ -143,11 +166,13 @@ never sees them:
 
 | Path | What it is |
 | --- | --- |
-| `/.sign-in/callback` | Google's way back, the client's redirect URI |
+| `/.sign-in/callback` | Google's way back, the Google client's redirect URI |
+| `/.sign-in/github-callback` | GitHub's way back, the GitHub OAuth app's callback URL |
 | `/.sign-in/` | the visitor's own page: whom they are signed in as, and a button to sign out |
 | `/.sign-in/sign-out` | sign-out, a POST the page sends |
 
-Any other path under `/.sign-in/` is answered `404`.
+Any other path under `/.sign-in/` is answered `404`, and so is the way back of a provider whose
+client is not set.
 
 **Every other request needs a session.**
 - **With one,** the service takes out every `Symphony-Signed-In` header the caller sent, every
@@ -160,18 +185,19 @@ Any other path under `/.sign-in/` is answered `404`.
   handshake that the server answers `101` is joined to the browser's connection both ways. Each
   ends when the word it was opened with expires, five minutes later, and the client opens it again
   with a fresh word while the session holds. A session signed out keeps no feed.
-- **Without a session, nothing is passed on.** A browser's navigation to a page is sent to Google
-  to sign in, and comes back to the path it asked for. Anything else is answered
-  `401 Unauthorized: not signed in`, never sent to sign in: a fetch, a script, an image, a socket,
-  a write.
+- **Without a session, nothing is passed on.** A browser's navigation to a page is sent to sign
+  in, and comes back to the path it asked for: straight to the one provider set, or, with both
+  set, to a page of two links, "Sign in with Google" and "Sign in with GitHub". Anything else is
+  answered `401 Unauthorized: not signed in`, never sent to sign in: a fetch, a script, an image,
+  a socket, a write.
 
 **The word** is the header [SIGNED_IN](SIGNED_IN.md#the-header) sets out, signed with the
 service's private key:
 
 | Claim | What it holds |
 | --- | --- |
-| `iss` | `google` |
-| `sub` | Google's subject for the visitor |
+| `iss` | `google` or `github` |
+| `sub` | Google's subject for the visitor, or their GitHub account's id |
 | `aud` | the origin |
 | `iat` | the second the request was passed on |
 | `exp` | five minutes after it |
@@ -181,27 +207,34 @@ person may do is each board's. The browser never sees it.
 
 ## How a visitor signs in
 
-The service uses OpenID Connect's authorization code flow with PKCE.
+The service uses the authorization code flow with PKCE: OpenID Connect's with Google, OAuth 2's
+with GitHub, whose OAuth apps issue no id token.
 
-1. **To Google.** A navigation with no session starts a sign-in: a fresh `state`, `nonce` and PKCE
-   verifier, each 32 random bytes. The browser is sent to Google with the `state`, the `nonce`, the
-   verifier's S256 challenge, the client id, the redirect URI and the scope `openid`. Its browser
-   is given a flow cookie holding the same `state`. The service keeps the sign-in under way, under
-   its `state`, for ten minutes. It keeps at most a thousand at once and drops the oldest first, as
-   anyone may begin one.
-2. **Back from Google.** The way back is taken only when its `state` is the one in the browser's
-   flow cookie (compared in constant time) and a sign-in under way still holds it. That sign-in is
-   then taken out, so it is taken once. A way back with no flow cookie, or another sign-in's,
-   leaves the sign-in under way for its own browser.
-3. **The code.** The service exchanges Google's code at Google's token endpoint, through `curl`,
+1. **To the provider.** A navigation with no session starts a sign-in: a fresh `state`, `nonce`
+   and PKCE verifier, each 32 random bytes. The browser is sent to the provider with the `state`,
+   the verifier's S256 challenge, the client id and the redirect URI; Google is also sent the
+   `nonce` and the scope `openid`, and GitHub no scope. With both set, the page of two links holds
+   one sign-in, and each link sends the browser to its provider for it.
+2. **The flow cookie.** The browser is given a flow cookie that holds the sign-in under way: its
+   `state`, `nonce`, verifier, the path to come back to and when it ends, ten minutes on. The
+   service signs it (HMAC-SHA256) with a key it makes at each start and never writes, and keeps
+   nothing of it. So no number of sign-ins anyone begins pushes another out, and a restart ends
+   every sign-in under way. A path longer than 2,048 bytes comes back to `/`, so the cookie stays
+   inside what a browser keeps of one.
+3. **Back from the provider.** The way back is taken only when the browser's flow cookie is one
+   the service signed (its tag checked in constant time), its `state` is the way back's (compared
+   in constant time), and its ten minutes have not passed. A way back with no flow cookie, or
+   another sign-in's, is refused. The provider takes a code once, so a way back repeated, cookie
+   and all, is refused by the provider.
+4. **The code.** The service exchanges the provider's code at its token endpoint, through `curl`,
    with the verifier, the redirect URI and the client's id and secret. `curl` reads the request on
    its standard input, so the secret, the code and the verifier are in no process's arguments or
-   environment. It reads no `~/.curlrc`, verifies Google's certificate, speaks HTTPS alone, follows
-   no redirect and uses no proxy.
-4. **The id token.** The id token comes straight from Google's token endpoint over TLS, in answer
-   to the client's secret, so the service takes it as Google's word, as OpenID Connect Core
-   (3.1.3.7) allows, and does not fetch a key to check its signature. It checks every claim it
-   relies on:
+   environment. It reads no `~/.curlrc`, verifies the provider's certificate, speaks HTTPS alone,
+   follows no redirect and uses no proxy.
+5. **Google's id token.** The id token comes straight from Google's token endpoint over TLS, in
+   answer to the client's secret, so the service takes it as Google's word, as OpenID Connect
+   Core (3.1.3.7) allows, and does not fetch a key to check its signature. It checks every claim
+   it relies on:
    - the issuer is Google's;
    - it was made for this client (`aud`, and `azp` where it names one or `aud` lists several);
    - it has not expired, and says it was issued no more than 30 seconds ahead of this machine's
@@ -211,13 +244,21 @@ The service uses OpenID Connect's authorization code flow with PKCE.
 
    The subject is Google's `sub`, which never changes and is never given to another account, as an
    email address can be. Nothing else of the token is read.
-5. **The session.** Only then is a session made. The browser is sent back to the path it asked
+6. **GitHub's account.** GitHub answers the code with an access token, which the service uses
+   once, through `curl` again, the token in its standard input, to ask GitHub's API
+   (`GET https://api.github.com/user`) whose it is, and then drops: it is kept nowhere and never
+   said. The subject is the account's `id`, a whole number, which never changes and is never given
+   to another account, as a login given up is anyone's to take. Nothing else of the answer is
+   read: no login, no email, no name.
+7. **The session.** Only then is a session made. The browser is sent back to the path it asked
    for, which is always a path of the origin: no parameter of any request names where it goes.
 
 **The cookies.** The session cookie holds the session's id, 32 random bytes, and nothing else: who
 the visitor is stays in the service's memory, kept under the id's digest. It is `HttpOnly`,
 `SameSite=Lax`, on the path `/` and held twelve hours from the sign-in, however it is used. The flow
-cookie is the same, held ten minutes. For an `https://` origin both are `Secure` and named with
+cookie has the same flags, held ten minutes, and holds the signed sign-in under way. The verifier
+it holds stays with the browser that began the sign-in: PKCE keeps a code from anyone else, and a
+browser's own code is its own. For an `https://` origin both are `Secure` and named with
 `__Host-`, so only this host can set them. For an `http://` origin, which Google allows on
 `localhost` alone, they are neither, and a browser sends them to every port of `localhost`, not to
 the service's alone: whatever else listens on `localhost` receives the session's id.
@@ -235,16 +276,20 @@ The server also refuses a signed write or socket whose `Origin` is not the origi
 
 ## What is refused
 
-A way back from Google is refused, with a page that offers to sign in again, and no session is
-made, when:
+A way back from either provider is refused, with a page that offers to sign in again, and no
+session is made, when:
 - its query names no `state`, no code, or a parameter twice;
-- its `state` is not the browser's flow cookie's: a cross-site way back, or another sign-in's;
-- no sign-in under way holds its `state`: one forged, or taken already;
+- the browser holds no flow cookie, or one the service did not sign: forged, altered, or signed
+  before a restart;
+- its `state` is not the flow cookie's: a cross-site way back, or another sign-in's;
 - its sign-in began more than ten minutes before;
-- Google says it did not sign the visitor in (`error=access_denied`);
-- Google's token endpoint does not answer, or answers with no id token (`502`);
-- the id token is malformed, not Google's, for another client, expired, issued ahead of the clock,
-  for another nonce, or names no subject.
+- the provider says it did not sign the visitor in (`error=access_denied`);
+- the provider's token endpoint does not answer, or answers with no token (`502`), as for a code
+  taken already;
+- Google's id token is malformed, not Google's, for another client, expired, issued ahead of the
+  clock, for another nonce, or names no subject;
+- GitHub's API does not answer whose its token is (`502`), or answers with no `id` that is a whole
+  number above 0.
 
 A sign-out from another site, or naming no `Origin`, is refused `403`, and the session holds.
 
@@ -257,8 +302,9 @@ it can see why a sign-in did not take.
   passed on from this machine without a word would be this machine's person.
 - It never passes on a `Symphony-Signed-In` header a caller sent.
 - It never shows the word to the browser.
-- It never logs or prints the client secret, the private key, a code, a `state`, a `nonce`, a
-  verifier, a session's id, an id token or a word.
-- It never reads an email, a name, a group or a role from Google.
+- It never logs or prints a client secret, the private key, a code, a `state`, a `nonce`, a
+  verifier, a flow cookie, a session's id, an id token, an access token or a word.
+- It never reads an email, a name, a group or a role from Google, nor a login, an email, a name
+  or an organization from GitHub.
 - Its settings and its key are never a link, never another account's, and never readable by
   another account. A refusal says the file and the rule, never a value.

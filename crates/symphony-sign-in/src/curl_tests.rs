@@ -140,3 +140,53 @@ fn redaction_hides_every_value_and_passes_over_an_empty_one() {
         "a <hidden>, <hidden> and <hidden>"
     );
 }
+
+/// Redaction hides each value form-encoded too, as the request's body carries it, wherever the
+/// encoded form and the value itself are both said, and one value inside another's form.
+#[test]
+fn redaction_hides_each_value_form_encoded_as_well() {
+    let hidden = ["4/0stand-in-code", "s+cret/=", "a b"];
+    assert_eq!(
+        redacted(
+            "code=4%2F0stand-in-code&client_secret=s%2Bcret%2F%3D&x=a+b; 4/0stand-in-code s+cret/=",
+            &hidden
+        ),
+        "code=<hidden>&client_secret=<hidden>&x=<hidden>; <hidden> <hidden>"
+    );
+    assert_eq!(
+        redacted("4/0 and 4%2F0", &["4/0", "4%2F0"]),
+        "<hidden> and <hidden>"
+    );
+}
+
+/// A curl that says its whole request on stderr, the form as the body carries it, encoded, names
+/// none of its values when it fails.
+#[test]
+fn what_curl_says_of_a_form_encoded_body_names_none_of_its_secrets() {
+    let bin = folder("curl-encoded");
+    let saying = write(&bin, "curl", "#!/bin/sh\ncat >&2\nexit 7\n", 0o700);
+    let hidden = [
+        "GOCSPX-stand-in/secret+0",
+        "4/0stand-in-code",
+        "verifier-0000",
+    ];
+    let form = form_urlencoded::Serializer::new(String::new())
+        .append_pair("client_secret", hidden[0])
+        .append_pair("code", hidden[1])
+        .append_pair("code_verifier", hidden[2])
+        .finish();
+    assert!(form.contains("4%2F0stand-in-code"), "{form}");
+    let said = post(
+        saying.to_str().unwrap(),
+        "https://oauth2.googleapis.com/token",
+        &form,
+        &hidden,
+    )
+    .unwrap_err();
+    assert!(said.contains("code=<hidden>"), "{said}");
+    for secret in hidden {
+        let encoded: String = form_urlencoded::byte_serialize(secret.as_bytes()).collect();
+        assert!(!said.contains(secret), "{said}");
+        assert!(!said.contains(&encoded), "{said}");
+    }
+}

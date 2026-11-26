@@ -1,9 +1,9 @@
 # `symphony-sign-in`: the Symphony's own sign-in service (docs/operations/SIGN_IN_SERVICE.md), a
 # program of its own that stands in front of the server, signs visitors in with Google by OpenID
-# Connect, keeps the client secret and the session, and passes each request on signed with the header
-# the server verifies (docs/operations/SIGNED_IN.md). Never published and never shipped: nothing links
-# it, the server knows it only by the public key `sign-in.toml` names, and it reaches Google through
-# `curl`, so it adds no TLS crate.
+# Connect or with GitHub by OAuth 2, keeps the client secrets and the session, and passes each request
+# on signed with the header the server verifies (docs/operations/SIGNED_IN.md). Never published and
+# never shipped: nothing links it, the server knows it only by the public key `sign-in.toml` names,
+# and it reaches each provider through `curl`, so it adds no TLS crate.
 [package]
 name = "symphony-sign-in"
 version = "0.1.0"
@@ -24,6 +24,9 @@ base64.workspace = true
 ed25519-dalek = { version = "3", default-features = false }
 # The provider's query and the token request's body.
 form_urlencoded = "1"
+# A sign-in under way's flow cookie, signed with a key made at start (HMAC-SHA256): the version the
+# board's PostgreSQL client builds already, over the same sha2.
+hmac = "0.13"
 # A feed's body ended at its word's expiry (`stream::unfold`).
 futures-util = { version = "0.3", default-features = false }
 http-body-util = "0.1"
@@ -49,6 +52,8 @@ toml.workspace = true
 # every request it is passed.
 symphony = { package = "symphony-app", path = "../symphony" }
 test-time = { path = "../test-time" }
+# A paused clock, so a test of a word's expiry waits on no machine's clock (`start_paused`).
+tokio = { version = "1", features = ["test-util"] }
 
 [lints]
 workspace = true

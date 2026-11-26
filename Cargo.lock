@@ -4578,6 +4578,7 @@ dependencies = [
  "ed25519-dalek",
  "form_urlencoded",
  "futures-util",
+ "hmac",
  "http-body-util",
  "hyper",
  "hyper-util",

@@ -4,7 +4,9 @@
 //! origin.
 
 use super::*;
-use crate::stand_in::{CLIENT_SECRET, folder, key, write};
+use crate::stand_in::{
+    CLIENT_SECRET, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, folder, github_client, key, write,
+};
 use std::os::unix::fs::{PermissionsExt as _, symlink};
 
 const GOOD: &str = r#"listen = "127.0.0.1:8766"
@@ -23,13 +25,50 @@ fn the_settings_name_where_to_listen_the_server_behind_the_origin_and_googles_cl
     assert_eq!(settings.listen, "127.0.0.1:8766".parse().unwrap());
     assert_eq!(settings.upstream, "127.0.0.1:8765".parse().unwrap());
     assert_eq!(settings.origin, "https://board.example.com");
-    assert_eq!(
-        settings.google.id,
-        "1234-stand-in.apps.googleusercontent.com"
-    );
-    assert_eq!(settings.google.secret.expose(), CLIENT_SECRET);
+    let google = settings.google.unwrap();
+    assert_eq!(google.id, "1234-stand-in.apps.googleusercontent.com");
+    assert_eq!(google.secret.expose(), CLIENT_SECRET);
+    assert_eq!(settings.github, None);
     let ipv6 = GOOD.replace("127.0.0.1:8766", "[::1]:8766");
     assert!(Settings::parse(&ipv6).is_ok());
+}
+
+/// The settings name GitHub's OAuth app beside Google's client, or in its place.
+#[test]
+fn the_settings_name_githubs_app_beside_googles_client_or_alone() {
+    let app = format!(
+        "\n[github]\nclient-id = \"{GITHUB_CLIENT_ID}\"\nclient-secret = \"{GITHUB_CLIENT_SECRET}\"\n"
+    );
+    let both = Settings::parse(&format!("{GOOD}{app}")).unwrap();
+    assert!(both.google.is_some());
+    assert_eq!(both.github, Some(github_client()));
+    let (head, _) = GOOD.split_once("[google]").unwrap();
+    let alone = Settings::parse(&format!("{head}{app}")).unwrap();
+    assert_eq!(alone.google, None);
+    assert_eq!(alone.github, Some(github_client()));
+    let neither = Settings::parse(head).unwrap_err();
+    assert!(neither.contains("it names no client"), "{neither}");
+    let cases = [
+        (
+            app.replace(GITHUB_CLIENT_ID, ""),
+            "github's client-id is not 1 to 256",
+        ),
+        (
+            app.replace(GITHUB_CLIENT_SECRET, "0123 4567"),
+            "github's client-secret is not 1 to 4096",
+        ),
+        (
+            app.replace("client-secret", "secret"),
+            "unknown field `secret`",
+        ),
+        (app.replace("client-id = ", "id = "), "unknown field `id`"),
+    ];
+    for (app, rule) in cases {
+        let refused = Settings::parse(&format!("{head}{app}")).unwrap_err();
+        assert!(refused.contains(rule), "{rule}: {refused}");
+        assert!(!refused.contains(GITHUB_CLIENT_SECRET), "{refused}");
+        assert!(!refused.contains("0123 4567"), "{refused}");
+    }
 }
 
 /// A setting missing, one unknown, a value of the wrong kind or breaking its rule is refused by

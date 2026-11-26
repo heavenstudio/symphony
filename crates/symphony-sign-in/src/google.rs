@@ -1,8 +1,8 @@
-//! The provider, Google, by OpenID Connect's authorization code flow with PKCE.
+//! The provider Google, by OpenID Connect's authorization code flow with PKCE.
 //!
 //! A visitor is sent to Google's authorization endpoint ([`Provider::authorize`]) with the
 //! client's id, the way back, the scope `openid` alone, and a sign-in's fresh `state`, `nonce` and
-//! S256 challenge ([`crate::kept::Flow`]). Google sends them back with a code, which the service
+//! S256 challenge ([`crate::flow::Flow`]). Google sends them back with a code, which the service
 //! exchanges at Google's token endpoint with its client secret and the challenge's verifier
 //! ([`Provider::exchange`], through `curl`). The answer's id token is taken as Google's word
 //! because it came from Google's token endpoint over TLS, in answer to the client's secret, as
@@ -17,7 +17,7 @@
 //! The endpoints are constants ([`Provider::google`]); a test alone stands one in.
 
 use crate::curl;
-use crate::kept::Flow;
+use crate::flow::Flow;
 use crate::settings::Client;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -110,7 +110,6 @@ impl Provider {
         #[derive(Deserialize)]
         struct Answered {
             id_token: Option<String>,
-            error: Option<String>,
         }
         let secret = client.secret.expose();
         let form = form_urlencoded::Serializer::new(String::new())
@@ -122,25 +121,15 @@ impl Provider {
             .append_pair("client_secret", secret)
             .finish();
         let answer = curl::post(&self.curl, &self.token, &form, &[secret, code, verifier])?;
-        let answered: Option<Answered> = serde_json::from_str(&answer.body).ok();
         let token = (answer.status == 200)
-            .then(|| {
-                answered
-                    .as_ref()
-                    .and_then(|answered| answered.id_token.clone())
-            })
-            .flatten();
+            .then(|| serde_json::from_str::<Answered>(&answer.body).ok())
+            .flatten()
+            .and_then(|answered| answered.id_token);
         token.ok_or_else(|| {
-            let named = (answered.and_then(|answered| answered.error))
-                .filter(|error| {
-                    !error.is_empty()
-                        && error.len() <= 64
-                        && error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-                })
-                .map_or_else(String::new, |error| format!(": {error}"));
             format!(
-                "Google's token endpoint answered {} with no id token{named}",
-                answer.status
+                "Google's token endpoint answered {} with no id token{}",
+                answer.status,
+                answer.error()
             )
         })
     }

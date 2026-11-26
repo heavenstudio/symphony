@@ -1,6 +1,6 @@
 //! The service's two files in the machine folder, beside the server's [`SERVER`]: its settings,
-//! [`SETTINGS`], which hold Google's client secret, and its private key, [`KEY`], which only it
-//! holds. Nothing in a project's `symphony.toml` names either.
+//! [`SETTINGS`], which hold each provider's client secret, and its private key, [`KEY`], which only
+//! it holds. Nothing in a project's `symphony.toml` names either.
 //!
 //! Each is held to the checks the server's `sign-in.toml` is, and, as it holds a secret, to one
 //! more: it may not be a link, it is this account's, and no other account may read it or write it
@@ -59,7 +59,7 @@ impl fmt::Debug for Secret {
     }
 }
 
-/// The OAuth client the service signs visitors in as: its id and its secret.
+/// An OAuth client the service signs visitors in as, Google's or GitHub's: its id and its secret.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Client {
     pub(crate) id: String,
@@ -75,13 +75,15 @@ pub(crate) struct Settings {
     pub(crate) upstream: SocketAddr,
     /// Where browsers reach the server through the service, as `sign-in.toml`'s `origin`.
     pub(crate) origin: String,
-    /// The Google client.
-    pub(crate) google: Client,
+    /// The Google client, where visitors sign in with Google.
+    pub(crate) google: Option<Client>,
+    /// The GitHub OAuth app, where visitors sign in with GitHub.
+    pub(crate) github: Option<Client>,
 }
 
 impl Settings {
-    /// The settings `text` names: `listen`, `upstream`, `origin` and a `[google]` table of
-    /// `client-id` and `client-secret`, and nothing else.
+    /// The settings `text` names: `listen`, `upstream`, `origin`, and a `[google]` table of
+    /// `client-id` and `client-secret`, a `[github]` table of the same, or both, and nothing else.
     ///
     /// # Errors
     ///
@@ -94,7 +96,8 @@ impl Settings {
             listen: String,
             upstream: String,
             origin: String,
-            google: NamedClient,
+            google: Option<NamedClient>,
+            github: Option<NamedClient>,
         }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields, rename_all = "kebab-case")]
@@ -117,30 +120,24 @@ impl Settings {
                     .into(),
             );
         }
-        let id = named.google.client_id;
-        if id.is_empty() || id.len() > CLIENT_ID_BYTES || !id.bytes().all(|b| b.is_ascii_graphic())
-        {
-            return Err(format!(
-                "google's client-id is not 1 to {CLIENT_ID_BYTES} visible ASCII characters"
-            ));
+        if named.google.is_none() && named.github.is_none() {
+            return Err(
+                "it names no client: name a [google] one, a [github] one, or both, each \
+                        with its client-id and client-secret"
+                    .into(),
+            );
         }
-        let secret = named.google.client_secret;
-        if secret.is_empty()
-            || secret.len() > SECRET_BYTES
-            || !secret.bytes().all(|b| b.is_ascii_graphic())
-        {
-            return Err(format!(
-                "google's client-secret is not 1 to {SECRET_BYTES} visible ASCII characters"
-            ));
-        }
+        let client = |name: &str, named: Option<NamedClient>| {
+            named
+                .map(|named| checked_client(name, named.client_id, named.client_secret))
+                .transpose()
+        };
         Ok(Settings {
             listen,
             upstream,
             origin: checked_origin(&named.origin)?,
-            google: Client {
-                id,
-                secret: Secret(secret),
-            },
+            google: client("google", named.google)?,
+            github: client("github", named.github)?,
         })
     }
 
@@ -290,6 +287,32 @@ pub(crate) fn matches_server(machine: &Path, key: &Key, origin: &str) -> Result<
         ));
     }
     Ok(())
+}
+
+/// The client of the provider `name` whose id is `id` and secret `secret`, each 1 to its bound of
+/// visible ASCII characters.
+///
+/// # Errors
+///
+/// Either breaks its rule: said by the provider and the rule, never the value.
+fn checked_client(name: &str, id: String, secret: String) -> Result<Client, String> {
+    if id.is_empty() || id.len() > CLIENT_ID_BYTES || !id.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(format!(
+            "{name}'s client-id is not 1 to {CLIENT_ID_BYTES} visible ASCII characters"
+        ));
+    }
+    if secret.is_empty()
+        || secret.len() > SECRET_BYTES
+        || !secret.bytes().all(|b| b.is_ascii_graphic())
+    {
+        return Err(format!(
+            "{name}'s client-secret is not 1 to {SECRET_BYTES} visible ASCII characters"
+        ));
+    }
+    Ok(Client {
+        id,
+        secret: Secret(secret),
+    })
 }
 
 /// What a TOML error in `text` says: its line, and its message where that names a key, never
