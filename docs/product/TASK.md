@@ -120,6 +120,17 @@ was, says all of it: for a
 build or test its command, how long it waited and ran, how it ended, its commit, who ran it and
 where. A bar says when an agent held a role, not that it worked the whole time.
 
+A line above the lanes zooms into part of the hours: **Whole task**, **−** and **+**, each shown
+only where it can act, and the hours shown with their length (*11-19 10:53 → 11-19 12:01 · 1 h
+8 m of 1 d 3 h*). ⌘ or Ctrl
+with the wheel, or a trackpad's pinch, zooms about the pointer, and Shift with the wheel or a
+sideways swipe moves along the hours; a drag across the hours zooms to them, a double click on a
+stage zooms to the stage, and with the lanes focused + − and 0 zoom in, out and back to the whole
+task. On a touch screen two fingers pinch and one swipes sideways. While zoomed, a strip above
+the lanes shows the whole task and the part shown, which a drag moves or resizes. A part the
+arrow keys step to, or a message picked, comes into view. A task of five minutes or less is
+shown whole, with no zoom.
+
 **Messages, in send order**, under the lanes, picks one message, or steps through them with
 **Previous message** and **Next message**, and shows who sent it, to whom, and its text, with a
 link to its place in the thread. Over no message it is not drawn, and over one it has no steps.

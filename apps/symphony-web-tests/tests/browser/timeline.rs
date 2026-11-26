@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 mod messages;
+mod zoom;
 
 const TASK: &str = "/task/visual/in-progress";
 const SLUG: &str = "visual/in-progress";
@@ -1697,11 +1698,15 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
             shoot(&site, view, out.join(format!("timeline-{task}-{name}.png")));
         }
     }
-    // The card's example task, before (the committed client, main's build) and after (this
-    // build), on a phone and 1440 wide as the card's pictures are, and 1600 wide, where its
-    // reviewer's label is weighed closest to its room; after, a message selected.
-    let committed =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../symphony-server/client/public");
+    // The card's example task, before (the client `SYMPHONY_TIMELINE_BEFORE` names, a build's
+    // `public/`, else the committed one) and after (this build), on a phone and 1440 wide as the
+    // card's pictures are, and 1600 wide, where its reviewer's label is weighed closest to its
+    // room; after, a message selected, and zoomed.
+    let committed = std::env::var_os("SYMPHONY_TIMELINE_BEFORE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../symphony-server/client/public")
+        });
     let card = [
         (
             "wide-light",
@@ -1738,6 +1743,59 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
             view,
             &["--click", ".tl-message-mark[data-message='15396']"],
             out.join(format!("timeline-guards-after-selected-{name}.png")),
+        );
+        // Zoomed to the first review, 11:22 to 11:31, by a double click on its bar, then out
+        // three times from it, the verdict's message selected: 10:53 to 12:01 with the overview.
+        let review = "document.querySelector('.tl-lane[data-lane=stage] .tl-seg:nth-of-type(3)')";
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--eval",
+                &format!("{review}.dispatchEvent(new MouseEvent('dblclick', {{bubbles: true}}))"),
+                "--wait-for",
+                ".tl-overview",
+                "--eval",
+                &format!("{review}.focus()"),
+                "--key",
+                "-",
+                "--key",
+                "-",
+                "--key",
+                "-",
+                "--click",
+                ".tl-message-mark[data-message='15396']",
+            ],
+            out.join(format!("timeline-guards-after-zoomed-{name}.png")),
+        );
+        // The first review zoomed in once more, to the least, five minutes, where + cannot act.
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--eval",
+                &format!("{review}.dispatchEvent(new MouseEvent('dblclick', {{bubbles: true}}))"),
+                "--wait-for",
+                ".tl-overview",
+                "--click",
+                ".tl-zoom button[aria-label='Zoom in']",
+                "--wait-for",
+                ".tl-zoom button[aria-label='Zoom in']:disabled",
+            ],
+            out.join(format!("timeline-guards-after-least-{name}.png")),
+        );
+        // A mouse held mid-drag across the hours from 08:00 to 12:30, its band drawn: the
+        // pointer's events sent to the lanes, which capture none of a pointer the page made.
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--eval",
+                "(() => { Element.prototype.setPointerCapture = () => {}; const h = document.querySelector('.tl-lanes .tl-hours').getBoundingClientRect(), s = document.querySelector('.tl-lane[data-lane=stage] .tl-track').getBoundingClientRect(), lanes = document.querySelector('.tl-lanes'); const fire = (type, f) => lanes.dispatchEvent(new PointerEvent(type, {bubbles: true, clientX: h.left + f * h.width, clientY: s.top + s.height / 2, pointerType: 'mouse', button: 0, buttons: 1, pointerId: 1})); fire('pointerdown', 7 / 27.58); fire('pointermove', 9 / 27.58); fire('pointermove', 11.5 / 27.58); })()",
+                "--wait-for",
+                ".tl-band",
+            ],
+            out.join(format!("timeline-guards-after-band-{name}.png")),
         );
     }
     let site = served(&fixture());

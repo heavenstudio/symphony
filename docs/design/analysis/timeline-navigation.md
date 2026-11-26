@@ -18,9 +18,9 @@ gates, with no message bodies or machine names. The mockup reads and writes noth
 view. Nothing in the product changes with this proposal.
 
 **Built.** Slices 1 and 2 and the phone's message row and not-kept row of slice 5, by the board
-task `app/timeline-navigation`: [the timeline](../../workflow/TASKS.md#the-timeline) says the drawing as
-built. Slice 3 (zoom and move) and slice 4 with the phone's quiet row (quiet stretches, under B)
-are their own tasks, each after the one before.
+task `app/timeline-navigation`, and slice 3, zoom and move, by `app/timeline-zoom`:
+[the timeline](../../workflow/TASKS.md#the-timeline) says the drawing as built. Slice 4 with the
+phone's quiet row (quiet stretches, under B) is a task of its own.
 
 ## Today
 

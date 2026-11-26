@@ -811,7 +811,7 @@ describe("a task's timeline laid out", () => {
     expect(label(tenLetters, { room: 26.6, last: false, bar: 50 })?.from).toBe(400);
     // A bar narrower than its least drawn width pushes its label's words past it: a bar of no time
     // is drawn 14 px wide, so 70 + 4 + 14 + 6 = 94 px, from 470, so 500. A bar of 2 % is 9 px at
-    // 450, its label 5 px further: 89 px of 90. At 400 it is 8 px: 90 px of 80.
+    // 450, its label 5 px further: 85 px of 90. At 400 it is 8 px, 6 further: 86 px of 80.
     expect(label(tenLetters, { room: 20, last: false, bar: 0 })?.from).toBe(500);
     expect(label(tenLetters, { room: 20, last: false, bar: 2 })?.from).toBe(450);
     // A bar 14 px wide at 300 already takes the label's padding alone at every width.
@@ -2134,5 +2134,165 @@ describe("each stage's cost after its time", () => {
     expect(totalParts(pictures())).toEqual(["6 h 18 m so far", " · 2 review rounds · 1 bounce"]);
     expect(totalParts(pictures()).join("")).toBe(totals(pictures())[0]);
     expect(totalParts(aTimeline({ now: 60, closed: 60 }))[0]).toBe("1 m in all");
+  });
+});
+
+describe("a part of the hours shown", () => {
+  /** The pictures' hours start at 09:00 on their clock: `minutes` after it. */
+  const START = 1_794_380_400;
+  const nine = (minutes: number) => START + minutes * 60;
+  /** 12:00 to 13:00 on the pictures' clock. */
+  const NOON = { from: nine(180), to: nine(240) };
+
+  it("places every part in the view, clamped to it, and says which are outside it", () => {
+    const scale = new Scale(pictures(), NOON);
+    expect([scale.zoomed, scale.from, scale.to, scale.shown]).toEqual([
+      true,
+      nine(180),
+      nine(240),
+      3600,
+    ]);
+    // The whole hours stay the lanes' own.
+    expect([scale.start, scale.span]).toEqual([START, 22_800]);
+    expect([scale.at(nine(195)), scale.at(nine(170)), scale.at(nine(300))]).toEqual([25, 0, 100]);
+    expect(scale.width(nine(170), nine(210))).toBe(50);
+    expect(scale.place(nine(170), nine(210))).toEqual({
+      left: 0,
+      width: 50,
+      from: nine(170),
+      to: nine(210),
+      out: false,
+    });
+    expect(scale.place(nine(100), nine(120)).out).toBe(true);
+    expect(scale.place(nine(250), nine(260)).out).toBe(true);
+    // An instant at either end is in it.
+    expect([scale.shows(nine(240), nine(240)), scale.shows(nine(170), nine(180))]).toEqual([
+      true,
+      true,
+    ]);
+    // Whether a part is drawn at all is the whole hours', whatever the view.
+    expect(scale.spans(nine(100), nine(120))).toBe(true);
+    expect(scale.spans(nine(100), nine(100))).toBe(false);
+    expect(scale.spans(nine(-60), nine(-30))).toBe(false);
+    // No view, or one with no length, is the whole hours.
+    for (const whole of [
+      new Scale(pictures()),
+      new Scale(pictures(), { from: nine(9), to: nine(9) }),
+    ]) {
+      expect([whole.zoomed, whole.from, whole.to, whole.shown]).toEqual([
+        false,
+        START,
+        whole.end,
+        22_800,
+      ]);
+    }
+  });
+
+  it("marks minutes when zoomed, from a minute up, each on its own local minute", () => {
+    const labels = (view: { from: number; to: number }) =>
+      new Scale(pictures(), view).ticks(false).map((tick) => tick.label);
+    // 11:05:30 to 12:18:30: every ten minutes, from the first whole ten after the start.
+    const hour = { from: nine(125) + 30, to: nine(198) + 30 };
+    expect(labels(hour)).toEqual(["11:10", "11:20", "11:30", "11:40", "11:50", "12:00", "12:10"]);
+    const first = new Scale(pictures(), hour).ticks(false)[0];
+    expect(first?.left).toBeCloseTo(((nine(130) - hour.from) / (hour.to - hour.from)) * 100, 10);
+    // 11:10:30 to 12:10:30, begun half a minute past a whole ten: from the next whole ten, 11:10
+    // being before the hours shown.
+    expect(labels({ from: nine(130) + 30, to: nine(190) + 30 })).toEqual([
+      "11:20",
+      "11:30",
+      "11:40",
+      "11:50",
+      "12:00",
+      "12:10",
+    ]);
+    // Five minutes: every minute; three hours: every half hour; a day's hours: by the hour up.
+    expect(labels({ from: nine(60), to: nine(65) })).toEqual([
+      "10:00",
+      "10:01",
+      "10:02",
+      "10:03",
+      "10:04",
+      "10:05",
+    ]);
+    expect(labels({ from: nine(0), to: nine(180) })).toEqual([
+      "09:00",
+      "09:30",
+      "10:00",
+      "10:30",
+      "11:00",
+      "11:30",
+      "12:00",
+    ]);
+    // The whole hours keep their steps from the hour up.
+    expect(new Scale(pictures()).ticks(false).map((tick) => tick.label)).toEqual([
+      "09:00",
+      "10:00",
+      "11:00",
+      "12:00",
+      "13:00",
+      "14:00",
+      "15:00",
+    ]);
+  });
+
+  it("keeps the hours near a view's end where now is past it, and none near now in it", () => {
+    // 12:00 to 13:00, now 15:20: 13:00 is at the view's end, far from now.
+    expect(new Scale(pictures(), NOON).ticks(true).at(-1)?.label).toBe("13:00");
+    // 14:20 to 15:20, now at its end: no mark within 4 % before now.
+    const latest = new Scale(pictures(), { from: nine(320), to: nine(380) });
+    expect(latest.ticks(true).at(-1)?.label).toBe("15:10");
+  });
+
+  it("lays out the same parts at any zoom, each placed and its words fitted in the view", () => {
+    const timeline = pictures();
+    const whole = lanes(timeline);
+    const noon = lanes(timeline, undefined, NOON);
+    // The keyboard's stops and every lane's parts are the whole task's, whatever the zoom.
+    expect(stops(noon)).toBe(stops(whole));
+    expect(noon.lanes.map((lane) => [lane.key, lane.segs.length, lane.rows])).toEqual(
+      whole.lanes.map((lane) => [lane.key, lane.segs.length, lane.rows]),
+    );
+    expect(noon.gates.map((gate) => gate.spans.length)).toEqual(
+      whole.gates.map((gate) => gate.spans.length),
+    );
+    // Outside the view: ready, the first stretch of work and round 2; in it: round 1's review and
+    // the second stretch of work.
+    const stage = noon.lanes[0]?.segs ?? [];
+    expect(stage.map((seg) => seg.out)).toEqual([true, true, false, false, true, true]);
+    const review = stage[2];
+    expect([review?.left, review?.width]).toEqual([0, 45]);
+    // The second stretch of work, from 12:27 past the view's end: its words fitted to what shows.
+    const work = stage[3];
+    expect([work?.left, work?.width]).toEqual([45, 55]);
+    expect(work?.text[0]).toEqual({ text: "in progress 1 h 10 m", from: null, to: null });
+    expect(whole.lanes[0]?.segs[3]?.text[0]?.text).toBe("in progress 1 h 10 m");
+    expect(whole.lanes[0]?.segs[3]?.text[0]?.from).not.toBeNull();
+    // A verdict is said after its round's end where that end shows; round 2's ends outside.
+    const reviewer = noon.lanes.find((lane) => lane.key === "reviewer")?.segs ?? [];
+    expect(reviewer.map((seg) => seg.after?.[0].text ?? null)).toEqual([
+      null,
+      "changes",
+      null,
+      null,
+    ]);
+    expect(reviewer.map((seg) => seg.title)).toEqual(
+      whole.lanes.find((lane) => lane.key === "reviewer")?.segs.map((seg) => seg.title),
+    );
+    // Now (15:20) is past the view: no line at it; nor any tick near the end left out for it.
+    expect(noon.now).toBeNull();
+    expect(lanes(timeline, undefined, { from: nine(330), to: nine(390) }).now?.label).toBe(
+      "now 15:20",
+    );
+    const certificate = noon.gates.find((gate) => gate.name === "certificate")?.spans ?? [];
+    expect(certificate.map((span) => span.out)).toEqual([true, true, true]);
+  });
+
+  it("hatches only what of the time no run is kept of shows", () => {
+    const timeline = { ...pictures(), runs_from: nine(150) };
+    expect(lanes(timeline).notKept?.width).toBeGreaterThan(0);
+    const partly = lanes(timeline, undefined, { from: nine(120), to: nine(180) }).notKept;
+    expect([partly?.left, partly?.width]).toEqual([0, 50]);
+    expect(lanes(timeline, undefined, NOON).notKept).toBeNull();
   });
 });
