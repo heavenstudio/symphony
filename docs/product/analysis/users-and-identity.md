@@ -530,8 +530,9 @@ What a person may do is kept with the board, and in no repository
   board, beside its tasks: in the git common dir's database on a machine, in the hosted
   database on a hosted board. An admin of the board changes them from a People page or a
   command, and the board keeps each change in a log.
-- **Two boards differ.** A person can decide on one board and only read another, of the same
-  project or not.
+- **Two boards differ.** A person can decide on one board and only read another. A project has
+  one board ([boards and projects](boards-and-projects.md#one-board-for-each-project)), so two
+  boards are two projects', even two of one repository over the same folders.
 - **A clone holds nobody's sign-in.** A service's subject for a person never leaves the board.
 - **The short name is the part that is in git.** It is written where the record is: on a card's
   line and in a comment, which are files, and on a thread. So it outlives the board's row for
@@ -731,8 +732,8 @@ The place it is in, unless a name is written on it
 
 What follows:
 
-- **The map is the board's own**, as its groups are, so two boards of one project can send the
-  same folder to different groups. Its admins keep it ([below](#who-changes-settings)).
+- **The map is the board's own**, as its groups are, and maps its project's places. Its admins
+  keep it ([below](#who-changes-settings)).
 - **A name written on a card is in the file**, so a group's name is public as a person's is. A
   board with no group of that name treats the card as unnamed and falls back to the map.
 - **An agent posting a card writes nothing** in the usual case, and names a group only when the
@@ -846,7 +847,7 @@ and may not direct agents. A person who may direct agents writes as the owner do
   as that person's own are: written into the file or shown on the thread, and an ask an agent
   answers. The line carries both names, whose words they are and who passed them on.
 
-- [ ] **held-callout-block-changed** — A held comment is written after the block it was left on when it is passed on. Once that block's words change, or the block is gone, every Pass on is refused and nobody can withdraw the comment, so it stays on the page for good. What should happen to it? A: its author may withdraw it. B: whoever passes it on places it at the end of its section. C: it lapses and leaves the page. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+- [x] **held-callout-block-changed** — A held comment is written after the block it was left on when it is passed on. Once that block's words change, or the block is gone, every Pass on is refused and nobody can withdraw the comment, so it stays on the page for good. What should happen to it? A: its author may withdraw it. B: whoever passes it on places it at the end of its section. C: it lapses and leaves the page. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
   [2026-11-25 01:19] agent — Posted for the board task `app/held-on-documents-follow-ups`, a question the pass leaves open once a document moves. Nothing that depends on it is built.
 
     **Base (today).** A pass finds the block again by its words: under its own heading, else anywhere it stands once. Where they changed or are gone, the pass is refused with "the block this comment was left after has changed or is gone: nothing was written". The comment stays held, drawn where its block was, with a Pass on that is refused every time.
@@ -871,6 +872,7 @@ and may not direct agents. A person who may direct agents writes as the owner do
     - **held-on-document-waits-where** (open) asks where a held comment waits. It does not ask what happens once its block is gone.
 
     Neither decides this.
+  [2026-11-26 08:08] owner · approved — B
 
 What follows:
 
@@ -944,7 +946,7 @@ What follows:
     Neither decides this.
   [2026-11-26 08:05] owner · approved — A
 
-- [ ] **held-on-document-waits-where** — When someone who may not direct agents comments on a document, their words wait for someone to pass them on. Where do you see them waiting? A: on the document's page alone, and those who may pass them on are sent a notice. B: also in the review queue, beside the cards waiting for you. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+- [x] **held-on-document-waits-where** — When someone who may not direct agents comments on a document, their words wait for someone to pass them on. Where do you see them waiting? A: on the document's page alone, and those who may pass them on are sent a notice. B: also in the review queue, beside the cards waiting for you. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
   [2026-11-24 21:40] agent — Posted for the board task `app/held-words-on-documents`, a question your A on **words-without-agent-reach** leaves open for documents. Nothing that depends on it is built.
 
     **Base (today).** A held message on a task's thread waits on you as an agent's question does, where your questions show, until someone passes it on. A document has no thread, so a held comment has no such line.
@@ -964,6 +966,7 @@ What follows:
     - **notice-sender** (B) says the page and the Mac app show every notice. It does not say where on the page a held comment waits.
 
     Neither decides this.
+  [2026-11-26 08:14] owner · approved — B
 
 ### The note beside a verdict
 
@@ -1052,8 +1055,9 @@ What follows:
 - **A preference spends someone's credits.** A costlier model for the board's shared agents runs
   on their host's credits. What a host may limit is a [later round's](#later-rounds).
 - **Making a value the project's reaches beyond the board.** It changes the committed file every
-  clone and every board of the project reads. With one board for a project, that board's say is
-  the whole of it; several boards for one project is a concept of its own.
+  clone of the project reads. A project has one board
+  ([boards and projects](boards-and-projects.md#one-board-for-each-project)), so that board's say
+  is the whole of it.
 
 - [r] **settings-who-changes** — Today you change every setting the Settings page offers. Its concept, now on main, keeps a change in the board's store, where it holds at once, and a control beside it makes the value the project's, a commit. It left to this concept who may do that once there are several people. A: the group the Settings page maps to; the page is a place like a folder of documents, so any member of its group changes a stored value and makes it the project's, and no power is added. B: the board's admins, as with who is on the board. C: a power of its own, to configure, given apart from deciding. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who changes settings]]
   [2026-11-22 20:13] agent — Posted for the board task `app/users-and-identity`, the question the settings concept (`app/settings-page`) left to this one. A concept: nothing is built by this card.
@@ -1394,7 +1398,7 @@ people on a board there are two kinds:
 On one machine with one person every agent is both at once: started by them, on their machine,
 directed by them. Nothing changes there.
 
-- [ ] **machine-agents-whose** — On a board that names other people, every agent on it still runs on your machine, on your credits: each is yours, and those holding a task's role are the board's shared agents too. What is left is whose words reach your agents there. A: every session on your machine is both, so anyone the board lets direct agents reaches any of them, as today. B: only a session holding a role on a task (its orchestrator, executor or reviewer) is shared; any other session is yours alone, and someone else's words to it come to you, not to the agent. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Agents beside people]]
+- [x] **machine-agents-whose** — On a board that names other people, every agent on it still runs on your machine, on your credits: each is yours, and those holding a task's role are the board's shared agents too. What is left is whose words reach your agents there. A: every session on your machine is both, so anyone the board lets direct agents reaches any of them, as today. B: only a session holding a role on a task (its orchestrator, executor or reviewer) is shared; any other session is yours alone, and someone else's words to it come to you, not to the agent. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Agents beside people]]
   [2026-11-24 21:45] agent — Posted for the board task `app/personal-agents`, step 5's last part. A concept: nothing is built by this card.
 
     **Base (today).** Every agent that reaches a board runs on that board's machine: the board's commands write its database there, and no command reaches a hosted board yet. So every session is yours. Someone the board named who may speak and direct agents (`bo`) reaches every session as you do: on a task's thread, by an ask or a comment, and through the quick chat, which goes to whoever holds the chat.
@@ -1418,6 +1422,7 @@ directed by them. Nothing changes there.
     - **words-without-agent-reach** (A) holds the words of someone who may not direct agents. It is about whose words are held, not which agents the words of someone who may reach.
 
     None of them decides this.
+  [2026-11-26 08:06] owner · approved — A
 
 Left for a later round: who hosts a board's shared agents and what a host may limit, beside the
 proposed execution providers, where a project's provider owns its runtime identity and
@@ -1630,6 +1635,3 @@ Not carded yet.
 - Shared agents: whose machine and credits host them, what a host may limit, and how an agent on
   another machine proves to a board its handle and, for a personal agent, whose it is.
 - Removing a person: their open asks, their unanswered cards, their agents' sessions.
-- Several boards for one project: nothing proposed here ties people to a project, and what else
-  a second board needs, among it who makes a value the project's for every board, is a concept
-  of its own.

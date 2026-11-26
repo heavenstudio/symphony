@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="476" viewBox="0 0 760 476" role="img" aria-labelledby="title desc">
+<title id="title">Two projects in one repository</title>
+<desc id="desc">Two ways two projects sit in one repository. Over folders of their own: a game folder and a site folder, each with its own project file, documents and skills, and each project with its own settings, people, tasks, board and decision queue at its own address. Over the same folders: one folder with its documents and skills, worked over by two projects, game and site, each again with its own settings, people, tasks, board and decision queue at its own address; where they share a folder a command names its project by its id. Under both the projects share the repository's history, its branches and its landing.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.s{font-size:13px}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.blue{fill:var(--primary)}
+.link{stroke:var(--muted-foreground);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+</style>
+<rect class="page" width="760" height="476"/>
+<text class="t" x="24" y="34">Two projects in one repository</text>
+
+<rect class="card" x="24" y="56" width="352" height="318" rx="8"/>
+<text class="h" x="38" y="82">Over folders of their own</text>
+<rect class="inner" x="38" y="96" width="324" height="264" rx="5"/>
+<text class="m" x="50" y="116">one repository</text>
+<rect class="card" x="50" y="128" width="146" height="86" rx="5"/>
+<text class="mono" x="60" y="148">game/</text>
+<text class="m s" x="60" y="168">its project file,</text>
+<text class="m s" x="60" y="186">documents, skills</text>
+<rect class="card" x="204" y="128" width="146" height="86" rx="5"/>
+<text class="mono" x="214" y="148">site/</text>
+<text class="m s" x="214" y="168">its project file,</text>
+<text class="m s" x="214" y="186">documents, skills</text>
+<path class="link" d="M123,214 L123,238"/>
+<path class="link" d="M277,214 L277,238"/>
+<rect class="new" x="50" y="238" width="146" height="110" rx="5"/>
+<text class="mono blue" x="60" y="258">/game/</text>
+<text class="m s" x="60" y="280">its settings,</text>
+<text class="m s" x="60" y="298">people, tasks,</text>
+<text class="m s" x="60" y="316">board and</text>
+<text class="m s" x="60" y="334">decision queue</text>
+<rect class="new" x="204" y="238" width="146" height="110" rx="5"/>
+<text class="mono blue" x="214" y="258">/site/</text>
+<text class="m s" x="214" y="280">its settings,</text>
+<text class="m s" x="214" y="298">people, tasks,</text>
+<text class="m s" x="214" y="316">board and</text>
+<text class="m s" x="214" y="334">decision queue</text>
+
+<rect class="card" x="384" y="56" width="352" height="318" rx="8"/>
+<text class="h" x="398" y="82">Over the same folders</text>
+<rect class="inner" x="398" y="96" width="324" height="264" rx="5"/>
+<text class="m" x="410" y="116">one repository</text>
+<rect class="card" x="410" y="128" width="300" height="86" rx="5"/>
+<text class="mono" x="420" y="148">one folder</text>
+<text class="m s" x="420" y="168">documents, skills, recipes,</text>
+<text class="m s" x="420" y="186">shared by both projects</text>
+<path class="link" d="M483,214 L483,238"/>
+<path class="link" d="M637,214 L637,238"/>
+<rect class="new" x="410" y="238" width="146" height="110" rx="5"/>
+<text class="mono blue" x="420" y="258">/game/</text>
+<text class="m s" x="420" y="280">its settings,</text>
+<text class="m s" x="420" y="298">people, tasks,</text>
+<text class="m s" x="420" y="316">board and</text>
+<text class="m s" x="420" y="334">decision queue</text>
+<rect class="new" x="564" y="238" width="146" height="110" rx="5"/>
+<text class="mono blue" x="574" y="258">/site/</text>
+<text class="m s" x="574" y="280">its settings,</text>
+<text class="m s" x="574" y="298">people, tasks,</text>
+<text class="m s" x="574" y="316">board and</text>
+<text class="m s" x="574" y="334">decision queue</text>
+
+<rect class="card" x="24" y="388" width="712" height="74" rx="8"/>
+<text x="40" y="412">Under both, the projects share the repository's history, its branches and its landing.</text>
+<text x="40" y="432">Over the same folders, a command there names its project by its id. Where such a project</text>
+<text x="40" y="452">writes its own settings, and whose queue holds a shared card, are later rounds.</text>
+</svg>
