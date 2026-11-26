@@ -1568,7 +1568,7 @@ Each step can ship alone, and a machine with one person sees none of them.
    credentials: until then no record ties a session to a person, as one claimed by hand would say
    what no session on the machine is.
 
-- [ ] **held-ask** — A person who may speak and may not direct agents is refused an ask about a document, its follow-up and the `+` sheet's chat, since asking is directing an agent. They can already leave a held question after any block, which an agent answers once someone passes it on. Should their ask also be held and passed on like a comment? A: no, it stays refused. B: held, drawn in the asks panel, and passed on as an ask under both names. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#The way from one owner]]
+- [x] **held-ask** — A person who may speak and may not direct agents is refused an ask about a document, its follow-up and the `+` sheet's chat, since asking is directing an agent. They can already leave a held question after any block, which an agent answers once someone passes it on. Should their ask also be held and passed on like a comment? A: no, it stays refused. B: held, drawn in the asks panel, and passed on as an ask under both names. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#The way from one owner]]
   [2026-11-25 08:39] agent — Posted for the board task `app/held-asks-on-documents`, a question your A on **words-without-agent-reach** leaves open for asks. Nothing that depends on it is built. Under either answer the document's page draws Ask and Follow up only for someone who may ask.
 
     **Base (today).** An ask is a question to the agent that answers chat. It reaches that agent at once and changes no file. Someone who may speak and may not direct agents is refused it, its follow-up and the `+` sheet's chat. Their question after a block is held: everyone reading the page sees it, those who may pass it on are told, and once passed it becomes an ask an agent answers, under both names.
@@ -1589,6 +1589,7 @@ Each step can ship alone, and a machine with one person sees none of them.
     - **held-on-document-agent-told** and **held-on-document-waits-where** (open) are about held comments, not asks.
 
     Neither decides this.
+  [2026-11-26 08:04] owner · approved — A
 
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
    saves through the same writes as local ones. Then the Symphony's own sign-in service, a
