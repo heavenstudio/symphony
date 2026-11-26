@@ -9,8 +9,10 @@ the plugin kit, the headless Chrome driver, the optional GitHub issue exchange
 takes (`crates/symphony-notice`, [NOTICES](docs/engineering/NOTICES.md)), the plugins that send it
 by Slack (`crates/symphony-notice-slack`, [NOTICE_SLACK](docs/operations/NOTICE_SLACK.md)), by
 email (`crates/symphony-notice-email`, [NOTICE_EMAIL](docs/operations/NOTICE_EMAIL.md)) and by
-WhatsApp (`crates/symphony-notice-whatsapp`, [NOTICE_WHATSAPP](docs/operations/NOTICE_WHATSAPP.md))
-and the tests' CPU meters and waits (`crates/test-time`). The app's formats and operating
+WhatsApp (`crates/symphony-notice-whatsapp`, [NOTICE_WHATSAPP](docs/operations/NOTICE_WHATSAPP.md)),
+the Symphony's own sign-in service in front of the server (`crates/symphony-sign-in`,
+[SIGN_IN_SERVICE](docs/operations/SIGN_IN_SERVICE.md)) and the tests' CPU meters and waits
+(`crates/test-time`). The app's formats and operating
 contract live in [docs/](docs/README.md). A consuming project owns its landing policy and
 shared-service safeguards.
 
