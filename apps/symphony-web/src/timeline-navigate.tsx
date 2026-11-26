@@ -83,7 +83,8 @@ export interface Navigation {
   set: (view: View | null, say?: boolean) => void;
 }
 
-const percent = (value: number) => `${fixed(value, 2)}%`;
+/** A share in percent as a style writes it, to two places: "12.5%". */
+export const percent = (value: number) => `${fixed(value, 2)}%`;
 /** A mark's place and its tone, as a style. */
 const marked = (tone: string, left: number, width?: number) =>
   ({

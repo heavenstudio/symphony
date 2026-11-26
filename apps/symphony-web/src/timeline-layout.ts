@@ -32,7 +32,7 @@
 import { field } from "./shared";
 import { type Carried, carriedFigure, carriedWords } from "./timeline-cost";
 import { type Cut, Cuts } from "./timeline-cut";
-import { address, endpointLane, readHistory } from "./timeline-history";
+import { address, endpointLane, isText, readHistory } from "./timeline-history";
 import { type Quiet, quietStretches } from "./timeline-quiet";
 import type {
   Claim,
@@ -296,6 +296,11 @@ export function date(at: number, offset: number): string {
   return `${twoDigits(month)}-${twoDigits(day)}`;
 }
 
+/** `at` as its day and its clock time say it, each as `dateOf` and `clockOf` do: "11-19 11:09". */
+export function stampOf(timeline: TaskTimeline, at: number): string {
+  return `${dateOf(timeline, at)} ${clockOf(timeline, at)}`;
+}
+
 /** `at` on the server's clock as it read then, its offset that instant's (a change of summer time
  * between two steps reads each at its own). */
 export function clockOf(timeline: TaskTimeline, at: number): string {
@@ -337,6 +342,10 @@ export function capitalised(word: string): string {
   return first.toUpperCase() + rest.join("");
 }
 
+/** The muted tone: an instant's in the list, and a status's, a gate state's or a verdict's that
+ * says none of the others. */
+const MUTED = "muted-foreground";
+
 /** The theme token a board status is drawn in. */
 export function statusTone(status: string): string {
   switch (status) {
@@ -356,7 +365,7 @@ export function statusTone(status: string): string {
     case "design":
       return "decision";
     default:
-      return "muted-foreground";
+      return MUTED;
   }
 }
 
@@ -373,20 +382,21 @@ const GATE_TONES: Record<GateState, string> = {
   missing: "question",
   waived: "resolved",
   held: "dislike",
-  unknown: "muted-foreground",
+  unknown: MUTED,
 };
 
 const VERDICT_TONES: Record<RoundVerdict, string> = {
   approved: "like",
   changes: "dislike",
-  other: "muted-foreground",
+  other: MUTED,
 };
 
 export const resultTone = (result: RunResult) => RESULT_TONES[result];
 export const gateTone = (state: GateState) => GATE_TONES[state];
 export const verdictTone = (verdict: RoundVerdict) => VERDICT_TONES[verdict];
 
-function closed(stage: Stage): boolean {
+/** Whether `stage` is a close (CLOSED): an instant, with no time of its own. */
+export function closed(stage: Pick<Stage, "status">): boolean {
   return CLOSED.includes(stage.status);
 }
 
@@ -447,7 +457,7 @@ export function totals(timeline: TaskTimeline): [string, string | null] {
  * none where it keeps every run of the task. */
 function keptFrom(timeline: TaskTimeline): string | null {
   const from = timeline.runs_from ?? null;
-  return from === null ? null : `${dateOf(timeline, from)} ${clockOf(timeline, from)}`;
+  return from === null ? null : stampOf(timeline, from);
 }
 
 /** What the timeline cannot show: the runs the recorder's rotated history let go, before
@@ -501,26 +511,32 @@ export interface Row {
   quiet?: string;
 }
 
+/** A row of the list that begins at `start`, at its clock time; its day is set once the list is
+ * whole (`rows`). An instant (`event`) has no time, bar or word of its own. */
+function listRow(
+  timeline: TaskTimeline,
+  start: number,
+  sub: boolean,
+  event: boolean,
+  tone: string,
+  label: string,
+  title: string,
+  took: string | null = null,
+  bar: Bar | null = null,
+  word: [string, string] | null = null,
+): Row {
+  const at = clockOf(timeline, start);
+  return { start, day: null, at, sub, event, tone, label, took, bar, word, title };
+}
+
 /** The phone's row at `runs_from`, from which the builds and tests are kept: none where they all
  * are. */
 export function keptRow(timeline: TaskTimeline): Row | null {
   const from = timeline.runs_from ?? null;
   const title = keptTitle(timeline);
   if (from === null || title === null) return null;
-  return {
-    start: from,
-    day: null,
-    at: clockOf(timeline, from),
-    sub: true,
-    event: true,
-    tone: "muted-foreground",
-    label: "Builds and tests kept from here on",
-    took: null,
-    bar: null,
-    word: null,
-    title,
-    kept: true,
-  };
+  const label = "Builds and tests kept from here on";
+  return { ...listRow(timeline, from, true, true, MUTED, label, title), kept: true };
 }
 
 /** Why a quiet stretch is quiet, as its band and its row say it: the status the task held through
@@ -534,10 +550,9 @@ export function quietWhy(quiet: Quiet): string {
 /** A quiet stretch as its row and its band say it: its length, then its ends, the end's day where
  * it is another ("10 h 54 m quiet, 14:03 → 11-20 00:57"), from `day` where given. */
 export function quietSaid(timeline: TaskTimeline, quiet: Quiet, day = false): string {
-  const at = (time: number) => `${dateOf(timeline, time)} ${clockOf(timeline, time)}`;
   const ends = dateOf(timeline, quiet.from) === dateOf(timeline, quiet.to);
-  const from = day ? at(quiet.from) : clockOf(timeline, quiet.from);
-  const to = ends && !day ? clockOf(timeline, quiet.to) : at(quiet.to);
+  const from = day ? stampOf(timeline, quiet.from) : clockOf(timeline, quiet.from);
+  const to = ends && !day ? clockOf(timeline, quiet.to) : stampOf(timeline, quiet.to);
   return `${took(quiet.to - quiet.from)} quiet, ${from} → ${to}`;
 }
 
@@ -547,17 +562,7 @@ export function quietRow(timeline: TaskTimeline, quiet: Quiet): Row {
   const label = quietSaid(timeline, quiet);
   const why = quietWhy(quiet);
   return {
-    start: quiet.from,
-    day: null,
-    at: clockOf(timeline, quiet.from),
-    sub: false,
-    event: true,
-    tone: "muted-foreground",
-    label,
-    took: null,
-    bar: null,
-    word: null,
-    title: `${label}: ${why}`,
+    ...listRow(timeline, quiet.from, false, true, MUTED, label, `${label}: ${why}`),
     quiet: capitalised(why),
   };
 }
@@ -596,7 +601,7 @@ function stageCost(timeline: TaskTimeline, costs: Costs | undefined, index: numb
   const when = (at: number) =>
     dateOf(timeline, at) === dateOf(timeline, start)
       ? clockOf(timeline, at)
-      : `${dateOf(timeline, at)} ${clockOf(timeline, at)}`;
+      : stampOf(timeline, at);
   const from = (other: number) => when(timeline.stages[other]?.from ?? start);
   return {
     figure: carriedFigure(held),
@@ -606,7 +611,7 @@ function stageCost(timeline: TaskTimeline, costs: Costs | undefined, index: numb
 
 /** `x` held between `least` and `most`, as Rust's `f64::clamp` (which panics where `least` is
  * over `most`: here `most` wins). */
-function clamp(x: number, least: number, most: number): number {
+export function clamp(x: number, least: number, most: number): number {
   return Math.min(Math.max(x, least), most);
 }
 
@@ -666,25 +671,17 @@ function stageRow(
   if (verdict !== null && stage.approved !== true) {
     word = [verdictWord(verdict), verdictTone(verdict)];
   } else if ((stage.to ?? null) === null && !ended) {
-    word = ["now", "muted-foreground"];
+    word = ["now", MUTED];
   }
   const to = stage.to ?? null;
   const until = to === null ? " until now" : ` to ${clockOf(timeline, to)}`;
   const by = stage.by ?? null;
   const moved = by === null ? "" : `, moved there by ${by}`;
+  const title = `${label}: from ${clockOf(timeline, stage.from)}${until}${moved}${cost.words}`;
+  const length = ended ? null : took(seconds);
   return {
-    start: stage.from,
-    day: null,
-    at: clockOf(timeline, stage.from),
-    sub: false,
-    event: false,
-    tone,
-    title: `${label}: from ${clockOf(timeline, stage.from)}${until}${moved}${cost.words}`,
-    label,
-    took: ended ? null : took(seconds),
+    ...listRow(timeline, stage.from, false, false, tone, label, title, length, bar, word),
     ...(cost.figure === null ? {} : { cost: cost.figure }),
-    bar,
-    word,
   };
 }
 
@@ -742,24 +739,15 @@ export function runRow(run: Run, timeline: TaskTimeline, share: Share): Row {
   const word: [string, string] | null =
     run.phase !== "build" || run.result !== "green" ? [resultWord(run.result), tone] : null;
   const started = run.started ?? null;
-  return {
-    start: run.queued,
-    day: null,
-    at: clockOf(timeline, run.queued),
-    sub: true,
-    event: false,
-    tone,
-    label: runLabel(run, wait),
-    took: lasted(started === null ? wait : running),
-    bar: {
-      wait: share(wait),
-      waitTone: "primary",
-      work: share(running),
-      running: run.result === "running",
-    },
-    word,
-    title: runTitle(run, now),
+  const bar = {
+    wait: share(wait),
+    waitTone: "primary",
+    work: share(running),
+    running: run.result === "running",
   };
+  const length = lasted(started === null ? wait : running);
+  const [label, title] = [runLabel(run, wait), runTitle(run, now)];
+  return listRow(timeline, run.queued, true, false, tone, label, title, length, bar, word);
 }
 
 /** What a gate change's detail says moved it, when it opens with a short reason before a colon:
@@ -798,19 +786,8 @@ export function gateChanges(timeline: TaskTimeline): Row[] {
       } else {
         label = `${name} ${span.state}`;
       }
-      rows.push({
-        start: span.from,
-        day: null,
-        at: clockOf(timeline, span.from),
-        sub: true,
-        event: true,
-        tone: gateTone(span.state),
-        title: span.detail === "" ? label : span.detail,
-        label,
-        took: null,
-        bar: null,
-        word: null,
-      });
+      const title = span.detail === "" ? label : span.detail;
+      rows.push(listRow(timeline, span.from, true, true, gateTone(span.state), label, title));
     }
   }
   return rows;
@@ -892,24 +869,15 @@ export function placeRow(stretch: PlaceStretch, timeline: TaskTimeline, share: S
   const seconds = stretch.to - stretch.from;
   const length = took(seconds);
   const open = timeline.closed === undefined || timeline.closed === null;
-  return {
-    start: stretch.from,
-    day: null,
-    at: clockOf(timeline, stretch.from),
-    sub: true,
-    event: false,
-    tone: statusTone(stretch.status),
-    label: stretch.label,
-    took: length,
-    bar: {
-      wait: 0,
-      waitTone: "primary",
-      work: share(seconds),
-      running: open && stretch.to === timeline.now,
-    },
-    word: null,
-    title: stretchTitle(stretch, length, (at) => clockOf(timeline, at)),
+  const bar = {
+    wait: 0,
+    waitTone: "primary",
+    work: share(seconds),
+    running: open && stretch.to === timeline.now,
   };
+  const title = stretchTitle(stretch, length, (at) => clockOf(timeline, at));
+  const tone = statusTone(stretch.status);
+  return listRow(timeline, stretch.from, true, false, tone, stretch.label, title, length, bar);
 }
 
 /**
@@ -958,19 +926,8 @@ export function rows(timeline: TaskTimeline, costs?: Costs): Row[] {
   });
   listed.push(...under.slice(next));
   if (timeline.history) {
-    const instant = (start: number, label: string, title = label): Row => ({
-      start,
-      label,
-      title,
-      day: null,
-      at: clockOf(timeline, start),
-      sub: true,
-      event: true,
-      tone: "muted-foreground",
-      took: null,
-      bar: null,
-      word: null,
-    });
+    const instant = (start: number, label: string, title = label) =>
+      listRow(timeline, start, true, true, MUTED, label, title);
     for (const role of timeline.history.roles.filter((r) => r.role === "orchestrator")) {
       const detail = `${role.by} holds orchestrator; source ${role.source}${role.uncertain ? "; uncertain boundaries" : ""}`;
       listed.push(instant(role.from, `Orchestrator: ${role.by}`, detail));
@@ -1194,6 +1151,23 @@ export interface Seg extends Placed {
   stop: boolean;
 }
 
+/** A segment at `placed`, its words starting past `before` where the segment before reaches into
+ * it, the keyboard stopping at it unless `stop` says not, in its lane's first row unless `row`
+ * says another. */
+function seg(
+  placed: Placed,
+  tone: string,
+  look: Look,
+  text: Fit[],
+  before: number | undefined,
+  title: string,
+  after: [Fit, string, Room] | null = null,
+  stop = true,
+  row = 0,
+): Seg {
+  return { ...placed, tone, look, text, ...insetOf(before), after, row, title, stop };
+}
+
 /** A lane of the wide view: its key (its row's `data-lane`), its name, who worked in it (a runs
  * lane: its counts), how many rows its segments take, and its segments. */
 export interface Lane {
@@ -1205,6 +1179,11 @@ export interface Lane {
    * lane and the board's and others', on a timeline with messages. */
   rail: boolean;
   segs: Seg[];
+}
+
+/** A lane of `segs` in `rows` rows, with no rail until the lanes are all known (`lanes`). */
+function lane(key: string, name: string, segs: Seg[], who = "", rows = 1): Lane {
+  return { key, name, who, rows, rail: false, segs };
 }
 
 /** Where the recorder keeps no runs of the task: from its making to `runs_from`, in percent of
@@ -1570,18 +1549,15 @@ function stageSegs(timeline: TaskTimeline, scale: Scale, costs?: Costs): Seg[] {
     const length = took(to - stage.from);
     const cost = stageCost(timeline, costs, index);
     const spent = cost.figure === null ? "" : ` ${cost.figure}`;
-    segs.push({
-      ...placed,
-      tone: statusTone(stage.status),
-      look: approved ? "waiting" : "solid",
-      // Its word, its time and its cost; else its time and its cost; else its time alone.
-      text: fittedFirst([`${word} ${length}${spent}`, `${length}${spent}`, length], width, before),
-      ...insetOf(before),
-      after: null,
-      row: 0,
-      title: `${word} ${length}${spent}, from ${scale.clock(stage.from)} to ${scale.clock(to)}${cost.words}`,
-      stop: true,
-    });
+    // Its word, its time and its cost; else its time and its cost; else its time alone.
+    const text = fittedFirst(
+      [`${word} ${length}${spent}`, `${length}${spent}`, length],
+      width,
+      before,
+    );
+    const title = `${word} ${length}${spent}, from ${scale.clock(stage.from)} to ${scale.clock(to)}${cost.words}`;
+    const tone = statusTone(stage.status);
+    segs.push(seg(placed, tone, approved ? "waiting" : "solid", text, before, title));
   }
   return segs;
 }
@@ -1596,19 +1572,9 @@ function placeSegs(timeline: TaskTimeline, scale: Scale, key: "phase" | "state")
     const before = past(prev, placed);
     prev = placed;
     const length = took(stretch.to - stretch.from);
-    return [
-      {
-        ...placed,
-        tone: statusTone(stretch.status),
-        look: "solid",
-        text: fitted(`${stretch.label} ${length}`, length, width, before),
-        ...insetOf(before),
-        after: null,
-        row: 0,
-        title: stretchTitle(stretch, length, (at) => scale.clock(at)),
-        stop: true,
-      },
-    ];
+    const text = fitted(`${stretch.label} ${length}`, length, width, before);
+    const title = stretchTitle(stretch, length, (at) => scale.clock(at));
+    return [seg(placed, statusTone(stretch.status), "solid", text, before, title)];
   });
 }
 
@@ -1624,17 +1590,8 @@ function claimSegs(timeline: TaskTimeline, scale: Scale, one: boolean): Seg[] {
     const length = took(to - claim.from);
     const word = one ? (index === 0 ? "claimed" : "") : claim.by;
     const long = word === "" ? length : `${word} ${length}`;
-    return {
-      ...placed,
-      tone: "primary",
-      look: "solid",
-      text: fitted(long, length, width, before),
-      ...insetOf(before),
-      after: null,
-      row: 0,
-      title: `${claim.by} held it ${length}, from ${scale.clock(claim.from)} to ${scale.clock(to)}`,
-      stop: true,
-    };
+    const title = `${claim.by} held it ${length}, from ${scale.clock(claim.from)} to ${scale.clock(to)}`;
+    return seg(placed, "primary", "solid", fitted(long, length, width, before), before, title);
   });
 }
 
@@ -1675,32 +1632,27 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
     if (scale.spans(round.from, taken ?? to) || taken === null) {
       const placed = scale.place(round.from, taken ?? to);
       const before = past(segs[segs.length - 1], placed);
-      segs.push({
-        ...placed,
-        tone: "question",
-        look: "waiting",
-        text: taken === null ? fitted(name, "", waiting, before) : [],
-        ...insetOf(taken === null ? before : undefined),
-        after: taken === null ? after : null,
-        row: 0,
-        title,
-        stop: taken === null,
-      });
+      // A wait its reviewer's time follows is only drawn: that part says all of the round.
+      segs.push(
+        taken === null
+          ? seg(
+              placed,
+              "question",
+              "waiting",
+              fitted(name, "", waiting, before),
+              before,
+              title,
+              after,
+            )
+          : seg(placed, "question", "waiting", [], undefined, title, null, false),
+      );
     }
     if (taken !== null) {
       const placed = scale.place(taken, to);
       const before = past(segs[segs.length - 1], placed);
-      segs.push({
-        ...placed,
-        tone: "question",
-        look: "solid",
-        text: fitted(name, "", width, before),
-        ...insetOf(before),
-        after,
-        row: 0,
-        title,
-        stop: true,
-      });
+      segs.push(
+        seg(placed, "question", "solid", fitted(name, "", width, before), before, title, after),
+      );
     }
   });
   return segs;
@@ -1743,29 +1695,13 @@ function runSegs(runs: Run[], scale: Scale): [Seg[], number] {
     const title = runTitle(run, now);
     const queued = scale.place(run.queued, started);
     const queue = queued.width;
-    segs.push({
-      ...queued,
-      tone: "primary",
-      look: "waiting",
-      text: began === null ? barFit(said, queue) : [],
-      after: null,
-      row,
-      title,
-      stop: began === null,
-    });
+    const text = began === null ? barFit(said, queue) : [];
+    segs.push(seg(queued, "primary", "waiting", text, undefined, title, null, began === null, row));
     if (began !== null) {
       const placed = scale.place(began, run.ended ?? now);
-      const width = placed.width;
-      segs.push({
-        ...placed,
-        tone: resultTone(run.result),
-        look: run.result === "running" ? "running" : "solid",
-        text: barFit(said, width),
-        after: null,
-        row,
-        title,
-        stop: true,
-      });
+      const look = run.result === "running" ? "running" : "solid";
+      const text = barFit(said, placed.width);
+      segs.push(seg(placed, resultTone(run.result), look, text, undefined, title, null, true, row));
     }
   });
   return [segs, count];
@@ -1839,29 +1775,13 @@ export function lanes(
     ),
   );
   const one = !executors.includes(", ");
-  const drawn: Lane[] = [
-    {
-      key: "stage",
-      name: "Stage",
-      who: "",
-      rows: 1,
-      rail: false,
-      segs: stageSegs(timeline, scale, costs),
-    },
-  ];
+  const drawn: Lane[] = [lane("stage", "Stage", stageSegs(timeline, scale, costs))];
   if ((timeline.places ?? []).length > 0) {
     for (const [key, name] of [
       ["phase", "Phase"],
       ["state", "State"],
     ] as const) {
-      drawn.push({
-        key,
-        name,
-        who: "",
-        rows: 1,
-        rail: false,
-        segs: placeSegs(timeline, scale, key),
-      });
+      drawn.push(lane(key, name, placeSegs(timeline, scale, key)));
     }
   }
   if (timeline.history) {
@@ -1877,46 +1797,16 @@ export function lanes(
       const placed = places[index] as Placed;
       const width = placed.width;
       const before = past(places[index - 1], placed);
-      return {
-        ...placed,
-        tone: "resolved",
-        look: "waiting",
-        text: fitted(role.by, "", width, before),
-        ...insetOf(before),
-        after: null,
-        row: 0,
-        title: `${role.by} held orchestrator from ${role.from} to ${role.to ?? "open"}; source ${role.source}${role.uncertain ? "; uncertain boundaries" : ""}; not continuous work or connection`,
-        stop: true,
-      };
+      const title = `${role.by} held orchestrator from ${role.from} to ${role.to ?? "open"}; source ${role.source}${role.uncertain ? "; uncertain boundaries" : ""}; not continuous work or connection`;
+      return seg(placed, "resolved", "waiting", fitted(role.by, "", width, before), before, title);
     });
-    drawn.push({
-      key: "orchestrator",
-      name: "Orchestrator",
-      who: "recorded role holds",
-      rows: 1,
-      rail: false,
-      segs,
-    });
+    drawn.push(lane("orchestrator", "Orchestrator", segs, "recorded role holds"));
   }
   if (timeline.claims.length > 0) {
-    drawn.push({
-      key: "executor",
-      name: "Executor",
-      who: executors,
-      rows: 1,
-      rail: false,
-      segs: claimSegs(timeline, scale, one),
-    });
+    drawn.push(lane("executor", "Executor", claimSegs(timeline, scale, one), executors));
   }
   if (timeline.rounds.length > 0) {
-    drawn.push({
-      key: "reviewer",
-      name: "Reviewer",
-      who: reviewers,
-      rows: 1,
-      rail: false,
-      segs: roundSegs(timeline, scale),
-    });
+    drawn.push(lane("reviewer", "Reviewer", roundSegs(timeline, scale), reviewers));
   }
   if (timeline.history?.messages.length) {
     for (const [role, name] of [
@@ -1924,26 +1814,19 @@ export function lanes(
       ["reviewer", "Reviewer"],
     ] as const) {
       if (
-        !drawn.some((lane) => lane.key === role) &&
+        !drawn.some((other) => other.key === role) &&
         timeline.history.messages.some(
           (m) =>
             endpointLane(m.from, m.sender) === role || endpointLane(m.to, m.recipient) === role,
         )
       ) {
-        drawn.push({
-          key: role,
-          name,
-          who: "holder unknown",
-          rows: 1,
-          rail: false,
-          segs: [],
-        });
+        drawn.push(lane(role, name, [], "holder unknown"));
       }
     }
-    drawn.push({ key: "other", name: "Board & others", who: "", rows: 1, rail: false, segs: [] });
+    drawn.push(lane("other", "Board & others", []));
     // Every lane a message can start or end at carries the line its ticks and arrows are drawn
     // on, whether or not one starts there.
-    for (const lane of drawn) lane.rail = RAILS.includes(lane.key);
+    for (const each of drawn) each.rail = RAILS.includes(each.key);
   }
   const builds = timeline.runs.filter((run) => run.phase === "build");
   const tests = timeline.runs.filter((run) => run.phase !== "build");
@@ -1953,7 +1836,7 @@ export function lanes(
   ] as const) {
     if (runs.length === 0) continue;
     const [segs, count] = runSegs(runs, scale);
-    drawn.push({ key, name, who: runCounts(runs), rows: count, rail: false, segs });
+    drawn.push(lane(key, name, segs, runCounts(runs), count));
   }
   const [breaks, ticks] = breaksOf(timeline, scale, scale.ticks(open), cut);
   return {
@@ -2014,7 +1897,6 @@ export function showAll(steps: number): string {
 
 // The read's guard: what serde reads of `/api/task-timeline`.
 
-const isText = (value: unknown): value is string => typeof value === "string";
 const isNumber = (value: unknown): value is number => typeof value === "number";
 /** As serde reads an `Option`: absent and `null` are none. */
 const absent = (value: unknown): value is undefined | null => value === undefined || value === null;

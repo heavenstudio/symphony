@@ -81,9 +81,9 @@ import {
   trimmed,
   verdictTone,
   verdictWord,
+  WIDTH_RULES,
   WIDTHS,
   waited,
-  WIDTH_RULES,
   widthFor,
 } from "./timeline-layout";
 import { type Quiet, quietStretches } from "./timeline-quiet";
@@ -1758,7 +1758,9 @@ describe("a task's timeline laid out", () => {
       expect(WIDTH_RULES).toContain(
         `@container (width<=${width - 1}.5px){.tl-from-${width}{display:none}}`,
       );
-      expect(WIDTH_RULES).toContain(`@container (width>=${width}px){.tl-to-${width}{display:none}}`);
+      expect(WIDTH_RULES).toContain(
+        `@container (width>=${width}px){.tl-to-${width}{display:none}}`,
+      );
     }
     expect(WIDTH_RULES.match(/@container /g)).toHaveLength(2 * WIDTHS.length);
     expect(WIDTH_RULES.match(/\{display:none\}\}/g)).toHaveLength(2 * WIDTHS.length);

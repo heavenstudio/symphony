@@ -83,6 +83,7 @@ import {
   type LanesHandlers,
   type Navigation,
   OverviewStrip,
+  percent,
   type QuietSwitch,
   sayAgain,
   useNavigation,
@@ -103,7 +104,6 @@ import { clampView, readout, revealed, wholeOf, zoomable } from "./timeline-zoom
 import { sleep } from "./timing";
 import { NOT_IN_TIME } from "./trouble";
 import type { TaskTimeline, TaskTokens, TimelineMessage } from "./wire";
-import { fixed } from "./words";
 
 /** The id of the page's box the timeline is drawn in (timeline-slot.tsx's, not imported here). */
 const SLOT = "timeline-slot";
@@ -299,7 +299,6 @@ export function drawnClass(all: boolean, clipped: boolean): string {
 
 /** A style of custom properties and others, written as the Dioxus page wrote it. */
 const style = (properties: Record<string, string>) => properties as CSSProperties;
-const percent = (value: number) => `${fixed(value, 2)}%`;
 
 /** What a part of the lanes the keyboard stops at does: its focus, its blur, its keys. */
 export interface Stops {
