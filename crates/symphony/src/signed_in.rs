@@ -303,13 +303,16 @@ fn verifying_key(text: &str) -> Result<VerifyingKey, String> {
 
 /// `text` as an origin words are made for: `http://` or `https://`, then a host of lowercase
 /// letters, digits, `.` and `-` or an IPv6 address in brackets, then a port or none, and nothing
-/// after it.
+/// after it. It is as a browser sends it in an Origin and a Host: the scheme's own port is left out,
+/// as a browser never names it, so an origin naming it would refuse every request made for it.
 fn checked_origin(text: &str) -> Result<String, String> {
     const RULE: &str = "the origin is not http:// or https:// and a lowercase host, with a port or \
-                        none and nothing after it, as https://board.example.com";
-    let authority = (text.strip_prefix("https://"))
-        .or_else(|| text.strip_prefix("http://"))
-        .ok_or(RULE)?;
+                        none and nothing after it, as https://board.example.com, and names no \
+                        scheme's own port";
+    let (authority, own_port) = match text.strip_prefix("https://") {
+        Some(authority) => (authority, 443),
+        None => (text.strip_prefix("http://").ok_or(RULE)?, 80),
+    };
     let (host, port) = match authority.strip_prefix('[') {
         Some(rest) => {
             let (address, after) = rest.split_once(']').ok_or(RULE)?;
@@ -335,7 +338,7 @@ fn checked_origin(text: &str) -> Result<String, String> {
             .strip_prefix(':')
             .filter(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
             .and_then(|digits| digits.parse::<u16>().ok())
-            .is_some_and(|port| port != 0);
+            .is_some_and(|port| port != 0 && port != own_port);
     (named && ported)
         .then(|| text.to_string())
         .ok_or_else(|| RULE.into())

@@ -224,11 +224,12 @@ async fn every_word_that_does_not_verify_is_refused_alike_and_nothing_is_written
                 .service
                 .signs(&claims("google", -400, 300, SignIn::ORIGIN)),
         ),
+        // An hour ahead, so it is not yet valid however long the passes below take.
         (
             "not yet valid",
             served
                 .service
-                .signs(&claims("google", 120, 300, SignIn::ORIGIN)),
+                .signs(&claims("google", 3600, 300, SignIn::ORIGIN)),
         ),
         (
             "held too long",
@@ -266,6 +267,8 @@ async fn every_word_that_does_not_verify_is_refused_alike_and_nothing_is_written
             let (status, _) = served.people(client, word).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{client}: {what}, read");
         }
+        // Two words each fresh, made just before the request, so it is their number refused.
+        let good = served.ana();
         let (status, body) = served
             .decide(client, SignIn::HOST, Some(SignIn::ORIGIN), &[&good, &good])
             .await;

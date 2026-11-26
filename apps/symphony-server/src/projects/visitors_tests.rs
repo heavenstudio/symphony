@@ -466,14 +466,15 @@ async fn a_signed_visitor_reaches_the_board_that_added_them_and_no_other_through
     let keys = crate::testing::Tree::new();
     let machine = Machine::with_gate(signed_gate(&keys, signed_ana_on("beta")));
     let service = SignIn::new(1);
-    let ana_word = service.word("google", "ana-sub");
+    // Each request carries a word made just before it, so none goes stale however slow the run.
+    let ana_word = || service.word("google", "ana-sub");
     const AWAY: &str = "10.0.0.5:1";
     let (status, body) = signed_get(
         &machine.projects,
         AWAY,
         SignIn::HOST,
         "/beta/docs/README.md",
-        &[&ana_word],
+        &[ana_word().as_str()],
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -482,7 +483,7 @@ async fn a_signed_visitor_reaches_the_board_that_added_them_and_no_other_through
         AWAY,
         SignIn::HOST,
         "/api/projects",
-        &[&ana_word],
+        &[ana_word().as_str()],
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -497,7 +498,7 @@ async fn a_signed_visitor_reaches_the_board_that_added_them_and_no_other_through
         AWAY,
         SignIn::HOST,
         "/alpha/docs/README.md",
-        &[&ana_word],
+        &[ana_word().as_str()],
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
@@ -506,7 +507,7 @@ async fn a_signed_visitor_reaches_the_board_that_added_them_and_no_other_through
         AWAY,
         SignIn::HOST,
         symphony_api::FRONT_PATH,
-        &[&ana_word],
+        &[ana_word().as_str()],
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -526,7 +527,7 @@ async fn a_signed_visitor_reaches_the_board_that_added_them_and_no_other_through
 
     for words in [
         vec![SignIn::new(2).word("google", "ana-sub")],
-        vec![ana_word.clone(), ana_word.clone()],
+        vec![ana_word(), ana_word()],
     ] {
         let words: Vec<&str> = words.iter().map(String::as_str).collect();
         for client in [AWAY, "127.0.0.1:1"] {

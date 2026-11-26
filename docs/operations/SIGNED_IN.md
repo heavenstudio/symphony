@@ -50,7 +50,8 @@ origin = "https://board.example.com"
 - **`key`** is the public half of the service's Ed25519 key: `ed25519:` and 64 lowercase hex
   digits. A weak key is refused.
 - **`origin`** is where browsers reach the server through the service: `https://` or `http://`, a
-  lowercase host, and a port or none, with nothing after it.
+  lowercase host, and a port or none, with nothing after it. It is written as a browser sends it:
+  the scheme's own port (`443` for `https://`, `80` for `http://`) is left out, never named.
 
 The machine folder is `~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_HOME/symphony`
 elsewhere, or `SYMPHONY_MACHINE_DIR` when set ([the server guide](../../apps/symphony-server/README.md#projects)).
@@ -105,7 +106,7 @@ Any other member is refused: `crit`, `jwk`, `jku`, `x5c`, `x5u` and the rest.
 
 ### Its claims
 
-A JSON object. A member given twice is refused.
+A JSON object. A claim of this table given twice is refused.
 
 | Claim | Holds | Rule |
 | --- | --- | --- |

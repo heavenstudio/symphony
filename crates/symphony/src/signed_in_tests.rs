@@ -455,7 +455,9 @@ fn the_origin_is_a_scheme_and_a_lowercase_host_with_a_port_or_none_and_nothing_a
     for good in [
         "https://board.example.com",
         "http://board.lan:8080",
-        "https://10.0.0.5:443",
+        "https://10.0.0.5:8443",
+        "http://board.lan:443",
+        "https://board.lan:80",
         "https://[fd7a:115c:a1e0::5]",
         "https://[::1]:8765",
     ] {
@@ -477,6 +479,10 @@ fn the_origin_is_a_scheme_and_a_lowercase_host_with_a_port_or_none_and_nothing_a
         "https://board.example.com:+80",
         "https://board.example.com:65536",
         "https://board.example.com:80:80",
+        // A browser never names the scheme's own port, so no word made for it would be taken.
+        "https://board.example.com:443",
+        "http://board.lan:80",
+        "https://[::1]:443",
         "https://[]",
         "https://[fd7a::5",
         "https://[fd7a::g]",
