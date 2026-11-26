@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
+import GUARDS from "../../symphony-web-tests/tests/browser/timeline/revision-guards.json";
+import { BAND_SHARE, Cuts } from "./timeline-cut";
 import { readTimeline, type View } from "./timeline-layout";
+import { quietStretches } from "./timeline-quiet";
 import {
   clampView,
   dragged,
@@ -8,6 +11,7 @@ import {
   gesture,
   held,
   LEAST_SHOWN,
+  leastShown,
   moved,
   overview,
   pinched,
@@ -28,6 +32,12 @@ import {
   zoomTo,
 } from "./timeline-zoom";
 import type { TaskTimeline } from "./wire";
+
+/** The quiet stretches of `timeline` skipped, as its page opens. */
+const CUT_OF = (timeline: TaskTimeline) => ({
+  skipped: quietStretches(timeline),
+  share: BAND_SHARE,
+});
 
 /** The approved pictures' task, as the server answers it: made at 09:02 on its clock (+2 h), now
  * 15:20, so its hours are drawn from 09:00, 6 h 20 m. */
@@ -189,18 +199,19 @@ describe("the hours a zoom shows", () => {
   });
 
   it("a drag of the overview's window moves it, and a drag of an edge resizes it", () => {
+    // Each drag a part of the overview, the whole 380 minutes: a quarter is 95.
     const start = minutes(60, 120);
-    expect(held(start, WHOLE, "move", 30 * 60)).toEqual(minutes(90, 150));
-    expect(held(start, WHOLE, "move", -2 * HOUR)).toEqual(minutes(0, 60));
-    expect(held(start, WHOLE, "start", -30 * 60)).toEqual(minutes(30, 120));
-    expect(held(start, WHOLE, "start", -5 * HOUR)).toEqual(minutes(0, 120));
+    expect(held(start, WHOLE, "move", 1 / 4)).toEqual(minutes(155, 215));
+    expect(held(start, WHOLE, "move", -1 / 2)).toEqual(minutes(0, 60));
+    expect(held(start, WHOLE, "start", -1 / 8)).toEqual(minutes(12.5, 120));
+    expect(held(start, WHOLE, "start", -1)).toEqual(minutes(0, 120));
     // Never past the other edge: the least.
-    expect(held(start, WHOLE, "start", 2 * HOUR)).toEqual(minutes(115, 120));
-    expect(held(start, WHOLE, "end", 30 * 60)).toEqual(minutes(60, 150));
-    expect(held(start, WHOLE, "end", -2 * HOUR)).toEqual(minutes(60, 65));
-    expect(held(start, WHOLE, "end", 9 * HOUR)).toEqual({ from: at(60), to: END });
+    expect(held(start, WHOLE, "start", 1 / 4)).toEqual(minutes(115, 120));
+    expect(held(start, WHOLE, "end", 1 / 8)).toEqual(minutes(60, 167.5));
+    expect(held(start, WHOLE, "end", -1 / 4)).toEqual(minutes(60, 65));
+    expect(held(start, WHOLE, "end", 1)).toEqual({ from: at(60), to: END });
     // Out to all of it: the whole task.
-    expect(held(minutes(0, 120), WHOLE, "end", 9 * HOUR)).toBeNull();
+    expect(held(minutes(0, 120), WHOLE, "end", 1)).toBeNull();
   });
 
   it("a wheel's travel counts a line and a page as pixels, and a notch zooms by a step", () => {
@@ -461,5 +472,147 @@ describe("the overview", () => {
     const marked = overview(queued, minutes(0, 60));
     expect(marked.runs[0]?.left).toBeCloseTo(percent(timeline.runs[0]?.queued ?? 0), 10);
     expect(marked.stages).toHaveLength(6);
+  });
+});
+
+describe("a zoom across the quiet stretches skipped", () => {
+  /** 11:00 to 14:00 skipped, a band a tenth of the track: 200 minutes of work, so the whole task
+   * holds 222.2 minutes of work on a track, and a view of 50 minutes with no band in it holds 50,
+   * the band then 5 minutes of the axis. */
+  const CUT = { skipped: [{ from: at(120), to: at(300) }], share: 0.1 };
+  const cuts = new Cuts(WHOLE, CUT);
+  /** `view`'s ends in minutes after 09:00, to a hundredth. */
+  const ends = (view: View | null) =>
+    view === null ? null : [view.from, view.to].map((t) => Math.round((t - START) / 0.6) / 100);
+
+  it("draws the whole task where all of it shows, the band and all, and nothing shorter", () => {
+    expect(clampView(WHOLE, WHOLE, CUT)).toBeNull();
+    expect(zoomed(WHOLE, WHOLE, false, CUT)).toBeNull();
+    // A view in the work alone is the clock's.
+    expect(clampView(minutes(0, 50), WHOLE, CUT)).toEqual(minutes(0, 50));
+    // A view of two minutes of work across the band is widened to five minutes of the axis, the
+    // least.
+    const narrow = clampView(minutes(119, 301), WHOLE, CUT);
+    expect(leastShown(narrow, WHOLE, CUT)).toBe(true);
+    expect(cuts.span(narrow as View)).toBeCloseTo(LEAST_SHOWN, 6);
+    expect(leastShown(minutes(119, 301), WHOLE, CUT)).toBe(true);
+    expect(leastShown(minutes(0, 50), WHOLE, CUT)).toBe(false);
+  });
+
+  it("comes back to the whole task from a zoom in and out again, whatever its seconds' rounding", () => {
+    const guards = readTimeline(JSON.parse(JSON.stringify(GUARDS)));
+    if (guards === null) throw new Error("the card's task is no timeline");
+    const whole = wholeOf(guards);
+    for (const cut of [null, { skipped: [], share: 0.033 }, CUT_OF(guards)]) {
+      let view: View | null = null;
+      for (let step = 0; step < 6; step += 1) view = zoomed(view, whole, true, cut);
+      for (let step = 0; step < 6; step += 1) view = zoomed(view, whole, false, cut);
+      expect(view).toBeNull();
+      expect(zoomed(zoomed(null, whole, true, cut), whole, false, cut)).toBeNull();
+    }
+  });
+
+  it("keeps the instant under the pointer where it was, the band as wide", () => {
+    const view = minutes(60, 360);
+    for (const x of [0, 0.3, 0.4, 0.45, 0.7, 1]) {
+      const under = cuts.time(view, x);
+      const zoomedIn = gesture(view, WHOLE, x, x, 0.5, CUT) as View;
+      expect(cuts.at(zoomedIn, under)).toBeCloseTo(x, 9);
+      expect(cuts.span(zoomedIn)).toBeCloseTo(cuts.span(view) / 2, 6);
+    }
+    // A notch of the wheel with ⌘ about the pointer does as much.
+    const x = 0.45;
+    expect(wheeled(view, WHOLE, TRACK, turn(200 + 1000 * x, -300, { zoom: true }), CUT)).toEqual({
+      view: gesture(view, WHOLE, x, x, 0.5, CUT),
+    });
+  });
+
+  it("moves a view across the band by as much of the track as the band takes", () => {
+    // A track on from 10:00–10:50: ten minutes of work, the band's five, then 35 minutes more.
+    expect(ends(moved(minutes(60, 110), WHOLE, 1, CUT))).toEqual([110, 335]);
+    expect(ends(moved(minutes(330, 380), WHOLE, -1, CUT))).toEqual([105, 330]);
+    // An end stops it.
+    expect(ends(moved(minutes(60, 110), WHOLE, 10, CUT))).toEqual([330, 380]);
+    // Shift + wheel, a swipe and the overview's keys move it so too.
+    expect(
+      ends(
+        wheeled(minutes(60, 110), WHOLE, TRACK, turn(0, 1000, { shift: true }), CUT)?.view ?? null,
+      ),
+    ).toEqual([110, 335]);
+    expect(ends(swiped(minutes(60, 110), WHOLE, TRACK, 1200, 200, CUT)?.view ?? null)).toEqual([
+      110, 335,
+    ]);
+    expect(ends(windowKey("PageDown", minutes(60, 110), WHOLE, CUT)?.view ?? null)).toEqual([
+      110, 335,
+    ]);
+    expect(ends(windowKey("Home", minutes(330, 380), WHOLE, CUT)?.view ?? null)).toEqual([0, 50]);
+    expect(ends(windowKey("End", minutes(0, 50), WHOLE, CUT)?.view ?? null)).toEqual([330, 380]);
+  });
+
+  it("pinches about the fingers across the band", () => {
+    const view = minutes(60, 360);
+    const pinch = pinched(
+      view,
+      WHOLE,
+      TRACK,
+      [
+        { x: 500, y: 0 },
+        { x: 700, y: 0 },
+      ],
+      [
+        { x: 400, y: 0 },
+        { x: 800, y: 0 },
+      ],
+      CUT,
+    );
+    expect(pinch).toEqual({ view: gesture(view, WHOLE, 0.4, 0.4, 0.5, CUT) });
+  });
+
+  it("zooms to the hours dragged across the band, and brings a part into view across it", () => {
+    const x = (time: number) => cuts.at(WHOLE, time);
+    expect(ends(dragged(null, WHOLE, x(at(320)), x(at(100)), CUT))).toEqual([100, 320]);
+    // At the zoom of a 50-minute view, a part from 14:05 to 14:10 in the middle: 25 minutes of the
+    // axis before it, 7.5 of them work after the band, the band's five, and 12.5 more.
+    expect(ends(revealed(minutes(0, 50), WHOLE, at(305), at(310), CUT))).toEqual([107.5, 332.5]);
+    expect(ends(zoomTo(WHOLE, at(100), at(320), CUT))).toEqual([100, 320]);
+  });
+
+  it("drags the overview's window across the band, each drag a part of the overview", () => {
+    const x = (time: number) => cuts.at(WHOLE, time);
+    const start = minutes(60, 110);
+    // Moved, it keeps its zoom: 50 minutes of work, past the band.
+    expect(ends(held(start, WHOLE, "move", x(at(300)) - x(at(60)), CUT))).toEqual([300, 350]);
+    // An edge dragged over the band takes it in.
+    expect(ends(held(start, WHOLE, "end", x(at(330)) - x(at(110)), CUT))).toEqual([60, 330]);
+    expect(ends(held(start, WHOLE, "start", -1, CUT))).toEqual([0, 110]);
+  });
+
+  it("says how long is skipped in the hours shown, a band partly in them for its part", () => {
+    const timeline = pictures();
+    expect(readout(timeline, null, CUT)).toBe("11-11 09:00 → 11-11 15:20 · 6 h 20 m · 3 h skipped");
+    expect(readout(timeline, minutes(110, 335), CUT)).toBe(
+      "11-11 10:50 → 11-11 14:35 · 3 h 45 m of 6 h 20 m · 3 h skipped",
+    );
+    expect(readout(timeline, minutes(200, 335), CUT)).toBe(
+      "11-11 12:20 → 11-11 14:35 · 2 h 15 m of 6 h 20 m · 1 h 40 m skipped",
+    );
+    // Less than half a minute of it is not said; nor is a band outside the view.
+    expect(readout(timeline, { from: at(300) - 20, to: at(330) }, CUT)).toBe(
+      "11-11 13:59 → 11-11 14:30 · 30 m of 6 h 20 m",
+    );
+    expect(readout(timeline, minutes(0, 50), CUT)).toBe(
+      "11-11 09:00 → 11-11 09:50 · 50 m of 6 h 20 m",
+    );
+  });
+
+  it("draws each band on the overview at its share, the work about it to scale", () => {
+    const strip = overview(pictures(), minutes(0, 50), CUT);
+    expect(strip.bands).toHaveLength(1);
+    expect(strip.bands[0]?.left).toBeCloseTo(54, 9);
+    expect(strip.bands[0]?.width).toBeCloseTo(10, 9);
+    expect(strip.window.left).toBeCloseTo(0, 9);
+    expect(strip.window.width).toBeCloseTo(22.5, 9);
+    // Nothing skipped, no band.
+    expect(overview(pictures(), minutes(0, 50)).bands).toEqual([]);
   });
 });

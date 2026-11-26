@@ -31,7 +31,9 @@
 
 import { field } from "./shared";
 import { type Carried, carriedFigure, carriedWords } from "./timeline-cost";
+import { type Cut, Cuts } from "./timeline-cut";
 import { address, endpointLane, readHistory } from "./timeline-history";
+import { type Quiet, quietStretches } from "./timeline-quiet";
 import type {
   Claim,
   GateLane,
@@ -445,6 +447,9 @@ export interface Row {
   message?: number;
   /** The row at `runs_from`, from which the recorder keeps every build and test. */
   kept?: true;
+  /** A quiet stretch's row: why it is quiet, said under its label ("Task done, nothing
+   * recorded"). */
+  quiet?: string;
 }
 
 /** The phone's row at `runs_from`, from which the builds and tests are kept: none where they all
@@ -466,6 +471,45 @@ export function keptRow(timeline: TaskTimeline): Row | null {
     word: null,
     title,
     kept: true,
+  };
+}
+
+/** Why a quiet stretch is quiet, as its band and its row say it: the status the task held through
+ * it, and that nothing was recorded ("task done, nothing recorded"). */
+export function quietWhy(quiet: Quiet): string {
+  if (quiet.status === "") return "nothing recorded";
+  const status = quiet.status.replaceAll("_", " ");
+  return `${CLOSED.includes(quiet.status) ? `task ${status}` : status}, nothing recorded`;
+}
+
+/** A quiet stretch as its row and its band say it: its length, then its ends, the end's day where
+ * it is another ("10 h 54 m quiet, 14:03 → 11-20 00:57"), from `day` where given. */
+export function quietSaid(timeline: TaskTimeline, quiet: Quiet, day = false): string {
+  const at = (time: number) => `${dateOf(timeline, time)} ${clockOf(timeline, time)}`;
+  const ends = dateOf(timeline, quiet.from) === dateOf(timeline, quiet.to);
+  const from = day ? at(quiet.from) : clockOf(timeline, quiet.from);
+  const to = ends && !day ? clockOf(timeline, quiet.to) : at(quiet.to);
+  return `${took(quiet.to - quiet.from)} quiet, ${from} → ${to}`;
+}
+
+/** The phone's row of a quiet stretch, at its start, in place of a scale: drawn whether or not the
+ * lanes skip it. */
+export function quietRow(timeline: TaskTimeline, quiet: Quiet): Row {
+  const label = quietSaid(timeline, quiet);
+  const why = quietWhy(quiet);
+  return {
+    start: quiet.from,
+    day: null,
+    at: clockOf(timeline, quiet.from),
+    sub: false,
+    event: true,
+    tone: "muted-foreground",
+    label,
+    took: null,
+    bar: null,
+    word: null,
+    title: `${label}: ${why}`,
+    quiet: capitalised(why),
   };
 }
 
@@ -890,7 +934,13 @@ export function rows(timeline: TaskTimeline, costs?: Costs): Row[] {
         message: message.id,
       });
     }
-    listed.sort((a, b) => a.start - b.start || (a.message ?? 0) - (b.message ?? 0));
+    // A quiet stretch begins at the record before it: its row goes after the rows of that instant.
+    for (const quiet of quietStretches(timeline)) listed.push(quietRow(timeline, quiet));
+    const quietLast = (row: Row) => (row.quiet === undefined ? 0 : 1);
+    listed.sort(
+      (a, b) =>
+        a.start - b.start || quietLast(a) - quietLast(b) || (a.message ?? 0) - (b.message ?? 0),
+    );
   }
   const earliest = Math.min(timeline.created, listed[0]?.start ?? timeline.created);
   if (dateOf(timeline, earliest) !== dateOf(timeline, new Scale(timeline).end)) {
@@ -994,15 +1044,16 @@ export function label(text: string, room: Room): Fit | null {
   return from === undefined ? null : { text, from, to: null };
 }
 
-/** The first of `texts`, longest first, that fits in a segment `room` percent wide: each drawn
- * only at the widths that hold it and no longer one. */
+/** The first of `texts`, longest first, that fits in a segment `room` percent wide, inside its
+ * padding and its border (SEG_MIN_PX): each drawn only at the widths that hold it and no longer
+ * one. */
 export function fittedFirst(texts: readonly string[], room: number): Fit[] {
   const fits: Fit[] = [];
   // The width from which a longer one is drawn: none yet.
   let to: number | null = null;
   for (const text of texts) {
     if (text === "" || fits.some((fit) => fit.text === text)) continue;
-    const from = widthFor(text, room, PAD_PX);
+    const from = widthFor(text, room, SEG_MIN_PX);
     if (from === undefined) continue;
     if (from !== null && to !== null && from >= to) continue;
     fits.push({ text, from, to });
@@ -1073,20 +1124,162 @@ export interface GateRow {
   spans: GateBar[];
 }
 
-/** An hour marked on the wide view's axis, in percent of the hours shown. */
+/** An hour marked on the wide view's axis, in percent of the hours shown; near a band's words on
+ * the hours line, its label drawn only from the track width (`wide`, one of WIDTHS) that clears
+ * them. */
 export interface Tick {
   left: number;
   label: string;
+  wide?: number;
 }
 
-/** The wide view: the hours, a line at now while the task is open, the lanes, the gates' rows, and
- * the time no run is kept of, where some is. */
+/** A quiet stretch skipped: a band through every lane, placed in percent of the hours shown. */
+export interface Break extends Placed {
+  /** Its length on the hours line over it, "+10 h 54 m", at the widths that clear the lengths of
+   * the bands before it. */
+  length: Fit | null;
+  /** The day it ends on, said right after its length where a day changed inside it, at the widths
+   * its length is drawn at that clear the other bands' lengths. */
+  day: Fit | null;
+  /** Its words down the band, "quiet · task done, nothing recorded", where it is wide enough. */
+  words: Fit | null;
+  /** The stretch, its ends and why it is quiet, for a pointer resting on it and for assistive
+   * technology. */
+  title: string;
+}
+
+/** The wide view: the hours, a line at now while the task is open, the lanes, the gates' rows, the
+ * time no run is kept of, where some is, and the quiet stretches skipped. */
 export interface Lanes {
   ticks: Tick[];
   now: Tick | null;
   lanes: Lane[];
   gates: GateRow[];
   notKept: NotKept | null;
+  breaks: Break[];
+}
+
+/** A band's least width, in pixels, for its words down it. */
+const BAND_WORDS_PX = 14;
+/** The room a band's length takes beside its letters, its padding either side. */
+const BREAK_PAD_PX = 8;
+/** How far after a band's length its day is said, in pixels. */
+const DAY_AFTER_PX = 4;
+
+/** A word on the hours line: its place, in percent of the track, and how far it reaches before
+ * and after it, in pixels. */
+interface Said {
+  at: number;
+  before: number;
+  after: number;
+}
+
+/** The first of WIDTHS at which `a` and `b` stand apart, a gap between them: null at every width,
+ * undefined at none. */
+function apartAt(a: Said, b: Said): number | null | undefined {
+  const [first, second] = a.at <= b.at ? [a, b] : [b, a];
+  const over = first.after + second.before + GAP_PX;
+  if (over <= 0) return null;
+  const between = second.at - first.at;
+  return between > 0 ? fromWidth((over * 100) / between) : undefined;
+}
+
+/** The first of WIDTHS at which `word` stands apart from each of `others`: null at every width,
+ * undefined at none. */
+function apartFrom(word: Said, others: readonly Said[]): number | null | undefined {
+  let from: number | null = null;
+  for (const other of others) {
+    const at = apartAt(word, other);
+    if (at === undefined) return undefined;
+    if (at !== null && (from === null || at > from)) from = at;
+  }
+  return from;
+}
+
+/** A word centred on `at`, `width` pixels wide. */
+const centred = (at: number, width: number): Said => ({ at, before: width / 2, after: width / 2 });
+
+/** The later of two first widths: none where either is drawn at none. */
+function later(
+  a: number | null | undefined,
+  b: number | null | undefined,
+): number | null | undefined {
+  if (a === undefined || b === undefined) return undefined;
+  if (a === null) return b;
+  return b === null ? a : Math.max(a, b);
+}
+
+/**
+ * The bands of the quiet stretches `cut` skips that are in the hours shown, each with its length
+ * over it on the hours line and, where a day changed inside it, that day said after the length;
+ * and the hours' ticks, each label drawn from the width that clears those words, none that clears
+ * them at no width. A band's length gives way to the lengths before it, and a day to every other
+ * band's length.
+ */
+function breaksOf(
+  timeline: TaskTimeline,
+  scale: Scale,
+  ticks: Tick[],
+  cut?: SkippedCut | null,
+): [Break[], Tick[]] {
+  const shown = scale.cuts.skipped.filter((skip) => scale.shows(skip.from, skip.to));
+  const lengths: Said[] = [];
+  const days: (Said | null)[] = [];
+  const breaks = shown.map((skip): Break => {
+    const placed = scale.place(skip.from, skip.to);
+    const quiet = cut?.skipped.find((stretch) => stretch.from === skip.from) ?? {
+      ...skip,
+      status: "",
+    };
+    const text = `+${took(skip.to - skip.from)}`;
+    const half = ([...text].length * LETTER_PX + BREAK_PAD_PX) / 2;
+    const centre = placed.left + placed.width / 2;
+    const length = centred(centre, 2 * half);
+    const lengthFrom = apartFrom(length, lengths);
+    lengths.push(length);
+    const dayText = dateOf(timeline, skip.to);
+    const changed = dateOf(timeline, skip.from) !== dayText && skip.to <= scale.from + scale.shown;
+    days.push(
+      changed
+        ? {
+            at: centre,
+            before: -half,
+            after: half + DAY_AFTER_PX + [...dayText].length * LETTER_PX,
+          }
+        : null,
+    );
+    const words = `quiet · ${quietWhy(quiet)}`;
+    const wordsFrom =
+      placed.width > 0 ? fromWidth((BAND_WORDS_PX * 100) / placed.width) : undefined;
+    return {
+      ...placed,
+      length: lengthFrom === undefined ? null : { text, from: lengthFrom, to: null },
+      day: changed ? { text: dayText, from: lengthFrom ?? null, to: null } : null,
+      words: wordsFrom === undefined ? null : { text: words, from: wordsFrom, to: null },
+      title: `${quietSaid(timeline, quiet, true)}, ${quietWhy(quiet)}`,
+    };
+  });
+  // The days, now every length is known: each after its own length, so only where that is drawn.
+  breaks.forEach((band, place) => {
+    const day = days[place];
+    if (band.day === null || day === null || day === undefined) return;
+    const others = lengths.filter((_, other) => other !== place);
+    const from = band.length === null ? undefined : later(band.length.from, apartFrom(day, others));
+    band.day = from === undefined ? null : { ...band.day, from };
+  });
+  const words = [...lengths, ...days.filter((day): day is Said => day !== null)];
+  const cleared = ticks.flatMap((tick): Tick[] => {
+    const from = apartFrom(centred(tick.left, [...tick.label].length * CHAR_PX), words);
+    if (from === undefined) return [];
+    return [from === null ? tick : { ...tick, wide: from }];
+  });
+  return [breaks, cleared];
+}
+
+/** The stretches a view skips as bands, each a quiet stretch, with each band's share of the
+ * track. */
+export interface SkippedCut extends Cut {
+  skipped: readonly Quiet[];
 }
 
 /** How many parts of the lanes a keyboard stops at: each step's segment, then each gate's state. */
@@ -1116,9 +1309,10 @@ export interface Placed {
 
 /**
  * The hours drawn: from the local hour the task was made in to the timeline's end, now beside
- * them; given a `view`, the part of them it shows (`from`, `to`), which everything is placed in.
- * Whether a part is drawn at all (`spans`) is the whole hours', so a zoom never adds or takes away
- * the keyboard's stops.
+ * them; given a `view`, the part of them it shows (`from`, `to`), which everything is placed in;
+ * given a `cut`, the quiet stretches skipped, each a band (timeline-cut.ts), the rest placed on the
+ * cut scale. Whether a part is drawn at all (`spans`) is the whole hours', so a zoom never adds or
+ * takes away the keyboard's stops.
  */
 export class Scale {
   readonly start: number;
@@ -1130,10 +1324,16 @@ export class Scale {
   readonly to: number;
   readonly shown: number;
   readonly zoomed: boolean;
+  /** The whole hours cut where quiet stretches are skipped. */
+  readonly cuts: Cuts;
+  /** The seconds of work a track holds on the cut scale, and where the hours shown start on it. */
+  private readonly track: number;
+  private readonly origin: number;
 
   constructor(
     readonly timeline: TaskTimeline,
     view?: View | null,
+    cut?: Cut | null,
   ) {
     const created = (timeline.history?.messages ?? []).reduce(
       (first, message) => Math.min(first, message.at),
@@ -1151,10 +1351,18 @@ export class Scale {
     this.from = this.zoomed ? (view as View).from : this.start;
     this.to = this.zoomed ? (view as View).to : this.end;
     this.shown = this.zoomed ? this.to - this.from : this.span;
+    this.cuts = new Cuts({ from: this.start, to: this.start + this.span }, cut);
+    this.track = this.cuts.span({ from: this.from, to: this.from + this.shown });
+    this.origin = this.cuts.axis(this.track, this.from);
   }
 
   at(at: number): number {
-    return clamp(((at - this.from) / this.shown) * 100, 0, 100);
+    // The plain clock where nothing is skipped, or where the hours shown hold no work.
+    const x =
+      this.cuts.skipped.length > 0 && this.track > 0
+        ? (this.cuts.axis(this.track, at) - this.origin) / this.track
+        : (at - this.from) / this.shown;
+    return clamp(x * 100, 0, 100);
   }
 
   width(from: number, to: number): number {
@@ -1189,14 +1397,15 @@ export class Scale {
 
   /**
    * The hours marked: the step's multiples from local midnight (midnight itself for a step of a
-   * day or more), so a change of day is always marked, by its date; while the task is `open`,
-   * none so near now that its label would meet now's. The whole hours are marked from the hour
-   * up; a zoom marks minutes too.
+   * day or more), so a change of day is always marked, by its date, a band's said after it
+   * (`breaks`); while the task is `open`, none so near now that its label would meet now's, and
+   * none in a band. The whole hours are marked from the hour up; a zoom marks minutes too. The
+   * step is the first that marks no more than eight in a track's worth of the hours drawn.
    */
   ticks(open: boolean): Tick[] {
+    const track = this.track > 0 ? this.track : this.shown;
     const step =
-      (this.zoomed ? ZOOMED_TICKS : TICK_HOURS).find((step) => this.shown / step <= 8) ??
-      168 * 3600;
+      (this.zoomed ? ZOOMED_TICKS : TICK_HOURS).find((step) => track / step <= 8) ?? 168 * 3600;
     const every = Math.trunc(step / 60);
     const offset = offsetAt(this.timeline, this.from);
     const first = local(this.from, offset);
@@ -1207,7 +1416,8 @@ export class Scale {
     const ticks: Tick[] = [];
     while (tick <= this.to) {
       const left = this.at(tick);
-      if (!open || nowAt - left >= 4) {
+      const skipped = this.cuts.skipped.some((skip) => skip.from <= tick && tick <= skip.to);
+      if (!skipped && (!open || nowAt - left >= 4)) {
         const offset = offsetAt(this.timeline, tick);
         const midnight = remEuclid(local(tick, offset), 1440) === 0;
         ticks.push({ left, label: midnight ? date(tick, offset) : clock(tick, offset) });
@@ -1324,9 +1534,13 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
     const next = timeline.rounds[index + 1];
     const waiting = scale.width(round.from, taken ?? to);
     const width = taken === null ? 0 : scale.width(taken, to);
+    // A verdict's room runs to the next round, or to the band of a stretch skipped before it, which
+    // would hide it; past the last round and no band, into the margin after the track.
+    const band = scale.cuts.skipped.find((skip) => skip.from >= to);
+    const ends = [...(next === undefined ? [] : [next.from]), ...(band ? [band.from] : [])];
     const room: Room = {
-      room: (next === undefined ? 100 : scale.at(next.from)) - scale.at(to),
-      last: next === undefined,
+      room: (ends.length === 0 ? 100 : scale.at(Math.min(...ends))) - scale.at(to),
+      last: ends.length === 0,
       bar: taken === null ? waiting : width,
     };
     const verdict = round.verdict ?? null;
@@ -1487,9 +1701,15 @@ function gateRows(timeline: TaskTimeline, scale: Scale): GateRow[] {
 
 /** The wide view of `timeline`: the stage lane always, the executor's, the reviewer's, the builds'
  * and the tests' (every run not a build's) once there is something to draw in them, and a row per
- * gate; over the whole hours, or the part of them `view` shows. */
-export function lanes(timeline: TaskTimeline, costs?: Costs, view?: View | null): Lanes {
-  const scale = new Scale(timeline, view);
+ * gate; over the whole hours, or the part of them `view` shows, the quiet stretches `cut` skips a
+ * band each. */
+export function lanes(
+  timeline: TaskTimeline,
+  costs?: Costs,
+  view?: View | null,
+  cut?: SkippedCut | null,
+): Lanes {
+  const scale = new Scale(timeline, view, cut);
   const open = timeline.closed === undefined || timeline.closed === null;
   const executors = eachOnce(timeline.claims.map((claim) => claim.by));
   const reviewers = eachOnce(
@@ -1609,8 +1829,9 @@ export function lanes(timeline: TaskTimeline, costs?: Costs, view?: View | null)
     const [segs, count] = runSegs(runs, scale);
     drawn.push({ key, name, who: runCounts(runs), rows: count, rail: false, segs });
   }
+  const [breaks, ticks] = breaksOf(timeline, scale, scale.ticks(open), cut);
   return {
-    ticks: scale.ticks(open),
+    ticks,
     now:
       open && scale.shows(scale.now, scale.now)
         ? { left: scale.at(scale.now), label: `now ${scale.clock(scale.now)}` }
@@ -1618,6 +1839,7 @@ export function lanes(timeline: TaskTimeline, costs?: Costs, view?: View | null)
     lanes: drawn,
     gates: gateRows(timeline, scale),
     notKept: notKept(timeline, scale),
+    breaks,
   };
 }
 

@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 mod messages;
+mod quiet;
 mod zoom;
 
 const TASK: &str = "/task/visual/in-progress";
@@ -683,8 +684,10 @@ fn messages_are_ticks_under_the_bars_and_the_hour_lines_meet_their_labels() {
             );
         }
         assert!(ticks["press"].as_f64().unwrap() >= 24.0, "{width}: {ticks}");
-        // Each hour's line is where its label's middle is, and the layers start where the tracks do.
-        let hours = chrome.eval("(() => { const lines = [...document.querySelectorAll('.tl-hours .tl-hour')], labels = [...document.querySelectorAll('.tl-axis .tl-tick:not(.tl-nowtag)')]; const track = document.querySelector('.tl-lane[data-lane=stage] .tl-track').getBoundingClientRect(); return {count: [lines.length, labels.length], off: Math.max(...lines.map((l, at) => { const b = labels[at].getBoundingClientRect(); return Math.abs(l.getBoundingClientRect().left - (b.left + b.width / 2)); })), hours: document.querySelector('.tl-hours').getBoundingClientRect().left - track.left, arrows: document.querySelector('.tl-address-track')?.getBoundingClientRect().left - track.left}; })()");
+        // Each hour's line drawn is where its label's middle is, a line shown where its label is
+        // (one that gives way to a band's words, neither), and the layers start where the tracks
+        // do.
+        let hours = chrome.eval("(() => { const seen = e => e.getClientRects().length > 0, lines = [...document.querySelectorAll('.tl-hours .tl-hour')].filter(seen), labels = [...document.querySelectorAll('.tl-axis .tl-tick:not(.tl-nowtag)')].filter(seen); const track = document.querySelector('.tl-lane[data-lane=stage] .tl-track').getBoundingClientRect(); return {count: [lines.length, labels.length], off: Math.max(...lines.map((l, at) => { const b = labels[at].getBoundingClientRect(); return Math.abs(l.getBoundingClientRect().left - (b.left + b.width / 2)); })), hours: document.querySelector('.tl-hours').getBoundingClientRect().left - track.left, arrows: document.querySelector('.tl-address-track')?.getBoundingClientRect().left - track.left}; })()");
         let lines = hours["count"][0].as_u64().unwrap();
         assert!(
             lines > 3 && hours["count"][1] == json!(lines),
@@ -874,14 +877,27 @@ const AFTER: &str = "[...document.querySelectorAll('.tl-lanes .tl-after')].filte
 /// card's reviewer's "changes" is not, 4 % of the track before the next round.
 #[test]
 fn no_word_of_the_lanes_is_drawn_over_another_at_any_width_for_the_fixture_or_a_week() {
+    // The labels after a bar at each width: the fixture's and a week's at every one, the card's
+    // task's as its quiet stretch skipped gives its work the width, each verdict from the width its
+    // room holds it before the next round or the band (a 555 px track at 900 wide, 1,095 at 1440).
+    let card = |width: u32| -> &'static [&'static str] {
+        match width {
+            ..1100 => &["approved"],
+            1100..1280 => &["approved", "approved"],
+            1280..1600 => &["approved", "changes", "approved"],
+            _ => &["approved", "changes", "changes", "approved"],
+        }
+    };
+    let fixed = |labels: &'static [&'static str]| move |_: u32| labels;
     for (name, timeline, labels) in [
-        ("the fixture", fixture(), &["changes", "approved"][..]),
-        ("a week", week(), &["changes"]),
         (
-            "the card's task",
-            revision_guards(),
-            &["approved", "approved"],
+            "the fixture",
+            fixture(),
+            Box::new(fixed(&["changes", "approved"]))
+                as Box<dyn Fn(u32) -> &'static [&'static str]>,
         ),
+        ("a week", week(), Box::new(fixed(&["changes"]))),
+        ("the card's task", revision_guards(), Box::new(card)),
     ] {
         let site = if name == "the card's task" {
             guards_on(site())
@@ -903,7 +919,8 @@ fn no_word_of_the_lanes_is_drawn_over_another_at_any_width_for_the_fixture_or_a_
                 .map(|label| label[0].as_str().unwrap())
                 .collect();
             assert_eq!(
-                drawn, labels,
+                drawn,
+                labels(width),
                 "{name} at {width} px: the labels after a bar"
             );
             for label in after.as_array().unwrap() {
@@ -1701,7 +1718,8 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
     // The card's example task, before (the client `SYMPHONY_TIMELINE_BEFORE` names, a build's
     // `public/`, else the committed one) and after (this build), on a phone and 1440 wide as the
     // card's pictures are, and 1600 wide, where its reviewer's label is weighed closest to its
-    // room; after, a message selected, and zoomed.
+    // room; after, a message selected, zoomed, on the true clock and zoomed across its quiet
+    // stretch's band, and a phone's row of that stretch.
     let committed = std::env::var_os("SYMPHONY_TIMELINE_BEFORE")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -1796,6 +1814,44 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
                 ".tl-band",
             ],
             out.join(format!("timeline-guards-after-band-{name}.png")),
+        );
+        // The quiet stretch on the true clock, the switch pressed off.
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--click",
+                ".tl-skip",
+                "--wait-for",
+                ".tl-skip[aria-pressed='false']",
+            ],
+            out.join(format!("timeline-guards-after-true-clock-{name}.png")),
+        );
+        // ⌘ + wheel about the review that ends the quiet stretch: zoomed across its band.
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--eval",
+                "(() => { const b = document.querySelector('.tl-lane[data-lane=stage] .tl-seg[data-from=\"1795132641.4\"]').getBoundingClientRect(); document.querySelector('.tl-lanes').dispatchEvent(new WheelEvent('wheel', {bubbles: true, cancelable: true, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, deltaY: -300, ctrlKey: true})); })()",
+                "--wait-for",
+                ".tl-overview .tl-ov-break",
+            ],
+            out.join(format!("timeline-guards-after-across-{name}.png")),
+        );
+    }
+    // On a phone, the list shown whole and the quiet stretch's row in the middle of the screen.
+    for (name, view) in phone {
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--click",
+                ".tl-more",
+                "--eval",
+                "document.querySelector('.tl-list .tl-quiet').scrollIntoView({block: 'center'})",
+            ],
+            out.join(format!("timeline-guards-after-quiet-{name}.png")),
         );
     }
     let site = served(&fixture());

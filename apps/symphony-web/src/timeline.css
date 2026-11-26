@@ -54,8 +54,11 @@
 }
 
 /* The steps: on a phone the box's height clips them, the latest in view, and "Show all" lets them
-   grow; wide the box holds them all. The box's foot holds what the bars mean. */
+   grow; wide the box holds them all. The box's foot holds what the bars mean. Wide, its name
+   column and its end margin are every layer's over the tracks: the lanes', the overview's. */
 .tl-body {
+  --name: 9rem;
+  --end: 5.5rem;
   position: relative;
   flex: 1;
   min-height: 0;
@@ -223,6 +226,23 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+/* A quiet stretch's row: a box of its own across the rail, its length and its ends, then why it
+   is quiet, in place of a scale the list does not have. */
+.tl-row.tl-quiet {
+  grid-template-columns: minmax(0, 1fr);
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--muted-foreground);
+  border-radius: 8px;
+  background: var(--muted);
+}
+.tl-quiet b {
+  font-weight: 600;
+}
+.tl-quiet small {
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+}
 
 /* The page's + button floats over a phone's bottom right: what the timeline says keeps clear of
    its column. A list the box clips keeps its latest steps in view, its earliest cut at the top,
@@ -268,8 +288,6 @@
    now's behind them all. The name column is var(--name) wide, padding and all, so every layer over
    the tracks (the hours' lines, the selected message's arrow) starts where the tracks do. */
 .tl-lanes {
-  --name: 9rem;
-  --end: 5.5rem;
   display: none;
   position: relative;
 }
@@ -320,12 +338,55 @@
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
+/* The range a press or a key showed, for assistive technology alone. */
+.tl-said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* The switch that skips the quiet stretches, with how many and how long, at the line's end. */
+/* The switch, drawn as the card's checkbox right after the readout: a box, ticked while the quiet
+   stretches are skipped, its words and how many and how long. */
+.tl-zoom .tl-skip {
+  gap: var(--sp-2);
+  margin-left: var(--sp-2);
+}
+.tl-skip-box {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--muted-foreground);
+  border-radius: 3px;
+}
+.tl-skip[aria-pressed="true"] .tl-skip-box {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+.tl-skip[aria-pressed="true"] .tl-skip-box::after {
+  content: "";
+  position: absolute;
+  left: 3.5px;
+  top: 0.5px;
+  width: 4px;
+  height: 8px;
+  box-sizing: border-box;
+  border: solid var(--primary-foreground);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.tl-skip-count {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
 
 /* While zoomed, a strip above the hours: the whole task's stages and runs, the hours outside the
    window dimmed, and the window, which a drag moves and a drag of an edge resizes. */
 .tl-overview {
-  --name: 9rem;
-  --end: 5.5rem;
   display: none;
   position: relative;
   height: 30px;
@@ -339,6 +400,7 @@
 }
 .tl-ov-stage,
 .tl-ov-run,
+.tl-ov-break,
 .tl-ov-dim,
 .tl-ov-window {
   position: absolute;
@@ -355,6 +417,14 @@
   width: 1px;
   height: 10px;
   background: color-mix(in srgb, var(--c) 80%, transparent);
+}
+/* A band: the strip's own colour, its edges dashed, the work either side of it. */
+.tl-ov-break {
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  border-inline: 1px dashed var(--muted-foreground);
+  background: var(--card);
 }
 .tl-ov-dim {
   top: 0;
@@ -406,6 +476,7 @@
   border-inline: 1px solid var(--primary);
   background: color-mix(in srgb, var(--primary) 14%, transparent);
 }
+/* The hours' lines, each shown at the track widths its label is (the layer is the tracks' width). */
 .tl-hours {
   position: absolute;
   left: var(--name);
@@ -413,6 +484,91 @@
   top: 22px;
   bottom: 0;
   pointer-events: none;
+  container-type: inline-size;
+}
+/* The quiet stretches skipped: a band each through every lane, over the bars that run through it,
+   in the card's colour, its edges zigzagged and its words down it; a press draws its stretch on
+   the true clock. Its layer is the tracks' width, so its words show at the widths that hold them. */
+.tl-breaks {
+  position: absolute;
+  left: var(--name);
+  right: var(--end);
+  top: 22px;
+  bottom: 0;
+  z-index: 2;
+  container-type: inline-size;
+  pointer-events: none;
+}
+.tl-zigzags {
+  position: absolute;
+}
+.tl-zigzag {
+  stroke: var(--muted-foreground);
+  stroke-width: 1.2;
+}
+.tl-break {
+  all: unset;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.tl-break:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .tl-break:hover {
+    color: var(--foreground);
+  }
+}
+.tl-edge {
+  position: absolute;
+  top: 0;
+  width: 6px;
+  height: 100%;
+}
+.tl-edge-start {
+  left: 0;
+}
+.tl-edge-end {
+  right: 0;
+}
+.tl-break > .tl-fit {
+  overflow: hidden;
+  max-height: calc(100% - 12px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+/* A band's length over it on the hours line, and the day it ends on after it. */
+.tl-break-length {
+  position: absolute;
+  top: 0;
+  padding: 0 4px;
+  transform: translateX(-50%);
+  color: var(--foreground);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The day a band ends on, said right after its length. */
+.tl-break-day {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  padding-left: 4px;
 }
 .tl-hour,
 .tl-now {
@@ -707,6 +863,13 @@
 }
 .tl-key-work {
   background: var(--primary);
+}
+/* A band's key: its two edges, as the overview marks it. */
+.tl-key-quiet {
+  width: 8px;
+  height: 12px;
+  border-inline: 1.5px dashed var(--muted-foreground);
+  border-radius: 0;
 }
 .tl-key-wait {
   background: color-mix(in srgb, var(--primary) 28%, transparent);

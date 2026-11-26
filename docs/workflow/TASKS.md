@@ -3809,7 +3809,27 @@ moves while zoomed, the page still scrolling up and down under it. With the focu
 + and − zoom and 0 shows the whole task. While zoomed, a strip over the tracks draws the whole
 task's stages and runs with the window shown, which a drag moves, a drag of its edge resizes,
 and its arrow keys, Page Up, Page Down, Home and End move. The height the box keeps for the next
-visit is the whole task's. A phone's list is not zoomed.
+visit is the whole task's. A phone's list is not zoomed. Assistive technology hears the hours
+shown after a press or a key, never at each step of a wheel, a drag or a pinch.
+
+A quiet stretch is an hour or more in which the task's records hold nothing (`timeline-quiet.ts`):
+measured between two records, never before the first or after the last, and only where its
+history is whole and from the time its runs are kept. Each run, claim, taken round, role held
+(the orchestrator's but at its start and its end), change of stage, ask for a round, message,
+gate state and place is a record. The wide lanes open with each one skipped, as
+[the timeline's analysis](../design/analysis/timeline-navigation.md#the-choice) chose: a band
+through every lane, 3.3 % of the track (36 px at 1440 wide, all of a task's bands 30 % at most;
+`timeline-cut.ts`), its edges zigzagged and its words down it ("quiet · task done, nothing
+recorded"), its length over it on the hours line ("+10 h 54 m") with the day it ends on after
+that where a day changed in it, and the stretch's ends in its hover and its label; the work about
+it gets the width. No hour is marked in a band, an hour's line going with its label where that
+gives way to a band's words, and a verdict after a round stops before a band. The readout adds
+"· 10 h 54 m skipped" while a band is in view. A zoom halves the work a track holds and leaves a
+band as wide, and a move keeps the zoom across it. **Skip quiet stretches**, ticked after the
+readout as the page opens, says how many and how long ("1 · 10 h 54 m") and switches every
+stretch at once; a press on a band draws its stretch on the true clock, the focus it had going to
+the switch. A task with no quiet stretch draws neither. A phone's list says each as a row of its
+own: "10 h 54 m quiet, 14:03 → 11-20 00:57" over "Task done, nothing recorded".
 
 - [ ] **timeline-drag-band** — A mouse dragged across the hours of a task's wide timeline zooms to the hours dragged, and the mockup leaves open what the drag shows while the button is held. As built, a band in the accent colour, faint with a solid edge at each end, covers the hours dragged across every lane, the bars showing through it, and goes when the button is let go. Approve, or comment.
   [2026-11-26 16:18] agent — Posted for the board task `app/timeline-zoom`, at 1440 wide, a drag held from 08:00 to 12:30. ![A drag held across the hours, light](../design/analysis/timeline-navigation/drag-band.webp) ![A drag held across the hours, dark](../design/analysis/timeline-navigation/drag-band-dark.webp)

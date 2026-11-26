@@ -2,6 +2,7 @@ import { isValidElement, type KeyboardEvent, type ReactElement, type ReactNode }
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
+import GUARDS from "../../symphony-web-tests/tests/browser/timeline/revision-guards.json";
 import { whenShown } from "./feed";
 import type { Shown } from "./parts";
 import { Failure, NO_ANSWER as POST_UNANSWERED } from "./request";
@@ -28,9 +29,11 @@ import {
   watchCrossings,
 } from "./timeline";
 import { readTaskTokens, totalWords } from "./timeline-cost";
+import { BAND_SHARE } from "./timeline-cut";
 import { failed, lanes, nextRead, readTimeline, stops, type View } from "./timeline-layout";
-import { handoff, keyView, leastShown, OverviewStrip, ZoomBar } from "./timeline-navigate";
-import { LEAST_SHOWN, wholeOf } from "./timeline-zoom";
+import { handoff, keyView, OverviewStrip, quietCount, ZoomBar } from "./timeline-navigate";
+import { quietStretches, SKIPPING, type Skipping } from "./timeline-quiet";
+import { LEAST_SHOWN, leastShown, wholeOf } from "./timeline-zoom";
 import { NOT_IN_TIME } from "./trouble";
 import type { TaskTimeline, TaskTokens, TimelineMessage } from "./wire";
 
@@ -1058,7 +1061,7 @@ describe("the timeline zoomed", () => {
     // Whole task and − cannot act there: not drawn, their places kept, + alone where it is when
     // zoomed.
     expect(drawn).toContain(
-      '<div class="tl-zoom"><span class="tl-zoom-group" role="group" aria-label="Zoom"><button class="dx-button tl-idle" data-style="outline" data-size="sm" type="button" disabled="">Whole task</button><button class="dx-button tl-idle" data-style="outline" data-size="sm" type="button" aria-label="Zoom out" title="Zoom out" disabled="">−</button><button class="dx-button" data-style="outline" data-size="sm" type="button" aria-label="Zoom in" title="Zoom in">+</button></span><span class="tl-range" aria-live="polite">11-11 09:00 → 11-11 15:20 · 6 h 20 m</span></div>',
+      '<div class="tl-zoom"><span class="tl-zoom-group" role="group" aria-label="Zoom"><button class="dx-button tl-idle" data-style="outline" data-size="sm" type="button" disabled="">Whole task</button><button class="dx-button tl-idle" data-style="outline" data-size="sm" type="button" aria-label="Zoom out" title="Zoom out" disabled="">−</button><button class="dx-button" data-style="outline" data-size="sm" type="button" aria-label="Zoom in" title="Zoom in">+</button></span><span class="tl-range">11-11 09:00 → 11-11 15:20 · 6 h 20 m</span><span class="tl-said" aria-live="polite"></span></div>',
     );
     expect(drawn).toContain(
       '<div class="tl-lanes tl-zoomable" id="tl-lanes" role="group" aria-label="Lanes">',
@@ -1077,7 +1080,7 @@ describe("the timeline zoomed", () => {
   it("zoomed, says the hours shown of the whole, draws the overview, and hides what is outside", () => {
     const drawn = draw(pictures(), { view: NOON });
     expect(drawn).toContain(
-      '<span class="tl-range" aria-live="polite">11-11 12:00 → 11-11 13:00 · 1 h of 6 h 20 m</span>',
+      '<span class="tl-range">11-11 12:00 → 11-11 13:00 · 1 h of 6 h 20 m</span>',
     );
     expect(drawn).toContain('type="button">Whole task</button>');
     expect(drawn).not.toContain("disabled");
@@ -1109,11 +1112,11 @@ describe("the timeline zoomed", () => {
     );
     expect(count(least, "tl-idle")).toBe(1);
     expect(least).toContain("· 5 m of 6 h 20 m");
-    expect([leastShown(null), leastShown(NOON), leastShown({ from: 0, to: LEAST_SHOWN })]).toEqual([
-      false,
-      false,
-      true,
-    ]);
+    expect([
+      leastShown(null, WHOLE),
+      leastShown(NOON, WHOLE),
+      leastShown({ from: START, to: START + LEAST_SHOWN }, WHOLE),
+    ]).toEqual([false, false, true]);
   });
 
   it("each of the toolbar's buttons sets the view it says", () => {
@@ -1126,15 +1129,16 @@ describe("the timeline zoomed", () => {
     press(whole, pressed(false).event);
     press(out, pressed(false).event);
     press(inward, pressed(false).event);
+    // Each a press, its range said.
     expect(set.mock.calls).toEqual([
-      [null],
-      [{ from: nine(150), to: nine(270) }],
-      [{ from: nine(195), to: nine(225) }],
+      [null, true],
+      [{ from: nine(150), to: nine(270) }, true],
+      [{ from: nine(195), to: nine(225) }, true],
     ]);
     // From the whole task, + zooms to its middle half.
     set.mockClear();
     press(buttons(null)[2], pressed(false).event);
-    expect(set.mock.calls).toEqual([[{ from: nine(95), to: nine(285) }]]);
+    expect(set.mock.calls).toEqual([[{ from: nine(95), to: nine(285) }, true]]);
   });
 
   /** A press's event on a toolbar button with the focus or not, and the buttons it focused. */
@@ -1177,11 +1181,11 @@ describe("the timeline zoomed", () => {
     expect(elsewhere.focus).toEqual([]);
     expect(set).toHaveBeenCalledTimes(6);
     expect([
-      handoff("whole", null),
-      handoff("out", null),
-      handoff("out", NOON),
-      handoff("in", { from: 0, to: LEAST_SHOWN }),
-      handoff("in", NOON),
+      handoff("whole", null, WHOLE),
+      handoff("out", null, WHOLE),
+      handoff("out", NOON, WHOLE),
+      handoff("in", { from: START, to: START + LEAST_SHOWN }, WHOLE),
+      handoff("in", NOON, WHOLE),
     ]).toEqual(["in", "in", null, "out", null]);
   });
 
@@ -1258,5 +1262,129 @@ describe("the timeline zoomed", () => {
     const inside = drawWith(8);
     expect(inside).toContain("tl-address-said");
     expect(inside).toContain("tl-address-track");
+  });
+});
+
+describe("the quiet stretches skipped", () => {
+  /** The card's quiet stretch's ends, as the server answers them. */
+  const QUIET_FROM = 1795093413.1;
+  const QUIET_TO = 1795132641.4;
+
+  /** The card's task, quiet from 14:03 on 11-19 to 00:57 the next day. */
+  function guards(): TaskTimeline {
+    const read = readTimeline(JSON.parse(JSON.stringify(GUARDS)));
+    if (read === null) throw new Error("the card's task is no timeline");
+    return read;
+  }
+
+  /** `timeline` drawn wide on the whole task, its quiet stretches skipped as `skipping`; with no
+   * way to change what is skipped where `skip` is false. */
+  function draw(timeline: TaskTimeline, skipping: Skipping = SKIPPING, skip = true) {
+    return renderToStaticMarkup(
+      <TimelineDrawn
+        timeline={timeline}
+        all={false}
+        clipped={false}
+        detail=""
+        stops={spiedStops()}
+        toggle={() => {}}
+        zoom={{
+          view: null,
+          set: () => {},
+          quiet: quietStretches(timeline),
+          skipping,
+          skip: skip ? () => {} : undefined,
+        }}
+      />,
+    );
+  }
+
+  it("draws a band that says its length, its day after it and why, the switch on with its count", () => {
+    const drawn = draw(guards());
+    expect(drawn).toContain(
+      '<button class="dx-button tl-skip" data-style="ghost" data-size="sm" type="button" aria-pressed="true"><span class="tl-skip-box" aria-hidden="true"></span>Skip quiet stretches<span class="tl-skip-count">1 · 10 h 54 m</span></button>',
+    );
+    expect(drawn).toContain(
+      '<span class="tl-range">11-19 01:00 → 11-20 04:34 · 1 d 3 h · 10 h 54 m skipped</span>',
+    );
+    const title = "10 h 54 m quiet, 11-19 14:03 → 11-20 00:57, task done, nothing recorded";
+    expect(count(drawn, 'class="tl-break"')).toBe(1);
+    expect(drawn).toContain(
+      `<button type="button" class="tl-break" data-start="${QUIET_FROM}" data-end="${QUIET_TO}" title="${title}" aria-label="Show on the true clock: ${title}" style="left:75.68%;width:3.30%">`,
+    );
+    expect(count(drawn, '<svg class="tl-edge')).toBe(2);
+    expect(drawn).toContain("quiet · task done, nothing recorded");
+    expect(drawn).toContain(
+      '<span class="tl-break-length tl-fit" style="left:77.33%">+10 h 54 m<span class="tl-break-day tl-fit">11-20</span></span>',
+    );
+    // The legend says what a band is, wide alone.
+    expect(drawn).toContain(
+      '<li class="tl-wide"><span class="tl-key tl-key-quiet"></span>quiet stretch skipped: nothing recorded</li>',
+    );
+    // The bands are over the tracks, after the hours' lines.
+    expect(drawn.indexOf('class="tl-hours"')).toBeLessThan(drawn.indexOf('class="tl-breaks"'));
+    // The phone's list says the stretch as a row of its own.
+    expect(drawn).toContain(
+      '<li class="tl-row tl-quiet" title="10 h 54 m quiet, 14:03 → 11-20 00:57: task done, nothing recorded"><b>10 h 54 m quiet, 14:03 → 11-20 00:57</b><small>Task done, nothing recorded</small></li>',
+    );
+  });
+
+  it("marks each band on the overview, dashed at its share", () => {
+    const timeline = guards();
+    const whole = wholeOf(timeline);
+    const cut = { skipped: quietStretches(timeline), share: BAND_SHARE };
+    const view = { from: whole.from, to: whole.from + 3600 };
+    const strip = renderToStaticMarkup(
+      <OverviewStrip timeline={timeline} view={view} nav={{ whole, view, cut, set: () => {} }} />,
+    );
+    expect(strip).toContain(
+      '<span class="tl-ov-break" aria-hidden="true" style="left:75.68%;width:3.30%"></span>',
+    );
+    const plain = renderToStaticMarkup(
+      <OverviewStrip timeline={timeline} view={view} nav={{ whole, view, set: () => {} }} />,
+    );
+    expect(plain).not.toContain("tl-ov-break");
+  });
+
+  it("switched off, draws the true clock, the switch still there to turn it on", () => {
+    const drawn = draw(guards(), { on: false, opened: [] });
+    expect(drawn).toContain(
+      'type="button" aria-pressed="false"><span class="tl-skip-box" aria-hidden="true"></span>Skip quiet stretches',
+    );
+    expect(drawn).not.toContain('class="tl-break"');
+    expect(drawn).not.toContain("tl-key-quiet");
+    expect(drawn).toContain('<span class="tl-range">11-19 01:00 → 11-20 04:34 · 1 d 3 h</span>');
+    // Its row stays in the phone's list: the list is the true clock always.
+    expect(drawn).toContain('class="tl-row tl-quiet"');
+  });
+
+  it("draws no band and no switch for a task with no quiet stretch, nor where neither can act", () => {
+    const none = draw(pictures());
+    expect(none).not.toContain("tl-skip");
+    expect(none).not.toContain("tl-break");
+    expect(none).not.toContain("tl-quiet");
+    expect(none).not.toContain("skipped");
+    const fixed = draw(guards(), SKIPPING, false);
+    expect(fixed).not.toContain("tl-skip");
+    expect(fixed).not.toContain("tl-break");
+    // The row says what happened whatever the lanes draw.
+    expect(fixed).toContain("tl-quiet");
+  });
+
+  it("the switch's press says what it does: every stretch on the true clock, or all skipped", () => {
+    const press_ = vi.fn();
+    const timeline = guards();
+    const [button] = elements(
+      ZoomBar({
+        timeline,
+        nav: { whole: wholeOf(timeline), view: null, set: () => {} },
+        quiet: { count: 1, total: 39228, on: true, press: press_ },
+      }),
+      (one) => one.props.className === "tl-skip",
+    );
+    expect(button?.props["aria-pressed"]).toBe(true);
+    press(button);
+    expect(press_).toHaveBeenCalledTimes(1);
+    expect([quietCount(1, 39228), quietCount(3, 90_000)]).toEqual(["1 · 10 h 54 m", "3 · 1 d 1 h"]);
   });
 });
