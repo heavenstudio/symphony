@@ -862,16 +862,22 @@ fn on_a_phone_a_message_is_one_line_and_the_runs_kept_from_a_time_is_a_row() {
 /// whole in its own box ([`CUT`]).
 const OVERPRINT: &str = "(() => { const met = []; const drawn = e => { const r = e.getBoundingClientRect(), bar = e.parentElement.closest('[data-lane=builds] .tl-seg, [data-lane=tests] .tl-seg'); if (!bar) return r; const b = bar.getBoundingClientRect(); return {left: Math.max(r.left, b.left), right: Math.min(r.right, b.right), top: Math.max(r.top, b.top), bottom: Math.min(r.bottom, b.bottom)}; }; for (const track of document.querySelectorAll('.tl-lanes .tl-track')) { const words = [...track.querySelectorAll('.tl-fit, .tl-tick')].filter(e => e.getClientRects().length > 0 && e.textContent.trim() !== '').map(e => [e.textContent.trim(), drawn(e)]); for (let i = 0; i < words.length; i++) for (let j = i + 1; j < words.length; j++) { const [a, r] = words[i], [b, s] = words[j]; if (r.left < s.right - 0.5 && s.left < r.right - 0.5 && r.top < s.bottom - 0.5 && s.top < r.bottom - 0.5) met.push([a, b]); } } return met; })()";
 
-/// The parts of the lanes drawn with words wider than they are, cut short: a run's bar alone cuts
-/// its words to fit, and is not counted.
-const CUT: &str = "[...document.querySelectorAll('.tl-lanes .tl-seg, .tl-lanes .tl-after, .tl-lanes .tl-g, .tl-lanes .tl-notkept .tl-fit')].filter(e => !e.closest('[data-lane=builds], [data-lane=tests]') || e.matches('.tl-notkept .tl-fit')).filter(e => e.getClientRects().length > 0 && e.textContent.trim() !== '' && e.scrollWidth > e.clientWidth + 1).map(e => e.textContent)";
+/// The parts of the lanes drawn with words wider than they are, cut short: the words as drawn (a
+/// Range over them, to the fraction of a pixel an ellipsis already takes) reaching past their box's
+/// padding. A run's bar alone cuts its words to fit, and is not counted.
+const CUT: &str = "[...document.querySelectorAll('.tl-lanes .tl-seg, .tl-lanes .tl-after, .tl-lanes .tl-g, .tl-lanes .tl-notkept .tl-fit')].filter(e => !e.closest('[data-lane=builds], [data-lane=tests]') || e.matches('.tl-notkept .tl-fit')).filter(e => e.getClientRects().length > 0 && e.innerText.trim() !== '').filter(e => { const words = document.createRange(); words.selectNodeContents(e); const w = words.getBoundingClientRect(), b = e.getBoundingClientRect(), s = getComputedStyle(e); return w.right > b.right - parseFloat(s.borderRightWidth) - parseFloat(s.paddingRight) + 0.01 || w.left < b.left + parseFloat(s.borderLeftWidth) + parseFloat(s.paddingLeft) - 0.01; }).map(e => e.innerText)";
+
+/// The words of a segment or of a label after one that another segment of their track is drawn
+/// over (a segment of a few minutes drawn at its least width reaching into the next), each with the
+/// segment over it: none. A runs lane's bars cut their words to fit, and are not counted.
+const COVERED: &str = "(() => { const met = []; for (const track of document.querySelectorAll('.tl-lanes .tl-track')) { if (track.closest('[data-lane=builds], [data-lane=tests]')) continue; const segs = [...track.querySelectorAll('.tl-seg')].filter(e => e.getClientRects().length > 0); for (const e of track.querySelectorAll('.tl-seg, .tl-after')) { if (e.getClientRects().length === 0 || e.innerText.trim() === '') continue; const words = document.createRange(); words.selectNodeContents(e); const w = words.getBoundingClientRect(); for (const seg of segs) { if (seg === e) continue; const b = seg.getBoundingClientRect(); if (b.left < w.right - 0.5 && w.left < b.right - 0.5 && b.top < w.bottom - 0.5 && w.top < b.bottom - 0.5) met.push([e.innerText.trim(), seg.title]); } } } return met; })()";
 
 /// Each label after a bar that is drawn: its words, how far past its bar as drawn they start, and
 /// how wide they are a letter.
 const AFTER: &str = "[...document.querySelectorAll('.tl-lanes .tl-after')].filter(e => e.getClientRects().length > 0).map(e => { const r = document.createRange(); r.selectNodeContents(e); const words = r.getBoundingClientRect(), bar = e.previousElementSibling.getBoundingClientRect(); return [e.textContent, words.left - bar.right, words.width / [...e.textContent].length]; })";
 
-/// No word of the lanes is drawn over another or cut short, at any width, for the fixture, a week
-/// and the card's task. Each label after a bar starts its padding past the bar as drawn, which a
+/// No word of the lanes is drawn over another, under another segment or cut short, at any width,
+/// for the fixture, a week and the card's task. Each label after a bar starts its padding past the bar as drawn, which a
 /// round of a few minutes draws wider than its time, and its letters are no wider than the
 /// estimate weighs them (`LETTER_PX`, timeline-layout.ts); a label with no room is not drawn, as the
 /// card's reviewer's "changes" is not, 4 % of the track before the next round.
@@ -913,6 +919,11 @@ fn no_word_of_the_lanes_is_drawn_over_another_at_any_width_for_the_fixture_or_a_
                 chrome.eval(CUT),
                 json!([]),
                 "{name} at {width} px: a word cut short"
+            );
+            assert_eq!(
+                chrome.eval(COVERED),
+                json!([]),
+                "{name} at {width} px: a word under another segment"
             );
             let after = chrome.eval(AFTER);
             let drawn: Vec<&str> = (after.as_array().unwrap().iter())

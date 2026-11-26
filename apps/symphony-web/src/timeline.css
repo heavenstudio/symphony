@@ -348,7 +348,6 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
-/* The switch that skips the quiet stretches, with how many and how long, at the line's end. */
 /* The switch, drawn as the card's checkbox right after the readout: a box, ticked while the quiet
    stretches are skipped, its words and how many and how long. */
 .tl-zoom .tl-skip {

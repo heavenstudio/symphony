@@ -56,9 +56,9 @@ import { fixed, plural, twoDigits } from "./words";
 export const BAR_SPAN = 72;
 
 /**
- * A character of the lanes' small type, about, in pixels; then the padding a segment's words take
- * beside them, and the gap a label keeps from the next. A word the estimate lets through that is
- * wider still is cut short with an ellipsis at its room's end, never drawn over the next.
+ * A character of the lanes' small type, about, in pixels, where an hour's label is centred on its
+ * line (a segment's words are weighed letter by letter, `textPx`); then the padding a segment's
+ * words take beside them, and the gap a label keeps from the next.
  */
 export const CHAR_PX = 6;
 export const PAD_PX = 12;
@@ -74,8 +74,45 @@ export const LETTER_PX = 7;
 /** The inset a label's words keep from its bar (`insetCss`). */
 export const AFTER_PAD_PX = 6;
 /** A segment's least drawn width, however short its time: its padding and its 1 px border on each
- * side (`.tl-seg`). A label after it starts past it as drawn. */
+ * side (`.tl-seg`). A label after it, and the next segment's words, start past it as drawn. */
 export const SEG_MIN_PX = PAD_PX + 2;
+
+/** The lanes' small type, in pixels (`--fs-xs`, 0.75rem). */
+const XS_PX = 12;
+
+/**
+ * Each character's advance in the lanes' small type, in thousandths of its size: Helvetica Bold's,
+ * Arial Bold's the same, as Chrome draws the page's sans-serif at weight 600 where the system's own
+ * face is not used. A character not here weighs the whole size; one with an accent, its letter.
+ */
+const ADVANCE: ReadonlyMap<string, number> = new Map(
+  Object.entries({
+    278: " ,./Iijl\\'·",
+    333: "!()-:;[]`ft|",
+    389: "r*{}",
+    474: '"',
+    500: "z",
+    556: "0123456789#$_acekJsvxy",
+    584: "+<=>^~",
+    611: "?bdghnopquFLTZ",
+    667: "EPSVXY",
+    722: "&ABCDHKNRU",
+    778: "GOQw",
+    833: "M",
+    889: "%m",
+    944: "W",
+    975: "@",
+  }).flatMap(([advance, chars]) => [...chars].map((char) => [char, Number(advance)] as const)),
+);
+
+/** How wide `text` is drawn in the lanes' small type, in pixels: its characters' advances
+ * (`ADVANCE`) and half a pixel for the browser's rounding of them, so never under it. A word the
+ * estimate lets through is drawn whole. */
+export function textPx(text: string): number {
+  let advances = 0;
+  for (const char of text) advances += ADVANCE.get(char.normalize("NFD")[0] ?? char) ?? 1000;
+  return (advances * XS_PX) / 1000 + 0.5;
+}
 
 /**
  * The track widths a word's room is weighed at, in pixels, every 50 from 400 to 1600: a word shows
@@ -988,7 +1025,7 @@ export function fitClass(fit: Fit): string {
  */
 export function widthFor(text: string, room: number, pad: number): number | null | undefined {
   if (text === "" || room <= 0) return undefined;
-  return fromWidth((([...text].length * CHAR_PX + pad) * 100) / room);
+  return fromWidth(((textPx(text) + pad) * 100) / room);
 }
 
 /** The first of WIDTHS at which a track is `needed` pixels wide or more: null where 300 is,
@@ -1027,6 +1064,44 @@ export function insetCss(room: Room): string {
   return `max(${AFTER_PAD_PX}px, calc(${SEG_MIN_PX + AFTER_PAD_PX}px - ${fixed(room.bar, 2)}%))`;
 }
 
+/** The track widths below which a word is weighed as at every width (`fromWidth`). */
+const NARROWEST = (WIDTHS[0] as number) - 100;
+
+/** The least a segment's words keep from the segment before it drawn over its padding, as the
+ * approved pictures draw a round's name past its few minutes' wait. */
+const CLEAR_PX = 3;
+/** How far past its own border and padding a segment's words would be reached at the start of a
+ * segment that begins where the one before it does: that one's least width and CLEAR_PX. */
+const REACH_PX = SEG_MIN_PX + CLEAR_PX - SEG_MIN_PX / 2;
+
+/**
+ * How far `placed` starts past the start of `prev`, the segment before it in its row, in percent
+ * of the track, where `prev` drawn at its least width (SEG_MIN_PX) reaches its words, or within
+ * CLEAR_PX of them, on a track as narrow as a word is weighed at: its words then start CLEAR_PX
+ * past `prev` as drawn (`segIndentCss`), and are weighed with that inset (`fittedFirst`). Undefined
+ * where `prev` never comes so near.
+ */
+export function past(prev: Placed | undefined, placed: Placed): number | undefined {
+  if (prev === undefined || prev.out) return undefined;
+  const before = placed.left - prev.left;
+  // One that ends where it starts, the two placed apart to the last digit, does not overlap it.
+  const apart = before >= prev.width - 1e-9;
+  return apart && (before * NARROWEST) / 100 < REACH_PX ? before : undefined;
+}
+
+/** A segment's words' indent past its padding, for its `text-indent`, starting `before` percent
+ * of the track past the segment before it (`past`): CLEAR_PX past that one as drawn, where it comes
+ * nearer. In the track's own units (`cqw`, the track an inline-size container), and an indent
+ * rather than a padding, which would draw a segment with no room for words wider than its time. */
+export function segIndentCss(before: number): string {
+  return `max(0px, calc(${REACH_PX}px - ${fixed(before, 2)}cqw))`;
+}
+
+/** A segment's inset, as its `inset` field, where its words start past the one before it. */
+function insetOf(before: number | undefined): { inset?: number } {
+  return before === undefined ? {} : { inset: before };
+}
+
 /**
  * `text` as a label beside a segment, in `room`: from the first of WIDTHS at which its letters,
  * its inset (`insetCss`) and its gap from the next fit there, at every width when 300 holds them,
@@ -1044,16 +1119,19 @@ export function label(text: string, room: Room): Fit | null {
   return from === undefined ? null : { text, from, to: null };
 }
 
-/** The first of `texts`, longest first, that fits in a segment `room` percent wide, inside its
- * padding and its border (SEG_MIN_PX): each drawn only at the widths that hold it and no longer
- * one. */
-export function fittedFirst(texts: readonly string[], room: number): Fit[] {
+/**
+ * The first of `texts`, longest first, that fits in a segment `room` percent wide, inside its
+ * padding and its border (SEG_MIN_PX) and past the segment `before` percent before it where that
+ * one, drawn at its least width, reaches in (`past`): each drawn only at the widths that hold it and
+ * no longer one.
+ */
+export function fittedFirst(texts: readonly string[], room: number, before?: number): Fit[] {
   const fits: Fit[] = [];
   // The width from which a longer one is drawn: none yet.
   let to: number | null = null;
   for (const text of texts) {
     if (text === "" || fits.some((fit) => fit.text === text)) continue;
-    const from = widthFor(text, room, SEG_MIN_PX);
+    const from = segWidthFor(text, room, before);
     if (from === undefined) continue;
     if (from !== null && to !== null && from >= to) continue;
     fits.push({ text, from, to });
@@ -1063,10 +1141,23 @@ export function fittedFirst(texts: readonly string[], room: number): Fit[] {
   return fits;
 }
 
-/** `long` where it fits in a segment `room` percent wide, else `short` where that fits: each drawn
- * only at the widths that hold it. */
-export function fitted(long: string, short: string, room: number): Fit[] {
-  return fittedFirst([long, short], room);
+/** `long` where it fits in a segment `room` percent wide, else `short` where that fits, past the
+ * segment `before` percent before it (`fittedFirst`): each drawn only at the widths that hold it. */
+export function fitted(long: string, short: string, room: number, before?: number): Fit[] {
+  return fittedFirst([long, short], room, before);
+}
+
+/**
+ * The first of WIDTHS at which `text` fits in a segment `room` percent wide (`widthFor`, inside
+ * SEG_MIN_PX), and past the segment `before` percent before it: that one, drawn SEG_MIN_PX wide,
+ * takes `REACH_PX - before%` more of it until the track draws `before` as wide, so the words need
+ * `room% ≥ words` and `room% ≥ words + REACH_PX - before%`.
+ */
+function segWidthFor(text: string, room: number, before?: number): number | null | undefined {
+  if (before === undefined) return widthFor(text, room, SEG_MIN_PX);
+  if (text === "" || room <= 0) return undefined;
+  const words = textPx(text) + SEG_MIN_PX;
+  return fromWidth(Math.max((words * 100) / room, ((words + REACH_PX) * 100) / (room + before)));
 }
 
 /** A segment of a lane, placed in percent of the hours shown. */
@@ -1075,6 +1166,9 @@ export interface Seg extends Placed {
   look: Look;
   /** Its words, at the widths that hold them. */
   text: Fit[];
+  /** How far it starts past the start of the segment before it in its row, in percent, where that
+   * one drawn at its least width reaches into it (`past`): its words start past it as drawn. */
+  inset?: number;
   /** A word right after it (a review's verdict) and its tone, where there is room before the
    * next, and that room in percent: it is cut short there, never drawn over the next. */
   after: [Fit, string, Room] | null;
@@ -1458,6 +1552,7 @@ function stageSegs(timeline: TaskTimeline, scale: Scale, costs?: Costs): Seg[] {
     if (!scale.spans(stage.from, to)) continue;
     const placed = scale.place(stage.from, to);
     const width = placed.width;
+    const before = past(segs[segs.length - 1], placed);
     const approved = stage.approved === true;
     const word = approved ? "waiting to land" : stage.status.replaceAll("_", " ");
     const length = took(to - stage.from);
@@ -1468,7 +1563,8 @@ function stageSegs(timeline: TaskTimeline, scale: Scale, costs?: Costs): Seg[] {
       tone: statusTone(stage.status),
       look: approved ? "waiting" : "solid",
       // Its word, its time and its cost; else its time and its cost; else its time alone.
-      text: fittedFirst([`${word} ${length}${spent}`, `${length}${spent}`, length], width),
+      text: fittedFirst([`${word} ${length}${spent}`, `${length}${spent}`, length], width, before),
+      ...insetOf(before),
       after: null,
       row: 0,
       title: `${word} ${length}${spent}, from ${scale.clock(stage.from)} to ${scale.clock(to)}${cost.words}`,
@@ -1480,17 +1576,21 @@ function stageSegs(timeline: TaskTimeline, scale: Scale, costs?: Costs): Seg[] {
 
 /** A place lane: each stretch of the task's places that shares one phase, or one state (`key`). */
 function placeSegs(timeline: TaskTimeline, scale: Scale, key: "phase" | "state"): Seg[] {
+  let prev: Placed | undefined;
   return stretches(timeline, key).flatMap((stretch): Seg[] => {
     if (!scale.spans(stretch.from, stretch.to)) return [];
     const placed = scale.place(stretch.from, stretch.to);
     const width = placed.width;
+    const before = past(prev, placed);
+    prev = placed;
     const length = took(stretch.to - stretch.from);
     return [
       {
         ...placed,
         tone: statusTone(stretch.status),
         look: "solid",
-        text: fitted(`${stretch.label} ${length}`, length, width),
+        text: fitted(`${stretch.label} ${length}`, length, width, before),
+        ...insetOf(before),
         after: null,
         row: 0,
         title: stretchTitle(stretch, length, (at) => scale.clock(at)),
@@ -1503,10 +1603,12 @@ function placeSegs(timeline: TaskTimeline, scale: Scale, key: "phase" | "state")
 /** The executor lane: each claim, the first saying so where one executor held them all, each
  * naming its executor where several did. */
 function claimSegs(timeline: TaskTimeline, scale: Scale, one: boolean): Seg[] {
+  const places = timeline.claims.map((claim) => scale.place(claim.from, claim.to ?? scale.now));
   return timeline.claims.map((claim: Claim, index) => {
     const to = claim.to ?? scale.now;
-    const placed = scale.place(claim.from, to);
+    const placed = places[index] as Placed;
     const width = placed.width;
+    const before = past(places[index - 1], placed);
     const length = took(to - claim.from);
     const word = one ? (index === 0 ? "claimed" : "") : claim.by;
     const long = word === "" ? length : `${word} ${length}`;
@@ -1514,7 +1616,8 @@ function claimSegs(timeline: TaskTimeline, scale: Scale, one: boolean): Seg[] {
       ...placed,
       tone: "primary",
       look: "solid",
-      text: fitted(long, length, width),
+      text: fitted(long, length, width, before),
+      ...insetOf(before),
       after: null,
       row: 0,
       title: `${claim.by} held it ${length}, from ${scale.clock(claim.from)} to ${scale.clock(to)}`,
@@ -1558,11 +1661,14 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
         ? `${name}: waited ${wait} for a reviewer${said}`
         : `${name}: waited ${wait} for a reviewer, then ${by} took ${took(to - taken)}${said}`;
     if (scale.spans(round.from, taken ?? to) || taken === null) {
+      const placed = scale.place(round.from, taken ?? to);
+      const before = past(segs[segs.length - 1], placed);
       segs.push({
-        ...scale.place(round.from, taken ?? to),
+        ...placed,
         tone: "question",
         look: "waiting",
-        text: taken === null ? fitted(name, "", waiting) : [],
+        text: taken === null ? fitted(name, "", waiting, before) : [],
+        ...insetOf(taken === null ? before : undefined),
         after: taken === null ? after : null,
         row: 0,
         title,
@@ -1570,11 +1676,14 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
       });
     }
     if (taken !== null) {
+      const placed = scale.place(taken, to);
+      const before = past(segs[segs.length - 1], placed);
       segs.push({
-        ...scale.place(taken, to),
+        ...placed,
         tone: "question",
         look: "solid",
-        text: fitted(name, "", width),
+        text: fitted(name, "", width, before),
+        ...insetOf(before),
         after,
         row: 0,
         title,
@@ -1745,18 +1854,23 @@ export function lanes(
   }
   if (timeline.history) {
     const roles = timeline.history.roles.filter((role) => role.role === "orchestrator");
-    const segs: Seg[] = roles.map((role) => {
-      // Uncertain boundaries are instants, never a corrected or invented duration.
-      const placed = scale.place(
+    // Uncertain boundaries are instants, never a corrected or invented duration.
+    const places = roles.map((role) =>
+      scale.place(
         role.from,
         role.uncertain ? role.from : (role.to ?? timeline.closed ?? timeline.now),
-      );
+      ),
+    );
+    const segs: Seg[] = roles.map((role, index) => {
+      const placed = places[index] as Placed;
       const width = placed.width;
+      const before = past(places[index - 1], placed);
       return {
         ...placed,
         tone: "resolved",
         look: "waiting",
-        text: fitted(role.by, "", width),
+        text: fitted(role.by, "", width, before),
+        ...insetOf(before),
         after: null,
         row: 0,
         title: `${role.by} held orchestrator from ${role.from} to ${role.to ?? "open"}; source ${role.source}${role.uncertain ? "; uncertain boundaries" : ""}; not continuous work or connection`,

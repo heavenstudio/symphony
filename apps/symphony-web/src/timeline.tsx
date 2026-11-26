@@ -67,6 +67,7 @@ import {
   type Seg,
   type Shown,
   type SkippedCut,
+  segIndentCss,
   showAll,
   stops,
   took,
@@ -493,6 +494,7 @@ function SegView({
     "--row": String(seg.row),
     left: percent(seg.left),
     width: percent(seg.width),
+    ...(seg.inset === undefined ? {} : { textIndent: segIndentCss(seg.inset) }),
   });
   return (
     <>

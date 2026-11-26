@@ -118,6 +118,25 @@ fn the_cards_quiet_stretch_is_a_band_that_says_its_length_and_the_work_gets_the_
     assert_eq!(chrome.eval(SIDEWAYS), json!(false));
 }
 
+/// Beside the band, the work's words as the review read them at 1440 wide: the hour after the
+/// review of two minutes says "1 h 4 m" whole, its letters past the review's least width as drawn;
+/// the 39 minutes before the band, in the stage and the claim, say nothing where "39 m" whole does
+/// not fit, and say it at 1600 wide.
+const BESIDE: &str = "(() => { const lane = k => [...document.querySelectorAll(`.tl-lanes [data-lane=${k}] .tl-seg`)]; const said = e => e.innerText.trim(); const stage = lane('stage'), at = stage.findIndex(e => e.title.startsWith('in progress 1 h 4 m,')), hour = stage[at], review = stage[at - 1], words = document.createRange(); words.selectNodeContents(hour); return {hour: said(hour), clear: words.getBoundingClientRect().left - review.getBoundingClientRect().right >= 2.5, review: review.title.split(',')[0], late: ['stage', 'executor'].map(k => said(lane(k).find(e => /(in progress|held it) 39 m,/.test(e.title))))}; })()";
+
+#[test]
+fn the_work_beside_the_band_says_its_words_whole_and_clear_of_a_few_minutes_before_it() {
+    let site = guards_on(site());
+    let Some(mut chrome) = chrome() else { return };
+    opened(&mut chrome, &site);
+    assert_eq!(
+        chrome.eval(BESIDE),
+        json!({"hour": "1 h 4 m", "clear": true, "review": "review 2 m", "late": ["", ""]})
+    );
+    view(&mut chrome, 1600, false);
+    assert_eq!(chrome.eval(BESIDE)["late"], json!(["39 m", "39 m"]));
+}
+
 /// A press on the band draws its stretch on the true clock, the press the timeline's alone, and
 /// the focus the press gave the band goes to the switch, which gives the band back; so too from
 /// the keyboard.

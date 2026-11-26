@@ -3778,8 +3778,9 @@ lane, under the bars, in a press area of 24 px; a message from or to no one role
 board, the owner, everyone) is on the 22 px line of **Board & others**. The selected message
 is a filled dot with one arrow from it to a ring on its addressed lane's line, its address
 and time on the hours line over a dashed guide down to it; one whose two ends are one lane
-is a ring around its dot, with no arrow. A word in the lanes is drawn only where it fits; every
-part of them is said to assistive technology and reached by the arrow keys, and the
+is a ring around its dot, with no arrow. A word in the lanes is drawn only where it fits, weighed
+letter by letter, and clear of a segment of a few minutes before it that is drawn wider than its
+time; every part of them is said to assistive technology and reached by the arrow keys, and the
 list stays for assistive technology beside them. A run's words name its command, its
 wait to start and its run time apart (to the second under a minute), how it ended, its
 commit, who ran it and where: a pointer resting on its part reads them; wide, its part
