@@ -887,14 +887,25 @@ fn no_word_of_the_lanes_is_drawn_over_another_at_any_width_for_the_fixture_or_a_
     // The labels after a bar at each width: the fixture's and a week's at every one, the card's
     // task's as its quiet stretch skipped gives its work the width, each verdict from the width its
     // room holds it before the next round or the band (a 555 px track at 900 wide, 935 at 1280,
-    // 1,095 at 1440, 1,158 at 1600): the first "changes" from a 950 px track, the second from 1,200,
-    // wider than the page draws.
+    // 1,095 at 1440, 1,158 at 1600): the first "changes" from a 903 px track, so from a 1280
+    // page's, which is one of the widths a word is weighed at (timeline-layout.ts `TRACKS`); the
+    // second from 1,162, wider than the page draws.
     let card = |width: u32| -> &'static [&'static str] {
         match width {
             ..1100 => &["approved"],
-            1100..1440 => &["approved", "approved"],
+            1100..1280 => &["approved", "approved"],
             _ => &["approved", "changes", "approved"],
         }
+    };
+    // The track at each width: at 1280, 1440 and 1600 one of `TRACKS`, which a layout that moved
+    // it would leave a word hidden there until the next step of 50.
+    let track = |width: u32| match width {
+        900 => 555,
+        960 => 615,
+        1100 => 755,
+        1280 => 935,
+        1440 => 1095,
+        _ => 1158,
     };
     let fixed = |labels: &'static [&'static str]| move |_: u32| labels;
     for (name, timeline, labels) in [
@@ -916,6 +927,13 @@ fn no_word_of_the_lanes_is_drawn_over_another_at_any_width_for_the_fixture_or_a_
         open_drawn(&mut chrome, &site, 1280);
         for width in [900, 960, 1100, 1280, 1440, 1600] {
             view(&mut chrome, width, false);
+            assert_eq!(
+                chrome.eval(
+                    "document.querySelector('.tl-lane[data-lane=stage] .tl-track').getBoundingClientRect().width"
+                ),
+                json!(track(width)),
+                "{name} at {width} px: the track's width"
+            );
             assert_eq!(chrome.eval(OVERPRINT), json!([]), "{name} at {width} px");
             assert_eq!(
                 chrome.eval(CUT),
@@ -1730,9 +1748,10 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
     }
     // The card's example task, before (the client `SYMPHONY_TIMELINE_BEFORE` names, a build's
     // `public/`, else the committed one) and after (this build), on a phone and 1440 wide as the
-    // card's pictures are, and 1600 wide, where its reviewer's label is weighed closest to its
-    // room; after, a message selected, zoomed, on the true clock and zoomed across its quiet
-    // stretch's band, and a phone's row of that stretch.
+    // card's pictures are, 1600 wide, where its reviewer's label is weighed closest to its room,
+    // and 1280 wide, light and dark, where its first "changes" shows from its track; after, a
+    // message selected, zoomed, on the true clock and zoomed across its quiet stretch's band, and
+    // a phone's row of that stretch.
     let committed = std::env::var_os("SYMPHONY_TIMELINE_BEFORE")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -1749,6 +1768,16 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
             &["--size", "1600x1100", "--scheme", "light"],
         ),
     ];
+    let common = [
+        (
+            "wide-1280-light",
+            &["--size", "1280x900", "--scheme", "light"][..],
+        ),
+        (
+            "wide-1280-dark",
+            &["--size", "1280x900", "--scheme", "dark"],
+        ),
+    ];
     for (version, site) in [
         (
             "before",
@@ -1759,7 +1788,7 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
         ),
         ("after", guards_on(site())),
     ] {
-        for (name, view) in phone.iter().chain(&card) {
+        for (name, view) in phone.iter().chain(&card).chain(&common) {
             shoot(
                 &site,
                 view,

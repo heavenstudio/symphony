@@ -118,11 +118,12 @@ fn the_cards_quiet_stretch_is_a_band_that_says_its_length_and_the_work_gets_the_
     assert_eq!(chrome.eval(SIDEWAYS), json!(false));
 }
 
-/// Beside the band, the work's words at 1440 wide and at 1600: the hour after the review of two
-/// minutes says nothing at 1440, where "1 h 4 m" weighed at the widest face's advances does not fit
-/// past the review's least width, and says it whole at 1600, its letters past that width as drawn;
-/// the 39 minutes before the band, in the stage and the claim, say nothing at either, as "39 m"
-/// whole fits no track the page draws (1,158 px at its widest).
+/// Beside the band, the work's words at 1280 wide, 1440 and 1600: the hour after the review of two
+/// minutes says nothing at 1280, where "1 h 4 m" weighed at the widest face's advances does not fit
+/// past the review's least width, and says it whole from 1440 (a 1,095 px track, one of the widths
+/// a word is weighed at), its letters past that width as drawn; the 39 minutes before the band, in
+/// the stage and the claim, say nothing at any, as "39 m" whole fits no track the page draws
+/// (1,158 px at its widest).
 const BESIDE: &str = "(() => { const lane = k => [...document.querySelectorAll(`.tl-lanes [data-lane=${k}] .tl-seg`)]; const said = e => e.innerText.trim(); const stage = lane('stage'), at = stage.findIndex(e => e.title.startsWith('in progress 1 h 4 m,')), hour = stage[at], review = stage[at - 1], words = document.createRange(); words.selectNodeContents(hour); return {hour: said(hour), clear: words.getBoundingClientRect().left - review.getBoundingClientRect().right >= 2.5, review: review.title.split(',')[0], late: ['stage', 'executor'].map(k => said(lane(k).find(e => /(in progress|held it) 39 m,/.test(e.title))))}; })()";
 
 #[test]
@@ -130,15 +131,19 @@ fn the_work_beside_the_band_says_its_words_whole_and_clear_of_a_few_minutes_befo
     let site = guards_on(site());
     let Some(mut chrome) = chrome() else { return };
     opened(&mut chrome, &site);
+    for width in [1440, 1600] {
+        view(&mut chrome, width, false);
+        assert_eq!(
+            chrome.eval(BESIDE),
+            json!({"hour": "1 h 4 m", "clear": true, "review": "review 2 m", "late": ["", ""]}),
+            "at {width} px"
+        );
+    }
+    view(&mut chrome, 1280, false);
     let beside = chrome.eval(BESIDE);
     assert_eq!(
         [&beside["hour"], &beside["review"], &beside["late"]],
         [&json!(""), &json!("review 2 m"), &json!(["", ""])]
-    );
-    view(&mut chrome, 1600, false);
-    assert_eq!(
-        chrome.eval(BESIDE),
-        json!({"hour": "1 h 4 m", "clear": true, "review": "review 2 m", "late": ["", ""]})
     );
 }
 

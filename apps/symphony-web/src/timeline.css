@@ -931,7 +931,8 @@
 }
 
 /* A word in the lanes shows only at the track widths that hold it (timeline-layout.ts WIDTHS): a
-   tl-from-W from W pixels wide, a tl-to-W below W. */
+   tl-from-W from W pixels wide, a tl-to-W below W. Every 50 px, and the tracks of a 1280, a 1440
+   and a 1600 or wider page (935, 1095 and 1158, timeline-layout.ts TRACKS). */
 @container (max-width: 399.5px) {
   .tl-from-400 {
     display: none;
@@ -1042,6 +1043,16 @@
     display: none;
   }
 }
+@container (max-width: 934.5px) {
+  .tl-from-935 {
+    display: none;
+  }
+}
+@container (min-width: 935px) {
+  .tl-to-935 {
+    display: none;
+  }
+}
 @container (max-width: 949.5px) {
   .tl-from-950 {
     display: none;
@@ -1072,6 +1083,16 @@
     display: none;
   }
 }
+@container (max-width: 1094.5px) {
+  .tl-from-1095 {
+    display: none;
+  }
+}
+@container (min-width: 1095px) {
+  .tl-to-1095 {
+    display: none;
+  }
+}
 @container (max-width: 1099.5px) {
   .tl-from-1100 {
     display: none;
@@ -1089,6 +1110,16 @@
 }
 @container (min-width: 1150px) {
   .tl-to-1150 {
+    display: none;
+  }
+}
+@container (max-width: 1157.5px) {
+  .tl-from-1158 {
+    display: none;
+  }
+}
+@container (min-width: 1158px) {
+  .tl-to-1158 {
     display: none;
   }
 }
