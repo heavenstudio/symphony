@@ -4,8 +4,10 @@ Whether a project may hold several boards, or a second board is a project of its
 concepts lean on the answer: who is on a board ([users and identity](users-and-identity.md)),
 what a project starts from ([blueprints](blueprints.md)), and a [desktop app](desktop-client.md)
 that reaches more than one server. This is a concept: it questions the idea against what the
-Symphony has, compares the shapes it could take, and puts two choices to the owner. Nothing here
-is built, and nothing is built from it but by a task filed from an approved card.
+Symphony has, compares the shapes it could take, and says the one chosen: one board for each
+project, and a repository that may hold several projects, over folders of their own or the same
+folders. Nothing here is built, and nothing is built from it but by a task filed from an approved
+card.
 
 Read at `66d362173`, and the blueprints concept as it landed at `11f6a2490`. The links name the
 modules and documents read. A fact marked *inferred* was reasoned from them and not tried.
@@ -15,22 +17,23 @@ modules and documents read. A fact marked *inferred* was reasoned from them and 
 - **Today a project has one board because the board is its repository's**, kept in its git
   common dir. Nothing says a project has one board; it follows from where the board is kept
   ([the picture](#what-the-symphony-has-today)).
-- **One board for each project, as the rule** ([its card](#boards-per-project)). Every tie between
-  a board and its project (the landing, the cards, the project file) holds the whole project, so
-  a second board in one project either separates only tasks and people, which groups already
-  do, or splits the rest and is a project in all but name.
+- **One board for each project** ([its card](#boards-per-project)). Every tie between a board
+  and its project (the landing, the cards, the project file) holds the whole project, so a second
+  board in one project either separates only tasks and people, which groups already do, or
+  splits the rest and is a project in all but name.
 - **What a second board was asked for is served without one.** People with different powers over
   parts of the work are groups on the one board, as [users and identity](users-and-identity.md#what-the-owner-becomes)
   settled. A part that needs its own process, template, rules or people is a project of its own.
-- **A repository may hold several projects**, each in a folder with its own project file,
-  documents, guides and board ([its card](#projects-per-repository)). That is where "several
-  boards for one repository" goes, and it is built when a repository first needs it.
+- **A repository may hold several projects** ([its card](#projects-per-repository)), over folders
+  of their own or over the same folders. What sets two projects apart is their settings, every
+  kind of them, and their board, which holds their people, their tasks and their decision queue.
+  It is built when a repository first needs a second project.
 - **Several machines on one project ask for fewer boards, not more.** Two clones on two machines
-  keep two boards today, counted apart, until the central board every machine reaches. Under the
-  proposal that board is the project's one.
-- **What the three concepts read** ([below](#what-the-three-concepts-would-read)). People, groups
-  and powers are a project's board's. A blueprint attaches to a project, with one record. The
-  desktop app lists each server's projects, each one board, as it does.
+  keep two boards today, counted apart, until the central board every machine reaches. That board
+  is the project's one.
+- **What the three concepts read** ([below](#what-the-three-concepts-read)). People, groups and
+  powers are each project's board's. A blueprint attaches to a project, with one record for each.
+  The desktop app lists each server's projects, each one board, as it does.
 
 ## What the Symphony has today
 
@@ -94,16 +97,18 @@ The first two, taken apart, ask four things:
   ([needed stamps](../../workflow/TASKS.md#needed-stamps)).
 - **A template of its own.** A blueprint is mostly files read at fixed places: the skills folder,
   the rules, the recipes, the project file. Two templates in one checkout write the same places. A
-  template fits a folder whose files are its own, which is what a project is.
+  template of its own needs files of its own: a project over folders of its own.
 
 ### What a board holds, and what a project holds
 
 | A board holds | A project holds |
 | --- | --- |
-| tasks, threads, sessions and asks | documents and their cards |
-| its people's groups and powers, and its map of places | the project file: what lands, the workflow, the stamps, the plugins, the look |
-| its store of preferences | the guides, skills and recipes its agents read |
-| | its address and its entry in the registry |
+| tasks, threads, sessions and asks | its settings: what lands, the workflow, the stamps, the plugins, the look |
+| its people's groups and powers, and its map of places | its address and its entry in the registry |
+| its store of preferences | the folders it works over: documents and their cards, the guides, skills and recipes its agents read |
+
+A project's folders may be its own, or the same as another project's in its repository; its
+settings and its board are always its own.
 
 They are tied in three places, and each tie holds the whole project:
 
@@ -161,25 +166,31 @@ task, and what it costs from where the code stands.
   its project.
 - **Branches and landing.** As above: one repository, one namespace of slugs and receipts, and
   each project landing as it does today.
-- **Settings, skills and the justfile.** Each project is a folder with its own project file,
-  documents, guides, skills and recipes; `symphony init --root FOLDER` takes such a root today.
-  The guides at the repository's root are read by both, and each folder's add to them. *Inferred*:
-  Claude Code reads its guides from the folder it starts in and the folders above, Codex from the
-  repository's root down to that folder, and `just` finds the nearest justfile above it.
-- **Address and registry.** One entry for each project, its root the project's folder, and a
-  `/<id>/` each. The server's scan of a repository's worktrees keeps to the branches its own board
-  names.
+- **Settings, skills and the justfile.** Each project has its own settings, every kind of them.
+  It works over folders of its own (its project file, documents, guides, skills and recipes;
+  `symphony init --root FOLDER` takes such a root today) or over the same folders as another
+  project of the repository, which then share those files and differ in their settings alone.
+  The guides at the repository's root are read by every project. *Inferred*: Claude Code reads its
+  guides from the folder it starts in and the folders above, Codex from the repository's root down
+  to that folder, and `just` finds the nearest justfile above it.
+- **Address and registry.** One entry for each project, and a `/<id>/` each. Two projects over one
+  folder are told apart by their ids, as their folder no longer tells them apart. The server's
+  scan of a repository's worktrees keeps to the branches its own board names.
 - **People and groups.** Each project's board's own. A person on both is added to each, and a
   group of one project is not the other's.
-- **Cards.** Each project's own documents and register.
-- **A blueprint.** One for each project, its files in the project's folder.
+- **Cards.** Each project has its own decision queue. Over folders of its own, that is its own
+  documents and register; in a document two projects serve, each card is given to one project.
+- **A blueprint.** One for each project. Its files are in the project's folders, so two projects
+  over the same folders share them.
 - **Moving a task.** It can keep its branch, as the repository is one; its thread goes to the other
   project's board. No command does it today.
 - **What it costs.** Some: the board kept for each project rather than each repository (its
   database, heartbeat keys, sweep state and staffing lock); slugs that cannot meet between a
-  repository's projects; a launch, and its worktree's session, starting in the task's project's
-  folder; the sweep and the server's branch scan keeping to their own board. The walk to the
-  nearest project file and the registry by root are there already.
+  repository's projects; a launch, and its worktree's session, starting in the task's project and
+  on its board; the sweep and the server's branch scan keeping to their own board. Projects over
+  the same folders add two more: a project named by its id wherever a folder names two, and each
+  card of a shared document given to one project's queue. For projects over folders of their own,
+  the walk to the nearest project file and the registry by root are there already.
 
 ### One project per repository
 
@@ -216,17 +227,17 @@ And two things it does not:
 
 | | Boards in one project | Projects in one repository | A repository each |
 | --- | --- | --- | --- |
-| Documents and cards | shared by every board | each project's own | each project's own |
+| Documents and cards | shared by every board | a queue each, folders own or shared | each project's own |
 | A part kept from someone | its tasks, not its files | its tasks, not its files | yes |
 | A process of its own | tables for each board | yes | yes |
-| A template of its own | the board's tables only | yes | yes |
+| A template of its own | the board's tables only | over folders of its own | yes |
 | A task moved keeps its branch | yes | yes | no |
 | What it costs | the most | some | nothing |
 
 Under all three, people with different powers over parts of the work are groups on a board, and
 several machines on one project reach its one board, the central board.
 
-## The proposal
+## The direction
 
 ### One board for each project
 
@@ -235,15 +246,18 @@ elsewhere:
 
 - **People with different powers over parts of the work** are groups on the one board, each
   owning what its places map to.
-- **A part with its own process, template, rules, or people who must not see the rest** is a
-  project of its own, in a folder of the repository ([below](#projects-sharing-a-repository)) or
-  in a repository of its own.
+- **A part with its own process, template, rules or people** is a project of its own: in the same
+  repository, over the same folders or folders of its own ([below](#projects-sharing-a-repository)),
+  or in a repository of its own. Its settings, people, tasks, board and decision queue are its
+  own whichever folders it works over.
+- **A part kept from people who must not see it** is a repository of its own, as every worktree
+  and every clone holds all of its repository's files.
 - **Several machines** reach the one board: the central board, a concept of its own.
 
 What stays as written elsewhere: the Settings page's control that makes a value the project's is
 one board's say, and the whole of it; a board's map of places is its project's.
 
-- [x] **boards-per-project** — Today a project has one board because the board is kept in its repository. Before people, blueprints and the desktop app build on boards, this decides whether a project may hold several. A: several boards in one project; they share its documents, its project file, its guides and its address, and each has its own tasks, people and process. B: one board for each project; people with different powers over its parts are groups on that board, and a part that needs its own process, template or people is a project of its own. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/boards-and-projects#One board for each project]]
+- [r] **boards-per-project** — Today a project has one board because the board is kept in its repository. Before people, blueprints and the desktop app build on boards, this decides whether a project may hold several. A: several boards in one project; they share its documents, its project file, its guides and its address, and each has its own tasks, people and process. B: one board for each project; people with different powers over its parts are groups on that board, and a part that needs its own process, template or people is a project of its own. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/boards-and-projects#One board for each project]]
   [2026-11-23 12:45] agent — Posted for the board task `app/boards-and-projects`, from your rejection of the blueprints card on how a project records its blueprint (branch `app/blueprints`): "We need to decide upon if we are going to do multiple boards per project or multiple project entirely." A concept: nothing is built by this card.
 
     ![A second board: three shapes](boards-and-projects/shapes.svg)
@@ -273,16 +287,23 @@ one board's say, and the whole of it; a board's map of places is its project's.
 
     None decides this.
   [2026-11-26 08:13] owner · approved — B, but they may even reference the same base folder. They should have different settings including people, tasks, board, decision queue tho and they could use different folders.
+  [2026-11-26 08:21] agent — Recorded: B, as your note widens it: "they may even reference the same base folder. They should have different settings including people, tasks, board, decision queue tho and they could use different folders." A project has one board, and two projects can work over the same folder: each keeps its own settings, people, tasks, board and decision queue, and its own address. Two costs follow that the card did not state. In a shared folder a command names its project, because the folder no longer does. A card in a document both projects serve must be given to one project's queue. The analysis now says so under One board for each project and Projects sharing a repository. It lists as later rounds where such a project keeps its own settings, and how a shared card is given to one queue.
+  [2026-11-26 08:24] agent · resolved
 
 ### Projects sharing a repository
 
-If a project has one board, a repository that holds two kinds of work (a game and its web
-service, say) needs two projects to give each its board, its template and its people. Today the
-Symphony half-allows it: a project file in a subfolder names a project, and that project reaches
-its repository's one board ([above](#what-the-symphony-has-today)).
+A repository that holds two kinds of work (a game and its web service, say) may hold a project
+for each, so that each has its own board, template and people. Two projects of a repository work
+over folders of their own, or over the same folders. What sets them apart is their settings,
+every kind of them, and their board, which holds their people, their tasks and their decision
+queue. They share the repository's history, its branches and its landing, and any folders they
+both work over.
 
-Under either answer, that silent sharing ends: a second project file inside a repository is
-refused by name, or it gets a board of its own.
+![Two projects in one repository](boards-and-projects/two-projects.svg)
+
+Today the Symphony half-allows it: a project file in a subfolder names a project, and that
+project reaches its repository's one board ([above](#what-the-symphony-has-today)). Building
+this ends that silent sharing: the second project gets a board of its own.
 
 What building it takes, when a repository first needs it:
 
@@ -290,10 +311,19 @@ What building it takes, when a repository first needs it:
   heartbeat keys, sweep state and staffing lock.
 - **Slugs that cannot meet.** A branch is its slug and a delivery keeps a receipt under it, both
   the repository's. Two projects' slugs need keeping apart, as a later card.
-- **Agents start in their project's folder**, so they read its guides and its board.
+- **A project named by its id.** The registry knows a project by its folder and the id its project
+  file gives (`Entry` in `crates/symphony/src/machine/registry.rs`). Where two projects work over
+  one folder, the folder names neither, so a command run there names its project.
+- **Each project's own settings**, kept where the other project does not read them, as a later
+  card. Over folders of their own, that is each folder's project file, as today.
+- **Each card in one project's decision queue.** Over folders of its own, a project's queue is
+  its documents' cards; a card in a document two projects serve is given to one of them, as a
+  later card.
+- **Agents start in their project and on its board**: in its folder, and named by its id where
+  its folder is shared.
 - **The sweep and the branch scan** keep to the branches their own board names.
 
-- [x] **projects-per-repository** — If each project has one board, a repository with two kinds of work (a game and its web service, say) needs two projects to give each its own board, template and people. This decides whether a repository may hold several projects. A: one project per repository, as today; a part that needs its own board moves to a repository of its own, and a second project file inside a repository is refused. B: several projects in one repository, each a folder with its own project file, documents, guides and board; they share the repository's history, branches and landing. Built when a repository first needs a second project. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/boards-and-projects#Projects sharing a repository]]
+- [r] **projects-per-repository** — If each project has one board, a repository with two kinds of work (a game and its web service, say) needs two projects to give each its own board, template and people. This decides whether a repository may hold several projects. A: one project per repository, as today; a part that needs its own board moves to a repository of its own, and a second project file inside a repository is refused. B: several projects in one repository, each a folder with its own project file, documents, guides and board; they share the repository's history, branches and landing. Built when a repository first needs a second project. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/boards-and-projects#Projects sharing a repository]]
   [2026-11-23 12:45] agent — Posted for the board task `app/boards-and-projects`. It matters only if **boards-per-project** is B, and is asked apart as its own choice. A concept: nothing is built by this card.
 
     **Base (today).** A project file in a subfolder already names a project of its own, with its own id and pages, but that project reaches the repository's one board: two projects silently on one board. Read in code, not tried.
@@ -315,45 +345,40 @@ What building it takes, when a repository first needs it:
 
     None decides this.
   [2026-11-26 08:12] owner · approved — B, but they may even use the same folders too. What generally could change is settings generally between the two
+  [2026-11-26 08:21] agent — Recorded: B, with your note: "they may even use the same folders too. What generally could change is settings generally between the two." Two projects of one repository use folders of their own, or the same ones. What sets them apart is their settings, every kind of them, and their board, with its people, tasks and decision queue. The section above now says so, and what building it takes gains two items. A project sharing a folder is named by its id, because today the registry knows a project by its folder. And it keeps its own settings where the other project does not read them. Where that is (a table for each project in one file, or a file for each project) is left until a repository first needs it.
+  [2026-11-26 08:24] agent · resolved
 
-## What the three concepts would read
-
-Under the answers recommended, B on both cards.
+## What the three concepts read
 
 **Users and identity** ([its analysis](users-and-identity.md)).
 
 - Each "board" there is a project's one board: its people, groups, powers and map of places are
-  that project's. A person on two projects is added to each, with one profile.
-- Its later round on several boards for one project is answered: there are none. Two projects in
-  one repository have two boards, each with its own people and groups.
-- A value made the project's from the Settings page is one board's say, the whole of it, as that
-  analysis already says for one board.
+  that project's, whether its folders are its own or shared. A person on two projects is added to
+  each, with one profile.
+- Its later round on several boards for one project is answered: a project has one. Two projects
+  in one repository have two boards, each with its own people and groups, even over the same
+  folders.
+- A value made the project's from the Settings page is that project's alone: one board's say,
+  the whole of it, as that analysis already says for one board.
 - A short name is unique on one server, as decided. A project served from two servers is the
   central board's concept, not a second board's.
 
-Under A on the first card it would read otherwise: a project's documents, cards and settings
-would each need a rule for which board's people decide them.
-
 **Blueprints** ([its analysis](blueprints.md#what-the-project-holds-of-its-blueprint)).
 
-- A blueprint attaches to a project, with one record beside its project file. The card on how a
-  project records its blueprint can be asked again with one record for each project.
-- A project has one blueprint, so no rule is needed for two blueprints writing the same skills
-  folder or justfile. A second template is a second project; in one repository, a folder of its
-  own, its blueprint's files inside it.
+- A blueprint attaches to a project, with one record for each project. The card on how a project
+  records its blueprint can be asked again on that ground.
+- A project has one blueprint, so one project never has two blueprints writing its skills folder
+  or its justfile. A second template is a second project over folders of its own, its
+  blueprint's files inside them. Two projects over the same folders share those files; which of
+  their blueprints writes them is a later round.
 - Its later rounds stand as written.
-
-Under A on the first card a blueprint would split in two: a board's own tables for each board,
-the files for the whole project, with a rule for which blueprint wins a shared place.
 
 **The desktop app** ([its analysis](desktop-client.md#several-servers)).
 
 - It lists each server's projects, each one board, as it is built. Nothing changes.
 - Two clones on two machines stay two boards, counted apart, until the central board; then the
   project is counted once, by its board.
-- A repository with two projects shows two rows, one for each.
-
-Under A on the first card each project's row would split into its boards, each counted apart.
+- A repository with two projects shows two rows, one for each, whether they share folders or not.
 
 ## Later rounds
 
@@ -364,6 +389,10 @@ Not carded yet.
 - Columns and edges for one kind of task on a board, for a process that differs by the work.
 - How a repository's projects keep their slugs apart: each project's branches under its id, or a
   slug refused where another project of the repository holds it.
+- Where a project keeps its own settings when it shares its folder with another: a table for each
+  project in one project file, or a file for each project naming the folder it works over.
+- Which project's decision queue holds a card in a document two projects serve.
+- Which blueprint writes the files that two projects over the same folders share.
 - Moving a task between two projects of one repository, its branch kept.
 - Groups shared by a server's projects, such as a company's, where today each board has its own.
 - The central board: several machines on one project's board, which the desktop app and the run
