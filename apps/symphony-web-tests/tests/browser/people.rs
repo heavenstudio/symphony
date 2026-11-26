@@ -13,11 +13,14 @@
 //! without administer, who is not the person at the machine, shown no section of theirs to name
 //! and no control but their own profile's and notices', which post to
 //! `/api/people-profile`, and no one's addresses but their own; a person's notices set on their
-//! card, what changed posted alone; and a read that fails said in the page's place.
+//! card, what changed posted alone; a signing service's key and no tailnet offering a sign-in of
+//! any service, and neither offering none; and a read that fails said in the page's place.
 //!
-//! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page, a person's notices being set
-//! and direct agents given are saved there, whole, at each width and in each scheme: a visitor who is not the person at the machine reaches a server only
-//! under another Tailscale login, so their page is pictured from the stand-in server.
+//! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page, a person's notices being set,
+//! direct agents given and the page behind a signing service on no tailnet are saved there, whole,
+//! at each width and in each scheme: a visitor who is not the person at the machine reaches a
+//! server only under another Tailscale login or a signed word, so their page is pictured from the
+//! stand-in server.
 use super::{SHOWN, chrome, chrome::Chrome, site, site::Site, texts};
 use serde_json::{Value, json};
 
@@ -203,6 +206,63 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
             .iter()
             .any(|asked| asked.contains(symphony_api::PEOPLE_PATH))
     );
+    assert_eq!(site.posts(), []);
+}
+
+/// A signing service in front and no tailnet: the add and every card but the person at the
+/// machine's own offer a sign-in, its placeholder the form any service's takes, as the service is
+/// the word's to name. With neither a tailnet nor a signing service's key, no form offers one.
+#[test]
+fn a_signing_services_key_and_no_tailnet_offer_a_sign_in_of_any_service_and_neither_none() {
+    let mut signed = sample();
+    signed.as_object_mut().unwrap().remove("signins");
+    assert_eq!(
+        signed["signed_words"],
+        json!(true),
+        "the wire's sample sets it"
+    );
+    let mut neither = signed.clone();
+    neither.as_object_mut().unwrap().remove("signed_words");
+    let fields = r#"[...document.querySelectorAll('input[aria-label^="Sign-in"]')].map(i => `${i.getAttribute('aria-label')}:${i.placeholder}`)"#;
+    let Some(mut chrome) = chrome() else { return };
+    let site = served(&signed);
+    for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
+        screen(&mut chrome, width, height, mobile);
+        open(&mut chrome, &site, "people");
+        assert_eq!(
+            chrome.eval(fields),
+            json!([
+                "Sign-in of ana:service:subject",
+                "Sign-in of bo:service:subject",
+                "Sign-in of cy:service:subject",
+                "Sign-in:service:subject",
+            ]),
+            "{width}"
+        );
+        assert_eq!(
+            chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
+            json!(true)
+        );
+        // Ana's profile opened, its sign-in field drawn beside the add's.
+        click(
+            &mut chrome,
+            "#person-ana .people-profile:not(.people-notices) summary",
+        );
+        assert_eq!(
+            chrome.eval(r#"document.querySelector('input[aria-label="Sign-in of ana"]').offsetParent !== null"#),
+            json!(true)
+        );
+        let view = if mobile { "phone" } else { "wide" };
+        shot(
+            &mut chrome,
+            &format!("people-signed-{view}"),
+            (width, height, mobile),
+        );
+    }
+    let site = served(&neither);
+    screen(&mut chrome, 1440, 900, false);
+    open(&mut chrome, &site, "people");
+    assert_eq!(chrome.eval(fields), json!([]));
     assert_eq!(site.posts(), []);
 }
 

@@ -32,6 +32,7 @@ import {
   readPeople,
   renamed,
   type Said,
+  signinPlaceholder,
   type Told,
   takesSignins,
   unreached,
@@ -205,6 +206,8 @@ describe("the read", () => {
     }
     expect(readPeople({ ...SAMPLE, signins: [1] })).toBeNull();
     expect(readPeople({ ...SAMPLE, signins: "tailscale" })).toBeNull();
+    expect(readPeople({ ...SAMPLE, signed_words: "yes" })).toBeNull();
+    expect(readPeople({ ...SAMPLE, signed_words: false })).not.toHaveProperty("signed_words");
   });
 
   it("asks once and tells the page what the server answered", async () => {
@@ -901,13 +904,35 @@ describe("the page", () => {
   });
 
   it("offers no sign-in to give where the server knows no sign-in's service, as off a tailnet", () => {
-    const { signins: _, ...offline } = SAMPLE;
+    const { signins: _, signed_words: __, ...offline } = SAMPLE;
     const html = draw(offline, writing().writes);
     expect(html).toContain('aria-label="Add someone else"');
     expect(html).not.toContain("Sign-in");
     expect(takesSignins(SAMPLE)).toBe(true);
     expect(takesSignins(offline)).toBe(false);
     expect(takesSignins({ ...SAMPLE, machine: false })).toBe(false);
+    expect(takesSignins({ ...offline, signed_words: false })).toBe(false);
+  });
+
+  it("offers a sign-in of any service where a signing service's key is set, off a tailnet too", () => {
+    const { signins: _, ...signed } = SAMPLE;
+    expect(signed.signed_words).toBe(true);
+    expect(takesSignins(signed)).toBe(true);
+    expect(takesSignins({ ...signed, machine: false })).toBe(false);
+    expect(signinPlaceholder(signed)).toBe("service:subject");
+    expect(signinPlaceholder(SAMPLE)).toBe("tailscale:login@example.com");
+    const html = draw(signed, writing().writes);
+    expect(html).toContain('aria-label="Sign-in"');
+    expect(html).toContain('aria-label="Sign-in of ana"');
+    expect(html).toContain('placeholder="service:subject"');
+    expect(html).not.toContain("tailscale:login@example.com");
+    // The person at the machine's own card takes none either way.
+    const row = { ...ana(), name: "stefano", display: "Stefano", signins: [], groups: [] };
+    const named = { ...NAMED, signed_words: true, people: [...SAMPLE.people, row] };
+    const own = draw(named, writing().writes);
+    expect(own).toContain('aria-label="Display name of stefano"');
+    expect(own).not.toContain('aria-label="Sign-in of stefano"');
+    expect(own).toContain('aria-label="Sign-in of bo"');
   });
 
   it("says a change of today by its time, and one of another day with its day", () => {
@@ -1151,8 +1176,16 @@ describe("a form's powers", () => {
     hooks.states = ["ana", "", "tailscale:ana@example.com", "", "", ["read", "direct_agents"]];
     fire(AddPerson({ page: SAMPLE, writes }), submit, "onSubmit", submitted);
     hooks.states = ["ana", "", "tailscale:ana@example.com", "", "", ["read"]];
-    const { signins: _, ...offline } = SAMPLE;
+    const { signins: _, signed_words: __, ...offline } = SAMPLE;
     fire(AddPerson({ page: offline, writes }), submit, "onSubmit", submitted);
+    // A signing service in front and no tailnet: the sign-in is taken.
+    hooks.states = ["ana", "", "google:110248", "", "", ["read"]];
+    fire(
+      AddPerson({ page: { ...offline, signed_words: true }, writes }),
+      submit,
+      "onSubmit",
+      submitted,
+    );
     expect(sent.map((write) => (write as [string, string, PeopleChange])[2])).toEqual([
       {
         action: "add",
@@ -1163,6 +1196,14 @@ describe("a form's powers", () => {
         git: [],
       },
       { action: "add", name: "ana", powers: ["read"], groups: [], signins: [], git: [] },
+      {
+        action: "add",
+        name: "ana",
+        powers: ["read"],
+        groups: [],
+        signins: ["google:110248"],
+        git: [],
+      },
     ]);
   });
 

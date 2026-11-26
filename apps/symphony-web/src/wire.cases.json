@@ -4530,7 +4530,8 @@
       "administers": true,
       "machine": true,
       "mine": {},
-      "signins": ["tailscale"]
+      "signins": ["tailscale"],
+      "signed_words": true
     },
     "emptyPeople": {
       "people": [],

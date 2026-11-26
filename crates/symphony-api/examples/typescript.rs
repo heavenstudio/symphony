@@ -2785,6 +2785,7 @@ fn people() -> api::PeoplePage {
         problem: None,
         mine: Some(api::MachineProfile::default()),
         signins: words(&["tailscale"]),
+        signed_words: true,
     }
 }
 

@@ -72,7 +72,7 @@ pub(crate) async fn read(shared: &Arc<Shared>, request: &axum::http::Request<()>
     let read = crate::spawn::blocking(move || {
         let board = hub.on_reader(|store| Ok((store.people()?, store.people_log()?)));
         let mut page = page(board, profiles(machine.as_deref()), &asker);
-        page.signins = services(&shared);
+        offer_signins(&shared, &mut page);
         Ok::<_, Failed>(Json(page))
     });
     answered(read.await, "the people could not be read: ")
@@ -125,7 +125,7 @@ pub(crate) async fn write(
             profiles(machine),
             &asker,
         );
-        page.signins = services(&shared);
+        offer_signins(&shared, &mut page);
         Ok::<_, Failed>(page)
     })
     .await;
@@ -135,15 +135,18 @@ pub(crate) async fn write(
     )
 }
 
-/// The sign-in services the server knows a visitor by, which a sign-in may name: Tailscale's
-/// while this machine is on a tailnet ([`crate::gate::Gate::tailnet`]), and none where it is on
-/// none, as no sign-in could then match a visitor.
-fn services(shared: &Shared) -> Vec<String> {
-    if shared.gate.tailnet() {
+/// `page` offering the sign-ins the server knows a visitor by, which an add and a profile then
+/// take: Tailscale's while this machine is on a tailnet ([`crate::gate::Gate::tailnet`]), and the
+/// service a signed word names while the machine folder sets a signing service's key
+/// ([`crate::gate::Gate::signs_words`]). With neither it offers none, as no sign-in could then
+/// match a visitor.
+fn offer_signins(shared: &Shared, page: &mut PeoplePage) {
+    page.signins = if shared.gate.tailnet() {
         vec![TAILSCALE.to_string()]
     } else {
         Vec::new()
-    }
+    };
+    page.signed_words = shared.gate.signs_words();
 }
 
 /// The machine's profiles, read from `machine`.
@@ -244,6 +247,7 @@ pub(crate) fn page(
             }
         }),
         signins: Vec::new(),
+        signed_words: false,
     }
 }
 

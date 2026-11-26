@@ -396,6 +396,17 @@ impl Served {
         Served { shared, ..served }
     }
 
+    /// [`Served::new`], on a machine on no tailnet: its status answer lists no name of it.
+    fn off_the_tailnet(people: &[(&str, &[Power])]) -> Served {
+        let served = Served::new(people);
+        let gate = laptop_and_phone(Arc::new(|_, _| None))
+            .with_status(Arc::new(|| Ok("{}".to_string())))
+            .with_machine(served.machine.clone());
+        let shared = Shared::new(1, 8123, &served.root, None, gate);
+        assert!(shared.api.set(served.shared.hub().ok().unwrap()).is_ok());
+        Served { shared, ..served }
+    }
+
     /// What the router answers `client`'s `method` of `path` with `body`: status and body.
     async fn asked(
         &self,
@@ -1276,4 +1287,35 @@ async fn a_person_writes_their_own_addresses_and_ways_and_no_one_elses() {
         assert!(said.contains(refused) && !said.contains(value), "{said}");
     }
     assert_eq!(served.profiles(), profiles);
+}
+
+/// The page offers a sign-in where the server reads a visitor by one: Tailscale's while the machine
+/// is on a tailnet, and a signing service's while the machine folder sets its key, on a tailnet or
+/// on none. With neither, or a `sign-in.toml` that does not read, it offers none, as no sign-in
+/// could then admit a visitor.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_page_offers_sign_ins_on_a_tailnet_and_where_a_signing_services_key_is_set() {
+    async fn offered(served: &Served) -> (Vec<String>, bool) {
+        let page = served.page(HERE).await;
+        (page.signins, page.signed_words)
+    }
+    let tailscale = vec![TAILSCALE.to_string()];
+    let on = Served::new(&[("ana", &[Power::Speak])]);
+    assert_eq!(offered(&on).await, (tailscale.clone(), false));
+    crate::testing::SignIn::new(1).named_in(&on.machine);
+    assert_eq!(offered(&on).await, (tailscale, true), "both");
+    let off = Served::off_the_tailnet(&[("ana", &[Power::Speak])]);
+    assert_eq!(offered(&off).await, (Vec::new(), false), "neither");
+    crate::testing::SignIn::new(1).named_in(&off.machine);
+    assert_eq!(
+        offered(&off).await,
+        (Vec::new(), true),
+        "a key and no tailnet"
+    );
+    std::fs::write(off.machine.join(symphony::signed_in::FILE), "key = 7\n").unwrap();
+    assert_eq!(
+        offered(&off).await,
+        (Vec::new(), false),
+        "a file that does not read"
+    );
 }

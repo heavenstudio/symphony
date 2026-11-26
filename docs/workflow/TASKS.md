@@ -2624,13 +2624,15 @@ board's admins, and the way each kind of notice goes by to them and the person a
 anyone else's answer carries neither, on the wire as on the page. Their card's Notices, beside its
 Profile, sets both. Its controls are drawn for whoever holds `administer`, as the person at the
 machine always does: someone else added with a display name, git handles, powers and groups (and
-sign-ins, by the person at the machine alone, where the server knows a sign-in's service, as on a
-tailnet), put in a group or taken out of one, given a power or one taken back, taken off the board;
-a group made, given a power or removed, direct agents as any other. Each field has a visible label,
-`(optional)` where it may be left empty. Taking a person off the board and removing a group, which a
-press cannot take back, ask first as a task's Cancel does: a named confirmation, then Confirm
-removal or Keep. Each change is one change of the log, the command's own, named as the actor who
-made it (`owner` for the person at the machine, or the short name they gave themselves).
+sign-ins, by the person at the machine alone, where the server knows a sign-in's service: on a
+tailnet, its placeholder a Tailscale login, or behind a signing service whose key the machine folder
+sets ([SIGNED_IN](../operations/SIGNED_IN.md)), its placeholder `service:subject`), put in a group
+or taken out of one, given a power or one taken back, taken off the board; a group made, given a
+power or removed, direct agents as any other. Each field has a visible label, `(optional)` where it
+may be left empty. Taking a person off the board and removing a group, which a press cannot take
+back, ask first as a task's Cancel does: a named confirmation, then Confirm removal or Keep. Each
+change is one change of the log, the command's own, named as the actor who made it (`owner` for the
+person at the machine, or the short name they gave themselves).
 `administer` is read from the board as the change arrives, so one from someone without it is a 403,
 `Forbidden: ana may not administer on this board`, with nothing written. The page is the project's
 own board's: a worktree's server and a hosted visitor are refused it

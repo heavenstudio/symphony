@@ -17,11 +17,12 @@
 // is shown none of these, and no line saying why. A removal asks first, as the task page's Cancel
 // does. A profile's form is shown on the reader's own card, and on every card for the person at
 // the machine, the one who gives a sign-in, where this server knows a sign-in's service (the
-// read's `signins`): the add's sign-in field is theirs alone too, and no card of their own name
-// takes one, as they are known by where they are. Each field is labelled, `(optional)` where it
-// may be left empty, and no line explains a control. Each write answers the page as it left it,
-// which the page draws: no read follows it, and what the write did is said on the part that sent
-// it, in the log's words.
+// read's `signins`, or `signed_words` where a signing service's key is set; the field's
+// placeholder a Tailscale login only where Tailscale's is one): the add's sign-in field is theirs
+// alone too, and no card of their own name takes one, as they are known by where they are. Each
+// field is labelled, `(optional)` where it may be left empty, and no line explains a control. Each
+// write answers the page as it left it, which the page draws: no read follows it, and what the
+// write did is said on the part that sent it, in the log's words.
 //
 // A person's addresses (the email, Slack member id and WhatsApp number their notices go to) and
 // the way each kind of notice goes by are in the read only for those who may see them: the
@@ -130,6 +131,7 @@ export function readPeople(value: unknown): Page | null {
   const problem = field(value, "problem");
   const mine = field(value, "mine");
   const signins = field(value, "signins");
+  const signed = field(value, "signed_words");
   if (
     !Array.isArray(people) ||
     !people.every(isPerson) ||
@@ -143,7 +145,8 @@ export function readPeople(value: unknown): Page | null {
     !maybeText(you) ||
     !maybeText(problem) ||
     !(absent(mine) || isMine(mine)) ||
-    !(absent(signins) || isTexts(signins))
+    !(absent(signins) || isTexts(signins)) ||
+    !(absent(signed) || typeof signed === "boolean")
   ) {
     return null;
   }
@@ -166,6 +169,7 @@ export function readPeople(value: unknown): Page | null {
         }
       : {}),
     ...(isTexts(signins) && signins.length > 0 ? { signins } : {}),
+    ...(signed === true ? { signed_words: true } : {}),
   };
 }
 
@@ -614,12 +618,15 @@ const SIGNIN_LABEL = "Sign-in";
 /** A person's profile, as the person at the machine or the person themself writes it. */
 function ProfileForm({
   person,
-  signins,
+  signin: hint,
   writes,
 }: {
   person: PersonRow;
-  /** Whether it takes a sign-in: the person at the machine's form, on a server that knows one. */
-  signins: boolean;
+  /**
+   * The placeholder of its sign-in field, where it takes one: the person at the machine's form, on
+   * a server that knows a sign-in's service ([`signinPlaceholder`]); none where it takes none.
+   */
+  signin: string | null;
   writes: Writes;
 }) {
   const [display, setDisplay] = useState("");
@@ -658,12 +665,12 @@ function ProfileForm({
             onChange={(event) => setGit(event.currentTarget.value)}
           />
         </Field>
-        {signins && (
+        {hint !== null && (
           <Field id={`profile-${person.name}-signin`} label={SIGNIN_LABEL} optional>
             <Input
               id={`profile-${person.name}-signin`}
               aria-label={`Sign-in of ${person.name}`}
-              placeholder="tailscale:login@example.com"
+              placeholder={hint}
               value={signin}
               onChange={(event) => setSignin(event.currentTarget.value)}
             />
@@ -846,7 +853,11 @@ export function Person({
           {profiled && (
             <ProfileForm
               person={person}
-              signins={takesSignins(page) && page.mine?.name !== person.name}
+              signin={
+                takesSignins(page) && page.mine?.name !== person.name
+                  ? signinPlaceholder(page)
+                  : null
+              }
               writes={writes}
             />
           )}
@@ -954,9 +965,18 @@ function doneBy(part: string, writes: Writes): Said | null {
 }
 
 /** Whether the page's profile forms take a sign-in: the person at the machine's, on a server that
- * knows a sign-in's service (none with no tailnet). */
+ * knows a sign-in's service, Tailscale's on a tailnet or a signing service's where its key is set
+ * (none with neither). */
 export function takesSignins(page: Page): boolean {
-  return page.machine && (page.signins ?? []).length > 0;
+  return page.machine && ((page.signins ?? []).length > 0 || page.signed_words === true);
+}
+
+/** The sign-in field's placeholder: a Tailscale login where the server offers Tailscale's, else
+ * the form any service's takes, as a signing service's name is the word's to say. */
+export function signinPlaceholder(page: Page): string {
+  return (page.signins ?? []).includes("tailscale")
+    ? "tailscale:login@example.com"
+    : "service:subject";
 }
 
 /** The form that puts someone else on the board, with their profile where they have none. */
@@ -1012,7 +1032,7 @@ export function AddPerson({ page, writes }: { page: Page; writes: Writes }) {
             <Input
               id="people-add-signin"
               aria-label="Sign-in"
-              placeholder="tailscale:login@example.com"
+              placeholder={signinPlaceholder(page)}
               value={signin}
               onChange={(event) => setSignin(event.currentTarget.value)}
             />

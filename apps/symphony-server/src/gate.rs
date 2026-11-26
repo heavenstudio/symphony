@@ -254,11 +254,22 @@ impl Gate {
     }
 
     /// Whether this machine is on a tailnet, as the last `tailscale status` that listed its names
-    /// said, asking it when that answer is due: the one sign-in service the server reads a
-    /// visitor by, which a profile's sign-in names, is Tailscale's, and with none no visitor but
-    /// the person at the machine reaches it.
+    /// said, asking it when that answer is due: Tailscale's is then a sign-in service the server
+    /// reads a visitor by, which a profile's sign-in names, and with none no visitor reaches it
+    /// by a tailnet login. A signing service in front is the other ([`Gate::signs_words`]).
     pub fn tailnet(&self) -> bool {
         self.own(|_| ()).is_some()
+    }
+
+    /// Whether a signing service's words are read here: the machine folder's `sign-in.toml` sets
+    /// its key, read as [`Gate::signed`] reads it, so a profile's sign-in of the service a word
+    /// names admits its visitor. False with no machine folder, no file, or a file that does not
+    /// read, where no word is taken.
+    pub fn signs_words(&self) -> bool {
+        matches!(
+            self.machine.as_deref().map(Settings::read),
+            Some(Ok(Some(_)))
+        )
     }
 
     /// Whether `visitor` is on the board at `root`, and as whom: the person at the machine is on
