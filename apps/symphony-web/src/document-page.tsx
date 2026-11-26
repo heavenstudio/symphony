@@ -246,7 +246,14 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
   }, [scope, refreshed, orders]);
   const state = page.state;
   const owners = useCardOwners(path, scope, state?.latest ?? null, refreshed);
-  const held = useHeld(path, scope, state?.shown.sections ?? null, page.heldMoves, refreshed);
+  const held = useHeld(
+    path,
+    scope,
+    state?.shown.sections ?? null,
+    state?.latest.version ?? null,
+    page.heldMoves,
+    refreshed,
+  );
   const device = shown(page.freshness);
   const trouble = page.trouble;
   // An intro the server no longer has follows no feed: the folder's next read drops it.

@@ -838,10 +838,12 @@ pub struct HeldComment {
     /// The card, for a message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card: Option<String>,
-    /// The section a callout was left after, by its key ([`Section::key`]).
+    /// The section a callout goes after, by its key ([`Section::key`]): the one its pass would
+    /// write it after now, the block it was left after or, that block changed, the end of its
+    /// section; else the one it was left after.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-    /// That section's last line then.
+    /// That section's last line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<i64>,
 }

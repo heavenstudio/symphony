@@ -1,11 +1,13 @@
 // The comments held for people on a document (docs/product/analysis/users-and-identity.md, "Words
 // without agent reach"): a callout or a card's message from a person who may not direct agents,
-// kept on the board until someone who may passes it on. The page reads them with itself and again
-// as its feed says one was held or passed on (`held`, document-live.ts), and draws each where it
-// was left: a callout under the section it was left after, by its key, else under the section
-// that ends on its line then, else at the document's end; a card's message in its card. Each says
-// who wrote it, its kind, "held" and its words, and for one who may pass it on (`passes`) Pass on,
-// which writes it into the file as its author's; the next read leaves it out.
+// kept on the board until someone who may passes it on. The page reads them with itself, again as
+// its feed says one was held or passed on (`held`, document-live.ts), and again as its document's
+// copy moves while it holds any. It draws each where the server says its pass writes it, after the
+// block it was left after or, that block changed, at the end of its section: a callout under the
+// section of its key, else under the section that ends on its line, else at the document's end; a
+// card's message in its card. Each says who wrote it, its kind, "held" and its words, and for one
+// who may pass it on (`passes`) Pass on, which writes it into the file as its author's; the next
+// read leaves it out.
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./button";
@@ -94,22 +96,33 @@ export const HeldContext = createContext<HeldValue | null>(null);
 /**
  * The held comments of the document `path` of the checkout `scope`, placed among its `sections`:
  * read at once, again each time `moved` (the feed's count of held comments moved) or `refreshed`
- * (the frame's) changes, and after a pass from this page. None until read, and none where nothing
+ * (the frame's) changes, after a pass from this page, and as the document's copy `version` moves
+ * while any is held, which moves where its pass writes it. None until read, and none where nothing
  * is held. A failed read draws none; the next move reads it again.
  */
 export function useHeld(
   path: string,
   scope: string,
   sections: readonly Section[] | null,
+  version: number | null,
   moved: number,
   refreshed: unknown,
 ): HeldValue | null {
   const [read, setRead] = useState<DocumentHeld | null>(null);
   const [passed, setPassed] = useState(0);
+  const [copies, setCopies] = useState(0);
+  const holding = (read?.held.length ?? 0) > 0;
+  const seen = useRef(version);
+  useEffect(() => {
+    if (version === seen.current) return;
+    seen.current = version;
+    if (holding) setCopies((count) => count + 1);
+  }, [version, holding]);
   useEffect(() => {
     void moved;
     void refreshed;
     void passed;
+    void copies;
     const reading = new AbortController();
     getJson(api(scope, DOCUMENT_HELD_PATH, path), reading.signal).then(
       (value) => {
@@ -120,7 +133,7 @@ export function useHeld(
       () => {},
     );
     return () => reading.abort();
-  }, [path, scope, moved, refreshed, passed]);
+  }, [path, scope, moved, refreshed, passed, copies]);
   return useMemo(() => {
     if (read === null || read.held.length === 0 || sections === null) return null;
     return {

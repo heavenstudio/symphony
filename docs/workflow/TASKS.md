@@ -2563,14 +2563,19 @@ and asks, as a card's note is; on a task she may not decide it is held.
   the block a callout was left after by its section's key, its last line and its lines then; no
   task's read, thread or ask carries it. Nothing of it reaches a clone: no file is written, no
   commit or delivery made, no ask opened and no callback sent, and an agent is told nothing of it.
-  The document's page draws each where it was left (`/api/document-held?path=DOC`), a callout under
-  its section and a message in its card, with her name, its kind, the state `held` and her words,
-  and Pass on for those who may pass a held message on. A pass (`/api/document-pass`) writes it
-  into the file as her own save would, her name on it and the passer first in its words, then
-  opens or joins its ask and tells the chat, as hers; a callout goes after its block found again
-  in the file as it is now, the one block under its heading holding the same lines, else the one
-  block anywhere that does, and is refused with nothing written where none or several do, two
-  alike under its heading among them, as its place there moves with every block above. A card's
+  The document's page draws each where its pass would write it (`/api/document-held?path=DOC`),
+  read again as the page's copy moves while it holds any: a callout under its section and a
+  message in its card, with her name, its kind, the state `held` and her words, and Pass on for
+  those who may pass a held message on. A pass (`/api/document-pass`) writes it into the file as
+  her own save would, her name on it and the passer first in its words, then opens or joins its
+  ask and tells the chat, as hers; a callout goes after its block found again in the file as it is
+  now, the one block under its heading holding the same lines, else the one block anywhere that
+  does, and is refused with nothing written where several do, two alike under its heading among
+  them, as its place there moves with every block above. Where none does, its block changed or is
+  gone, and it goes at the end of its section: after the last block under the heading it was left
+  under that a callout may follow (a heading under it starts a section of its own, and a register
+  takes no callout), else, that heading gone, after the document's last such block
+  ([its card](../product/analysis/users-and-identity.md#held-callout-block-changed)). A card's
   message goes where her own line would go then: on main's card where the branch's page it was
   typed on draws main's. A second pass is refused naming who passed it. A press after one whose
   words went in and whose mark did not writes nothing again and marks it: the document holds what

@@ -1071,11 +1071,13 @@ export type HeldComment = {
    */
   card?: string | null;
   /**
-   * The section a callout was left after, by its key ([`Section::key`]).
+   * The section a callout goes after, by its key ([`Section::key`]): the one its pass would
+   * write it after now, the block it was left after or, that block changed, the end of its
+   * section; else the one it was left after.
    */
   key?: string | null;
   /**
-   * That section's last line then.
+   * That section's last line.
    */
   line?: number | null;
 };
