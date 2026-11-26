@@ -15,11 +15,18 @@
 // The task's tokens are another part of the page (task-live.ts's `tokensPart`), which the box
 // hands on as it came: once read, the task's estimated cost follows its total time and each stage
 // stretch's its own (timeline-cost.ts); until then, and for a task with none, no cost is drawn.
+//
+// Wide, the task's quiet stretches (timeline-quiet.ts) are skipped, each a band through every lane
+// that a press draws on the true clock; the toolbar's switch skips them all or none. Which are
+// skipped is the page's own, as its view is: each visit opens with them all skipped. On a phone each
+// is a row of the list.
 
 import {
   type CSSProperties,
+  Fragment,
   type JSX,
   type KeyboardEvent,
+  type MouseEvent,
   type Ref,
   useEffect,
   useLayoutEffect,
@@ -27,16 +34,18 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { Button } from "./button";
 import { whenShown } from "./feed";
 import type { Shown as Answer } from "./parts";
 import { Failure, said } from "./request";
 import STYLE from "./timeline.css?inline";
 import { carried, costFigure, readTaskTokens, tookTokens, totalWords } from "./timeline-cost";
+import { BAND_SHARE } from "./timeline-cut";
 import { address, addressAt, endpointLane, historyWords, messagesOf } from "./timeline-history";
 import {
   type Bar,
+  type Break,
   type Fit,
   failed,
   fitClass,
@@ -57,6 +66,8 @@ import {
   Scale,
   type Seg,
   type Shown,
+  type SkippedCut,
+  segIndentCss,
   showAll,
   stops,
   took,
@@ -70,10 +81,21 @@ import {
   type LanesHandlers,
   type Navigation,
   OverviewStrip,
+  type QuietSwitch,
   useNavigation,
   ZoomBar,
 } from "./timeline-navigate";
-import { clampView, revealed, wholeOf, zoomable } from "./timeline-zoom";
+import {
+  opened,
+  type Quiet,
+  quietStretches,
+  SKIPPING,
+  type Skipping,
+  skipOn,
+  skippedOf,
+  switched,
+} from "./timeline-quiet";
+import { clampView, readout, revealed, wholeOf, zoomable } from "./timeline-zoom";
 // biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: readAgain reads the timeline again each period while the task is open, where the feed's event of a change, or a clock tick for the times shown, is the wait
 import { sleep } from "./timing";
 import { NOT_IN_TIME } from "./trouble";
@@ -403,6 +425,17 @@ function RowView({
           ? "tl-row tl-sub tl-event"
           : "tl-row tl-sub";
   const told = isTold(row);
+  if (row.quiet !== undefined) {
+    return (
+      <>
+        {row.day !== null && <li className="tl-day">{row.day}</li>}
+        <li className="tl-row tl-quiet" title={row.title}>
+          <b>{row.label}</b>
+          <small>{row.quiet}</small>
+        </li>
+      </>
+    );
+  }
   return (
     <>
       {row.day !== null && <li className="tl-day">{row.day}</li>}
@@ -461,6 +494,7 @@ function SegView({
     "--row": String(seg.row),
     left: percent(seg.left),
     width: percent(seg.width),
+    ...(seg.inset === undefined ? {} : { textIndent: segIndentCss(seg.inset) }),
   });
   return (
     <>
@@ -618,6 +652,48 @@ interface LanesProps {
   at: Stops;
   timeline: TaskTimeline;
   selection?: MessageSelection | undefined;
+  /** Draws a band's stretch on the true clock, the band pressed. */
+  open?: ((band: Break, pressed: HTMLElement) => void) | undefined;
+}
+
+/** The id of the zigzag a band's edges are drawn with. */
+const ZIGZAG = "tl-zigzag";
+
+/** The quiet stretches skipped, a band each through every lane over the tracks, its edges zigzagged
+ * and its words down it, the bars that run through it drawn under it: a press draws its stretch on
+ * the true clock. */
+function BreaksView({ breaks, open }: { breaks: Break[]; open: LanesProps["open"] }) {
+  return (
+    <div className="tl-breaks">
+      <svg className="tl-zigzags" aria-hidden="true" width="0" height="0">
+        <defs>
+          <pattern id={ZIGZAG} width="6" height="8" patternUnits="userSpaceOnUse">
+            <path className="tl-zigzag" d="M1 0L5 4L1 8" fill="none" />
+          </pattern>
+        </defs>
+      </svg>
+      {breaks.map((band) => (
+        <button
+          key={band.from}
+          type="button"
+          className="tl-break"
+          data-start={band.from}
+          data-end={band.to}
+          title={band.title}
+          aria-label={`Show on the true clock: ${band.title}`}
+          style={style({ left: percent(band.left), width: percent(band.width) })}
+          onClick={(event: MouseEvent<HTMLButtonElement>) => open?.(band, event.currentTarget)}
+        >
+          {["tl-edge-start", "tl-edge-end"].map((edge) => (
+            <svg key={edge} className={`tl-edge ${edge}`} aria-hidden="true">
+              <rect width="100%" height="100%" fill={`url(#${ZIGZAG})`} />
+            </svg>
+          ))}
+          {band.words && <FitView fit={band.words} />}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 /** The lanes of a task long enough to zoom into: what a wheel, a pointer, a touch and a key do to
@@ -633,6 +709,7 @@ function LanesView({
   at,
   timeline,
   selection,
+  open,
   nav,
   root,
   band,
@@ -646,14 +723,14 @@ function LanesView({
   handlers?: LanesHandlers | undefined;
 }) {
   const view = nav?.view ?? null;
-  const scale = new Scale(timeline, view);
+  const scale = new Scale(timeline, view, nav?.cut);
   const found = selection?.messages.find((m) => m.id === selection.selected);
   // A message chosen outside the hours shown has no tick drawn to point from.
   const selected = found && scale.shows(found.at, found.at) ? found : undefined;
   const count = stops(lanes);
   const notKept = lanes.notKept;
   const reveal = nav
-    ? (from: number, to: number) => nav.set(revealed(nav.view, nav.whole, from, to))
+    ? (from: number, to: number) => nav.set(revealed(nav.view, nav.whole, from, to, nav.cut))
     : undefined;
   let index = 0;
   const next = () => index++;
@@ -759,19 +836,44 @@ function LanesView({
       )}
       <div className="tl-hours" aria-hidden="true">
         {lanes.ticks.map((tick, at) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: an hour's line has no identity but its place
-          <span key={at} className="tl-hour" style={style({ left: percent(tick.left) })} />
+          // An hour's line shows where its label does.
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: an hour's line has no identity but its place
+            key={at}
+            className={tick.wide === undefined ? "tl-hour" : `tl-hour tl-from-${tick.wide}`}
+            style={style({ left: percent(tick.left) })}
+          />
         ))}
         {lanes.now && <span className="tl-now" style={style({ left: percent(lanes.now.left) })} />}
       </div>
+      {lanes.breaks.length > 0 && <BreaksView breaks={lanes.breaks} open={open} />}
       <div className="tl-lane tl-axis" aria-hidden="true">
         <span className="tl-name" />
         <span className="tl-track">
           {lanes.ticks.map((tick, at) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: an hour's label has no identity but its place
-            <span key={at} className="tl-tick" style={style({ left: percent(tick.left) })}>
+            <span
+              // biome-ignore lint/suspicious/noArrayIndexKey: an hour's label has no identity but its place
+              key={at}
+              className={tick.wide === undefined ? "tl-tick" : `tl-tick tl-from-${tick.wide}`}
+              style={style({ left: percent(tick.left) })}
+            >
               {tick.label}
             </span>
+          ))}
+          {lanes.breaks.map((band) => (
+            <Fragment key={band.from}>
+              {band.length && (
+                <span
+                  className={`tl-break-length ${fitClass(band.length)}`}
+                  style={style({ left: percent(band.left + band.width / 2) })}
+                >
+                  {band.length.text}
+                  {band.day && (
+                    <span className={`tl-break-day ${fitClass(band.day)}`}>{band.day.text}</span>
+                  )}
+                </span>
+              )}
+            </Fragment>
           ))}
           {lanes.now && (
             <span className="tl-tick tl-nowtag" style={style({ left: percent(lanes.now.left) })}>
@@ -833,10 +935,22 @@ export interface DrawnProps {
   zoom?: Zoom | undefined;
 }
 
-/** The view the lanes show (none for the whole task), and what sets it. */
+/** The view the lanes show (none for the whole task) and what sets it; the task's quiet stretches,
+ * which of them are skipped and what changes it; and the range last said to assistive technology
+ * and what says one. */
 export interface Zoom {
   view: View | null;
   set: (view: View | null) => void;
+  quiet?: readonly Quiet[] | undefined;
+  skipping?: Skipping | undefined;
+  skip?: ((skipping: Skipping) => void) | undefined;
+  said?: string | undefined;
+  say?: ((said: string) => void) | undefined;
+}
+
+/** The cut the lanes are drawn on: the quiet stretches `skipping` skips, each a band. */
+export function cutOf(quiet: readonly Quiet[], skipping: Skipping): SkippedCut {
+  return { skipped: skippedOf(quiet, skipping), share: BAND_SHARE };
 }
 
 /**
@@ -858,11 +972,43 @@ export function TimelineDrawn({
   zoom,
 }: DrawnProps) {
   const whole = wholeOf(timeline);
+  // A band and the switch are drawn only where their press can act.
+  const skip = zoom?.skip;
+  const quiet = (skip && zoom?.quiet) || [];
+  const skipping = zoom?.skipping ?? SKIPPING;
+  const cut = zoom && zoomable(whole) ? cutOf(quiet, skipping) : undefined;
   const nav: Navigation | undefined =
     zoom && zoomable(whole)
-      ? { whole, view: clampView(zoom.view, whole), set: zoom.set }
+      ? {
+          whole,
+          view: clampView(zoom.view, whole, cut),
+          cut,
+          said: zoom.said,
+          set: (next, say) => {
+            zoom.set(next);
+            if (say) zoom.say?.(readout(timeline, clampView(next, whole, cut), cut));
+          },
+        }
       : undefined;
   const view = nav?.view ?? null;
+  const quietSwitch: QuietSwitch | undefined =
+    nav && quiet.length > 0
+      ? {
+          count: quiet.length,
+          total: quiet.reduce((sum, stretch) => sum + stretch.to - stretch.from, 0),
+          on: skipOn(quiet, skipping),
+          press: () => skip?.(switched(quiet, skipping)),
+        }
+      : undefined;
+  // A band pressed draws its stretch on the true clock; the focus it had goes to the switch.
+  const open = (band: Break, pressed: HTMLElement) => {
+    const stretch = quiet.find((each) => each.from === band.from);
+    if (!stretch) return;
+    const focused = pressed.ownerDocument.activeElement === pressed;
+    const lanes = pressed.closest(".tl-body");
+    flushSync(() => skip?.(opened(skipping, stretch)));
+    if (focused) lanes?.querySelector<HTMLElement>(".tl-skip")?.focus();
+  };
   const [first, machine] = totals(timeline);
   const [length, rest] = totalParts(timeline);
   // A task that took no tokens says no cost anywhere, and draws as one whose tokens are not read.
@@ -880,7 +1026,7 @@ export function TimelineDrawn({
     ["States", placeTotals(timeline, "state")],
   ] as const;
   const steps = rowLayout(timeline, costs);
-  const drawn = laneLayout(timeline, costs, view);
+  const drawn = laneLayout(timeline, costs, view, cut);
   const running = timeline.runs.some((run) => run.result === "running");
   return (
     <div className={drawnClass(all, clipped)} data-selected={selection?.selected ?? undefined}>
@@ -944,7 +1090,7 @@ export function TimelineDrawn({
             />
           ))}
         </ol>
-        {nav && <ZoomBar timeline={timeline} nav={nav} />}
+        {nav && <ZoomBar timeline={timeline} nav={nav} quiet={quietSwitch} />}
         {nav && view && <OverviewStrip timeline={timeline} view={view} nav={nav} />}
         {nav ? (
           <NavigableLanes
@@ -952,6 +1098,7 @@ export function TimelineDrawn({
             at={at}
             timeline={timeline}
             selection={selection}
+            open={open}
             nav={nav}
           />
         ) : (
@@ -972,6 +1119,12 @@ export function TimelineDrawn({
             <li>
               <span className="tl-key tl-key-running" />
               running now
+            </li>
+          )}
+          {drawn.breaks.length > 0 && (
+            <li className="tl-wide">
+              <span className="tl-key tl-key-quiet" />
+              quiet stretch skipped: nothing recorded
             </li>
           )}
           {legendStates(drawn).map((state) => (
@@ -1023,6 +1176,8 @@ export function TimelineView({
 }: ViewProps): JSX.Element {
   const [selected, setSelected] = useState<number | null>(null);
   const [view, setView] = useState<View | null>(null);
+  const [skipping, setSkipping] = useState<Skipping>(SKIPPING);
+  const [heard, setHeard] = useState("");
   const [loading, setLoading] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -1056,6 +1211,7 @@ export function TimelineView({
   const projected = timeline.history
     ? { ...timeline, history: { ...timeline.history, messages } }
     : timeline;
+  const quiet = quietStretches(projected);
   const shownAt = useRef(view);
   shownAt.current = view;
   // Thread reads remain in the page's store. Read one existing cursor at a time, until the
@@ -1100,7 +1256,8 @@ export function TimelineView({
     const chosen = messages.find((m) => m.id === selected);
     if (chosen === undefined) return;
     const whole = wholeOf(projected);
-    setView((shown) => revealed(clampView(shown, whole), whole, chosen.at, chosen.at));
+    const cut = cutOf(quiet, skipping);
+    setView((shown) => revealed(clampView(shown, whole, cut), whole, chosen.at, chosen.at, cut));
   }, [selected]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: measured again for each answer drawn and each crossing of 900 px
   useLayoutEffect(() => {
@@ -1161,7 +1318,15 @@ export function TimelineView({
         stops={stopsOf(active, setActive, setDetail)}
         toggle={() => setAll((shown) => !shown)}
         body={body}
-        zoom={{ view, set: setView }}
+        zoom={{
+          view,
+          set: setView,
+          quiet,
+          skipping,
+          skip: setSkipping,
+          said: heard,
+          say: setHeard,
+        }}
       />
       {panel && details ? createPortal(panel, details) : panel}
     </>

@@ -4,10 +4,14 @@
 // hours, a double click on a stage and a drag of the overview's window move it; what the
 // toolbar's readout says of it; and the overview strip drawn while zoomed.
 //
-// Every move is a fraction of the hours shown, as the pointer's place on the tracks gives it, so
-// the arithmetic needs no pixel. A view stays where it is when a read brings a new step; the whole
-// task grows with it. A task no longer than LEAST_SHOWN is drawn whole, with no toolbar.
+// Every move is a fraction of the track, as the pointer's place on it gives it, so the arithmetic
+// needs no pixel. Where quiet stretches are skipped (`cut`), it goes through the cut scale
+// (timeline-cut.ts): a band keeps its width at every zoom, so what is under the pointer stays there
+// across a band, and LEAST_SHOWN is five minutes of work. A view stays where it is when a read
+// brings a new step; the whole task grows with it. A task no longer than LEAST_SHOWN is drawn whole,
+// with no toolbar.
 
+import { type Cut, Cuts } from "./timeline-cut";
 import { clockOf, dateOf, resultTone, Scale, statusTone, took, type View } from "./timeline-layout";
 import type { TaskTimeline } from "./wire";
 
@@ -44,22 +48,34 @@ function clamp(x: number, least: number, most: number): number {
 }
 
 /**
- * `view` kept inside `whole` and at least LEAST_SHOWN long, about its middle; none (the whole task)
- * where it holds all of `whole`, or where `whole` is too short to zoom into.
+ * The view one track long from `u` on `cuts`' axis where a track holds `track` seconds of work,
+ * kept inside the whole hours and holding at least LEAST_SHOWN; none (the whole task) where it
+ * holds the whole hours.
  */
-export function clampView(view: View | null, whole: View): View | null {
+function windowAt(cuts: Cuts, track: number, u: number): View | null {
+  const held = Math.max(track, LEAST_SHOWN);
+  // A hair short of the whole, as a zoom in and out again leaves it, is the whole.
+  if (!(held < cuts.most * (1 - 1e-9))) return null;
+  return cuts.window(held, clamp(u, 0, cuts.length(held) - held));
+}
+
+/**
+ * `view` kept inside `whole` and showing at least LEAST_SHOWN of work, about its middle; none (the
+ * whole task) where it holds all of `whole`, or where `whole` is too short to zoom into.
+ */
+export function clampView(view: View | null, whole: View, cut?: Cut | null): View | null {
   if (view === null || !Number.isFinite(view.from) || !Number.isFinite(view.to)) return null;
-  const most = whole.to - whole.from;
-  const span = Math.max(view.to - view.from, LEAST_SHOWN);
-  if (!(span < most)) return null;
-  const from = clamp((view.from + view.to - span) / 2, whole.from, whole.to - span);
-  return { from, to: from + span };
+  const cuts = new Cuts(whole, cut);
+  const track = cuts.span(view);
+  const middle = track > 0 ? cuts.time(view, 0.5) : (view.from + view.to) / 2;
+  const held = Math.max(track, LEAST_SHOWN);
+  return windowAt(cuts, held, cuts.axis(held, middle) - held / 2);
 }
 
 /**
  * The view a gesture leaves: the hours shown `factor` times as long, and the instant that was at
- * `before` (a fraction of the hours shown, 0 at their start) now at `after`. A wheel's or a pinch's
- * zoom keeps the instant under the pointer (`before` = `after`); a swipe, a sideways wheel or two
+ * `before` (a fraction of the track, 0 at its start) now at `after`. A wheel's or a pinch's zoom
+ * keeps the instant under the pointer (`before` = `after`); a swipe, a sideways wheel or two
  * fingers moving together move it (`factor` 1); a press zooms about the middle.
  */
 export function gesture(
@@ -68,66 +84,106 @@ export function gesture(
   before: number,
   after: number,
   factor: number,
+  cut?: Cut | null,
 ): View | null {
+  const cuts = new Cuts(whole, cut);
   const shown = view ?? whole;
-  const span = shown.to - shown.from;
-  const at = shown.from + before * span;
-  const next = clamp(span * factor, LEAST_SHOWN, whole.to - whole.from);
-  const from = at - after * next;
-  return clampView({ from, to: from + next }, whole);
+  const at = cuts.time(shown, before);
+  const track = clamp(cuts.span(shown) * factor, LEAST_SHOWN, cuts.most);
+  return windowAt(cuts, track, cuts.axis(track, at) - after * track);
 }
 
 /** A press's or a key's zoom, about the middle of the hours shown: in, or out. */
-export function zoomed(view: View | null, whole: View, inward: boolean): View | null {
-  return gesture(view, whole, 0.5, 0.5, inward ? 1 / STEP : STEP);
+export function zoomed(
+  view: View | null,
+  whole: View,
+  inward: boolean,
+  cut?: Cut | null,
+): View | null {
+  return gesture(view, whole, 0.5, 0.5, inward ? 1 / STEP : STEP, cut);
 }
 
-/** The view moved by `by` of the hours shown, later where it is more than 0. */
-export function moved(view: View | null, whole: View, by: number): View | null {
-  return gesture(view, whole, by, 0, 1);
+/** The view moved by `by` of the track, later where it is more than 0. */
+export function moved(view: View | null, whole: View, by: number, cut?: Cut | null): View | null {
+  return gesture(view, whole, by, 0, 1, cut);
 }
 
-/** The view a drag across the hours from `a` to `b` zooms to, each a fraction of the hours shown. */
-export function dragged(view: View | null, whole: View, a: number, b: number): View | null {
+/** The view a drag across the hours from `a` to `b` zooms to, each a fraction of the track. */
+export function dragged(
+  view: View | null,
+  whole: View,
+  a: number,
+  b: number,
+  cut?: Cut | null,
+): View | null {
+  const cuts = new Cuts(whole, cut);
   const shown = view ?? whole;
-  const span = shown.to - shown.from;
-  const from = shown.from + clamp(Math.min(a, b), 0, 1) * span;
-  const to = shown.from + clamp(Math.max(a, b), 0, 1) * span;
-  return clampView({ from, to }, whole);
+  const from = cuts.time(shown, clamp(Math.min(a, b), 0, 1));
+  const to = cuts.time(shown, clamp(Math.max(a, b), 0, 1));
+  return clampView({ from, to }, whole, cut);
 }
 
 /** The view that shows `from` to `to`, a stage a double click zoomed to. */
-export function zoomTo(whole: View, from: number, to: number): View | null {
-  return clampView({ from, to }, whole);
+export function zoomTo(whole: View, from: number, to: number, cut?: Cut | null): View | null {
+  return clampView({ from, to }, whole, cut);
 }
 
 /**
  * The view with `from` to `to` in it: as it is where any of them shows (the whole task always
- * does), else as long, its middle theirs, or its start, where its words are, for a part longer
- * than the view. A part the keyboard steps to, and a message chosen in the message list, come into
- * view so.
+ * does), else at the same zoom, its middle theirs, or its start, where its words are, for a part
+ * longer than the view. A part the keyboard steps to, and a message chosen in the message list,
+ * come into view so.
  */
-export function revealed(view: View | null, whole: View, from: number, to: number): View | null {
+export function revealed(
+  view: View | null,
+  whole: View,
+  from: number,
+  to: number,
+  cut?: Cut | null,
+): View | null {
   if (view === null || (to >= view.from && from <= view.to)) return view;
-  const span = view.to - view.from;
-  const start = to - from > span ? from : (from + to - span) / 2;
-  return clampView({ from: start, to: start + span }, whole);
+  const cuts = new Cuts(whole, cut);
+  const track = cuts.span(view);
+  const [a, b] = [cuts.axis(track, from), cuts.axis(track, to)];
+  return windowAt(cuts, track, b - a > track ? a : (a + b - track) / 2);
 }
 
 /** Which of the overview's window a drag holds: all of it, which moves it, or an edge, which
  * resizes it. */
 export type Hold = "move" | "start" | "end";
 
-/** The view a drag of the overview's window by `by` seconds leaves, from `start`, the view as the
- * drag began. */
-export function held(start: View, whole: View, hold: Hold, by: number): View | null {
-  if (hold === "move") return clampView({ from: start.from + by, to: start.to + by }, whole);
-  if (hold === "start") {
-    const from = clamp(start.from + by, whole.from, start.to - LEAST_SHOWN);
-    return clampView({ from, to: start.to }, whole);
+/**
+ * The view a drag of the overview's window by `by` of the overview leaves, from `start`, the view
+ * as the drag began: the part it holds where the pointer took it on the overview, the rest as it
+ * was, and an edge never so near the other that less than a zoom's least shows.
+ */
+export function held(
+  start: View,
+  whole: View,
+  hold: Hold,
+  by: number,
+  cut?: Cut | null,
+): View | null {
+  const cuts = new Cuts(whole, cut);
+  const taken = (at: number) => cuts.time(whole, cuts.at(whole, at) + by);
+  if (hold === "move") {
+    const track = cuts.span(start);
+    return windowAt(cuts, track, cuts.axis(track, taken(start.from)));
   }
-  const to = clamp(start.to + by, start.from + LEAST_SHOWN, whole.to);
-  return clampView({ from: start.from, to }, whole);
+  const least = LEAST_SHOWN;
+  if (hold === "start") {
+    const latest = cuts.instant(least, cuts.axis(least, start.to) - least);
+    const from = clamp(taken(start.from), whole.from, latest);
+    return clampView({ from, to: start.to }, whole, cut);
+  }
+  const earliest = cuts.instant(least, cuts.axis(least, start.from) + least);
+  const to = clamp(taken(start.to), earliest, whole.to);
+  return clampView({ from: start.from, to }, whole, cut);
+}
+
+/** Whether `view` is as narrow as a zoom goes: no more of the hours shows at a press of +. */
+export function leastShown(view: View | null, whole: View, cut?: Cut | null): boolean {
+  return view !== null && new Cuts(whole, cut).span(view) <= LEAST_SHOWN + 1e-6;
 }
 
 /** A wheel's travel in pixels: a line's and a page's as a browser that counts in those means them
@@ -179,16 +235,22 @@ export interface Wheel {
  * travelling more sideways than down, it moves by its travel across the tracks; else nothing, and
  * the page scrolls.
  */
-export function wheeled(view: View | null, whole: View, track: Track, wheel: Wheel): Next {
+export function wheeled(
+  view: View | null,
+  whole: View,
+  track: Track,
+  wheel: Wheel,
+  cut?: Cut | null,
+): Next {
   if (!(track.width > 0)) return null;
   const x = wheelPixels(wheel.deltaX, wheel.mode);
   const y = wheelPixels(wheel.deltaY, wheel.mode);
   if (wheel.zoom) {
     const pointer = clamp(fractionOn(track, wheel.x), 0, 1);
-    return { view: gesture(view, whole, pointer, pointer, wheelFactor(y)) };
+    return { view: gesture(view, whole, pointer, pointer, wheelFactor(y), cut) };
   }
   if (view === null || !(wheel.shift || Math.abs(x) > Math.abs(y))) return null;
-  return { view: moved(view, whole, (x !== 0 ? x : y) / track.width) };
+  return { view: moved(view, whole, (x !== 0 ? x : y) / track.width, cut) };
 }
 
 /** Whether one finger's travel by `dx`, `dy` is a sideways swipe; none until it has gone
@@ -213,13 +275,14 @@ export function pinched(
   track: Track,
   began: [Point, Point],
   now: [Point, Point],
+  cut?: Cut | null,
 ): Next {
   const before = between(began);
   const after = between(now);
   if (!(track.width > 0 && before.distance > 0 && after.distance > 0)) return null;
   const from = fractionOn(track, before.x);
   const to = fractionOn(track, after.x);
-  return { view: gesture(view, whole, from, to, before.distance / after.distance) };
+  return { view: gesture(view, whole, from, to, before.distance / after.distance, cut) };
 }
 
 /** The view a finger swiped sideways from `from` to `to` leaves, from `view`, the view as it
@@ -230,18 +293,21 @@ export function swiped(
   track: Track,
   from: number,
   to: number,
+  cut?: Cut | null,
 ): Next {
   if (view === null || !(track.width > 0)) return null;
-  return { view: gesture(view, whole, fractionOn(track, from), fractionOn(track, to), 1) };
+  return { view: gesture(view, whole, fractionOn(track, from), fractionOn(track, to), 1, cut) };
 }
 
 /**
  * What a key does to the overview's window with the focus, past + − 0: the arrows move it a tenth
- * of the hours shown, Page Up and Page Down all of them, Home and End take it to an end; nothing
- * for another key.
+ * of the track, Page Up and Page Down a whole track, Home and End take it to an end; nothing for
+ * another key.
  */
-export function windowKey(key: string, view: View, whole: View): Next {
-  const ends = (whole.to - whole.from) / (view.to - view.from);
+export function windowKey(key: string, view: View, whole: View, cut?: Cut | null): Next {
+  const cuts = new Cuts(whole, cut);
+  const track = cuts.span(view);
+  const ends = cuts.length(track) / track;
   const by = (() => {
     switch (key) {
       case "ArrowLeft":
@@ -260,17 +326,20 @@ export function windowKey(key: string, view: View, whole: View): Next {
         return null;
     }
   })();
-  return by === null ? null : { view: moved(view, whole, by) };
+  return by === null ? null : { view: moved(view, whole, by, cut) };
 }
 
 /** The toolbar's readout: the hours shown, their length, and, zoomed, of how long the whole is
- * ("11-19 11:05 → 11-19 12:18 · 1 h 13 m of 1 d 3 h"). */
-export function readout(timeline: TaskTimeline, view: View | null): string {
+ * ("11-19 11:05 → 11-19 12:18 · 1 h 13 m of 1 d 3 h"); then how much of them a band skips, where
+ * one is shown ("· 10 h 54 m skipped"), as the widths across it are not to scale. */
+export function readout(timeline: TaskTimeline, view: View | null, cut?: Cut | null): string {
   const whole = wholeOf(timeline);
   const shown = view ?? whole;
   const at = (time: number) => `${dateOf(timeline, time)} ${clockOf(timeline, time)}`;
   const of = view === null ? "" : ` of ${took(whole.to - whole.from)}`;
-  return `${at(shown.from)} → ${at(shown.to)} · ${took(shown.to - shown.from)}${of}`;
+  const skipped = new Cuts(whole, cut).skippedIn(shown.from, shown.to);
+  const said = skipped < 30 ? "" : ` · ${took(skipped)} skipped`;
+  return `${at(shown.from)} → ${at(shown.to)} · ${took(shown.to - shown.from)}${of}${said}`;
 }
 
 /** A mark of the overview, in percent of the whole hours. */
@@ -280,17 +349,19 @@ export interface Mark {
   tone: string;
 }
 
-/** The overview strip: the whole task's stages and runs (each at its start), and the window
- * shown, in percent of the whole hours. */
+/** The overview strip: the whole task's stages and runs (each at its start), the window shown and
+ * each band, in percent of the whole hours as the lanes draw the whole task. */
 export interface Overview {
   stages: Mark[];
   runs: Mark[];
   window: { left: number; width: number };
+  bands: { left: number; width: number }[];
 }
 
-/** The overview of `timeline` with `view`'s window on it. */
-export function overview(timeline: TaskTimeline, view: View): Overview {
-  const scale = new Scale(timeline);
+/** The overview of `timeline` with `view`'s window on it, its quiet stretches skipped as `cut`
+ * skips them. */
+export function overview(timeline: TaskTimeline, view: View, cut?: Cut | null): Overview {
+  const scale = new Scale(timeline, null, cut);
   const stages = timeline.stages.flatMap((stage): Mark[] => {
     const to = stage.to ?? scale.now;
     if (CLOSED.includes(stage.status) || !scale.spans(stage.from, to)) return [];
@@ -303,5 +374,9 @@ export function overview(timeline: TaskTimeline, view: View): Overview {
     tone: resultTone(run.result),
   }));
   const { left, width } = scale.place(view.from, view.to);
-  return { stages, runs, window: { left, width } };
+  const bands = scale.cuts.skipped.map((skip) => {
+    const { left, width } = scale.place(skip.from, skip.to);
+    return { left, width };
+  });
+  return { stages, runs, window: { left, width }, bands };
 }

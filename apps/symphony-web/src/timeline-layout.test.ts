@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
+import GUARDS from "../../symphony-web-tests/tests/browser/timeline/revision-guards.json";
 import { carried } from "./timeline-cost";
+import { BAND_SHARE } from "./timeline-cut";
 import {
   AFTER_PAD_PX,
   BAR_SPAN,
   BAR_WORDS_PX,
   barFit,
-  CHAR_PX,
   type Costs,
   capitalised,
   civil,
@@ -28,6 +29,7 @@ import {
   keptRow,
   keptTitle,
   type Lane,
+  type Lanes,
   LETTER_PX,
   LONGEST_WAIT,
   label,
@@ -39,9 +41,12 @@ import {
   nextRead,
   offsetAt,
   PAD_PX,
+  past,
   placeRow,
   placeTotals,
   queuedSeconds,
+  quietSaid,
+  quietWhy,
   type Row,
   ran,
   readTimeline,
@@ -58,12 +63,15 @@ import {
   runWords,
   Scale,
   SEG_MIN_PX,
+  type Seg,
+  segIndentCss,
   shortCommit,
   showAll,
   stageSeconds,
   statusTone,
   stops,
   stretches,
+  textPx,
   timelineEnd,
   took,
   totalParts,
@@ -75,6 +83,7 @@ import {
   waited,
   widthFor,
 } from "./timeline-layout";
+import { type Quiet, quietStretches } from "./timeline-quiet";
 import type { PlaceSpan, Run, RunResult, Stage, TaskTimeline, TokenRow } from "./wire";
 import { TIMELINE_EVERY } from "./wire";
 import { moment } from "./words";
@@ -467,8 +476,9 @@ describe("a task's timeline laid out", () => {
     const hatch = lanes(rotated).notKept;
     expect(hatch?.left).toBeCloseTo((2 / 380) * 100, 10);
     expect(hatch?.width).toBeCloseTo((86 / 380) * 100, 10);
-    // 27 characters and their padding, 184 px, in 23% of the track: from 850 px.
-    expect(hatch?.label).toEqual({ text: "not kept before 11-11 10:28", from: 850, to: null });
+    // 27 characters weighed letter by letter and their padding, 177 px, in 23% of the track: from
+    // 800 px.
+    expect(hatch?.label).toEqual({ text: "not kept before 11-11 10:28", from: 800, to: null });
     expect(hatch?.title).toBe("Builds and tests before 11-11 10:28 are not kept");
     // Too narrow for its words: a hatch alone.
     expect(lanes({ ...pictures(), runs_from: at(4) }).notKept?.label).toBeNull();
@@ -769,18 +779,18 @@ describe("a task's timeline laid out", () => {
   it("a word is drawn only at the track widths its room holds it", () => {
     // Room enough at every width, at some, at none.
     expect(widthFor("41 m", 50, PAD_PX)).toBeNull();
-    expect(widthFor("ready 41 m", 10, PAD_PX)).toBe(750);
+    expect(widthFor("ready 41 m", 10, PAD_PX)).toBe(800);
     expect(widthFor("ready 41 m", 0.5, PAD_PX)).toBeUndefined();
     expect(widthFor("", 50, PAD_PX)).toBeUndefined();
     expect(widthFor("41 m", 0, PAD_PX)).toBeUndefined();
     // The long words where they fit, the short below that, nothing below the short's own.
     const fits = fitted("ready 41 m", "41 m", 10);
     expect(shown(fits, 1280)).toBe("ready 41 m");
-    expect(shown(fits, 750)).toBe("ready 41 m");
-    expect(shown(fits, 700)).toBe("41 m");
-    expect(shown(fits, 400)).toBe("41 m");
-    expect(shown(fits, 350)).toBe("");
-    expect(fitClass(fits[1] as Fit)).toBe("tl-fit tl-from-400 tl-to-750");
+    expect(shown(fits, 800)).toBe("ready 41 m");
+    expect(shown(fits, 750)).toBe("41 m");
+    expect(shown(fits, 450)).toBe("41 m");
+    expect(shown(fits, 400)).toBe("");
+    expect(fitClass(fits[1] as Fit)).toBe("tl-fit tl-from-450 tl-to-800");
     // A short word no narrower than the long one is never drawn beside it.
     expect(fitted("41 m", "41 m", 10)).toHaveLength(1);
     // The last label may run into the lanes' end margin.
@@ -795,13 +805,13 @@ describe("a task's timeline laid out", () => {
   it("a label after a bar is weighed by its letters, its padding past the bar as drawn and its gap", () => {
     expect([LETTER_PX, AFTER_PAD_PX, SEG_MIN_PX, GAP_PX]).toEqual([7, 6, 14, 4]);
     // "changes" beside a bar no narrower than drawn: 7 × 7 + 6 + 4 = 59 px, of 10 % from a 590 px
-    // track, so from 600; "approved", 66 px, from 700. Weighed as other words (CHAR_PX, no
-    // padding), it would have shown from 500, and been cut.
+    // track, so from 600; "approved", 66 px, from 700. Weighed as a segment's words (textPx, 49 px,
+    // no padding), it would have shown from 550, and been cut.
     const ten = { room: 10, last: false, bar: 5 };
     expect(label("changes", ten)).toEqual({ text: "changes", from: 600, to: null });
     expect(label("approved", ten)?.from).toBe(700);
     expect(label("verdict", ten)?.from).toBe(600);
-    expect(widthFor("changes", 10, GAP_PX)).toBe(500);
+    expect(widthFor("changes", 10, GAP_PX)).toBe(550);
     // Ten letters take 80 px: exactly 20 % of 400 shows from 400, a hair less from 450, and 27 % of
     // 300 at every width.
     const tenLetters = "a".repeat(10);
@@ -841,26 +851,64 @@ describe("a task's timeline laid out", () => {
     expect(insetCss({ room: 1, last: true, bar: 0.125 })).toBe("max(6px, calc(20px - 0.12%))");
   });
 
+  it("a segment's words start past a few minutes' segment before it, drawn wider than its time", () => {
+    const at = (left: number, width: number) => ({ left, width, from: 0, to: 0, out: false });
+    // Two minutes before it, 0.1 % of the track: drawn 14 px wide on any track, so its words keep
+    // 3 px past it, indented 10 px less 0.1 % of the track past its padding, and never less.
+    expect(past(at(10, 0.1), at(10.1, 5))).toBeCloseTo(0.1, 12);
+    expect(segIndentCss(0.1)).toBe("max(0px, calc(10px - 0.10cqw))");
+    // None before it, one not drawn, or one that overlaps it in time: nothing to keep past.
+    expect(past(undefined, at(10, 5))).toBeUndefined();
+    expect(past({ ...at(10, 0.1), out: true }, at(10.1, 5))).toBeUndefined();
+    expect(past(at(10, 2), at(11, 5))).toBeUndefined();
+    // One far enough before it never comes within 3 px of its words on a 300 px track: 10 px.
+    expect(past(at(10, 0.1), at(10 + 10 / 3, 5))).toBeUndefined();
+    expect(past(at(10, 0.1), at(10 + 10 / 3 - 0.01, 5))?.toFixed(2)).toBe("3.32");
+    // "1 h 4 m" weighs 41.9 px, 55.9 with its padding and border: of 5 %, from 1150 alone; past a
+    // segment 0.1 % before it, which takes 10 px less 0.1 % more, from 1300; one 4 % before it,
+    // never near, changes nothing.
+    expect(fittedFirst(["1 h 4 m"], 5)).toEqual([{ text: "1 h 4 m", from: 1150, to: null }]);
+    expect(fittedFirst(["1 h 4 m"], 5, 0.1)).toEqual([{ text: "1 h 4 m", from: 1300, to: null }]);
+    expect(fittedFirst(["1 h 4 m"], 5, 4)).toEqual(fittedFirst(["1 h 4 m"], 5));
+    expect(fitted("1 h 4 m", "", 4, 0.2)).toEqual([{ text: "1 h 4 m", from: 1600, to: null }]);
+    // Where that leaves too little room on every track, it gives way.
+    expect(fittedFirst(["1 h 4 m"], 3.6)).toEqual([{ text: "1 h 4 m", from: 1600, to: null }]);
+    expect(fittedFirst(["1 h 4 m"], 3.6, 0.1)).toEqual([]);
+  });
+
   it("a word's room is weighed by its characters, and a room's width rounds a tie to even", () => {
-    // Weighed at exactly 300 px it shows at every width; a hair more, from 400.
-    expect(widthFor("ab", ((2 * CHAR_PX + PAD_PX) * 100) / 300, PAD_PX)).toBeNull();
-    expect(widthFor("ab", ((2 * CHAR_PX + PAD_PX) * 100) / 301, PAD_PX)).toBe(400);
+    // Each character by its own advance in the lanes' type, Helvetica Bold's at 12 px, and half a
+    // pixel for the browser's rounding: "39 m" is 6.67 + 6.67 + 3.33 + 10.67, as Chrome draws it.
+    expect(textPx("39 m")).toBeCloseTo(27.348 + 0.5, 9);
+    expect(textPx("")).toBe(0.5);
+    // A wide letter and a narrow one; a capital; a word's middle dot.
+    expect([textPx("m"), textPx("i"), textPx("W"), textPx("·")].map((px) => px - 0.5)).toEqual([
+      10.668, 3.336, 11.328, 3.336,
+    ]);
+    // An accented letter weighs its letter; one the table has not, the whole size.
+    expect(textPx("é")).toBe(textPx("e"));
+    expect(textPx("→")).toBe(12.5);
+    // Weighed a hair under 300 px it shows at every width; a hair over, from 400.
+    expect(widthFor("ab", ((textPx("ab") + PAD_PX) * 100) / 299.9, PAD_PX)).toBeNull();
+    expect(widthFor("ab", ((textPx("ab") + PAD_PX) * 100) / 300.1, PAD_PX)).toBe(400);
     // An accented word is as wide as its letters, not its bytes.
     expect(widthFor("é".repeat(8), 10, PAD_PX)).toBe(widthFor("e".repeat(8), 10, PAD_PX));
     // A short word that fits where the long one never does shows wherever it fits.
-    // "2 m" needs 3 × 6 + 12 = 30 px, 3 % of a 1000 px track exactly.
+    // "2 m" weighs 21.2 px, 35.2 px with its padding and its border: 3 % of a 1,173 px track.
     expect(fitted("a very long word for one segment", "2 m", 3)).toEqual([
-      { text: "2 m", from: 1000, to: null },
+      { text: "2 m", from: 1200, to: null },
     ]);
     // A short word that fits only where the long one does is left out.
     expect(fitted("ab", "a", 0.5)).toEqual([]);
-    // "abc" needs 30 px of 3.2 %, a 937.5 px track: from 950; "ab" 24 px, from 750 to there.
+    // "abc" needs 35.2 px of 3.2 %, a 1,100 px track: from 1100; "ab" 28.5 px, from 900 to there.
     expect(fitted("abc", "ab", 3.2)).toEqual([
-      { text: "abc", from: 950, to: null },
-      { text: "ab", from: 750, to: 950 },
+      { text: "abc", from: 1100, to: null },
+      { text: "ab", from: 900, to: 1100 },
     ]);
-    // No short word: the long one alone, from where it fits (36 px of 10 %, 360 px) or at every
-    // width (of 20 %, 180 px, below the narrowest track).
+    // A segment's words keep clear of its padding and its 1 px border either side.
+    expect(SEG_MIN_PX).toBe(PAD_PX + 2);
+    // No short word: the long one alone, from where it fits (39.8 px of 10 %, 398 px) or at every
+    // width (of 20 %, 199 px, below the narrowest track).
     expect(fitted("long", "", 10)).toEqual([{ text: "long", from: 400, to: null }]);
     expect(fitted("long", "", 20)).toEqual([{ text: "long", from: null, to: null }]);
     // Rust's `{:.2}`: a tie rounds to the even digit.
@@ -908,7 +956,7 @@ describe("a task's timeline laid out", () => {
     expect(texts("stage", 600)).toEqual([
       "41 m",
       "in progress 1 h 52 m",
-      "review 52 m",
+      "52 m",
       "1 h 10 m",
       "28 m",
       "1 h 15 m",
@@ -1406,8 +1454,8 @@ describe("a task's timeline laid out", () => {
     const stage = drawn.lanes.find((lane) => lane.key === "stage");
     for (const seg of stage?.segs ?? []) {
       const words = shown(seg.text, 950);
-      const wide = [...words].length * CHAR_PX + PAD_PX;
-      expect(words === "" || wide <= (seg.width / 100) * 950 + 0.5).toBe(true);
+      const wide = textPx(words) + SEG_MIN_PX;
+      expect(words === "" || wide <= (seg.width / 100) * 950).toBe(true);
     }
   });
 
@@ -1594,7 +1642,10 @@ describe("a task's timeline laid out", () => {
     expect(switches, "one width switches the views").toBeGreaterThan(0);
     const phone = CSS.slice(0, switches);
     const wide = CSS.slice(switches + "@media (min-width: 900px)".length);
-    expect(phone).toContain(".tl-lanes {\n  --name: 9rem;\n  --end: 5.5rem;\n  display: none;\n");
+    expect(phone).toContain(".tl-lanes {\n  display: none;\n");
+    // The name column and the end margin are every layer's over the tracks, said once.
+    expect(phone).toContain(".tl-body {\n  --name: 9rem;\n  --end: 5.5rem;\n");
+    expect(CSS.match(/--name: /g)?.length).toBe(1);
     // Wide, the list stays for assistive technology, out of sight but not display:none.
     expect(wide).toContain(
       "  .tl-list {\n    position: absolute;\n    width: 1px;\n    height: 1px;\n    overflow: hidden;\n    clip-path: inset(50%);\n",
@@ -2011,12 +2062,13 @@ describe("each stage's cost after its time", () => {
 
   it("tries three widths, longest first: its word, time and cost; its time and cost; its time", () => {
     const all = ["in progress 3 h 14 m $30.75", "3 h 14 m $30.75", "3 h 14 m"];
-    // 27, 15 and 8 characters: 174, 102 and 60 px with their padding, of 12 % of the track.
+    // 27, 15 and 8 characters: 171, 103 and 63 px weighed letter by letter with their padding and
+    // border, of 12 % of the track.
     const fits = fittedFirst(all, 12);
     expect(fits).toEqual([
       { text: all[0], from: 1450, to: null },
-      { text: all[1], from: 850, to: 1450 },
-      { text: all[2], from: 500, to: 850 },
+      { text: all[1], from: 900, to: 1450 },
+      { text: all[2], from: 550, to: 900 },
     ]);
     expect(shown(fits, 1600)).toBe(all[0]);
     expect(shown(fits, 1400)).toBe(all[1]);
@@ -2025,7 +2077,7 @@ describe("each stage's cost after its time", () => {
     // Room for the longest at every width: it alone.
     expect(fittedFirst(all, 60)).toEqual([{ text: all[0], from: null, to: null }]);
     // Room for its time and not its cost: the time, as with no cost.
-    expect(fittedFirst(all, 4)).toEqual([{ text: all[2], from: 1500, to: null }]);
+    expect(fittedFirst(all, 4)).toEqual([{ text: all[2], from: 1600, to: null }]);
     expect(fittedFirst(all, 4)).toEqual(fitted("in progress 3 h 14 m", "3 h 14 m", 4));
     // No room for any, and none to try.
     expect(fittedFirst(all, 1)).toEqual([]);
@@ -2048,8 +2100,8 @@ describe("each stage's cost after its time", () => {
       "review 28 m $0.64",
       "waiting to land 1 h 15 m",
     ]);
-    // The second review's 28 m are 70 px of a 950 px track: room for its time (36 px) and not for
-    // its time and cost (72 px), so it shows its time, as with no cost.
+    // The second review's 28 m are 70 px of a 950 px track: room for its time (38 px) and not for
+    // its time and cost (74 px), so it shows its time, as with no cost.
     expect(texts(950)).toEqual([
       "ready 41 m",
       "in progress 1 h 52 m $30.75",
@@ -2058,8 +2110,9 @@ describe("each stage's cost after its time", () => {
       "28 m",
       "waiting to land 1 h 15 m",
     ]);
-    // Narrower, a stretch drops its word before its cost.
-    expect(texts(500)).toEqual(["41 m", "1 h 52 m $30.75", "52 m", "1 h 10 m", "28 m", "1 h 15 m"]);
+    // Narrower, a stretch drops its word before its cost; the second review, 37 px, has no room
+    // for its time's 38.
+    expect(texts(500)).toEqual(["41 m", "1 h 52 m $30.75", "52 m", "1 h 10 m", "", "1 h 15 m"]);
     // Its words always say it: whose calls, when they ran, how many, and that it is an estimate.
     const titles = stage(pictures(), costs()).segs.map((seg) => seg.title);
     expect(titles[1]).toBe(
@@ -2294,5 +2347,228 @@ describe("a part of the hours shown", () => {
     const partly = lanes(timeline, undefined, { from: nine(120), to: nine(180) }).notKept;
     expect([partly?.left, partly?.width]).toEqual([0, 50]);
     expect(lanes(timeline, undefined, NOON).notKept).toBeNull();
+  });
+});
+
+describe("a quiet stretch skipped", () => {
+  /** The card's task: closed at 14:03 on 11-19 and quiet until a review at 00:57 the next day. */
+  function guards(): TaskTimeline {
+    const read = readTimeline(JSON.parse(JSON.stringify(GUARDS)));
+    if (read === null) throw new Error("the card's task is no timeline");
+    return read;
+  }
+  const QUIET = quietStretches(guards())[0] as Quiet;
+  const CUT = { skipped: [QUIET], share: BAND_SHARE };
+
+  it("says why it is quiet, how long, and its ends, a day named where it changed", () => {
+    const timeline = guards();
+    expect(QUIET.status).toBe("done");
+    expect(quietWhy(QUIET)).toBe("task done, nothing recorded");
+    expect(quietWhy({ ...QUIET, status: "ready" })).toBe("ready, nothing recorded");
+    expect(quietWhy({ ...QUIET, status: "in_progress" })).toBe("in progress, nothing recorded");
+    expect(quietWhy({ ...QUIET, status: "" })).toBe("nothing recorded");
+    expect(quietSaid(timeline, QUIET)).toBe("10 h 54 m quiet, 14:03 → 11-20 00:57");
+    expect(quietSaid(timeline, QUIET, true)).toBe("10 h 54 m quiet, 11-19 14:03 → 11-20 00:57");
+    const sameDay = { ...QUIET, to: QUIET.from + 2 * 3600 };
+    expect(quietSaid(timeline, sameDay)).toBe("2 h quiet, 14:03 → 16:03");
+    expect(quietSaid(timeline, sameDay, true)).toBe("2 h quiet, 11-19 14:03 → 11-19 16:03");
+  });
+
+  it("draws every segment's words whole, and clear of a few minutes' segment before it", () => {
+    const drawn = lanes(guards(), undefined, null, CUT);
+    const segs = (key: string) => drawn.lanes.find((lane) => lane.key === key)?.segs ?? [];
+    // The track at 900, 1280, 1440 and 1600 wide, and the widest a word is weighed at.
+    for (const px of [555, 935, 1095, 1255, 1600]) {
+      for (const key of ["stage", "orchestrator", "executor", "reviewer"]) {
+        for (const seg of segs(key)) {
+          const words = shown(seg.text, px);
+          if (words === "") continue;
+          // Past one before it, its least width and 3 px clear take 10 px past its own padding,
+          // less as wide as the track draws the distance from that one's start.
+          const reach = seg.inset === undefined ? 0 : Math.max(0, 10 - (seg.inset * px) / 100);
+          expect(
+            textPx(words) + SEG_MIN_PX + reach,
+            `${key}: ${words} at ${px}`,
+          ).toBeLessThanOrEqual((seg.width * px) / 100);
+        }
+      }
+    }
+    // The review of two minutes at 02:44 on 11-20, drawn at its least width, and the hour after
+    // it, whose words keep past it: at 1440 wide its "1 h 4 m" is drawn clear of it.
+    const stage = segs("stage");
+    const after = stage.findIndex((seg) => seg.title.startsWith("in progress 1 h 4 m"));
+    const review = stage[after - 1] as Seg;
+    expect([
+      review.title.startsWith("review 2 m"),
+      (review.width * 1095) / 100 < SEG_MIN_PX,
+    ]).toEqual([true, true]);
+    expect(stage[after]?.inset).toBeCloseTo(review.width, 9);
+    expect(shown(stage[after]?.text ?? [], 1095)).toBe("1 h 4 m");
+    // The 39 minutes before the band, in its stage and its claim, give way at 1440 wide, where
+    // "39 m" whole needs 41.8 px; at 1600 wide they are said.
+    const late = (key: string) => segs(key).find((seg) => seg.title.includes("39 m")) as Seg;
+    expect([1095, 1255].map((px) => shown(late("stage").text, px))).toEqual(["", "39 m"]);
+    expect([1095, 1255].map((px) => shown(late("executor").text, px))).toEqual(["", "39 m"]);
+  });
+
+  it("is a row of a phone's list after the rows of the instant it begins at", () => {
+    const timeline = guards();
+    const listed = rows(timeline);
+    const at = listed.findIndex((row) => row.quiet !== undefined);
+    expect(listed.filter((row) => row.quiet !== undefined)).toHaveLength(1);
+    expect(listed[at]).toEqual({
+      start: QUIET.from,
+      day: null,
+      at: "14:03",
+      sub: false,
+      event: true,
+      tone: "muted-foreground",
+      label: "10 h 54 m quiet, 14:03 → 11-20 00:57",
+      took: null,
+      bar: null,
+      word: null,
+      title: "10 h 54 m quiet, 14:03 → 11-20 00:57: task done, nothing recorded",
+      quiet: "Task done, nothing recorded",
+    });
+    // The message it begins at is before it; the review that ends it after, under its day.
+    expect(listed[at - 1]?.start).toBe(QUIET.from);
+    expect(listed[at - 1]?.message).toBe(15678);
+    expect(listed[at + 1]?.start).toBe(QUIET.to);
+    expect(listed[at + 1]?.day).toBe("11-20");
+    // A task with no quiet stretch has no such row.
+    expect(rows(pictures()).some((row) => row.quiet !== undefined)).toBe(false);
+  });
+
+  it("is a band of its share of the track, the work either side to scale", () => {
+    const timeline = guards();
+    const scale = new Scale(timeline, null, CUT);
+    expect(scale.at(QUIET.to) - scale.at(QUIET.from)).toBeCloseTo(BAND_SHARE * 100, 9);
+    // As many percent an hour before the band as after it, and at the ends the whole track.
+    const perHour = (from: number) => scale.at(from + 3600) - scale.at(from);
+    expect(perHour(QUIET.from - 7200)).toBeCloseTo(perHour(QUIET.to + 600), 9);
+    expect(scale.at(scale.start)).toBe(0);
+    expect(scale.at(scale.end)).toBeCloseTo(100, 9);
+    // The work gets the width: an hour is wider than on the true clock.
+    expect(perHour(QUIET.from - 7200)).toBeGreaterThan(
+      new Scale(timeline).at(QUIET.from) - new Scale(timeline).at(QUIET.from - 3600),
+    );
+  });
+
+  it("says its length over it, its day after that, and why down it where it is wide enough", () => {
+    const timeline = guards();
+    const drawn = lanes(timeline, undefined, null, CUT);
+    expect(drawn.breaks).toHaveLength(1);
+    const [band] = drawn.breaks;
+    expect(band?.left).toBeCloseTo(75.68, 2);
+    expect(band?.width).toBeCloseTo(3.3, 9);
+    expect({ ...band, left: 0, width: 0 }).toEqual({
+      left: 0,
+      width: 0,
+      from: QUIET.from,
+      to: QUIET.to,
+      out: false,
+      length: { text: "+10 h 54 m", from: null, to: null },
+      day: { text: "11-20", from: null, to: null },
+      // 14 px of 3.3% of the track: from a track of 424 px.
+      words: { text: "quiet · task done, nothing recorded", from: 450, to: null },
+      title: "10 h 54 m quiet, 11-19 14:03 → 11-20 00:57, task done, nothing recorded",
+    });
+    // No hour inside the band is marked, its midnight neither: the day is the band's to say.
+    expect(drawn.ticks.map((tick) => [tick.label, tick.wide])).toEqual([
+      ["03:00", undefined],
+      ["06:00", undefined],
+      ["09:00", undefined],
+      // 15 px of 12:00, 39 of the length and a gap, 58 px over 13.6% of the track: from 427 px.
+      ["12:00", 450],
+      // The day's 78 px after the band's middle, 15 of 03:00 and a gap, over 13.5%: from 718 px.
+      ["03:00", 750],
+    ]);
+    // On the true clock the same hours mark the midnight by its date.
+    expect(lanes(timeline).ticks.map((tick) => tick.label)).toContain("11-20");
+    expect(lanes(timeline).breaks).toEqual([]);
+  });
+
+  it("ends the room of a verdict said before it at its edge, which would hide the word", () => {
+    const timeline = guards();
+    const verdicts = (drawn: Lanes) =>
+      (drawn.lanes.find((lane) => lane.key === "reviewer") as Lane).segs.flatMap((seg) =>
+        seg.after === null
+          ? []
+          : [[seg.left + seg.width, seg.after[0].text, seg.after[2]] as const],
+      );
+    const [band] = lanes(timeline, undefined, null, CUT).breaks;
+    const [approved] = verdicts(lanes(timeline, undefined, null, CUT));
+    expect(approved?.[1]).toBe("approved");
+    expect((approved?.[0] ?? 0) + (approved?.[2].room ?? 0)).toBeCloseTo(band?.left ?? 0, 9);
+    expect(approved?.[2].last).toBe(false);
+    // The last round with a band after it says its verdict before the band, not in the margin.
+    const two = { ...timeline, rounds: timeline.rounds.slice(0, 2) };
+    const [last] = verdicts(lanes(two, undefined, null, CUT));
+    expect(last?.[2].last).toBe(false);
+    expect((last?.[0] ?? 0) + (last?.[2].room ?? 0)).toBeCloseTo(band?.left ?? 0, 9);
+    // On the true clock it runs to the next round, and the last into the margin.
+    const [plain] = verdicts(lanes(two));
+    expect(plain?.[2]).toEqual({
+      room: 100 - (plain?.[0] ?? 0),
+      last: true,
+      bar: expect.any(Number),
+    });
+  });
+
+  it("is drawn only where it shows, its day only where its end does", () => {
+    const timeline = guards();
+    // Two hours of the band in view, with the hour before it.
+    const view = { from: QUIET.from - 3600, to: QUIET.from + 2 * 3600 };
+    const partly = lanes(timeline, undefined, view, CUT);
+    expect(partly.breaks).toHaveLength(1);
+    expect(partly.breaks[0]?.day).toBeNull();
+    expect(partly.breaks[0]?.length?.text).toBe("+10 h 54 m");
+    // A view after it draws none.
+    const after = lanes(timeline, undefined, { from: QUIET.to + 600, to: QUIET.to + 4200 }, CUT);
+    expect(after.breaks).toEqual([]);
+  });
+
+  it("gives way where two bands meet: the later's length and day to the earlier's length", () => {
+    const timeline = guards();
+    const split = QUIET.from + 5 * 3600;
+    const two = {
+      skipped: [
+        { ...QUIET, to: split },
+        { ...QUIET, from: split + 60 },
+      ],
+      share: BAND_SHARE,
+    };
+    const [first, second] = lanes(timeline, undefined, null, two).breaks;
+    expect(first?.length).toEqual({ text: "+5 h", from: null, to: null });
+    expect(first?.day).toBeNull();
+    expect(second?.length).toBeNull();
+    expect(second?.day).toBeNull();
+    expect(second?.title).toBe(
+      "5 h 53 m quiet, 11-19 19:04 → 11-20 00:57, task done, nothing recorded",
+    );
+  });
+
+  it("draws a day from the width that clears its own length's room and the next band's length", () => {
+    const timeline = guards();
+    // Three hours, then 6 h 44 m across midnight 20 minutes on, then ten minutes 40 minutes on.
+    const a = QUIET.from + 3 * 3600;
+    const b = QUIET.to - 50 * 60;
+    const three = {
+      skipped: [
+        { ...QUIET, to: a },
+        { ...QUIET, from: a + 1200, to: b },
+        { ...QUIET, from: b + 2400 },
+      ],
+      share: BAND_SHARE,
+    };
+    const [first, second, third] = lanes(timeline, undefined, null, three).breaks;
+    expect(first?.length).toEqual({ text: "+3 h", from: null, to: null });
+    // 18 px of "+3 h", 35.5 of "+6 h 44 m" and a gap, over 5.0% of the track: from 1,150.4 px.
+    expect(second?.length).toEqual({ text: "+6 h 44 m", from: 1200, to: null });
+    // Its day's 74.5 px past its middle, 21.5 of "+10 m" and a gap, over 6.7%: from 1,493 px.
+    expect(second?.day).toEqual({ text: "11-20", from: 1500, to: null });
+    // The third's length gives way to the second's alone: 61 px over 6.7%, from 910 px.
+    expect(third?.length).toEqual({ text: "+10 m", from: 950, to: null });
+    expect(third?.day).toBeNull();
   });
 });

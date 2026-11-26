@@ -1,8 +1,9 @@
 //! Zoom and sideways movement on a task's wide timeline (apps/symphony-web: src/timeline-zoom.ts,
-//! src/timeline-navigate.tsx), on the card's example task: the whole task first, then zoomed and
-//! moved by the toolbar, a wheel, a drag across the hours, a double click on a stage, the keys, the
-//! overview's window and a touch screen's pinch and swipe, each back to the whole task, the
-//! readout true at every zoom; a phone and a task too short to zoom into keep their drawing.
+//! src/timeline-navigate.tsx), on the card's example task on the true clock, its quiet stretch
+//! switched off (the band across it is quiet.rs's): the whole task first, then zoomed and moved by
+//! the toolbar, a wheel, a drag across the hours, a double click on a stage, the keys, the
+//! overview's window and a touch screen's pinch and swipe, each back to the whole task, the readout
+//! true at every zoom; a phone and a task too short to zoom into keep their drawing.
 use super::*;
 
 /// The toolbar's readout.
@@ -12,8 +13,10 @@ const WHOLE: &str = "11-19 01:00 → 11-20 04:34 · 1 d 3 h";
 
 /// Whether the readout is true of the hours drawn: each hour's label, at its place on the track,
 /// within a minute of the time the readout's range puts there (its ends are said to the minute),
-/// with how many hours are marked.
-const TRUE: &str = "(() => { const said = document.querySelector('.tl-range').textContent; const m = said.match(/^(\\d\\d)-(\\d\\d) (\\d\\d):(\\d\\d) → (\\d\\d)-(\\d\\d) (\\d\\d):(\\d\\d) · /); if (!m) return {said, ticks: 0, off: null}; const at = (mo, d, h, mi) => Date.UTC(2026, mo - 1, d, h, mi) / 60000; const from = at(+m[1], +m[2], +m[3], +m[4]), to = at(+m[5], +m[6], +m[7], +m[8]); const ticks = [...document.querySelectorAll('.tl-axis .tl-tick:not(.tl-nowtag)')]; const off = ticks.map(t => { const expected = from + parseFloat(t.style.left) / 100 * (to - from); const date = t.textContent.match(/^(\\d\\d)-(\\d\\d)$/); if (date) return Math.abs(at(+date[1], +date[2], 0, 0) - expected); const [h, mi] = t.textContent.split(':').map(Number); const day = Math.floor(expected / 1440) * 1440; return Math.min(...[day - 1440, day, day + 1440].map(d => Math.abs(d + h * 60 + mi - expected))); }); return {said, ticks: ticks.length, off: Math.max(0, ...off)}; })()";
+/// a band of a quiet stretch skipped taking its stretch's hours (its ends, on the card's clock,
+/// an hour past UTC), and the stretches drawn as long as the readout says are skipped; with how
+/// many hours are marked.
+pub(super) const TRUE: &str = "(() => { const said = document.querySelector('.tl-range').textContent; const m = said.match(/^(\\d\\d)-(\\d\\d) (\\d\\d):(\\d\\d) → (\\d\\d)-(\\d\\d) (\\d\\d):(\\d\\d) · /); if (!m) return {said, ticks: 0, off: null, skipped: null}; const at = (mo, d, h, mi) => Date.UTC(2026, mo - 1, d, h, mi) / 60000; const from = at(+m[1], +m[2], +m[3], +m[4]), to = at(+m[5], +m[6], +m[7], +m[8]); const local = s => (s + 3600) / 60; const bands = [...document.querySelectorAll('.tl-break')].map(b => ({left: parseFloat(b.style.left), right: parseFloat(b.style.left) + parseFloat(b.style.width), start: Math.max(from, local(+b.dataset.start)), end: Math.min(to, local(+b.dataset.end))})); const known = [[0, from], ...bands.flatMap(b => [[b.left, b.start], [b.right, b.end]]), [100, to]].sort((a, b) => a[0] - b[0]); const time = p => { const i = Math.max(1, known.findIndex(k => k[0] >= p)); const [p0, t0] = known[i - 1], [p1, t1] = known[i]; return p1 > p0 ? t0 + (p - p0) / (p1 - p0) * (t1 - t0) : t0; }; const ticks = [...document.querySelectorAll('.tl-axis .tl-tick:not(.tl-nowtag)')].filter(t => t.getClientRects().length > 0); const off = ticks.map(t => { const expected = time(parseFloat(t.style.left)); const date = t.textContent.match(/^(\\d\\d)-(\\d\\d)$/); if (date) return Math.abs(at(+date[1], +date[2], 0, 0) - expected); const [h, mi] = t.textContent.split(':').map(Number); const day = Math.floor(expected / 1440) * 1440; return Math.min(...[day - 1440, day, day + 1440].map(d => Math.abs(d + h * 60 + mi - expected))); }); const words = (said.match(/ · ([^·]+) skipped$/) ?? [null, ''])[1].trim().split(' '); let told = 0; for (let i = 0; i + 1 < words.length; i += 2) told += +words[i] * ({d: 1440, h: 60}[words[i + 1]] ?? 1); const drawn = bands.reduce((sum, b) => sum + b.end - b.start, 0); return {said, ticks: ticks.length, off: Math.max(0, ...off), skipped: Math.abs(told - drawn), bands: bands.length}; })()";
 
 /// Where the lanes are on the screen: the hours' layer (the tracks' start and width) and the
 /// middle of the stage lane's track, once the timeline is scrolled to the top of the window.
@@ -22,16 +25,23 @@ const PLACES: &str = "(() => { document.getElementById('timeline').scrollIntoVie
 /// Whether the page scrolls sideways.
 const SIDEWAYS: &str = "document.documentElement.scrollWidth > innerWidth";
 
-/// The card's task open on a desk at 1440 wide, its lanes in the window: their places.
+/// The card's task open on a desk at 1440 wide on the true clock, its quiet stretch switched off,
+/// its lanes in the window: their places.
 fn opened(chrome: &mut crate::chrome::Chrome, site: &Site) -> Value {
     open_drawn(chrome, site, 1440);
+    tap(chrome, ".tl-skip");
+    readout(
+        chrome,
+        "switched off",
+        &format!("said === {}", json!(WHOLE)),
+    );
     let places = chrome.eval(PLACES);
     chrome.frames();
     places
 }
 
 /// The readout, once it has become what `test` holds, and its hours true of the lanes.
-fn readout(chrome: &mut crate::chrome::Chrome, what: &str, test: &str) -> String {
+pub(super) fn readout(chrome: &mut crate::chrome::Chrome, what: &str, test: &str) -> String {
     assert!(
         chrome.wait_for(&format!("(said => {test})({RANGE})"), SHOWN),
         "{what}: the readout is {}",
@@ -39,7 +49,9 @@ fn readout(chrome: &mut crate::chrome::Chrome, what: &str, test: &str) -> String
     );
     let truth = chrome.eval(TRUE);
     assert!(
-        truth["ticks"].as_u64().unwrap() >= 2 && truth["off"].as_f64().unwrap() < 1.0,
+        truth["ticks"].as_u64().unwrap() >= 2
+            && truth["off"].as_f64().unwrap() < 1.0
+            && truth["skipped"].as_f64().unwrap() < 1.0,
         "{what}: the readout is not true of the hours drawn: {truth}"
     );
     assert_eq!(

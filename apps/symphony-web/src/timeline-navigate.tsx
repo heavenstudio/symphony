@@ -1,8 +1,10 @@
 // The wide timeline's zoom and movement, drawn and handled: the toolbar line above the lanes
-// (Whole task, − and +, the range shown), the overview strip while zoomed, and what the lanes do
-// with a wheel, a pointer, a touch and a key. The arithmetic is timeline-zoom.ts's; this module
-// only reads where the pointer is on the tracks, as a fraction of the hours shown, and hands the
-// view it computes to `set`. A chunk of timeline.tsx's: it imports nothing of the task page.
+// (Whole task, − and +, the range shown, and where the task has quiet stretches the switch that
+// skips them), the overview strip while zoomed, and what the lanes do with a wheel, a pointer, a
+// touch and a key. The arithmetic is timeline-zoom.ts's, through the cut scale where quiet
+// stretches are skipped (`Navigation.cut`); this module only reads where the pointer is on the
+// tracks, as a fraction of them, and hands the view it computes to `set`. A chunk of
+// timeline.tsx's: it imports nothing of the task page.
 //
 // - ⌘/Ctrl + wheel, a trackpad's pinch with it, zooms about the pointer; Shift + wheel and a
 //   sideways wheel move while zoomed; a plain wheel scrolls the page, which the lanes never trap.
@@ -12,6 +14,8 @@
 //   still scrolls up and down under a finger (`touch-action: pan-y` in timeline.css).
 // - While the lanes or the overview's window have the focus, + and − zoom and 0 shows the whole
 //   task.
+// - The range shown is said to assistive technology after a press or a key alone, never at each
+//   step of a wheel, a drag or a pinch (`Navigation.said`).
 
 import {
   type CSSProperties,
@@ -25,12 +29,13 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { Button } from "./button";
-import type { View } from "./timeline-layout";
+import type { Cut } from "./timeline-cut";
+import { took, type View } from "./timeline-layout";
 import {
   dragged,
   type Hold,
   held,
-  LEAST_SHOWN,
+  leastShown,
   type Next,
   overview,
   type Point,
@@ -54,11 +59,15 @@ export const LANES_ID = "tl-lanes";
 const DRAG_PX = 4;
 
 /** The view the lanes show and how to change it: the whole hours, the view (none for the whole
- * task), and `set`, which takes the next view (none for the whole task). */
+ * task), the quiet stretches skipped (`cut`), and `set`, which takes the next view (none for the
+ * whole task) and, for a press or a key (`say`), says its range to assistive technology, where
+ * `said` holds it. */
 export interface Navigation {
   whole: View;
   view: View | null;
-  set: (view: View | null) => void;
+  cut?: Cut | null | undefined;
+  said?: string | undefined;
+  set: (view: View | null, say?: boolean) => void;
 }
 
 const percent = (value: number) => `${fixed(value, 2)}%`;
@@ -70,11 +79,6 @@ const marked = (tone: string, left: number, width?: number) =>
     ...(width === undefined ? {} : { width: percent(width) }),
   }) as CSSProperties;
 
-/** Whether the view is as narrow as a zoom goes. */
-export function leastShown(view: View | null): boolean {
-  return view !== null && view.to - view.from <= LEAST_SHOWN + 1e-6;
-}
-
 /**
  * What a key does to the view while the lanes or the overview's window have the focus: + (or =)
  * zooms in, − zooms out, 0 shows the whole task; none for any other key, or one with a modifier,
@@ -85,16 +89,17 @@ export function keyView(
   modified: boolean,
   view: View | null,
   whole: View,
+  cut?: Cut | null,
 ): { view: View | null } | null {
   if (modified) return null;
   switch (key) {
     case "+":
     case "=":
-      return { view: zoomed(view, whole, true) };
+      return { view: zoomed(view, whole, true, cut) };
     case "-":
     case "_":
     case "−":
-      return { view: zoomed(view, whole, false) };
+      return { view: zoomed(view, whole, false, cut) };
     case "0":
       return { view: null };
     default:
@@ -110,9 +115,12 @@ function taken(event: { preventDefault(): void }, next: Next, set: (view: View |
   return true;
 }
 
+/** A key's zoom, its range said. */
 function zoomKey(event: KeyboardEvent<HTMLElement>, nav: Navigation): boolean {
   const modified = event.ctrlKey || event.metaKey || event.altKey;
-  return taken(event, keyView(event.key, modified, nav.view, nav.whole), nav.set);
+  return taken(event, keyView(event.key, modified, nav.view, nav.whole, nav.cut), (view) =>
+    nav.set(view, true),
+  );
 }
 
 /** A button of the toolbar's that cannot act: not drawn, its place kept (`.tl-idle`), and
@@ -127,19 +135,48 @@ export type ZoomButton = "whole" | "out" | "in";
  * else to the button that now acts, + once the whole task shows (Whole task, or − pressed until
  * it), − at the least. A button that hides itself with the focus would leave it to the page.
  */
-export function handoff(pressed: ZoomButton, next: View | null): "in" | "out" | null {
-  if (pressed === "in") return leastShown(next) ? "out" : null;
+export function handoff(
+  pressed: ZoomButton,
+  next: View | null,
+  whole: View,
+  cut?: Cut | null,
+): "in" | "out" | null {
+  if (pressed === "in") return leastShown(next, whole, cut) ? "out" : null;
   return next === null ? "in" : null;
 }
 
 /** The labels the focus finds the buttons it moves to by. */
 const LABELS = { in: "Zoom in", out: "Zoom out" } as const;
 
+/** The switch that skips the task's quiet stretches: how many there are and how long they last
+ * together, whether it is on, and what pressing it does. */
+export interface QuietSwitch {
+  count: number;
+  total: number;
+  on: boolean;
+  press: () => void;
+}
+
+/** The switch's words after its label: how many quiet stretches, and how long together
+ * ("1 · 10 h 54 m"). */
+export function quietCount(count: number, total: number): string {
+  return `${count} · ${took(total)}`;
+}
+
 /** The toolbar line: Whole task, − and +, each drawn only where it can act, its place kept so that
  * nothing on the line moves under the pointer (on the whole task + alone, which the readout says
- * is the whole), and the range shown. */
-export function ZoomBar({ timeline, nav }: { timeline: TaskTimeline; nav: Navigation }) {
-  const { view, whole, set } = nav;
+ * is the whole), the range shown, and where the task has quiet stretches (`quiet`) the switch that
+ * skips them. */
+export function ZoomBar({
+  timeline,
+  nav,
+  quiet,
+}: {
+  timeline: TaskTimeline;
+  nav: Navigation;
+  quiet?: QuietSwitch | undefined;
+}) {
+  const { view, whole, set, cut } = nav;
   /** A press of `button`, which sets `next`, the focus handed on where it would hide: once the
    * view is drawn, as the button it goes to may be hidden until then (+ at the least, − on the
    * whole task). */
@@ -147,12 +184,13 @@ export function ZoomBar({ timeline, nav }: { timeline: TaskTimeline; nav: Naviga
     return (event: MouseEvent<HTMLButtonElement>) => {
       const view = next();
       const pressed = event.currentTarget;
-      const to = pressed.ownerDocument.activeElement === pressed ? handoff(button, view) : null;
+      const to =
+        pressed.ownerDocument.activeElement === pressed ? handoff(button, view, whole, cut) : null;
       if (to === null) {
-        set(view);
+        set(view, true);
         return;
       }
-      flushSync(() => set(view));
+      flushSync(() => set(view, true));
       pressed.parentElement?.querySelector<HTMLElement>(`[aria-label="${LABELS[to]}"]`)?.focus();
     };
   };
@@ -174,7 +212,7 @@ export function ZoomBar({ timeline, nav }: { timeline: TaskTimeline; nav: Naviga
           aria-label="Zoom out"
           title="Zoom out"
           {...idle(view === null)}
-          onClick={press("out", () => zoomed(view, whole, false))}
+          onClick={press("out", () => zoomed(view, whole, false, cut))}
         >
           −
         </Button>
@@ -183,15 +221,30 @@ export function ZoomBar({ timeline, nav }: { timeline: TaskTimeline; nav: Naviga
           size="sm"
           aria-label="Zoom in"
           title="Zoom in"
-          {...idle(leastShown(view))}
-          onClick={press("in", () => zoomed(view, whole, true))}
+          {...idle(leastShown(view, whole, cut))}
+          onClick={press("in", () => zoomed(view, whole, true, cut))}
         >
           +
         </Button>
       </span>
-      <span className="tl-range" aria-live="polite">
-        {readout(timeline, view)}
+      <span className="tl-range">{readout(timeline, view, cut)}</span>
+      <span className="tl-said" aria-live="polite">
+        {nav.said}
       </span>
+      {quiet && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="tl-skip"
+          aria-pressed={quiet.on}
+          onClick={quiet.press}
+        >
+          <span className="tl-skip-box" aria-hidden="true" />
+          Skip quiet stretches
+          <span className="tl-skip-count">{quietCount(quiet.count, quiet.total)}</span>
+        </Button>
+      )}
     </div>
   );
 }
@@ -219,7 +272,7 @@ export function OverviewStrip({
   view: View;
   nav: Navigation;
 }) {
-  const strip = overview(timeline, view);
+  const strip = overview(timeline, view, nav.cut);
   const drag = useRef<WindowDrag | null>(null);
   const { left, width } = strip.window;
   const down = (event: PointerEvent<HTMLElement>) => {
@@ -234,14 +287,15 @@ export function OverviewStrip({
   const move = (event: PointerEvent<HTMLElement>) => {
     const at = drag.current;
     if (at === null) return;
-    const by = ((event.clientX - at.x) / at.width) * (nav.whole.to - nav.whole.from);
-    nav.set(held(at.start, nav.whole, at.hold, by));
+    nav.set(held(at.start, nav.whole, at.hold, (event.clientX - at.x) / at.width, nav.cut));
   };
   const up = () => {
     drag.current = null;
   };
   const key = (event: KeyboardEvent<HTMLElement>) => {
-    if (!zoomKey(event, nav)) taken(event, windowKey(event.key, view, nav.whole), nav.set);
+    if (!zoomKey(event, nav)) {
+      taken(event, windowKey(event.key, view, nav.whole, nav.cut), (next) => nav.set(next, true));
+    }
   };
   return (
     <div className="tl-overview">
@@ -263,6 +317,14 @@ export function OverviewStrip({
           style={marked(mark.tone, mark.left)}
         />
       ))}
+      {strip.bands.map((band) => (
+        <span
+          key={band.left}
+          className="tl-ov-break"
+          aria-hidden="true"
+          style={{ left: percent(band.left), width: percent(band.width) }}
+        />
+      ))}
       <span className="tl-ov-dim" aria-hidden="true" style={{ left: 0, width: percent(left) }} />
       <span
         className="tl-ov-dim"
@@ -279,7 +341,7 @@ export function OverviewStrip({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(left)}
-        aria-valuetext={readout(timeline, view)}
+        aria-valuetext={readout(timeline, view, nav.cut)}
         style={{ left: percent(left), width: percent(width) }}
         onPointerDown={down}
         onPointerMove={move}
@@ -346,6 +408,9 @@ export function useNavigation(
 ): { band: [number, number] | null; handlers: LanesHandlers } {
   const latest = useRef(nav);
   latest.current = nav;
+  // The view the next gesture moves on from: the one drawn, or one set since that is not drawn yet.
+  const shown = useRef(nav.view);
+  shown.current = nav.view;
   const press = useRef<Press | null>(null);
   const touches = useRef<Touches | null>(null);
   const swallow = useRef(false);
@@ -358,27 +423,32 @@ export function useNavigation(
       const at = latest.current;
       const track = trackOf(element);
       if (track === null) return;
-      const next = wheeled(at.view, at.whole, track, {
-        x: event.clientX,
-        deltaX: event.deltaX,
-        deltaY: event.deltaY,
-        mode: event.deltaMode,
-        zoom: event.ctrlKey || event.metaKey,
-        shift: event.shiftKey,
-      });
+      const next = wheeled(
+        shown.current,
+        at.whole,
+        track,
+        {
+          x: event.clientX,
+          deltaX: event.deltaX,
+          deltaY: event.deltaY,
+          mode: event.deltaMode,
+          zoom: event.ctrlKey || event.metaKey,
+          shift: event.shiftKey,
+        },
+        at.cut,
+      );
       // Each wheel event moves on from the last, though the page has not drawn it yet.
       taken(event, next, (view) => {
-        at.view = view;
+        shown.current = view;
         at.set(view);
       });
     };
     element.addEventListener("wheel", wheel, { passive: false });
     return () => element.removeEventListener("wheel", wheel);
   }, [lanes]);
-  const set = (next: View | null) => {
-    const at = latest.current;
-    at.view = next;
-    at.set(next);
+  const set = (next: View | null, say?: boolean) => {
+    shown.current = next;
+    latest.current.set(next, say);
   };
   const touched = (event: PointerEvent<HTMLDivElement>) => {
     const at = latest.current;
@@ -396,6 +466,7 @@ export function useNavigation(
         track,
         of(held.start) as [Point, Point],
         of(held.now) as [Point, Point],
+        at.cut,
       );
       if (next !== null) set(next.view);
       return;
@@ -403,7 +474,7 @@ export function useNavigation(
     const start = held.start.get(event.pointerId) as Point;
     held.swiping ??= sideways(event.clientX - start.x, event.clientY - start.y);
     if (!held.swiping) return;
-    const next = swiped(held.view, at.whole, track, start.x, event.clientX);
+    const next = swiped(held.view, at.whole, track, start.x, event.clientX, at.cut);
     if (next !== null) set(next.view);
   };
   const untouched = (id: number) => {
@@ -413,7 +484,7 @@ export function useNavigation(
     held.now.delete(id);
     // The fingers left go on from where the view is now.
     for (const [finger, at] of held.now) held.start.set(finger, at);
-    held.view = latest.current?.view ?? null;
+    held.view = shown.current;
     held.swiping = null;
     if (held.start.size === 0) touches.current = null;
   };
@@ -430,7 +501,7 @@ export function useNavigation(
         for (const [finger, now] of held.now) held.start.set(finger, now);
         held.start.set(event.pointerId, at);
         held.now.set(event.pointerId, at);
-        held.view = latest.current?.view ?? null;
+        held.view = shown.current;
         held.swiping = null;
         touches.current = held;
         return;
@@ -478,7 +549,7 @@ export function useNavigation(
       const to = fractionAt(lanes.current, event.clientX);
       const at = latest.current;
       if (to === null || !at) return;
-      set(dragged(at.view, at.whole, held.from, to));
+      set(dragged(shown.current, at.whole, held.from, to, at.cut));
     },
     onPointerCancel(event: PointerEvent<HTMLDivElement>) {
       if (event.pointerType === "touch") {
@@ -496,8 +567,7 @@ export function useNavigation(
       event.stopPropagation();
     },
     onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-      const at = latest.current;
-      if (at) zoomKey(event, { ...at, set });
+      zoomKey(event, { ...latest.current, view: shown.current, set });
     },
     // A double click on a stage's bar zooms to the stage, its instants on it.
     onDoubleClick(event: MouseEvent<HTMLDivElement>) {
@@ -506,7 +576,7 @@ export function useNavigation(
       if (!bar || !at) return;
       const from = Number(bar.dataset.from);
       const to = Number(bar.dataset.to);
-      if (Number.isFinite(from) && Number.isFinite(to)) set(zoomTo(at.whole, from, to));
+      if (Number.isFinite(from) && Number.isFinite(to)) set(zoomTo(at.whole, from, to, at.cut));
     },
   };
   return { band, handlers };
