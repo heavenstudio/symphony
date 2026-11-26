@@ -4,9 +4,9 @@
 
 use super::{Held, Live, SEND};
 use crate::common::NOW;
-use crate::git;
+use crate::{git, project_file};
 use std::path::Path;
-use symphony_board::Store;
+use symphony_board::{Opening, Store};
 
 #[test]
 fn a_message_activates_no_committed_workflow_and_the_next_tasks_write_does() {
@@ -18,11 +18,12 @@ fn a_message_activates_no_committed_workflow_and_the_next_tasks_write_does() {
         handles.push(ran.out.trim().to_string());
     }
     let active = || {
-        Store::unchecked(
-            live.client("tasks"),
+        Store::unchecked_on(
+            live.database("tasks"),
             Box::new(|| NOW),
             Box::new(|_| true),
             "",
+            &Opening::write(),
         )
         .workflow_active()
         .unwrap()
@@ -31,7 +32,7 @@ fn a_message_activates_no_committed_workflow_and_the_next_tasks_write_does() {
     // The default branch commits a workflow once the board is made.
     std::fs::write(
         live.main.join("symphony.toml"),
-        format!("[project]\nid = \"live\"\n{}", crate::workflow::FLOW),
+        project_file("live", crate::workflow::FLOW),
     )
     .unwrap();
     git(&live.main, &["commit", "-qam", "a workflow"]);

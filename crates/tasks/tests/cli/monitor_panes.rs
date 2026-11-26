@@ -141,20 +141,64 @@ fn a_poll_asks_hc_once_for_the_view_and_the_terminal_watch() {
     assert_eq!(Monitor::asked(&calls), GONE_STEPS + 1);
 }
 
+/// A callback notice queued for `handle` under `key`, as an older build queued it: numbered by
+/// `handle`'s callback counter, as every callback event is.
 fn seed_inbox_notice(board: &Store, handle: &str, key: &str, text: &str) {
-    board.client().query(
-        "LET $counted = (UPSERT ONLY type::record('counter', ['callback-event', $handle]) SET last = (last ?? 0) + 1);
-         CREATE type::record('callback_event', [$handle, $key]) CONTENT {
-             key:$key, handle:$handle, text:$text, slug:NONE, message:NONE, attempts:0,
-             delivered:false, sequence:$counted.last
-         } RETURN NONE;",
-        json!({"handle":handle, "key":key, "text":text})).unwrap();
+    let raw = board.raw();
+    let counter = raw.row("counter", json!(["callback-event", handle]));
+    let sequence = counter.field("last").unwrap().as_u64().unwrap_or(0) + 1;
+    counter.put(json!({"last": sequence})).unwrap();
+    (raw.row("callback_event", json!([handle, key])))
+        .create(
+            json!({"key": key, "handle": handle, "text": text, "attempts": 0,
+                       "delivered": false, "sequence": sequence}),
+        )
+        .unwrap();
 }
 
+/// `handle`'s callback events, in their order: by sequence, then by key, its numbers by value.
 fn inbox_rows(board: &Store, handle: &str) -> Vec<Value> {
-    board.client().query(
-        "RETURN SELECT key, text, sequence, attempts, delivered, message FROM callback_event WHERE handle = $handle ORDER BY sequence, key NUMERIC;",
-        json!({"handle":handle})).unwrap()[0].as_array().unwrap().clone()
+    let fields = [
+        "key",
+        "text",
+        "sequence",
+        "attempts",
+        "delivered",
+        "message",
+    ];
+    let rows = (board.raw().table("callback_event"))
+        .matching(json!({"handle": handle}))
+        .fields(&fields)
+        .unwrap();
+    let mut rows = rows.as_array().unwrap().clone();
+    symphony_board::order::sort_by_key(&mut rows, &|row| {
+        let key = row["key"].as_str().unwrap_or_default();
+        (row["sequence"].as_u64(), numbered(key))
+    });
+    rows
+}
+
+/// `key` as runs of digits, each by its value, and of the other characters between them.
+fn numbered(key: &str) -> Vec<(String, u128)> {
+    let mut runs: Vec<(String, u128)> = Vec::new();
+    let mut text = String::new();
+    let mut chars = key.chars().peekable();
+    while let Some(c) = chars.next() {
+        if !c.is_ascii_digit() {
+            text.push(c);
+            continue;
+        }
+        let mut digits = c.to_string();
+        while let Some(d) = chars.next_if(char::is_ascii_digit) {
+            digits.push(d);
+        }
+        runs.push((
+            std::mem::take(&mut text),
+            digits.parse().unwrap_or(u128::MAX),
+        ));
+    }
+    runs.push((text, 0));
+    runs
 }
 
 fn inbox_subprocess(monitor: &Monitor, actor: &str) -> String {

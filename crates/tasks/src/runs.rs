@@ -388,7 +388,7 @@ fn said_by(command: &mut sys::Command, deadline: Instant) -> Option<Vec<u8>> {
         .stderr(sys::Stdio::Null)
         .spawn()
         .ok()?;
-    let (tell, said) = std::sync::mpsc::channel();
+    let (tell, said) = crate::channel::channel();
     if let Some(mut out) = child.stdout.take() {
         std::thread::spawn(move || {
             let mut bytes = Vec::new();
@@ -640,7 +640,7 @@ mod tests {
             .collect();
         assert_eq!(read.len(), 400);
         let mut runs: Vec<&str> = read.iter().map(|line| line.run.as_str()).collect();
-        runs.sort_unstable();
+        crate::order::sort_by(&mut runs, &Ord::cmp);
         runs.dedup();
         assert_eq!(runs.len(), 400);
         fs::remove_dir_all(&dir).unwrap();

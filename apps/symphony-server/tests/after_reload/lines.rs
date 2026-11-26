@@ -24,7 +24,7 @@ impl Lines {
     pub(super) fn of(child: &mut Child, path: &Path) -> Self {
         let began = Instant::now();
         let log = Arc::new(Mutex::new(File::create(path).unwrap()));
-        let (send, receive) = mpsc::channel();
+        let (send, receive) = crate::test_channel::channel();
         let streams: Vec<Box<dyn Read + Send>> = vec![
             Box::new(child.stdout.take().unwrap()),
             Box::new(child.stderr.take().unwrap()),
@@ -81,12 +81,6 @@ impl Lines {
                 return Ok(line);
             }
         }
-    }
-
-    /// Everything the child said, once both its streams have closed.
-    pub(super) fn said(&mut self) -> String {
-        self.closed();
-        self.history.join("\n")
     }
 
     /// The lines that arrived at or after `mark`, each after the seconds since `mark`.

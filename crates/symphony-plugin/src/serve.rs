@@ -414,7 +414,13 @@ fn answer(plugin: &dyn Plugin, request: Request, pages: &Pages) -> Result<Box<Ra
             let action = named(plugin.board_actions(), "board action", &asked.action, |a| {
                 a.name()
             })?;
-            reply(&action.submit(&asked.root, &asked.task.task(), &asked.submission))
+            // Who sent it, where the host said (minor 6); a host of an older minor's submission is
+            // answered as it always was.
+            let task = asked.task.task();
+            reply(&match &asked.sender {
+                Some(sender) => action.submit_from(&asked.root, &task, &asked.submission, sender),
+                None => action.submit(&asked.root, &task, &asked.submission),
+            })
         }
         Request::Validate(asked) => {
             let field = named(plugin.board_fields(), "board field", &asked.field, |f| {

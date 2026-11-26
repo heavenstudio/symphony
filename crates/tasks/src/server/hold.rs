@@ -1,9 +1,8 @@
-//! The hold ([`Home::hold`]): the board's database stopped and kept stopped while someone works on
-//! its data, a snapshot, a replay on a clone or a swap. While `symphony/tasks/hold` is there
-//! nothing of the board starts a server on that data: [`Home::ensure`], [`Home::stop`],
-//! [`Home::reclaim`] and every start refuse with [`ServerError::Held`], which names who holds it,
-//! since when and why, and the command that releases it ([`Home::release`]). Only builds that carry
-//! it honour it.
+//! The hold: the board's database stopped and kept stopped while someone works on its data, a
+//! snapshot, a restore or a swap ([`super::Postgres::hold`]). While `symphony/tasks/hold` is there
+//! nothing of the board starts a server on that data: every start, stop, snapshot and reclaim
+//! refuses with [`ServerError::Held`], which names who holds it, since when and why, and the
+//! command that releases it ([`Home::release`]). Only builds that carry it honour it.
 //!
 //! Its holder releases it, or another handle that names the holder: a release by mistake in the
 //! middle of someone's work on the data (a restart between a stop and a rename) is what the hold
@@ -11,12 +10,11 @@
 //! role decides it (an orchestrator's, say): the board, which holds the roles, is not read while it
 //! is held. Each hold and release is a line of `symphony/tasks/hold.log`, which nothing removes.
 
-use super::{DATA, Doing, Home, LOG, REPLAY_THROUGH, Running, ServerError, Waited, io, untold};
+use super::{Doing, Home, ServerError, io};
 use crate::sys::local_minute;
 use std::fmt;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// In the board's folder: the hold, while it is held.
@@ -47,17 +45,6 @@ impl fmt::Display for Hold {
     }
 }
 
-/// What [`Home::hold`] did.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Holding {
-    /// The hold, as `symphony/tasks/hold` says it.
-    pub hold: Hold,
-    /// Each server it stopped: the recorded one, then one on the data no record named.
-    pub stopped: Vec<Running>,
-    /// The data, which nothing serves now and nothing starts a server on until the release.
-    pub data: PathBuf,
-}
-
 impl Home {
     /// The hold on this board's database, if it is held. A hold file that cannot be read still
     /// holds: its setter is unknown and its reason is that it does not read.
@@ -73,32 +60,18 @@ impl Home {
             pid: 0,
         };
         match fs::read_to_string(&path) {
-            Ok(text) => Some(serde_json::from_str(&text).unwrap_or_else(|e| unreadable(&e))),
+            Ok(text) => {
+                Some(serde_json::from_slice(text.as_bytes()).unwrap_or_else(|e| unreadable(&e)))
+            }
             Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => None,
             Err(problem) => Some(unreadable(&problem)),
         }
     }
 
-    /// Hold this board's database stopped, as `by`, for `why`: under the starters' lock, write the
-    /// hold, then stop cleanly every server on the data ([`Home::stop_serving`]) and forget its
-    /// address. The hold is written first, so a stop left waiting (a server still replaying its
-    /// log, or still closing its store) leaves no one starting another meanwhile; `by` holding it
-    /// again finishes that stop. Refused while another holds it. The hold is a line of the
-    /// history before it is written.
-    pub fn hold(&self, by: &str, why: &str) -> Result<Holding, ServerError> {
-        self.require_surreal()?;
-        let _locked = self.lock(Doing::Holding)?;
-        self.require_surreal()?;
-        let hold = self.hold_as(by, why)?;
-        let stopped = self.stop_serving()?;
-        Ok(Holding {
-            hold,
-            stopped,
-            data: self.dir.join(DATA),
-        })
-    }
-
-    /// Record a hold under the caller's starters' lock, before its backend stops its server.
+    /// Record a hold, as `by`, for `why`, under the caller's starters' lock, before its server is
+    /// stopped, so a stop left waiting leaves no one starting another meanwhile: one `by` set
+    /// already is kept as it is, and another's refuses. The hold is a line of the history before
+    /// it is written.
     pub(super) fn hold_as(&self, by: &str, why: &str) -> Result<Hold, ServerError> {
         let hold = match self.held() {
             Some(hold) if hold.by == by => hold,
@@ -167,74 +140,10 @@ impl Home {
             .map_err(io("could not write", &path))
     }
 
-    /// The server that runs on this board's data, if one does: the recorded one, else one no
-    /// record names. Asks it nothing; under a hold, one still closing its store, or still starting.
-    pub fn serving(&self) -> Option<Running> {
-        self.recorded()
-            .filter(|running| self.serves(running.pid))
-            .or_else(|| self.unrecorded())
-    }
-
     /// Refused while held.
     pub(super) fn unheld(&self) -> Result<(), ServerError> {
         self.held()
             .map_or(Ok(()), |hold| Err(ServerError::Held(hold)))
-    }
-
-    /// Every server on this board's data stopped cleanly, the recorded one first, then the one a
-    /// private replay's record still standing takes for the replay's ([`Home::left_replay_through`],
-    /// which refuses the stop while that cannot be told), then one no record names,
-    /// and the record of each removed once it has ended: those it stopped. A server that has not
-    /// answered yet is still starting (replaying its log) and is waited for, never signalled: a
-    /// signal before its handlers are set ends it at once, as a kill would, and a store cut off in
-    /// its replay can lose what that replay had not yet written. One that does not answer within
-    /// the patience is left running and the stop refused, naming it. Under the lock.
-    pub(super) fn stop_serving(&self) -> Result<Vec<Running>, ServerError> {
-        let mut stopped = Vec::new();
-        if let Some(running) = self.recorded() {
-            let serving = self.serves(running.pid);
-            if serving {
-                self.stop_one(&running)?;
-            }
-            self.forget()?;
-            if serving {
-                stopped.push(running);
-            }
-        }
-        if let Some(left) = self.left_replay_through()? {
-            self.stop_left_replay(
-                &left,
-                &format!("{REPLAY_THROUGH}: the stop of every server on the data goes on"),
-            )?;
-            stopped.push(left.server);
-        }
-        if let Some(running) = self.unrecorded() {
-            self.stop_one(&running)?;
-            stopped.push(running);
-        }
-        Ok(stopped)
-    }
-
-    /// `running`, a server on this board's data, stopped cleanly once it answers ([`Home::end`]);
-    /// one that does not answer within the patience is left as it is, and said, with how a replay
-    /// is told from a hang ([`Home::unanswered`]). One whose answer cannot be told for its own is
-    /// left running too, the stop refused naming why ([`untold`]).
-    pub(super) fn stop_one(&self, running: &Running) -> Result<(), ServerError> {
-        match self.answers(running) {
-            Waited::Ended => Ok(()),
-            Waited::Answers => self.end(running.pid),
-            Waited::Unsure(why) => Err(untold(running, &why)),
-            Waited::Silent => Err(ServerError::NotUp(format!(
-                "the board's server (pid {}, {}) has not answered within {} s, so it is still \
-                 starting (replaying its log) or stuck: it is left running, never signalled before \
-                 it answers. {}. Its log is {}",
-                running.pid,
-                running.addr,
-                self.answer_wait().as_secs_f64(),
-                self.unanswered(running.pid),
-                self.dir.join(LOG).display()
-            ))),
-        }
     }
 
     /// Write the hold whole, so a reader never sees half of it.

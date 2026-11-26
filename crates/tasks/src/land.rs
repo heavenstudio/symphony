@@ -1371,7 +1371,7 @@ fn justfile(root: &Path) -> Option<PathBuf> {
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| matches!(name.to_lowercase().as_str(), "justfile" | ".justfile"))
         .collect();
-    names.sort_unstable();
+    crate::order::sort_by(&mut names, &Ord::cmp);
     names.first().map(|name| root.join(name))
 }
 
@@ -1740,7 +1740,7 @@ fn watched<T>(
     now: &(dyn Fn() -> Instant + Sync),
     wait: impl FnOnce() -> T,
 ) -> (T, Ended) {
-    use std::sync::mpsc::{RecvTimeoutError, channel};
+    use crate::channel::{RecvTimeoutError, channel};
     let (waited, ended) = std::thread::scope(|scope| {
         let (done, finished) = channel::<()>();
         let watchdog = scope.spawn(move || {
@@ -2140,10 +2140,24 @@ impl Landing<'_> {
         }
     }
 
+    /// Say `text` on the task's thread, to `to`, as the land's actor. A line to `@orchestrator`
+    /// that a dispatch or a watcher's round says acting as that orchestrator, who reads none of
+    /// their output, is the board's own, authorized as it ([`Store::say_for`]): an inbox leaves out
+    /// what its own session said, so a line said as itself would reach nobody. A land run by hand
+    /// says each line as whoever runs it, who reads it in its output too.
     fn post(&self, text: &str, to: Option<&str>) {
-        if self.task {
-            let _ = self.store.say(self.slug, self.actor, text, to);
+        if !self.task {
+            return;
         }
+        let unheard = to == Some("@orchestrator")
+            && !matches!(self.mode, Mode::Land)
+            && (self.store.get(self.slug))
+                .is_ok_and(|task| task.holders("orchestrator").contains(&self.actor));
+        let _ = if unheard {
+            self.store.say_for(self.slug, self.actor, text, to)
+        } else {
+            self.store.say(self.slug, self.actor, text, to)
+        };
     }
 
     fn land(mut self) -> Result<String, Stop> {
@@ -2852,7 +2866,7 @@ impl Landing<'_> {
                 taken.push(file.clone());
             }
         }
-        taken.sort_unstable();
+        crate::order::sort_by(&mut taken, &Ord::cmp);
         if !taken.is_empty() {
             if let Err(why) = self.take_ours(&path, &taken) {
                 let _ = git(&path, &["merge", "--abort"]);
@@ -3286,8 +3300,9 @@ impl Landing<'_> {
         let range = format!("^{base}");
         let brought = told(&self.main, &["rev-list", tip, &range])
             .map_err(|why| format!("the commits {slug} brings could not be listed: {why}"))?;
-        let brought = String::from_utf8_lossy(&brought.stdout).into_owned();
-        let brought: BTreeSet<&str> = brought.split_whitespace().collect();
+        let commits = String::from_utf8_lossy(&brought.stdout).into_owned();
+        let mut brought: BTreeSet<&str> = BTreeSet::new();
+        brought.extend(commits.split_whitespace());
         let mut left = Vec::new();
         for entry in listed {
             if entry.bare

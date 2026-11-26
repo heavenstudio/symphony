@@ -149,10 +149,12 @@ export function readVersions(value: unknown): Version[] | null {
 /** `/api/diff`: one commit's change to a document. */
 export const readDiff = read<DocumentDiff>(shaped({ sha: isText, subject: isText, diff: isText }));
 
-/** What the asks' panel draws of `/api/asks`: the asks, and whom the chat goes to. */
+/** What the asks' panel draws of `/api/asks`: the asks, whom the chat goes to, and whether the one
+ * reading may ask and follow an ask up. */
 export interface Asks {
   asks: Ask[];
   recipient: string | null;
+  mayAsk: boolean;
 }
 
 const isAsk = shaped({
@@ -165,12 +167,19 @@ const isAsk = shaped({
 
 /**
  * `/api/asks`: its asks, and the chat's recipient, which the panel says only when it is a name, as
- * the Dioxus client reads it apart from them.
+ * the Dioxus client reads it apart from them; and whether the one reading may ask (`may_ask`),
+ * which a server that does not say it (an older one, which drew Ask for everyone) leaves true.
  */
 export function readAsks(value: unknown): Asks | null {
-  if (!isRecord(value) || !listOf(isAsk)(value.asks)) return null;
-  const { asks, recipient } = value;
-  return { asks: asks as Ask[], recipient: typeof recipient === "string" ? recipient : null };
+  if (!isRecord(value) || !listOf(isAsk)(value.asks) || !absentOr(isFlag)(value.may_ask)) {
+    return null;
+  }
+  const { asks, recipient, may_ask } = value;
+  return {
+    asks: asks as Ask[],
+    recipient: typeof recipient === "string" ? recipient : null,
+    mayAsk: may_ask !== false,
+  };
 }
 
 const isBody = shaped({

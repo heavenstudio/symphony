@@ -57,9 +57,9 @@ symphony-schema = { path = "../symphony-schema", version = "1.0.0" }
 symphony-args = { path = "../symphony-args", version = "1.0.0" }
 symphony-api = { path = "../symphony-api", version = "=0.2.0" }
 # The plugin seams a project's plugins implement, and the project file (symphony.toml) they are chosen by.
-symphony-plugin = { path = "../symphony-plugin", version = "1.2.0" }
+symphony-plugin = { path = "../symphony-plugin", version = "1.3.0" }
 # The one reading of a card and its entries, which the docs build shares (`register`).
-symphony-docs = { path = "../symphony-docs", version = "1.2.0" }
+symphony-docs = { path = "../symphony-docs", version = "1.3.0" }
 # Its variables, each by its one SYMPHONY_ name.
 symphony-env = { path = "../symphony-env", version = "1.0.0" }
 toml.workspace = true
@@ -69,9 +69,12 @@ symphony-chrome = { path = "../chrome-devtools", version = "=0.2.0" }
 gix = { version = "0.87", default-features = false, features = ["basic", "blob-diff", "revision", "sha1"] }
 
 [dev-dependencies]
-# The board the verdicts' and asks' tests run on is the store's own test server (SurrealDB, in
-# memory), a database of its own per test: tests/picks/main.rs and the other fixtures take the
-# store's tests' common file, which waits for its server through the tests' wait (RULES.md
+# The notice format the server writes (`notices`), read back by the crate a plugin takes it with:
+# that crate is not published, so this one writes the format and its tests hold the two the same.
+symphony-notice = { path = "../symphony-notice" }
+# The board the verdicts' and asks' tests run on is the store's own test server (PostgreSQL, one
+# per test binary), a database of its own per test: tests/picks/main.rs and the other fixtures take
+# the store's tests' common file, which waits for its server through the tests' wait (RULES.md
 # `tests/no-test-fails-on-load`).
 test-time = { path = "../test-time" }
 # The tests' stand-in for a project's approval authority signs its attestations as one does

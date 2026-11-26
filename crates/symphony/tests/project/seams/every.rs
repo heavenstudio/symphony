@@ -15,7 +15,7 @@ use symphony_plugin::vocabulary::{
 use symphony_plugin::{
     Authority, BoardAction, BoardField, Card, CardKind, Command, Component, Describer, DocCheck,
     Docs, Drawing, FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule,
-    Renderer, Reply, Route, Submission, Submitted, TaskRef, Theme, Transport, Watch,
+    Renderer, Reply, Route, Sender, Submission, Submitted, TaskRef, Theme, Transport, Watch,
 };
 
 /// A plugin with one object at every seam, each answer made of every argument it is given, so a
@@ -511,6 +511,21 @@ impl BoardAction for Every {
             said: format!("{} in {}: {}", task.slug, root.display(), submission.note),
             released: vec![task.slug.into(), task.branch.into()],
         })
+    }
+    fn submit_from(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        submission: &Submission,
+        sender: &Sender,
+    ) -> Result<Submitted, String> {
+        let mut done = self.submit(root, task, submission)?;
+        let git = sender.git.join(" ");
+        done.said = format!(
+            "{}, from {} ({}, {git})",
+            done.said, sender.name, sender.display
+        );
+        Ok(done)
     }
 }
 

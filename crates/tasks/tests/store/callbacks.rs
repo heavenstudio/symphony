@@ -1,5 +1,4 @@
 use super::common::{Fixture, sweep_presence};
-use crate::common::Backend;
 use serde_json::{Value, json};
 use std::io::Read;
 use std::os::unix::net::UnixListener;
@@ -30,8 +29,8 @@ impl Listener {
         ));
         let listener = UnixListener::bind(&path).unwrap();
         listener.set_nonblocking(true).unwrap();
-        let (send, messages) = mpsc::channel();
-        let (stop, stopped) = mpsc::channel();
+        let (send, messages) = crate::test_channel::channel();
+        let (stop, stopped) = crate::test_channel::channel();
         let thread = std::thread::spawn(move || {
             loop {
                 match listener.accept() {
@@ -145,9 +144,9 @@ fn state(f: &Fixture, handle: &str) -> Value {
     f.store.raw().row("callback_state", handle).get().unwrap()
 }
 
-on_both! {
-fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority() {
+    let f = Fixture::new(crate::common::Seed::default());
     let first = f.session("orchestrator");
     let second = f.session("orchestrator");
     assert_eq!(f.store.chat_seat().unwrap(), None);
@@ -240,21 +239,20 @@ fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority(backen
     assert_eq!(f.store.chat_seat().unwrap(), None);
     assert_eq!(f.store.chat_recipient().unwrap(), None);
 }
-}
 
 fn sweep_callbacks(f: &Fixture, listener: &Listener) {
     sweep_presence(&f.store, listener.path.with_extension("reap.json"));
 }
 
-on_both! {
-fn failed_chat_delivery_and_presence_sweep_restore_the_registered_priority(backend: Backend) {
+#[test]
+fn failed_chat_delivery_and_presence_sweep_restore_the_registered_priority() {
     for (chat, if_free, seat) in [
         (false, false, false),
         (true, false, true),
         (true, true, true),
         (true, true, false),
     ] {
-        let f = Fixture::on(backend, crate::common::Seed::default());
+        let f = Fixture::new(crate::common::Seed::default());
         let orchestrator = f.session("orchestrator");
         let listener = Listener::new(f.store.database().database());
         let address = format!("uds:{}", listener.path.display());
@@ -314,15 +312,14 @@ fn failed_chat_delivery_and_presence_sweep_restore_the_registered_priority(backe
         );
     }
 }
-}
 
-on_both! {
-fn stale_failed_delivery_preserves_the_priority_saved_by_a_newer_dispatcher(backend: Backend) {
+#[test]
+fn stale_failed_delivery_preserves_the_priority_saved_by_a_newer_dispatcher() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     for if_free in [false, true] {
-        let f = Arc::new(Fixture::on(backend, crate::common::Seed::default()));
+        let f = Arc::new(Fixture::new(crate::common::Seed::default()));
         let handle = f.session("worker");
         let listener = Listener::new(f.store.database().database());
         f.store
@@ -389,11 +386,10 @@ fn stale_failed_delivery_preserves_the_priority_saved_by_a_newer_dispatcher(back
         listener.receive("owner chat across overlapping failures");
     }
 }
-}
 
-on_both! {
-fn a_plain_orchestrator_needs_live_health_or_confirmed_native_presence(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_plain_orchestrator_needs_live_health_or_confirmed_native_presence() {
+    let f = Fixture::new(crate::common::Seed::default());
     let orchestrator = f.session("orchestrator");
     let listener = Listener::new(f.store.database().database());
     f.store
@@ -426,13 +422,12 @@ fn a_plain_orchestrator_needs_live_health_or_confirmed_native_presence(backend: 
         .unwrap();
     assert_eq!(f.store.chat_recipient().unwrap(), None);
 }
-}
 
-on_both! {
-fn legacy_writers_do_not_repeat_unknown_notices_across_the_lost_threshold(backend: Backend) {
+#[test]
+fn legacy_writers_do_not_repeat_unknown_notices_across_the_lost_threshold() {
     use symphony_board::{Health, NewSession};
 
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let orchestrator = f.session("orchestrator");
     let child = f.session_with(NewSession {
         parent: Some(orchestrator.clone()),
@@ -558,11 +553,10 @@ fn legacy_writers_do_not_repeat_unknown_notices_across_the_lost_threshold(backen
     );
     assert!(f.store.claim("tools/mixed", &orchestrator).is_ok());
 }
-}
 
-on_both! {
-fn idle_callback_snapshots_drain_queued_work_without_rewriting_observations(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn idle_callback_snapshots_drain_queued_work_without_rewriting_observations() {
+    let f = Fixture::new(crate::common::Seed::default());
     assert!(f.store.dispatch_callbacks_snapshot().unwrap().is_none());
     let worker = f.session("worker");
     let sender = f.session("worker");
@@ -669,11 +663,10 @@ fn idle_callback_snapshots_drain_queued_work_without_rewriting_observations(back
             > before["snapshot_sequence"].as_u64().unwrap()
     );
 }
-}
 
-on_both! {
-fn idle_unchanged_observation_prevents_an_older_snapshot_from_emitting_a_transient(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn idle_unchanged_observation_prevents_an_older_snapshot_from_emitting_a_transient() {
+    let f = Fixture::new(crate::common::Seed::default());
     let worker = f.session("worker");
     f.task("tools/idle");
     f.store.claim("tools/idle", &worker).unwrap();
@@ -734,12 +727,11 @@ fn idle_unchanged_observation_prevents_an_older_snapshot_from_emitting_a_transie
         "no transient callback was allocated"
     );
 }
-}
 
-on_both! {
-fn cached_board_inputs_age_without_a_board_read_and_refresh_after_mutation(backend: Backend) {
+#[test]
+fn cached_board_inputs_age_without_a_board_read_and_refresh_after_mutation() {
     use crate::common::{GONE, Seed};
-    let f = Fixture::on(backend,
+    let f = Fixture::new(
         Seed::default()
             .session("worker")
             .task("tools/clock", "in_progress")
@@ -769,13 +761,9 @@ fn cached_board_inputs_age_without_a_board_read_and_refresh_after_mutation(backe
         "Changed by another writer"
     );
     let marker = f.store.marker().unwrap();
-    match f.store.database() {
-        symphony_board::Database::SurrealDb(client) => assert!(client.query("BEGIN TRANSACTION; UPDATE task SET title = 'Uncommitted'; THROW 'rollback'; COMMIT TRANSACTION;", json!({})).is_err()),
-        symphony_board::Database::PostgreSql(client) => {
-            assert!(client.simple("BEGIN; UPDATE task SET title = 'Uncommitted'; DO $test$ BEGIN RAISE EXCEPTION 'rollback'; END $test$; COMMIT;").is_err());
-            client.simple("ROLLBACK").unwrap();
-        }
-    }
+    let client = f.store.database().postgresql();
+    assert!(client.simple("BEGIN; UPDATE task SET title = 'Uncommitted'; DO $test$ BEGIN RAISE EXCEPTION 'rollback'; END $test$; COMMIT;").is_err());
+    client.simple("ROLLBACK").unwrap();
     assert_eq!(
         f.store.marker().unwrap(),
         marker,
@@ -786,14 +774,13 @@ fn cached_board_inputs_age_without_a_board_read_and_refresh_after_mutation(backe
         "Changed by another writer"
     );
 }
-}
 
-on_both! {
-fn an_idle_clock_reports_stale_and_lost_children_without_a_board_mutation(backend: Backend) {
+#[test]
+fn an_idle_clock_reports_stale_and_lost_children_without_a_board_mutation() {
     use crate::common::{Seed, session};
     let mut child = session("child");
     child.parent = Some("parent".into());
-    let f = Fixture::on(backend,
+    let f = Fixture::new(
         Seed::default()
             .session("parent")
             .session_row(child)
@@ -819,20 +806,16 @@ fn an_idle_clock_reports_stale_and_lost_children_without_a_board_mutation(backen
     );
     let marker = f.store.marker().unwrap();
     f.advance(91.0);
-    assert_eq!(
-        f.store.marker().unwrap(),
-        marker
-    );
+    assert_eq!(f.store.marker().unwrap(), marker);
     f.store.dispatch_callbacks().unwrap();
     listener.receive("STALE child");
     f.advance(510.0);
     f.store.dispatch_callbacks().unwrap();
     listener.receive("LOST child");
 }
-}
 
-on_both! {
-fn finished_history_is_not_retained_and_new_ready_work_still_arrives(backend: Backend) {
+#[test]
+fn finished_history_is_not_retained_and_new_ready_work_still_arrives() {
     use crate::common::{Seed, session};
     let mut orch = session("orchestrator");
     orch.kind = "orchestrator".into();
@@ -849,7 +832,7 @@ fn finished_history_is_not_retained_and_new_ready_work_still_arrives(backend: Ba
             .task(&slug, if i % 2 == 0 { "done" } else { "cancelled" })
             .role(&slug, "orchestrator", "orchestrator");
     }
-    let f = Fixture::on(backend, seed);
+    let f = Fixture::new(seed);
     let listener = Listener::new(f.store.database().database());
     f.store
         .callback(
@@ -905,15 +888,14 @@ fn finished_history_is_not_retained_and_new_ready_work_still_arrives(backend: Ba
     f.store.dispatch_callbacks().unwrap();
     listener.receive("NEW tools/history-0 ready");
 }
-}
 
-on_both! {
-fn a_second_dispatcher_cannot_take_a_live_small_recipient_lease(backend: Backend) {
+#[test]
+fn a_second_dispatcher_cannot_take_a_live_small_recipient_lease() {
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-    let f = Arc::new(Fixture::on(backend, crate::common::Seed::default()));
+    let f = Arc::new(Fixture::new(crate::common::Seed::default()));
     let receiver = f.session("worker");
     let sender = f.session("worker");
     let listener = Listener::new(f.store.database().database());
@@ -972,9 +954,7 @@ fn a_second_dispatcher_cannot_take_a_live_small_recipient_lease(backend: Backend
     );
     listener.receive("serialized-direct-message");
 }
-}
 
-// SurrealDB alone: installs a SurrealDB event to audit callback-state writes during retry.
 #[test]
 fn a_failed_chat_waits_without_writes_and_retries_at_its_deadline() {
     let f = Fixture::empty();
@@ -989,23 +969,12 @@ fn a_failed_chat_waits_without_writes_and_retries_at_its_deadline() {
         )
         .unwrap();
     drop(listener);
-    f.store.client().query("DEFINE TABLE callback_audit SCHEMALESS; DEFINE EVENT state_writes ON callback_state WHEN true THEN { UPSERT callback_audit:writes SET count = (count ?? 0) + 1; };", json!({})).unwrap();
+    let state_writes = f.writes_to("callback_state");
     f.store
         .owner_callback("deadline", "retry this owner message")
         .unwrap();
-    let state_writes = || {
-        f.store
-            .raw()
-            .row("callback_audit", "writes")
-            .field("count")
-            .unwrap()
-    };
     let writes = state_writes();
-    assert_eq!(
-        writes,
-        json!(1),
-        "the first failure marks the callback blocked"
-    );
+    assert_eq!(writes, 1, "the first failure marks the callback blocked");
     let rows = || {
         let rows = |table: &str| f.store.raw().table(table).get().unwrap();
         json!({
@@ -1037,10 +1006,10 @@ fn a_failed_chat_waits_without_writes_and_retries_at_its_deadline() {
     );
 }
 
-on_both! {
-fn a_contended_observation_is_retried_even_without_another_board_change(backend: Backend) {
+#[test]
+fn a_contended_observation_is_retried_even_without_another_board_change() {
     use crate::common::Seed;
-    let f = Fixture::on(backend,
+    let f = Fixture::new(
         Seed::default()
             .session("worker")
             .task("tools/contended", "in_progress")
@@ -1082,17 +1051,16 @@ fn a_contended_observation_is_retried_even_without_another_board_change(backend:
         "review"
     );
 }
-}
 
-on_both! {
-fn unchanged_periodic_pull_rearms_across_lost_sessions_and_fresh_stores(backend: Backend) {
+#[test]
+fn unchanged_periodic_pull_rearms_across_lost_sessions_and_fresh_stores() {
     use crate::common::{GONE, NOW, Seed, session};
     let mut orchestrator = session("orchestrator");
     orchestrator.kind = "orchestrator".into();
     orchestrator.busy_until = Some(NOW + 5000.0);
     let mut lost = session("lost");
     lost.last_seen = NOW - GONE;
-    let f = Fixture::on(backend,
+    let f = Fixture::new(
         Seed::default()
             .session_row(orchestrator)
             .session_row(lost)
@@ -1182,11 +1150,10 @@ fn unchanged_periodic_pull_rearms_across_lost_sessions_and_fresh_stores(backend:
         "a periodic checkpoint does not change counters or invalidate the board cache"
     );
 }
-}
 
-on_both! {
-fn callback_pruning_retains_lease_revisions_across_retirement_and_registration(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn callback_pruning_retains_lease_revisions_across_retirement_and_registration() {
+    let f = Fixture::new(crate::common::Seed::default());
     let worker = f.session("worker");
     let listener = Listener::new(f.store.database().database());
     let address = format!("uds:{}", listener.path.display());
@@ -1222,74 +1189,135 @@ fn callback_pruning_retains_lease_revisions_across_retirement_and_registration(b
         "registration must not reuse a revision that can identify a retained event"
     );
 }
-}
 
-on_both! {
-fn chat_and_legacy_outbox_keys_keep_each_numeric_run_in_natural_order(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn chat_and_legacy_outbox_keys_keep_each_numeric_run_in_natural_order() {
+    let f = Fixture::new(crate::common::Seed::default());
     let handle = f.session("orchestrator");
     let sender = f.session("worker");
     let expected = ["2", "10", "aa2b100", "aa10b1", "b2", "z"];
     for key in expected.iter().rev() {
-        f.store.raw().row("chat_event", *key).put(json!({
-            "key": key, "text": key, "delivered": false,
-        })).unwrap();
+        f.store
+            .raw()
+            .row("chat_event", *key)
+            .put(json!({
+                "key": key, "text": key, "delivered": false,
+            }))
+            .unwrap();
     }
-    let words: Vec<_> = f.store.unheard_owner_events(&handle).unwrap()
-        .into_iter().map(|(_, text)| text).collect();
+    let words: Vec<_> = f
+        .store
+        .unheard_owner_events(&handle)
+        .unwrap()
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
     assert_eq!(words, expected);
     let listener = Listener::new(f.store.database().database());
-    f.store.callback(&handle, Some(&format!("uds:{}", listener.path.display())), true, false).unwrap();
-    let delivered = || listener.drain(&f, &sender, &handle).into_iter()
-        .filter(|line| expected.contains(&line.as_str())).collect::<Vec<_>>();
+    f.store
+        .callback(
+            &handle,
+            Some(&format!("uds:{}", listener.path.display())),
+            true,
+            false,
+        )
+        .unwrap();
+    let delivered = || {
+        listener
+            .drain(&f, &sender, &handle)
+            .into_iter()
+            .filter(|line| expected.contains(&line.as_str()))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(delivered(), expected);
 
     // Legacy queues can have one sequence for several events: key ordering breaks that tie.
     for key in expected.iter().rev() {
-        f.store.raw().row("callback_event", json!([handle, key])).put(json!({
-            "handle": handle, "key": key, "text": key, "sequence": 1,
-            "attempts": 0, "delivered": false,
-        })).unwrap();
+        f.store
+            .raw()
+            .row("callback_event", json!([handle, key]))
+            .put(json!({
+                "handle": handle, "key": key, "text": key, "sequence": 1,
+                "attempts": 0, "delivered": false,
+            }))
+            .unwrap();
     }
-    let keys: Vec<_> = f.store.callback_inbox(&handle).unwrap()
-        .into_iter().map(|(key, _)| key).collect();
+    let keys: Vec<_> = f
+        .store
+        .callback_inbox(&handle)
+        .unwrap()
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
     assert_eq!(keys, expected);
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(delivered(), expected);
 }
-}
 
-on_both! {
-fn retirement_by_presence_and_a_held_close_clears_only_the_registered_channel(backend: Backend) {
+#[test]
+fn retirement_by_presence_and_a_held_close_clears_only_the_registered_channel() {
     use crate::common::{NoTerminals, Seed};
     use symphony_board::{NewLaunch, launch};
     for held in [false, true] {
-        let f = Fixture::on(backend, Seed::default());
+        let f = Fixture::new(Seed::default());
         let worker = f.session("worker");
         let actor = f.session("orchestrator");
         let listener = Listener::new(f.store.database().database());
         let address = format!("uds:{}", listener.path.display());
-        f.store.callback(&worker, Some(&address), false, false).unwrap();
+        f.store
+            .callback(&worker, Some(&address), false, false)
+            .unwrap();
         if held {
             f.task("work/closed");
-            f.store.take_role("work/closed", &actor, "orchestrator").unwrap();
-            f.store.record_launch(&NewLaunch {
-                pane: "old:pane".into(),
-                ..NewLaunch::new("work/closed", &worker, "executor")
-            }).unwrap();
-            let closure = launch::close(&f.store, &NoTerminals,
-                &|_| panic!("a historical pane has no process"), &actor, "work/closed", &worker).unwrap();
+            f.store
+                .take_role("work/closed", &actor, "orchestrator")
+                .unwrap();
+            f.store
+                .record_launch(&NewLaunch {
+                    pane: "old:pane".into(),
+                    ..NewLaunch::new("work/closed", &worker, "executor")
+                })
+                .unwrap();
+            let closure = launch::close(
+                &f.store,
+                &NoTerminals,
+                &|_| panic!("a historical pane has no process"),
+                &actor,
+                "work/closed",
+                &worker,
+            )
+            .unwrap();
             assert!(closure.closed);
-            assert!(f.store.task_sessions("work/closed").unwrap()[0].closed.is_some());
+            assert!(
+                f.store.task_sessions("work/closed").unwrap()[0]
+                    .closed
+                    .is_some()
+            );
         } else {
             // Older registrations without a listener identity cannot be used or retained.
-            f.store.raw().row("callback_state", worker.as_str()).set(json!({"owner":null})).unwrap();
-            let path = std::env::temp_dir().join(format!("retire-{}-{}.json", std::process::id(), f.store.database().database()));
+            f.store
+                .raw()
+                .row("callback_state", worker.as_str())
+                .set(json!({"owner":null}))
+                .unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "retire-{}-{}.json",
+                std::process::id(),
+                f.store.database().database()
+            ));
             sweep_presence(&f.store, path);
         }
-        assert!(!f.store.raw().row("callback_state", worker.as_str()).exists().unwrap());
+        assert!(
+            !f.store
+                .raw()
+                .row("callback_state", worker.as_str())
+                .exists()
+                .unwrap()
+        );
         assert!(!f.store.callbacks().unwrap().contains_key(&worker));
-        assert!(f.store.session(&worker).unwrap().row.left_at.is_none(), "retiring the channel does not leave the session");
+        assert!(
+            f.store.session(&worker).unwrap().row.left_at.is_none(),
+            "retiring the channel does not leave the session"
+        );
     }
-}
 }

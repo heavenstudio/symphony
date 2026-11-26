@@ -31,8 +31,10 @@ pub const MAJOR: i64 = 2;
 /// The api's minor within [`MAJOR`]: 1 added a task's `id`, `bound`, `edit_bound` and
 /// `integration_state`; 2 added `evidence`; 3 added `import` to its `assessment`, where the
 /// assessment names one; 4 added `workflow_read`, `workflow_actions` and `workflow_apply`; 5 added
-/// `attempts`; 6 added `workflow_apply`'s `attestations` and `workflow_observe`.
-pub const MINOR: i64 = 6;
+/// `attempts`; 6 added `workflow_apply`'s `attestations` and `workflow_observe`; 7 added
+/// `create`'s `kind` ([`crate::kind`]); 8 added `create`'s `group`
+/// ([`crate::people::ownership`]).
+pub const MINOR: i64 = 8;
 
 /// Why a call has no result.
 enum Fail {
@@ -141,7 +143,8 @@ pub(super) fn run_in<F: FnOnce() -> Result<Store, String>>(
         .read_to_string(&mut text)
         .map_err(|e| format!("cannot read the call: {e}"))
         .and_then(|_| {
-            serde_json::from_str::<Value>(&text).map_err(|e| format!("the call is not JSON: {e}"))
+            serde_json::from_slice::<Value>(text.as_bytes())
+                .map_err(|e| format!("the call is not JSON: {e}"))
         });
     let (answer, code) = match calls {
         Ok(Value::Array(calls)) => (
@@ -182,7 +185,7 @@ pub(super) fn serve_in<F: FnOnce() -> Result<Store, String>>(
                 "error": format!("cannot read the call: {e}"),
             }),
             Ok(line) if line.trim().is_empty() => continue,
-            Ok(line) => match serde_json::from_str::<Value>(&line) {
+            Ok(line) => match serde_json::from_slice::<Value>(line.as_bytes()) {
                 Ok(Value::Array(calls)) => {
                     Value::Array(calls.into_iter().map(|c| answer(c, &mut board)).collect())
                 }

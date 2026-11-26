@@ -22,7 +22,7 @@ fn agent_pages(seen: &super::posted::Shown) -> Vec<(String, String)> {
         .iter()
         .map(|item| (item.slug.clone(), item.path.clone()))
         .collect();
-    pages.sort();
+    symphony_board::order::sort_by(&mut pages, &Ord::cmp);
     pages
 }
 
@@ -213,7 +213,7 @@ pub(super) fn answers_in_a_finished_worktree_stay_under_the_owners_line() {
                     .iter()
                     .map(|item| (item.slug.clone(), item.doc.clone()))
                     .collect();
-                paths.sort();
+                symphony_board::order::sort_by(&mut paths, &Ord::cmp);
                 paths
             };
             assert_eq!(

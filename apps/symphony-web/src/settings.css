@@ -1,6 +1,6 @@
-/* The Settings page (settings.tsx): its head, what does not load, what each tag means, the files
-   read, then a panel a part, an entry a block of it and a setting a line, a preference the
-   board's store keeps with its control under its value.
+/* The Settings page (settings.tsx): its head, what does not load, the files read, then a panel a
+   part, an entry a block of it and a setting a line, a preference the board's store keeps with its
+   control under its value.
    A scope and a class wear their colour on a tag that says its word, never on colour alone. */
 .settings {
   display: grid;
@@ -11,12 +11,6 @@
   margin: 0;
   font-size: var(--fs-2xl);
   line-height: 1.2;
-}
-.settings-sub {
-  margin: 4px 0 0;
-  color: var(--muted-foreground);
-  font-size: var(--fs-sm);
-  overflow-wrap: anywhere;
 }
 .settings-error,
 .settings-problems {
@@ -36,7 +30,6 @@
   padding-left: 1.2em;
   font-size: var(--fs-sm);
 }
-.settings-legend,
 .settings-files {
   display: flex;
   flex-wrap: wrap;
@@ -50,7 +43,6 @@
 .settings-files {
   font-family: var(--font-mono);
 }
-.settings-legend li,
 .settings-files li {
   display: flex;
   flex-wrap: wrap;
@@ -112,7 +104,7 @@
 .setting-state[data-on="false"] {
   color: var(--muted-foreground);
 }
-.setting-about {
+.setting-why {
   margin: 2px 0 0;
   color: var(--muted-foreground);
   font-size: var(--fs-sm);

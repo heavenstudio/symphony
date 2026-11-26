@@ -1,5 +1,5 @@
 //! The gate a peer passes and the Host `/api/front` holds to, as a project's routes and the one
-//! server's both judge them ([`peer_allowed`], [`loopback_refused`]), and what a project's state
+//! server's both judge them ([`visitor`], [`loopback_refused`]), and what a project's state
 //! is made with ([`Shared::one_server`], [`Shared::beside`]).
 
 use super::*;
@@ -30,7 +30,10 @@ async fn answered(response: Response) -> (StatusCode, String) {
 async fn this_machine_is_let_in_without_asking_tailscale() {
     let shared = behind(|ip| panic!("tailscale was asked of {ip}"));
     for ip in ["127.0.0.1", "127.9.9.9", "::1", "::ffff:127.0.0.1"] {
-        assert!(peer_allowed(&shared, ip.parse().unwrap()).await, "{ip}");
+        assert!(
+            visitor(&shared, ip.parse().unwrap()).await.is_some(),
+            "{ip}"
+        );
     }
 }
 
@@ -47,7 +50,7 @@ async fn a_tailnet_peer_is_let_in_only_when_tailscale_confirms_it() {
             Ok((ip == PEER).then(|| r#"{"Node": {"Name": "phone"}}"#.to_string()))
         }
     });
-    assert!(peer_allowed(&shared, PEER.parse().unwrap()).await);
+    assert!(visitor(&shared, PEER.parse().unwrap()).await.is_some());
     for ip in [
         "100.64.0.9",
         "fd7a:115c:a1e0::9",
@@ -56,7 +59,10 @@ async fn a_tailnet_peer_is_let_in_only_when_tailscale_confirms_it() {
         "::ffff:192.168.1.20",
         "0.0.0.0",
     ] {
-        assert!(!peer_allowed(&shared, ip.parse().unwrap()).await, "{ip}");
+        assert!(
+            !visitor(&shared, ip.parse().unwrap()).await.is_some(),
+            "{ip}"
+        );
     }
     assert_eq!(
         *asked.lock().unwrap(),
@@ -69,8 +75,55 @@ async fn a_tailnet_peer_is_let_in_only_when_tailscale_confirms_it() {
 #[tokio::test]
 async fn a_peer_whose_gate_panics_is_refused() {
     let shared = behind(|ip| panic!("the gate's whois of {ip} panics"));
-    assert!(!peer_allowed(&shared, PEER.parse().unwrap()).await);
-    assert!(peer_allowed(&shared, "127.0.0.1".parse().unwrap()).await);
+    assert!(!visitor(&shared, PEER.parse().unwrap()).await.is_some());
+    assert!(
+        visitor(&shared, "127.0.0.1".parse().unwrap())
+            .await
+            .is_some()
+    );
+}
+
+/// Who a request is admitted as on a server of its own: the person at the machine from this
+/// machine and from a node under its login; nobody, so refused, from a node under another login,
+/// a tagged node or a gate that panics.
+#[tokio::test]
+async fn a_server_of_its_own_admits_its_boards_people_alone() {
+    let gate = Gate::new(
+        Arc::new(|ip: &str| {
+            Ok(match ip {
+                PEER => Some(r#"{"Node": {"Name": "phone"}, "UserProfile": {"ID": 11, "LoginName": "owner@example.com"}}"#.into()),
+                "100.101.102.104" => Some(r#"{"Node": {"Name": "laptop"}, "UserProfile": {"ID": 12, "LoginName": "ana@example.com"}}"#.into()),
+                "100.101.102.105" => Some(r#"{"Node": {"Name": "ci", "Tags": ["tag:ci"]}, "UserProfile": {"ID": 99, "LoginName": "tagged-devices"}}"#.into()),
+                _ => None,
+            })
+        }),
+        Arc::new(Instant::now),
+    )
+    .with_status(Arc::new(|| Ok(r#"{"Self": {"DNSName": "studio.ts.net.", "UserID": 11}}"#.into())));
+    let shared = Shared::new(1, 1, Path::new("/nowhere"), None, gate);
+    let local = symphony_board::workflow::local_actor();
+    let judged = async |shared: &Arc<Shared>, ip: &str| {
+        admitted(shared, ip.parse().unwrap())
+            .await
+            .map(|admitted| (admitted.actor, admitted.machine))
+    };
+    for ip in ["127.0.0.1", "::ffff:127.0.0.1", PEER] {
+        assert_eq!(
+            judged(&shared, ip).await,
+            Some((local.clone(), true)),
+            "{ip}"
+        );
+    }
+    for ip in [
+        "100.101.102.104",
+        "100.101.102.105",
+        "100.64.0.9",
+        "192.168.1.20",
+    ] {
+        assert_eq!(judged(&shared, ip).await, None, "{ip}");
+    }
+    let panics = behind(|ip| panic!("the gate's whois of {ip} panics"));
+    assert_eq!(judged(&panics, PEER).await, None);
 }
 
 #[tokio::test]

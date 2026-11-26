@@ -82,15 +82,18 @@
 //! reads the branch's tip, [`crate::land::reopenable`]), each said as `kept branch`; and each
 //! `worktree-agent-*` branch merged into main, or squashed into it, that no
 //! worktree holds is deleted, only if it still points where it did when listed and no live or stale
-//! session still binds its agent's detached worktree. In-process agents must use their own
-//! `agent-ID` worktree; their id does not bind an arbitrarily named checkout. One sweep runs at a
-//! time (`symphony/tasks/sweep.lock` in the git common dir). Contenders append a request and exit
-//! before connecting to the board; the holder runs another pass for requests received during its
-//! pass. Positive witnesses or bounded complete clean inventories reuse unchanged metadata/policy;
-//! unknown inputs rescan. Cache hits stat saved entries without walking. Both final status guards
-//! remain fresh; an early unavailable HEAD/removal guard retains the tree before lookup. Foreground
-//! `--task` cleanup visits only its finished worktrees, guarded per tree, and asks for a detached
-//! full pass.
+//! session still binds its agent's detached worktree. The comments on documents a pass wrote into a
+//! removed worktree's files, all in main now, are kept under main's from then on
+//! ([`Store::held_landed`]), where the count of a later pass reads them, once no other listed
+//! worktree holds its branch; a board that refuses it is said, the sweep going on. In-process
+//! agents must use their own `agent-ID` worktree; their id does not bind an arbitrarily named
+//! checkout. One sweep runs at a time (`symphony/tasks/sweep.lock` in the git common dir).
+//! Contenders append a request and exit before connecting to the board; the holder runs another
+//! pass for requests received during its pass. Positive witnesses or bounded complete clean
+//! inventories reuse unchanged metadata/policy; unknown inputs rescan. Cache hits stat saved
+//! entries without walking. Both final status guards remain fresh; an early unavailable
+//! HEAD/removal guard retains the tree before lookup. Foreground `--task` cleanup visits only its
+//! finished worktrees, guarded per tree, and asks for a detached full pass.
 //!
 //! Of the worktrees that stay, it then removes the build output of work past its executor: a
 //! worktree's build folders ([`build_output::FOLDERS`], and what git ignores in
@@ -216,14 +219,16 @@ impl Finished {
         // An in-process agent (a Claude Code subagent) has no launch record: its session says where
         // it worked, and its health whether it still does.
         let board = store.board()?;
-        let workers: BTreeSet<&str> = board
-            .tasks
-            .iter()
-            .filter(|task| slugs.contains(&task.slug))
-            .flat_map(|task| &task.roles)
-            .filter(|role| matches!(role.role.as_str(), "executor" | "reviewer"))
-            .map(|role| role.handle.as_str())
-            .collect();
+        let mut workers: BTreeSet<&str> = BTreeSet::new();
+        workers.extend(
+            board
+                .tasks
+                .iter()
+                .filter(|task| slugs.contains(&task.slug))
+                .flat_map(|task| &task.roles)
+                .filter(|role| matches!(role.role.as_str(), "executor" | "reviewer"))
+                .map(|role| role.handle.as_str()),
+        );
         for session in &board.sessions {
             if !workers.contains(session.row.handle.as_str()) || session.health.holds() {
                 continue;
@@ -333,6 +338,9 @@ pub struct Sweep {
     pub set_aside: Option<kept::Measured>,
     /// Why the project's cap could not be read, the default taken.
     pub cap_unread: Option<String>,
+    /// The branches of removed worktrees whose comments passed on into their documents stay under
+    /// the worktree's name, and the board's refusal ([`Store::held_landed`]): never their words.
+    pub unmoved: Vec<(String, String)>,
     pub total: usize,
     pub dry_run: bool,
     /// What the removed worktrees and the cleared build folders held on disk.
@@ -409,6 +417,9 @@ impl Sweep {
         if self.dry_run {
             out.extend(self.rows.iter().map(Row::line));
         }
+        out.extend(self.unmoved.iter().map(|(b, why)| {
+            format!("the comments passed on into {b} stay under its name, not main's: {why}")
+        }));
         if let Some(why) = &self.cap_unread {
             out.push(format!("set aside: {why}; its cap is {} GB", kept::CAP_GB));
         }
@@ -768,6 +779,10 @@ impl<'a> Index<'a> {
         unbound: &BTreeSet<String>,
     ) -> Option<String> {
         let mut handles = self.sessions_at.get(path).cloned().unwrap_or_default();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a busy board path keeps std's in-place sort (crate::order): the sweep"
+        )]
         handles.sort_unstable();
         handles.dedup();
         if handles.is_empty() || self.bound(path, unbound) {
@@ -1050,6 +1065,25 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
                             .into();
                 }
             };
+            // Gone, all it held in main: the comments passed into its documents, kept under its id
+            // (its branch, `/` spelled `~`, as the Symphony names a worktree), are main's now. Not
+            // while another listed worktree holds its branch (`git worktree add --force`), whose
+            // id they share: a pass may have written into that one, and a line main lacks would
+            // count as main's. They move when a sweep removes the last listed worktree on the
+            // branch. Where that one leaves it otherwise (its folder deleted by hand and pruned,
+            // or switched to another branch), nothing moves them: they stay under the branch's id
+            // and a later pass counts once too few, as for a branch merged by hand (the count in
+            // crates/symphony/src/save.rs).
+            let shared = (trees.iter().zip(&paths)).any(|(other, at)| {
+                at != path && !gone.contains(at) && other.branch == entry.branch
+            });
+            if !o.dry_run
+                && !shared
+                && let Some(branch) = branch
+                && let Err(error) = store.held_landed(&branch.replace('/', "~"))
+            {
+                result.unmoved.push((branch.to_string(), error.to_string()));
+            }
             let mut why = format!("{place} at {short}, {how}, clean, {lock}");
             if let (Some(to), Some(folder)) = (&went.aside, &artifacts) {
                 let moved = if o.dry_run { "would move" } else { "moved" };
@@ -1480,17 +1514,16 @@ fn recorded_lands(root: &Path) -> BTreeSet<String> {
     let Ok(entries) = std::fs::read_dir(&folder) else {
         return BTreeSet::new();
     };
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let text = std::fs::read_to_string(entry.path()).ok()?;
-            let record: crate::land::Record = crate::objects::parse(&text)?;
-            let at = entry.path();
-            (at == crate::land::Record::path(&folder, &record.slug)
-                || at == crate::land::Record::dashed(&folder, &record.slug))
-            .then_some(record.slug)
-        })
-        .collect()
+    let mut slugs = BTreeSet::new();
+    slugs.extend(entries.flatten().filter_map(|entry| {
+        let text = std::fs::read_to_string(entry.path()).ok()?;
+        let record: crate::land::Record = crate::objects::parse(&text)?;
+        let at = entry.path();
+        (at == crate::land::Record::path(&folder, &record.slug)
+            || at == crate::land::Record::dashed(&folder, &record.slug))
+        .then_some(record.slug)
+    }));
+    slugs
 }
 
 /// Why branch `name`, landed in main, stays though its worktree went, if it does: a land's
@@ -1590,12 +1623,14 @@ fn agent_branches(
     store: &Store,
     o: &Options,
 ) -> Result<Vec<String>, String> {
-    let held: BTreeSet<&str> = trees
-        .iter()
-        .zip(paths)
-        .filter(|(_, path)| !gone.contains(*path))
-        .filter_map(|(entry, _)| entry.branch.as_deref())
-        .collect();
+    let mut held: BTreeSet<&str> = BTreeSet::new();
+    held.extend(
+        trees
+            .iter()
+            .zip(paths)
+            .filter(|(_, path)| !gone.contains(*path))
+            .filter_map(|(entry, _)| entry.branch.as_deref()),
+    );
     let listing = git::git(
         root,
         &[
@@ -2088,6 +2123,27 @@ mod tests {
         assert_eq!(
             done.summary(),
             "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* branches; cleared no build output: the board did not answer; freed 1.5 MB"
+        );
+    }
+
+    #[test]
+    fn a_move_the_board_refused_is_said_beside_the_removal_it_followed() {
+        let done = Sweep {
+            total: 2,
+            removed: vec![(PathBuf::from("/wt/a"), "merged".into())],
+            unmoved: vec![("sim/a".into(), "the board did not answer".into())],
+            freed: 1_500_000,
+            ..Sweep::default()
+        };
+        assert_eq!(
+            done.lines(),
+            [
+                "removed /wt/a (merged)",
+                "the comments passed on into sim/a stay under its name, not main's: the board did \
+                 not answer",
+                "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* \
+                 branches; freed 1.5 MB",
+            ]
         );
     }
 

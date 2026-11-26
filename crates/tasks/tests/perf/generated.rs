@@ -263,6 +263,7 @@ fn message(n: usize) -> MessageRow {
         kind: kind.into(),
         text,
         ts: NOW - 30.0 * DAY + n as f64 * (30.0 * DAY - HOUR) / MESSAGES as f64,
+        person: false,
     };
     match n % 100 {
         0..28 => line(

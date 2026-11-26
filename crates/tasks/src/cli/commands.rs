@@ -27,6 +27,7 @@ mod gate;
 mod limits;
 mod list;
 mod panes;
+mod people;
 mod runs;
 mod settings;
 mod stamps;
@@ -208,6 +209,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "limits" => limits::run(store, c)?,
         "settings" => settings::run(store, c)?,
+        "people" => people::run(store, c)?,
         "workflow" => workflow::run(store, c)?,
         "stamps" => stamps::stamps(store, c)?,
         "runs" => runs::runs(store, c)?,
@@ -228,6 +230,14 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                     }
                 })?;
             c.say(&format!("{} is p{}", t.slug, t.priority));
+        }
+        "kind" => {
+            let t = store.set_kind(&c.arg("slug"), &c.arg("kind"), &c.actor()?)?;
+            c.say(&format!(
+                "{} is {}",
+                t.slug,
+                t.kind().unwrap_or("of no kind")
+            ));
         }
         "parent" => {
             if p.flag("none") == p.get("parent").is_some() {
@@ -316,6 +326,18 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let text = said(c)?;
             let m = store.say(&c.arg("slug"), &c.actor()?, &text, to.as_deref())?;
             c.say(&format!("sent #{} on {}", m.id, m.slug));
+        }
+        "pass" => {
+            let slug = c.arg("slug");
+            let id = c.arg("id");
+            let id: i64 = (id.trim_start_matches('#').parse()).map_err(|_| {
+                Stop::Refused(format!(
+                    "{id:?} is no message's number: nothing was written"
+                ))
+            })?;
+            let held = store.pass(&slug, id, &c.actor()?)?;
+            let line = held.passed.map_or(0, |passed| passed.line);
+            c.say(&format!("passed on #{id} on {slug} as #{line}"));
         }
         "launch" => panes::launch(store, c)?,
         "staff" => panes::staff(store, c)?,
@@ -763,6 +785,8 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         instruction: p.flag("instruction"),
         // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
         red: None,
+        kind: p.get("kind").map(str::to_string),
+        group: p.get("group").map(str::to_string),
         // No task is filed as a fast fix any more: what it needs to land is its assessor's.
     };
     let t = match p.get("arm") {
@@ -933,14 +957,33 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let spent = store.spent_on(&slugs)?;
     let prices = crate::usage::Prices::embedded();
     let tally = crate::usage::Tally::at(&spent, prices);
+    // How many messages are held for people, never what they say (crate::held).
+    let held_messages = store.held_count(&slug)?;
+    // Whose it is: the person at the machine's on a board with nobody named, which neither the
+    // text nor the JSON says, so such a board's show is as it was.
+    let people = store.people()?;
+    let owning = if people.members.is_empty() {
+        None
+    } else {
+        Some(crate::people::ownership::owning(
+            &people,
+            &store.ownership_map()?,
+            task.group(),
+            &crate::people::ownership::Thing::Task(task.slug.clone()).places(),
+        ))
+    };
     if c.parsed.flag("json") {
-        let json = json!({
+        let mut json = json!({
             "task": shape::task(&task),
             "thread": shape::messages(&thread),
+            "held": held_messages,
             "children": shape::tasks(&children),
             "stages": shape::stages(&stages),
             "tokens": tally.json(&spent, prices),
         });
+        if let Some(owning) = &owning {
+            json["owning"] = json!(owning);
+        }
         c.say(&serde_json::to_string_pretty(&json).expect("JSON values serialize"));
         return Ok(());
     }
@@ -990,7 +1033,21 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     if let Some(arm) = task.arm() {
         c.say(&format!("  arm: {arm}"));
     }
+    if let Some(kind) = task.kind() {
+        c.say(&format!("  kind: {kind}"));
+    }
+    if let Some(owning) = &owning {
+        c.say(&format!("  group: {} ({})", owning.name, owning.said()));
+    }
     c.say(&format!("  {}", stages::summary_line(&stages)));
+    if held_messages > 0 {
+        let messages = if held_messages == 1 {
+            "message"
+        } else {
+            "messages"
+        };
+        c.say(&format!("  held for people: {held_messages} {messages}"));
+    }
     for line in tally.lines() {
         c.say(&format!("  {line}"));
     }

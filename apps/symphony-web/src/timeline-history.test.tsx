@@ -77,6 +77,7 @@ const entry = (id: number): TaskEntry => ({
     recipient: null,
     text: "Original full text",
     kind: "msg",
+    person: false,
   },
   stamp: "exact",
   blocks: [],
@@ -120,9 +121,7 @@ describe("recorded timeline history", () => {
     expect(endpointWords({ ...known("executor"), state: "ambiguous" })).toContain("Ambiguous");
     expect(endpointWords(unknown)).toContain("unknown");
     expect(endpointWords({ ...unknown, state: "outside" })).toContain("Outside");
-    expect(endpointWords({ ...unknown, state: "everyone" })).toContain(
-      "historical recipients are not recorded",
-    );
+    expect(endpointWords({ ...unknown, state: "everyone" })).toBe("Everyone on task.");
     expect(endpointWords({ ...known("executor"), state: "unknown" })).toContain("possible:");
     expect(address({ ...msg(), recipient: null })).toBe("one → Everyone on task");
   });
@@ -180,7 +179,8 @@ describe("recorded timeline history", () => {
   });
   it("distinguishes unavailable, partial ancestry and known empty records", () => {
     expect(historyWords(undefined)).toContain("unavailable");
-    expect(historyWords(history())).toContain("not continuous work");
+    // A whole history says nothing: the timeline does not explain itself.
+    expect(historyWords(history())).toBeNull();
     expect(historyWords({ ...history(), sources_complete: false })).toContain("Incomplete");
     expect(
       historyWords({
@@ -320,11 +320,35 @@ describe("timeline message details", () => {
       "after task closure",
       "Original full text",
       'href="#message-4"',
-      "not recorded",
     ])
       expect(html).toContain(text);
-    expect(html).toContain('disabled=""');
+    // No note over a whole history, and nothing to step through with one message.
+    expect(html).not.toContain("tl-note");
+    expect(html).not.toContain("not recorded");
+    expect(html).not.toContain("Previous message");
+    expect(html).not.toMatch(/<button[^>]*disabled/);
     expect(html).not.toContain("Load earlier messages");
+  });
+  it("draws its picker only where it can act: none over no message, steps over two", () => {
+    const drawn = (messages: TimelineMessage[]) =>
+      renderToStaticMarkup(
+        <MessagePanel
+          timeline={timeline()}
+          selection={{ messages, selected: messages[0]?.id ?? null, choose: vi.fn() }}
+          error={null}
+          loading={false}
+          retry={vi.fn()}
+          earlier={vi.fn()}
+        />,
+      );
+    const none = drawn([]);
+    expect(none).toContain("No recorded messages in the available range.");
+    expect(none).not.toContain("tl-message-choice");
+    expect(none).not.toContain("<button");
+    const two = drawn([msg(), msg(5, 60)]);
+    expect(two).toContain('id="tl-message-choice"');
+    expect(two).toMatch(/disabled="">Previous message<\/button>/);
+    expect(two).toMatch(/data-size="default">Next message<\/button>/);
   });
   it("keeps loading, failed and missing text explicit, without inventing empty complete history", () => {
     expect(panel(msg(), undefined, null, true)).toContain("Loading message");

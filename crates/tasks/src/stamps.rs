@@ -106,7 +106,8 @@ const OWN: [Own; 4] = [
                   token, a page's words): before and after, phone and wide, dark and light where \
                   colour changed",
         skips: "a change no page shows (what a page reads, caches or weighs, a route's answer), and \
-                anything off the pages",
+                anything off the pages; a commit of a generator's outputs alone (the client \
+                distribution rebuilt from main), whose pictures were its source tasks'",
     },
     Own {
         name: "owner",

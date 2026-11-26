@@ -158,7 +158,7 @@ pub fn installed(machine: &Path, name: &str) -> Result<Option<Manifest>, String>
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("{}: {error}", path.display())),
     };
-    serde_json::from_str(&text)
+    serde_json::from_slice(text.as_bytes())
         .map(Some)
         .map_err(|error| format!("{}: {error}", path.display()))
 }
@@ -193,7 +193,7 @@ pub fn noted(machine: &Path) -> Option<(String, String)> {
         .filter_map(|entry| entry.file_name().into_string().ok())
         .filter(|name| order(name).is_some())
         .collect();
-    found.sort_by(|a, b| order(b).cmp(&order(a)));
+    symphony_board::order::sort_by(&mut found, &|a, b| order(b).cmp(&order(a)));
     found.into_iter().find_map(|name| {
         let text = fs::read_to_string(folder(machine, &name).join(NOTES)).ok()?;
         Some((name, text))
@@ -426,7 +426,7 @@ fn client_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     }
     let mut found = Vec::new();
     walk(root, root, &mut found)?;
-    found.sort();
+    symphony_board::order::sort_by(&mut found, &Ord::cmp);
     Ok(found)
 }
 
@@ -531,7 +531,10 @@ pub fn of_binary(binary: &Path) -> Option<(PathBuf, Manifest)> {
         return None;
     }
     let text = fs::read_to_string(release.join(MANIFEST)).ok()?;
-    Some((release.to_path_buf(), serde_json::from_str(&text).ok()?))
+    Some((
+        release.to_path_buf(),
+        serde_json::from_slice(text.as_bytes()).ok()?,
+    ))
 }
 
 /// The client the server at `binary` serves from beside it: its release's `client/HASH/`, when

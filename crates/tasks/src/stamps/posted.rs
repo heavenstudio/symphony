@@ -13,7 +13,11 @@
 //!    posted.
 //! 2. **Approved.** Each card it posted has `approved` as its newest owner verdict at T
 //!    ([`newest`]): a reject, a question, pending, dismissed or none, on any of them, and it does
-//!    not stand.
+//!    not stand. The owner's, or a decider's: a person a board named writes as the owner does
+//!    (`ana · approved`), and decides the stamp while the board gives her the decide power
+//!    ([`read_by`], docs/product/analysis/users-and-identity.md); a person's who holds none is no
+//!    approve, and a later word of anyone's that is no approve keeps the approve from standing, as
+//!    it opens the card again on every page ([`decided`]).
 //! 3. **Nothing since.** Let B be the commit before the first commit that carries the newest of
 //!    those approves: the commit the owner's page showed when the owner gave it. Each commit after
 //!    B up to T, on T's first-parent line, adds the owner's lines under the posted cards and
@@ -30,8 +34,8 @@ use crate::sweep::git::{ancestor, blobs, git, pathspecs, rev, stdout, under};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use symphony_docs::syntax::{
-    CARD_LINE, Card, Entry, REGION_END, REGION_START, cards, entry_line, is_continuation, lines,
-    unseen_owner,
+    CARD_LINE, Card, REGION_END, REGION_START, Said, cards, entry_line, is_continuation, lines,
+    said, unseen_owner,
 };
 
 /// Who writes the owner's lines under a card.
@@ -55,14 +59,38 @@ pub enum Posted {
     Changed { cards: Vec<String>, commit: String },
 }
 
+/// What the cards a branch posted say of its `owner` stamp, and who gave the newest approve they
+/// stand on: `owner`, or a person who holds decide ([`read_by`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Approval {
+    pub posted: Posted,
+    pub by: String,
+}
+
 /// What the cards the branch at `tip` posted say of its `owner` stamp, read in the main checkout
 /// `main` (the module's doc).
 pub fn read(main: &Path, tip: &str) -> Posted {
-    approval(main, tip).unwrap_or_default()
+    read_by(main, tip, &[]).posted
 }
 
-/// [`read`], none where git could not say.
-fn approval(main: &Path, tip: &str) -> Option<Posted> {
+/// [`read`] on a board where `deciders` hold the decide power: a card's newest verdict of the
+/// owner's or theirs is the one that must approve it (rule 2), and its approve the one rule 3
+/// reads, as the owner's is.
+pub fn read_by(main: &Path, tip: &str, deciders: &[String]) -> Approval {
+    approval(main, tip, deciders).unwrap_or_else(|| Approval {
+        posted: Posted::Nothing,
+        by: OWNER.into(),
+    })
+}
+
+/// [`read_by`], none where git could not say.
+fn approval(main: &Path, tip: &str, deciders: &[String]) -> Option<Approval> {
+    let nothing = || {
+        Some(Approval {
+            posted: Posted::Nothing,
+            by: OWNER.into(),
+        })
+    };
     // A default branch the project file's rule refuses names no branch to read the cards on.
     let default = crate::live::default_branch(Some(main))
         .ok()?
@@ -86,7 +114,7 @@ fn approval(main: &Path, tip: &str) -> Option<Posted> {
         .flat_map(|text| cards(&lines(&text)))
         .collect();
     if at_tip.is_empty() {
-        return Some(Posted::Nothing);
+        return nothing();
     }
     let held = carded(main, &base, &specs)?;
     let mut forked: BTreeMap<String, Vec<Written>> = BTreeMap::new();
@@ -102,43 +130,48 @@ fn approval(main: &Path, tip: &str) -> Option<Posted> {
         })
         .collect();
     if posted.is_empty() {
-        return Some(Posted::Nothing);
+        return nothing();
     }
     // The newest approve of them all, with the card it is under.
-    let mut approve: Option<(&str, Entry)> = None;
+    let mut approve: Option<(&str, Said)> = None;
     for card in &posted {
-        let verdict = newest(card)?;
-        if verdict.verdict.as_deref() != Some(APPROVED) {
-            return Some(Posted::Nothing);
+        let verdict = newest(card, deciders)?;
+        if verdict.entry.verdict.as_deref() != Some(APPROVED) || !decided(card) {
+            return nothing();
         }
         if approve
             .as_ref()
-            .is_none_or(|(_, kept)| kept.ts <= verdict.ts)
+            .is_none_or(|(_, kept)| kept.entry.ts <= verdict.entry.ts)
         {
             approve = Some((&card.slug, verdict));
         }
     }
     let (slug, line) = approve?;
     let names: Vec<String> = posted.iter().map(|card| card.slug.clone()).collect();
-    let named: BTreeSet<String> = names.iter().cloned().collect();
+    let mut named: BTreeSet<String> = BTreeSet::new();
+    named.extend(names.iter().cloned());
     // A tip with no commit of its own past the base posted nothing.
     let Some(before) = first_other(main, tip, &base, &default_tip, &named, &folders)? else {
-        return Some(Posted::Nothing);
+        return nothing();
     };
     let carried = (carded(main, &before, &specs).and_then(|held| texts(main, &before, &held)))?
         .into_iter()
         .flatten()
         .any(|text| {
             (cards(&lines(&text)).iter())
-                .any(|card| card.slug == slug && card.entries().contains(&line))
+                .any(|card| card.slug == slug && said(&card.raw).contains(&line))
         });
-    Some(if carried {
+    let posted = if carried {
         Posted::Changed {
             cards: names,
             commit: before,
         }
     } else {
         Posted::Approved { cards: names }
+    };
+    Some(Approval {
+        posted,
+        by: line.name.clone(),
     })
 }
 
@@ -167,12 +200,28 @@ fn fork(main: &Path, tip: &str, default_tip: &str) -> Option<String> {
     Some(base.trim().to_string())
 }
 
-/// The owner's newest verdict under `card`: the latest by its time of the owner's dated lines that
-/// give one, the last written of one minute; none where there is none.
-fn newest(card: &Card) -> Option<Entry> {
-    (card.entries().into_iter())
-        .filter(|entry| entry.who == OWNER && entry.ts.is_some() && entry.verdict.is_some())
-        .max_by(|a, b| a.ts.cmp(&b.ts))
+/// The newest verdict under `card` that decides it: the latest by its time of the owner's own
+/// dated lines that give one, and of each of `deciders`', the last written of one minute; none
+/// where there is none. A person's who holds no decide is none (the module's doc).
+fn newest(card: &Card, deciders: &[String]) -> Option<Said> {
+    newest_of(card, |said| {
+        said.name == OWNER || deciders.contains(&said.name)
+    })
+}
+
+/// Whether `card`'s newest verdict of every person's, the owner's and any a board named, is an
+/// approve: a person's word after the owner's approve that is none keeps it from standing.
+fn decided(card: &Card) -> bool {
+    newest_of(card, |_| true).is_some_and(|said| said.entry.verdict.as_deref() == Some(APPROVED))
+}
+
+/// The newest verdict under `card` of a person's dated lines that `whose` takes, as [`newest`]
+/// reads the owner's.
+fn newest_of(card: &Card, whose: impl Fn(&Said) -> bool) -> Option<Said> {
+    (said(&card.raw).into_iter())
+        .filter(|said| said.entry.who == OWNER && whose(said))
+        .filter(|said| said.entry.ts.is_some() && said.entry.verdict.is_some())
+        .max_by(|a, b| a.entry.ts.cmp(&b.entry.ts))
 }
 
 /// The newest commit on `tip`'s first-parent line past `base` that neither adds only the owner's
@@ -270,7 +319,8 @@ impl Written {
 /// The lines `raw` under a card, as the owner's dated entries (each with the lines that continue
 /// it, as one) and every other line, blank lines in neither: a line a card's entries read as an
 /// owner's dated line ([`symphony_docs::syntax::entries`]) starts one of the owner's, a deeper-indented line goes with
-/// the dated line above it, and the hidden `review:unseen-owner` line is an agent's.
+/// the dated line above it, and the hidden `review:unseen-owner` line is an agent's. A person's a
+/// board named goes with the owner's: a word on the card, never what the branch posted.
 fn split(raw: &[String]) -> (Vec<String>, Vec<String>) {
     let (mut owner, mut rest): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
     // Whose dated entry the lines under it continue: the owner's, an agent's, or none.
@@ -356,7 +406,7 @@ impl Doc {
             by_name.entry(card.slug).or_default().push(copy);
         }
         for copies in by_name.values_mut() {
-            copies.sort();
+            crate::order::sort_by(copies, &Ord::cmp);
         }
         let mut other = Vec::new();
         let mut register = false;

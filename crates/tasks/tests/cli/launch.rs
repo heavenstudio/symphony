@@ -1393,7 +1393,7 @@ fn through_just_tasks_a_callback_gives_a_launch_record_only_its_callers_own_code
 #[test]
 fn a_board_it_cannot_reach_is_exit_2() {
     let mut p = Terminals::new("unreached");
-    p.set("TASKS_SERVER", "127.0.0.1:1");
+    p.set("TASKS_SERVER", crate::UNREACHED_SERVER);
     let ran = p.run(&["restore", "sim/jump"]);
     assert_eq!((ran.code, ran.out.as_str()), (2, ""));
     assert!(

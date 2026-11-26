@@ -42,9 +42,6 @@ use super::{Failure, Saves, held_write_lock};
 use crate::commit;
 use crate::project::{FILE, Project};
 
-/// Who a change the page makes is recorded as made by.
-const BY: &str = crate::postpone::OWNER;
-
 /// A refusal of a write that conflicts with what the store or the project holds now.
 fn conflict(error: String) -> Failure {
     Failure { status: 409, error }
@@ -129,9 +126,10 @@ fn committed(root: &std::path::Path, branch: &str) -> Result<String, Failure> {
 }
 
 impl Saves {
-    /// The Settings page's write, `payload` a [`SettingWrite`]: what it did, as a
-    /// [`SettingWritten`], or why it is refused with nothing changed.
-    pub(super) fn setting(&self, scope: &str, payload: &Value) -> Result<Value, Failure> {
+    /// The Settings page's write, `payload` a [`SettingWrite`], recorded as made by `by`, the short
+    /// name of who asked: what it did, as a [`SettingWritten`], or why it is refused with nothing
+    /// changed.
+    pub(super) fn setting(&self, scope: &str, payload: &Value, by: &str) -> Result<Value, Failure> {
         if !scope.is_empty() {
             return Err(Failure {
                 status: 404,
@@ -150,10 +148,10 @@ impl Saves {
                     .value
                     .as_ref()
                     .ok_or("a store write gives the value it keeps".to_string())?;
-                self.keep(&write.key, &toml_of(value))?
+                self.keep(&write.key, &toml_of(value), by)?
             }
-            SettingAction::Remove => self.remove(&write.key)?,
-            SettingAction::Commit => self.make_the_projects(&write.key)?,
+            SettingAction::Remove => self.remove(&write.key, by)?,
+            SettingAction::Commit => self.make_the_projects(&write.key, by)?,
         };
         Ok(serde_json::to_value(done).expect("a setting's answer is JSON"))
     }
@@ -168,11 +166,11 @@ impl Saves {
         Ok(held)
     }
 
-    fn keep(&self, key: &str, value: &toml::Value) -> Result<SettingWritten, Failure> {
+    fn keep(&self, key: &str, value: &toml::Value, by: &str) -> Result<SettingWritten, Failure> {
         let _held = self.open()?;
         // A switch is judged against the launch default the main checkout's project file names.
         let project_file = symphony_board::builds::main_of(&self.root).join(FILE);
-        let (entry, changed) = self.store()?.store_setting(key, value, BY, &project_file)?;
+        let (entry, changed) = self.store()?.store_setting(key, value, by, &project_file)?;
         // A switch is said as the page draws it: on or off.
         let held = match &entry.value {
             Some(Value::Bool(on)) => (if *on { "on" } else { "off" }).to_string(),
@@ -195,9 +193,9 @@ impl Saves {
         })
     }
 
-    fn remove(&self, key: &str) -> Result<SettingWritten, Failure> {
+    fn remove(&self, key: &str, by: &str) -> Result<SettingWritten, Failure> {
         let _held = self.open()?;
-        self.store()?.remove_setting(key, BY)?;
+        self.store()?.remove_setting(key, by)?;
         Ok(SettingWritten {
             said: format!(
                 "{} has no entry in the board's store now: the files' value is in force",
@@ -208,7 +206,7 @@ impl Saves {
     }
 
     /// The stored value of `key` made the project's, as [the module](self) says.
-    fn make_the_projects(&self, key: &str) -> Result<SettingWritten, Failure> {
+    fn make_the_projects(&self, key: &str, by: &str) -> Result<SettingWritten, Failure> {
         let root = &self.root;
         // Held through a delivery's submit, as a document save holds them; a commit straight to
         // the default branch takes them again under the commits' lock, which comes first
@@ -269,7 +267,7 @@ impl Saves {
             if !takes(root, &at, &value) {
                 return Err(untaken(&said, &default));
             }
-            store.remove_setting_holding(key, &kept(&value), BY)?;
+            store.remove_setting_holding(key, &kept(&value), by)?;
             return Ok(SettingWritten {
                 said: format!(
                     "{FILE} on {default} writes {said} already: the board's entry is removed, and \
@@ -304,7 +302,7 @@ impl Saves {
         if delivers {
             self.committer
                 .get_or_init(|| commit::Committer::start(root, self.writes.clone()))
-                .submit(edit)?;
+                .submit_as(edit, by)?;
             drop(file);
             drop(saving);
             return Ok(SettingWritten {
@@ -325,7 +323,7 @@ impl Saves {
             if !takes(root, &at, &value) {
                 return Err(untaken(&said, &default));
             }
-            store.remove_setting_holding(key, &held, BY)?;
+            store.remove_setting_holding(key, &held, by)?;
             return Ok(SettingWritten {
                 said: format!(
                     "{default} holds {said} already: the board's entry is removed, and the \
@@ -344,7 +342,7 @@ impl Saves {
             said.push_str(&format!("; {note}"));
         }
         if taken {
-            match store.remove_setting_holding(key, &held, BY) {
+            match store.remove_setting_holding(key, &held, by) {
                 Ok(_) => said
                     .push_str("; the board's entry is removed, and the file's value is in force"),
                 Err(why) => said.push_str(&format!(

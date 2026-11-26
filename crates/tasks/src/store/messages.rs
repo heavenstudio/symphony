@@ -2,8 +2,7 @@
 //! and landings on the record.
 
 use super::postgres::messages as pg;
-use super::statement::both;
-use super::surreal::messages as sql;
+use super::statement::Statement;
 use super::work::{OWNER, ROLES, Tree, above, no_task};
 use super::{
     Error, Failure, Message, NativePresence, REFUSED, Store, message, native_bounds, native_health,
@@ -36,7 +35,8 @@ pub const DELIVERED: [&str; 2] = ["msg", "verdict"];
 /// own and leaves it out of its inbox.
 pub const BOARD: &str = "board";
 
-/// Whom a post's write is authorized as: the owner, whose write checks no session; the board, for
+/// Whom a post's write is authorized as: the owner, or a person a board named
+/// ([`Store::is_person`]), whose write checks no session; the board, for
 /// a notice a session's command makes, which checks its session and records no activity of it; or
 /// the session posting, checked and its activity recorded.
 #[derive(Clone, Copy, Debug)]
@@ -72,12 +72,15 @@ fn unowned_mark(held: &[(&str, Health)]) -> String {
 /// ([`heard`]): those on the task stop, without an orchestrator relaying it.
 const NO_FURTHER: &str = "; it moves no further: stop work on it";
 
-/// `message`, which reached an inbox, as the inbox carries it: the owner's move of a task to a
-/// finished status says it moves no further ([`NO_FURTHER`]), and the owner's word about a task no
-/// live orchestrator holds, as an orchestrator it reached for that hears it, carries `mark`
-/// ([`unowned_mark`]). The thread keeps the line as written.
-fn heard(mut message: Message, mark: Option<&str>) -> Message {
-    if message.sender != OWNER {
+/// `row`, which reached an inbox, as the inbox carries it: the owner's move of a task to a
+/// finished status, or a person's ([`MessageRow::by_person`]), says it moves no further
+/// ([`NO_FURTHER`]), and their word about a task no live orchestrator holds, as an orchestrator it
+/// reached for that hears it, carries `mark` ([`unowned_mark`]). The thread keeps the line as
+/// written.
+fn heard(row: MessageRow, mark: Option<&str>) -> Message {
+    let by_person = row.by_person();
+    let mut message = message(row);
+    if !by_person {
         return message;
     }
     let finished = |to: &str| crate::health::FINISHED.contains(&to.trim());
@@ -125,10 +128,25 @@ impl Store {
         handle: &str,
         text: &str,
     ) -> Result<Message, Error> {
-        if handle == OWNER || handle.starts_with('@') {
+        if self.is_person(handle) || handle.starts_with('@') {
             return Err(refused("a notice needs a literal session handle".into()));
         }
         self.post(slug, actor, BOARD, text, Some(handle), None, false)
+    }
+
+    /// A line a tool says for `actor` on a task's thread, to `to` (a role, a session or none),
+    /// authorized as `actor` and authored by the board, as [`Store::notify`]'s is: what a detached
+    /// dispatch or a delivery watcher's round acting as the task's orchestrator says to
+    /// `@orchestrator`, which a line of its own would reach nobody with, as an inbox leaves out
+    /// what its own session said.
+    pub fn say_for(
+        &self,
+        slug: &str,
+        actor: &str,
+        text: &str,
+        to: Option<&str>,
+    ) -> Result<Message, Error> {
+        self.post(slug, actor, BOARD, text, to, None, false)
     }
 
     /// Post to a task's thread once per `key`: the first post under a key on a thread is made, and
@@ -172,7 +190,7 @@ impl Store {
         if text.is_empty() {
             return Err(refused("an empty message says nothing".into()));
         }
-        let body = || both(sql::unread(true), pg::unread(true)).posting();
+        let body = || Statement::from(pg::unread(true)).posting();
         let vars = json!({
             "slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "key": key,
             "said": text, "now": (self.clock)(),
@@ -186,13 +204,28 @@ impl Store {
     /// ([`crate::Ask`]). The next line by a session holding a role on the task, or by the session
     /// it is sent to, answers it. The owner's other lines there (a board action's record) open none.
     pub fn say_asking(&self, slug: &str, text: &str, to: Option<&str>) -> Result<Message, Error> {
-        self.post(slug, OWNER, OWNER, text, to, None, true)
+        self.say_asking_as(slug, OWNER, text, to)
+    }
+
+    /// [`Store::say_asking`] by the person `sender`, the actor of the write
+    /// (`symphony_plugin::Actor`): a person's line, which opens or joins the task's ask, when it
+    /// is `owner` or the person this store writes for ([`Store::for_person`]), marked theirs. Any
+    /// other is posted as a session's line is, so one the board does not know is refused as every
+    /// unknown actor is (docs/product/analysis/users-and-identity.md, "The way from one owner").
+    pub fn say_asking_as(
+        &self,
+        slug: &str,
+        sender: &str,
+        text: &str,
+        to: Option<&str>,
+    ) -> Result<Message, Error> {
+        self.post(slug, sender, sender, text, to, None, true)
     }
 
     /// A post authorized as `actor` and authored by `sender` (the board's own, [`BOARD`], for a
     /// notice), made once per key when `keyed` gives one, with whether that key adopts a line made
     /// under no key ([`Store::adopt_or_say`]); with `asking`, the owner's line opens or joins the
-    /// task's ask ([`sql::post`]).
+    /// task's ask ([`pg::post`]).
     #[expect(
         clippy::too_many_arguments,
         reason = "each caller names its post's every part; a struct would only rename them"
@@ -217,7 +250,7 @@ impl Store {
             format!("{REFUSED}no role @{role}; use one of {}", roles.join(", "))
         });
         let handle = to.filter(|to| *to != OWNER && role.is_none());
-        let poster = if actor == OWNER {
+        let poster = if self.is_person(actor) {
             Poster::Owner
         } else if sender == BOARD {
             Poster::Board
@@ -226,7 +259,7 @@ impl Store {
         };
         let (task_about, task_words) = super::asks::on_thread_vars(slug, text);
         let shape = keyed.map(|(_, adopt)| adopt);
-        let body = || both(sql::post(poster, shape), pg::post(poster, shape)).posting();
+        let body = || Statement::from(pg::post(poster, shape)).posting();
         let now = (self.clock)();
         let key = keyed.map(|(key, _)| key);
         let vars = self.acting(
@@ -241,27 +274,31 @@ impl Store {
         );
         let row: MessageRow = self.retrying(|| self.transact(body(), vars.clone()))?;
         // Told of the line's recipient, not this call's: a post repeated under a key, or one that
-        // took a line made under no key, answers that line, and says once that no executor reads
-        // it when nothing said so yet (the board's notice goes under the line's own key,
-        // `unread:<id>`, which takes a notice of the line said under no key, so it is said once
-        // per line, whichever post says it).
-        let unread = format!("unread:{}", row.id);
-        match row.recipient.as_deref() {
-            Some("@executor") => self.tell_if_unread(
-                slug,
-                None,
-                &format!("#{} from {} to @executor", row.id, row.sender),
-                Some(&unread),
-            ),
-            Some(to) if to != OWNER && !to.starts_with('@') => self.tell_if_unread(
-                slug,
-                Some(to),
-                &format!("#{} from {} to {to}", row.id, row.sender),
-                Some(&unread),
-            ),
-            _ => {}
-        }
+        // took a line made under no key, answers that line.
+        self.tell_line_if_unread(slug, row.id, &row.sender, row.recipient.as_deref());
         Ok(message(row))
+    }
+
+    /// The line `id` on `slug`'s thread, `sender`'s to `recipient`, has no executor to read it
+    /// ([`Store::tell_if_unread`]): told where it is written to `@executor`, or to a handle that
+    /// executes the task; a line to nobody, to `owner`, to another role or to another handle tells
+    /// no one. Said once per line, whichever write says it: under the line's own key,
+    /// `unread:<id>`, which takes a notice of the line said under no key. A post and a held
+    /// message passed on ([`Store::pass`]) tell by it alike.
+    pub(super) fn tell_line_if_unread(
+        &self,
+        slug: &str,
+        id: i64,
+        sender: &str,
+        recipient: Option<&str>,
+    ) {
+        let (to, only) = match recipient {
+            Some(to @ "@executor") => (to, None),
+            Some(to) if to != OWNER && !to.starts_with('@') => (to, Some(to)),
+            _ => return,
+        };
+        let what = format!("#{id} from {sender} to {to}");
+        self.tell_if_unread(slug, only, &what, Some(&format!("unread:{id}")));
     }
 
     /// `said`, a record line `sender` puts on `slug`'s thread, to no one, once per `key`: a later
@@ -277,7 +314,7 @@ impl Store {
         let vars = json!({
             "slug": slug, "sender": sender, "said": said, "key": key, "now": (self.clock)(),
         });
-        let body = both(sql::RECORD_ONCE.as_str(), pg::record_once()).posting();
+        let body = Statement::from(pg::record_once()).posting();
         self.transact::<Value>(body, vars).map(|_| ())
     }
 
@@ -285,7 +322,7 @@ impl Store {
     /// [`Store::say_keyed`]). Within a caller's retry.
     pub(super) fn keyed(&self, slug: &str, key: &str) -> Result<bool, Failure> {
         let vars = json!({"slug": slug, "key": key});
-        let keyed: Value = self.read(both(sql::KEYED, pg::keyed()), vars)?;
+        let keyed: Value = self.read(Statement::from(pg::keyed()), vars)?;
         Ok(keyed == Value::Bool(true))
     }
 
@@ -350,7 +387,7 @@ impl Store {
             gone.push("no session holds the role".into());
         }
         let text = format!("{what} reaches no live executor: {}", gone.join("; "));
-        let body = || both(sql::unread(key.is_some()), pg::unread(key.is_some())).posting();
+        let body = || Statement::from(pg::unread(key.is_some())).posting();
         let vars = json!({
             "slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "key": key,
             "said": format!("{what} reaches no live executor"), "now": (self.clock)(),
@@ -395,9 +432,8 @@ impl Store {
         let mut vars =
             json!({"handle": handle, "delivered": DELIVERED, "since":since, "pool": pool});
         native_bounds(&mut vars);
-        let read: Read = self.retrying(|| {
-            self.read_together(both(sql::INBOX.as_str(), pg::inbox()), vars.clone())
-        })?;
+        let read: Read =
+            self.retrying(|| self.read_together(Statement::from(pg::inbox()), vars.clone()))?;
         if !read.known {
             return Err(refused(format!("no session {}", repr(handle))));
         }
@@ -454,7 +490,7 @@ impl Store {
             // The owner's word, a post, a verdict or a move, reaches everyone on the task and its
             // orchestrator; on a task no live orchestrator holds, every orchestrator, since none
             // relays it.
-            let owners_word = m.sender == OWNER
+            let owners_word = m.by_person()
                 && (roles.is_some()
                     || nearest(&m.slug)
                     || (orchestrating && unowned(&m.slug).is_some()));
@@ -476,17 +512,17 @@ impl Store {
             .filter(reaches)
             .map(|row| {
                 // Only an orchestrator it reached for that hears the mark, never the holder.
-                let marked = orchestrating && row.sender == OWNER && !nearest(&row.slug);
+                let marked = orchestrating && row.by_person() && !nearest(&row.slug);
                 let mark = marked.then(|| unowned(&row.slug)).flatten();
                 let mark = mark.map(|held| unowned_mark(&held));
-                heard(message(row), mark.as_deref())
+                heard(row, mark.as_deref())
             })
             .collect())
     }
 
     /// `handle` has read messages `ids`: they leave its inbox.
     pub fn ack(&self, handle: &str, ids: &[i64]) -> Result<(), Error> {
-        let body = || both(sql::ack(), pg::ack());
+        let body = || Statement::from(pg::ack());
         let vars = self.acting(handle, (self.clock)(), json!({"ids": ids}));
         self.retrying(|| self.transact::<Value>(body(), vars.clone()))
             .map(|_| ())
@@ -495,7 +531,7 @@ impl Store {
     /// The newest messages to the owner, newest first.
     pub fn to_owner(&self, limit: usize) -> Result<Vec<Message>, Error> {
         let rows: Vec<MessageRow> = self.retrying(|| {
-            self.read_together(both(sql::TO_OWNER, pg::to_owner()), json!({"limit": limit}))
+            self.read_together(Statement::from(pg::to_owner()), json!({"limit": limit}))
         })?;
         Ok(rows.into_iter().map(message).collect())
     }
@@ -511,7 +547,7 @@ impl Store {
         }
         let rows: Vec<MessageRow> = self.retrying(|| {
             self.read_together(
-                both(sql::QUESTIONS_WAITING, pg::questions_waiting()),
+                Statement::from(pg::questions_waiting()),
                 json!({"person": person, "open": open}),
             )
         })?;
@@ -522,31 +558,35 @@ impl Store {
     /// It reads the lines from the newest back to that verdict, every line of a board with none, so
     /// a reader reads it once and follows the lines after it ([`Store::messages_after`]).
     pub fn newest_verdict(&self) -> Result<Option<Message>, Error> {
-        let rows: Vec<MessageRow> = self.retrying(|| {
-            self.read_together(both(sql::NEWEST_VERDICT, pg::newest_verdict()), json!({}))
-        })?;
+        let rows: Vec<MessageRow> =
+            self.retrying(|| self.read_together(Statement::from(pg::newest_verdict()), json!({})))?;
         Ok(rows.into_iter().next().map(message))
     }
 
     /// New messages in creation order, for the Symphony server's shared delta feed. The cursor is
     /// the snapshot's latest_message, so two writes between reads are both delivered.
     pub fn messages_after(&self, since: i64, through: i64) -> Result<Vec<Message>, Error> {
-        let rows: Vec<MessageRow> = self.retrying(|| {
+        let rows = self.messages_after_rows(since, through)?;
+        Ok(rows.into_iter().map(message).collect())
+    }
+
+    /// [`Store::messages_after`] as the board holds the lines, each with whether a person wrote
+    /// it ([`MessageRow::by_person`]).
+    pub fn messages_after_rows(&self, since: i64, through: i64) -> Result<Vec<MessageRow>, Error> {
+        self.retrying(|| {
             self.read_together(
-                both(sql::MESSAGES_AFTER, pg::messages_after()),
+                Statement::from(pg::messages_after()),
                 json!({"since": since, "through": through}),
             )
-        })?;
-        Ok(rows.into_iter().map(message).collect())
+        })
     }
 
     /// Each sender's latest message or verdict, by handle: what an agent last said on the board (the
     /// board's own record lines are not its words). `said` names each one ([`crate::schema`]), so
     /// this reads one message a sender, not every message.
     pub fn last_messages(&self) -> Result<BTreeMap<String, Message>, Error> {
-        let rows: Vec<MessageRow> = self.retrying(|| {
-            self.read_together(both(sql::LAST_MESSAGES, pg::last_messages()), json!({}))
-        })?;
+        let rows: Vec<MessageRow> =
+            self.retrying(|| self.read_together(Statement::from(pg::last_messages()), json!({})))?;
         Ok(rows
             .into_iter()
             .map(|row| (row.sender.clone(), message(row)))
@@ -568,11 +608,13 @@ impl Store {
     pub fn landings_posted(&self) -> Result<BTreeSet<String>, Error> {
         let slugs: Vec<String> = self.retrying(|| {
             self.read_together(
-                both(sql::LANDINGS_POSTED, pg::landings_posted()),
+                Statement::from(pg::landings_posted()),
                 json!({"delivered": DELIVERED}),
             )
         })?;
-        Ok(slugs.into_iter().collect())
+        let mut landed = BTreeSet::new();
+        landed.extend(slugs);
+        Ok(landed)
     }
 }
 
@@ -592,8 +634,31 @@ mod tests {
         }
     }
 
+    /// [`said`] as the board holds it, a person's line when `person`.
+    fn row(sender: &str, kind: &str, text: &str, person: bool) -> MessageRow {
+        let Message {
+            id,
+            slug,
+            sender,
+            recipient,
+            kind,
+            text,
+            ts,
+        } = said(sender, kind, text);
+        MessageRow {
+            id,
+            slug,
+            sender,
+            recipient,
+            kind,
+            text,
+            ts,
+            person,
+        }
+    }
+
     fn heard_text(sender: &str, kind: &str, text: &str, unowned: bool) -> String {
-        heard(said(sender, kind, text), unowned.then_some(UNOWNED)).text
+        heard(row(sender, kind, text, false), unowned.then_some(UNOWNED)).text
     }
 
     #[test]
@@ -657,6 +722,23 @@ mod tests {
     }
 
     #[test]
+    fn a_persons_word_is_heard_as_the_owners_is_and_a_sessions_of_that_name_is_not() {
+        let moved = "ana moved it in_progress → done";
+        let ana = |kind, text, person| heard(row("ana", kind, text, person), Some(UNOWNED)).text;
+        assert_eq!(
+            ana("system", moved, true),
+            format!("{UNOWNED}{moved}{NO_FURTHER}")
+        );
+        assert_eq!(ana("msg", "stop", true), format!("{UNOWNED}stop"));
+        assert_eq!(
+            ana("system", moved, false),
+            moved,
+            "a session named ana is no person"
+        );
+        assert_eq!(ana("msg", "stop", false), "stop");
+    }
+
+    #[test]
     fn the_mark_names_the_holders_that_are_not_live_or_says_nobody_holds_it() {
         assert_eq!(unowned_mark(&[]), UNOWNED);
         assert_eq!(
@@ -669,59 +751,57 @@ mod tests {
         );
         let mark = unowned_mark(&[("amber", Health::Unknown)]);
         assert_eq!(
-            heard(said(OWNER, "msg", "stop"), Some(&mark)).text,
+            heard(row(OWNER, "msg", "stop", false), Some(&mark)).text,
             "[unowned: no live orchestrator holds it: amber (unknown)] stop"
         );
     }
     #[test]
     fn pooled_inbox_and_cursor_read_the_same_unacknowledged_suffix() {
-        use crate::store_fixture::{Backend, Fixture, Seed};
-        for backend in [Backend::SurrealDb, Backend::PostgreSql] {
-            let f = Fixture::on(backend, Seed::default());
-            let worker = f.session("worker");
-            f.task("work");
-            f.store.claim("work", &worker).unwrap();
-            let first = f
-                .store
-                .say("work", "owner", "first", Some(&worker))
-                .unwrap();
-            let acked = f
-                .store
-                .say("work", "owner", "acked", Some(&worker))
-                .unwrap();
-            let last = f.store.say("work", "owner", "last", Some(&worker)).unwrap();
-            f.store.ack(&worker, &[acked.id]).unwrap();
-            let rows = f.store.messages_after(first.id, last.id).unwrap();
-            assert_eq!(
-                rows.iter().map(|m| m.id).collect::<Vec<_>>(),
-                [acked.id, last.id]
-            );
-            let pool: Vec<Value> = rows
-                .iter()
-                .map(|m| {
-                    json!({"sid":m.id,"slug":m.slug,
-                "sender":m.sender,"recipient":m.recipient,"kind":m.kind,"ts":m.ts})
-                })
-                .collect();
-            let direct = f.store.inbox_read(&worker, Some(first.id), None).unwrap();
-            let pooled = f
-                .store
-                .inbox_read(&worker, Some(first.id), Some(json!(pool)))
-                .unwrap();
-            assert_eq!(direct, [last]);
-            assert_eq!(pooled, direct);
-            assert!(
-                f.store
-                    .inbox_read(&worker, Some(0), Some(json!([])))
-                    .unwrap()
-                    .is_empty()
-            );
-            assert!(
-                f.store
-                    .messages_after(first.id, first.id)
-                    .unwrap()
-                    .is_empty()
-            );
-        }
+        use crate::store_fixture::{Fixture, Seed};
+        let f = Fixture::new(Seed::default());
+        let worker = f.session("worker");
+        f.task("work");
+        f.store.claim("work", &worker).unwrap();
+        let first = f
+            .store
+            .say("work", "owner", "first", Some(&worker))
+            .unwrap();
+        let acked = f
+            .store
+            .say("work", "owner", "acked", Some(&worker))
+            .unwrap();
+        let last = f.store.say("work", "owner", "last", Some(&worker)).unwrap();
+        f.store.ack(&worker, &[acked.id]).unwrap();
+        let rows = f.store.messages_after(first.id, last.id).unwrap();
+        assert_eq!(
+            rows.iter().map(|m| m.id).collect::<Vec<_>>(),
+            [acked.id, last.id]
+        );
+        let pool: Vec<Value> = rows
+            .iter()
+            .map(|m| {
+                json!({"sid":m.id,"slug":m.slug,
+            "sender":m.sender,"recipient":m.recipient,"kind":m.kind,"ts":m.ts})
+            })
+            .collect();
+        let direct = f.store.inbox_read(&worker, Some(first.id), None).unwrap();
+        let pooled = f
+            .store
+            .inbox_read(&worker, Some(first.id), Some(json!(pool)))
+            .unwrap();
+        assert_eq!(direct, [last]);
+        assert_eq!(pooled, direct);
+        assert!(
+            f.store
+                .inbox_read(&worker, Some(0), Some(json!([])))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            f.store
+                .messages_after(first.id, first.id)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

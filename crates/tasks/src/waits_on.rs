@@ -265,6 +265,10 @@ impl<'a> Look<'a> {
     /// oldest made first, and the role it holds there: `executor of SLUG`.
     fn under_work(&self, task: &Task, role: &str) -> Option<(String, String)> {
         let mut under = self.below(task);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a busy board path keeps std's in-place sort (crate::order): PULL's waits"
+        )]
         under.sort_unstable_by_key(|t| t.id);
         (under.iter()).find_map(|child| {
             (self.held(child, role)).map(|who| (who, format!("{role} of {}", child.slug)))

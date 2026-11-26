@@ -5,16 +5,15 @@
 //!
 //! The line arrives with schema [`SINCE`]: a build below it never writes one, and a board below it
 //! has no table to hold one. It is read in the opening's one read of the board's schema
-//! ([`sql::OPENING`]) and written only when it is missing, names another schema, or is [`EVERY`] old, so a
-//! board command adds no request in the common case and "last seen" is good to the hour. A writer
+//! (`postgres::writers::OPENING`) and written only when it is missing, names another schema, or is
+//! [`EVERY`] old, so a board command adds no request in the common case and "last seen" is good to the hour. A writer
 //! refused a board behind its build (a project's live board that only `tasks migrate` moves) still
 //! writes its line, so a rebuilt writer stops counting as behind once it has run; one refused a board
 //! ahead of its build writes nothing, refused before any write. The table is schemaless and its line
 //! is written without the schema guard, as builds of other schemas write it; it has no event, so a
 //! line written moves no board marker. Its times are this machine's clock ([`seen_now`]).
 
-use super::statement::both;
-use super::surreal::writers as sql;
+use super::statement::Statement;
 use super::{Failure, Store};
 use crate::board_health::ago;
 use crate::schema::{Access, Schema};
@@ -114,7 +113,8 @@ pub(super) fn opening_vars(program: &Program, host: &str) -> Value {
     json!({"host": host, "path": program.path})
 }
 
-/// The board's version, the line and the board's additive steps [`sql::OPENING`] answered with.
+/// The board's version, the line and the board's additive steps `postgres::writers::OPENING`
+/// answered with.
 pub(super) fn opened(answer: &[Value]) -> (Option<i64>, Line, i64) {
     let read = answer.last().and_then(Value::as_array);
     let found = read.and_then(|read| read.first()).and_then(Value::as_i64);
@@ -196,7 +196,7 @@ impl Store {
     }
 
     fn writer_lines(&self) -> Result<Vec<Writer>, Failure> {
-        let lines = both(sql::LINES, super::postgres::writers::LINES);
+        let lines = Statement::from(super::postgres::writers::LINES);
         let read = self.request(lines, json!({})).map(Some);
         let Some(found) = self.absent_board(read, None)? else {
             return Ok(Vec::new());
@@ -235,7 +235,7 @@ impl Store {
             return;
         }
         let _ = self.request(
-            both(sql::WRITE_LINE, super::postgres::writers::WRITE_LINE),
+            Statement::from(super::postgres::writers::WRITE_LINE),
             json!({
                 "host": self.host,
                 "path": program.path,

@@ -1,7 +1,6 @@
 //! The server clock's terminal watch (`dispatch_callbacks_snapshot`), hc the crate's `fake-hc`
 //! found on PATH as `hc`, as the shared server finds hc: each case runs again in a child process of
 //! its own, in a repository of its own, its terminals a file the case rewrites between ticks.
-use crate::common::Backend;
 
 use super::common::Fixture;
 use super::quiet_callbacks::listen;
@@ -80,14 +79,6 @@ fn in_child_with_hc(name: &str) -> bool {
     false
 }
 
-fn paired_child(name: &str, backend: Backend) -> bool {
-    let suffix = match backend {
-        Backend::PostgreSql => "postgresql",
-        Backend::SurrealDb => "surrealdb",
-    };
-    in_child_with_hc(&format!("{name}::{suffix}"))
-}
-
 /// What hc answers from now on: these terminals, or, given None, a state it cannot read, which it
 /// refuses as hc does when it cannot be asked.
 fn panes(terminals: Option<Value>) {
@@ -136,12 +127,14 @@ fn launch(f: &Fixture, slug: &str, handle: &str, pane: &str) {
         .unwrap();
 }
 
-on_both! {
-fn a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode(backend: Backend) {
-    if !paired_child("blocked_panes::a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode", backend) {
+#[test]
+fn a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode() {
+    if !in_child_with_hc(
+        "blocked_panes::a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode",
+    ) {
         return;
     }
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let parent = f.session("orchestrator");
     let other = f.session("orchestrator");
@@ -208,15 +201,14 @@ fn a_blocked_pane_reaches_the_orchestrator_of_its_work_once_an_episode(backend: 
     tick(&f);
     assert_eq!(heard(), once, "blocking again is a new episode");
 }
-}
 
-on_both! {
-fn hc_failing_is_said_once_and_a_known_block_is_not_repeated(backend: Backend) {
-    if !paired_child("blocked_panes::hc_failing_is_said_once_and_a_known_block_is_not_repeated", backend)
+#[test]
+fn hc_failing_is_said_once_and_a_known_block_is_not_repeated() {
+    if !in_child_with_hc("blocked_panes::hc_failing_is_said_once_and_a_known_block_is_not_repeated")
     {
         return;
     }
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     f.task("tests/pane");
@@ -262,14 +254,15 @@ fn hc_failing_is_said_once_and_a_known_block_is_not_repeated(backend: Backend) {
     ticks(&f, 30);
     assert_eq!(o.drain(&f, &worker, &orch).len(), 1);
 }
-}
 
-on_both! {
-fn with_no_session_launched_into_a_pane_there_is_nothing_to_watch(backend: Backend) {
-    if !paired_child("blocked_panes::with_no_session_launched_into_a_pane_there_is_nothing_to_watch", backend) {
+#[test]
+fn with_no_session_launched_into_a_pane_there_is_nothing_to_watch() {
+    if !in_child_with_hc(
+        "blocked_panes::with_no_session_launched_into_a_pane_there_is_nothing_to_watch",
+    ) {
         return;
     }
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     f.task("tests/pane");
@@ -287,7 +280,6 @@ fn with_no_session_launched_into_a_pane_there_is_nothing_to_watch(backend: Backe
     tick(&f);
     tick(&f);
     assert_eq!(o.drain(&f, &worker, &orch), Vec::<String>::new());
-}
 }
 
 /// An orchestrator, and a worker it oversees launched into `t2`, which waits: both handles, and
@@ -310,12 +302,12 @@ fn waiting_worker(f: &Fixture) -> (String, String, super::callbacks::Listener) {
     (orch, worker, o)
 }
 
-on_both! {
-fn two_clocks_on_one_board_say_an_episode_once(backend: Backend) {
-    if !paired_child("blocked_panes::two_clocks_on_one_board_say_an_episode_once", backend) {
+#[test]
+fn two_clocks_on_one_board_say_an_episode_once() {
+    if !in_child_with_hc("blocked_panes::two_clocks_on_one_board_say_an_episode_once") {
         return;
     }
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, worker, o) = waiting_worker(&f);
     // The slow clock has read what its recipients were told when the other clock's whole tick runs
     // (the shared server's beside a `just symphony --port N` one).
@@ -331,14 +323,15 @@ fn two_clocks_on_one_board_say_an_episode_once(backend: Backend) {
         )]
     );
 }
-}
 
-on_both! {
-fn a_tick_asks_hc_once_for_its_watch_its_pull_and_its_agents_view(backend: Backend) {
-    if !paired_child("blocked_panes::a_tick_asks_hc_once_for_its_watch_its_pull_and_its_agents_view", backend) {
+#[test]
+fn a_tick_asks_hc_once_for_its_watch_its_pull_and_its_agents_view() {
+    if !in_child_with_hc(
+        "blocked_panes::a_tick_asks_hc_once_for_its_watch_its_pull_and_its_agents_view",
+    ) {
         return;
     }
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, worker, o) = waiting_worker(&f);
     let log = Path::new(&std::env::var("FAKE_HC_LOG").unwrap()).to_path_buf();
     let asked = || std::fs::read_to_string(&log).map_or(0, |text| text.lines().count());
@@ -358,14 +351,15 @@ fn a_tick_asks_hc_once_for_its_watch_its_pull_and_its_agents_view(backend: Backe
         "BLOCKED {worker} tests/pane t2 — observed waiting on an approval or a question; inspect its terminal before acting"
     )));
 }
-}
 
-on_both! {
-fn a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away(backend: Backend) {
-    if !paired_child("blocked_panes::a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away", backend) {
+#[test]
+fn a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away() {
+    if !in_child_with_hc(
+        "blocked_panes::a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away",
+    ) {
         return;
     }
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let successor = f.session("orchestrator");
     let (orch, worker, o) = waiting_worker(&f);
     // The orchestrator cannot be reached when the watch sees the pane wait.
@@ -383,14 +377,15 @@ fn a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away
     // Nor is its own hand-over said to it.
     assert!(back.drain(&f, &worker, &orch).is_empty());
 }
-}
 
-on_both! {
-fn a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent(backend: Backend) {
-    if !paired_child("blocked_panes::a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent", backend) {
+#[test]
+fn a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent() {
+    if !in_child_with_hc(
+        "blocked_panes::a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent",
+    ) {
         return;
     }
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let former = f.session("orchestrator");
     let current = f.session("orchestrator");
     let unrelated = f.session("orchestrator");
@@ -399,15 +394,23 @@ fn a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent(ba
     child.parent = Some(former.clone());
     let reviewer = f.session_with(child);
     f.task("tests/reviewer");
-    f.store.take_role("tests/reviewer", &former, "orchestrator").unwrap();
+    f.store
+        .take_role("tests/reviewer", &former, "orchestrator")
+        .unwrap();
     f.store.claim("tests/reviewer", &executor).unwrap();
-    f.store.move_to("tests/reviewer", "review", &executor).unwrap();
-    f.store.take_role("tests/reviewer", &reviewer, "reviewer").unwrap();
-    f.store.record_launch(&NewLaunch {
-        pane: "t3".into(),
-        claude_session: "codex:review-conversation".into(),
-        ..NewLaunch::new("tests/reviewer", &reviewer, "reviewer")
-    }).unwrap();
+    f.store
+        .move_to("tests/reviewer", "review", &executor)
+        .unwrap();
+    f.store
+        .take_role("tests/reviewer", &reviewer, "reviewer")
+        .unwrap();
+    f.store
+        .record_launch(&NewLaunch {
+            pane: "t3".into(),
+            claude_session: "codex:review-conversation".into(),
+            ..NewLaunch::new("tests/reviewer", &reviewer, "reviewer")
+        })
+        .unwrap();
     panes(Some(json!([pane("t3", "working")])));
     let (old, next, other) = (
         listen(&f, &former),
@@ -421,35 +424,56 @@ fn a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent(ba
     let notice = format!(
         "BLOCKED {reviewer} tests/reviewer t3 — observed waiting on an approval or a question; inspect its terminal before acting"
     );
-    assert!(f.store.callback_inbox(&former).unwrap().iter().any(|(_, text)| text == &notice));
-    f.store.hand_over("tests/reviewer", &former, &current).unwrap();
+    assert!(
+        f.store
+            .callback_inbox(&former)
+            .unwrap()
+            .iter()
+            .any(|(_, text)| text == &notice)
+    );
+    f.store
+        .hand_over("tests/reviewer", &former, &current)
+        .unwrap();
     tick(&f);
     let back = crate::callbacks::Listener::new(&format!("{}-back", f.store.database().database()));
     let address = format!("uds:{}", back.path.display());
-    f.store.callback(&former, Some(&address), false, false).unwrap();
-    let blocked = |lines: Vec<String>| lines.into_iter().filter(|line| line.starts_with("BLOCKED ")).collect::<Vec<_>>();
+    f.store
+        .callback(&former, Some(&address), false, false)
+        .unwrap();
+    let blocked = |lines: Vec<String>| {
+        lines
+            .into_iter()
+            .filter(|line| line.starts_with("BLOCKED "))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(blocked(next.drain(&f, &executor, &current)), [notice]);
     assert!(blocked(back.drain(&f, &executor, &former)).is_empty());
     assert!(blocked(other.drain(&f, &executor, &unrelated)).is_empty());
     tick(&f);
-    assert!(blocked(next.drain(&f, &executor, &current)).is_empty(), "one episode is said once");
-}
+    assert!(
+        blocked(next.drain(&f, &executor, &current)).is_empty(),
+        "one episode is said once"
+    );
 }
 
-on_both! {
-fn a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_wakes(backend: Backend) {
-    if !paired_child("blocked_panes::a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_wakes", backend) {
+#[test]
+fn a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_wakes() {
+    if !in_child_with_hc(
+        "blocked_panes::a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_wakes",
+    ) {
         return;
     }
     // The night of the incident: no tool call since before the sleep, its turn retrying its
     // model at each wake, then ended on an error at its prompt, its listener answering throughout.
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let mut child = symphony_board::NewSession::new("worker");
     child.parent = Some(orch.clone());
     let worker = f.session_with(child);
     f.task("tests/quiet");
-    f.store.take_role("tests/quiet", &orch, "orchestrator").unwrap();
+    f.store
+        .take_role("tests/quiet", &orch, "orchestrator")
+        .unwrap();
     f.store.claim("tests/quiet", &worker).unwrap();
     launch(&f, "tests/quiet", &worker, "t2");
     // Its terminal, named for it: the agents view finds a terminal of no conversation by name.
@@ -489,7 +513,6 @@ fn a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_w
         assert_eq!(wake(), Vec::<String>::new(), "not again at each wake");
     }
     drop(w);
-}
 }
 
 /// An orchestrator and a worker it oversees that holds `tests/quiet` with no terminal, its tool
@@ -538,14 +561,17 @@ fn idle_once(worker: &str) -> [String; 2] {
     ["PULL idle=1 (was 0)".to_string(), format!("idle {worker}")]
 }
 
-on_both! {
-fn a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_again_after_a_tool_call(backend: Backend) {
-    if !paired_child("blocked_panes::a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_again_after_a_tool_call", backend) {
+#[test]
+fn a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_again_after_a_tool_call()
+ {
+    if !in_child_with_hc(
+        "blocked_panes::a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_again_after_a_tool_call",
+    ) {
         return;
     }
     // The incident's sessions without a terminal the agents view can bind: a turn ended at its
     // prompt, no tool call since, its listener answering every round of the sweep.
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, worker, o, w) = worker_with_no_terminal(&f);
     // The barrier's sender, never an idle row of its own.
     let sender = f.session("orchestrator");
@@ -561,20 +587,30 @@ fn a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_a
     for _ in 0..2 {
         f.advance(1800.0 - symphony_board::health::LIVE_SECONDS);
         tool_call(&f, &symphony_board::Beat::default());
-        assert_eq!(wake(symphony_board::health::LIVE_SECONDS), nothing, "a tool call within the window is work");
+        assert_eq!(
+            wake(symphony_board::health::LIVE_SECONDS),
+            nothing,
+            "a tool call within the window is work"
+        );
     }
     // One long call holds it at work past the window, until the call could have ended.
-    tool_call(&f, &symphony_board::Beat {
-        busy_for: Some(3600.0),
-        call: Some("long".into()),
-        ended: false,
-    });
+    tool_call(
+        &f,
+        &symphony_board::Beat {
+            busy_for: Some(3600.0),
+            call: Some("long".into()),
+            ended: false,
+        },
+    );
     assert_eq!(wake(1800.0), nothing, "inside a tool call is not idle");
-    tool_call(&f, &symphony_board::Beat {
-        call: Some("long".into()),
-        ended: true,
-        ..symphony_board::Beat::default()
-    });
+    tool_call(
+        &f,
+        &symphony_board::Beat {
+            call: Some("long".into()),
+            ended: true,
+            ..symphony_board::Beat::default()
+        },
+    );
     assert_eq!(
         wake(1800.0),
         idle_once(&worker),
@@ -589,7 +625,11 @@ fn a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_a
         for seconds in [100.0, 150.0] {
             f.advance(seconds);
             tick(&f);
-            assert_eq!(o.drain(&f, &sender, &orch), nothing, "round {round}, after {seconds} s");
+            assert_eq!(
+                o.drain(&f, &sender, &orch),
+                nothing,
+                "round {round}, after {seconds} s"
+            );
         }
         assert_eq!(f.health(&worker), symphony_board::Health::Stale);
         assert_eq!(wake(50.0), nothing, "nor at the round after");
@@ -598,11 +638,18 @@ fn a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_a
     // A tool call is work again, and the rest after it is a new one.
     f.advance(1800.0 - 60.0);
     tool_call(&f, &symphony_board::Beat::default());
-    assert_eq!(wake(60.0), nothing, "back at work, which no PULL is owed for");
+    assert_eq!(
+        wake(60.0),
+        nothing,
+        "back at work, which no PULL is owed for"
+    );
     // The last PULL it heard counted it idle, and no PULL since said otherwise.
     assert_eq!(
         wake(1800.0),
-        ["PULL counts unchanged".to_string(), format!("idle {worker}")],
+        [
+            "PULL counts unchanged".to_string(),
+            format!("idle {worker}")
+        ],
         "re-armed by the tool call"
     );
     assert_eq!(wake(1800.0), nothing);
@@ -611,14 +658,15 @@ fn a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_a
     }
     drop(w);
 }
-}
 
-on_both! {
-fn a_session_that_never_made_a_tool_call_rests_from_when_it_connected(backend: Backend) {
-    if !paired_child("blocked_panes::a_session_that_never_made_a_tool_call_rests_from_when_it_connected", backend) {
+#[test]
+fn a_session_that_never_made_a_tool_call_rests_from_when_it_connected() {
+    if !in_child_with_hc(
+        "blocked_panes::a_session_that_never_made_a_tool_call_rests_from_when_it_connected",
+    ) {
         return;
     }
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, worker, o, w) = worker_with_no_terminal(&f);
     // The barrier's sender, never an idle row of its own.
     let sender = f.session("orchestrator");
@@ -629,11 +677,14 @@ fn a_session_that_never_made_a_tool_call_rests_from_when_it_connected(backend: B
         tick(&f);
         o.drain(&f, &sender, &orch)
     };
-    assert_eq!(wake(symphony_board::health::LIVE_SECONDS), Vec::<String>::new(), "within the window of connecting");
+    assert_eq!(
+        wake(symphony_board::health::LIVE_SECONDS),
+        Vec::<String>::new(),
+        "within the window of connecting"
+    );
     assert_eq!(wake(1800.0), idle_once(&worker));
     assert_eq!(wake(1800.0), Vec::<String>::new());
     drop(w);
-}
 }
 
 /// An older dispatcher's pass over `orch`'s state: it lists no session without a terminal idle,
@@ -647,13 +698,15 @@ fn an_older_pass_forgets(f: &Fixture, orch: &str, worker: &str) {
     row.set(json!({"pull_entries": kept})).unwrap();
 }
 
-on_both! {
-fn an_older_dispatchers_pass_forgets_the_idle_entry_and_the_beat_told_keeps_it_said_once(backend: Backend) {
-    if !paired_child("blocked_panes::an_older_dispatchers_pass_forgets_the_idle_entry_and_the_beat_told_keeps_it_said_once", backend) {
+#[test]
+fn an_older_dispatchers_pass_forgets_the_idle_entry_and_the_beat_told_keeps_it_said_once() {
+    if !in_child_with_hc(
+        "blocked_panes::an_older_dispatchers_pass_forgets_the_idle_entry_and_the_beat_told_keeps_it_said_once",
+    ) {
         return;
     }
     // The server's tick and a detached dispatch of two builds, alternating on one orchestrator.
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, worker, o, w) = worker_with_no_terminal(&f);
     // The barrier's sender, never an idle row of its own.
     let sender = f.session("orchestrator");
@@ -668,7 +721,10 @@ fn an_older_dispatchers_pass_forgets_the_idle_entry_and_the_beat_told_keeps_it_s
     assert_eq!(wake(1800.0), idle_once(&worker));
     let row = || f.store.raw().row("callback_state", orch.as_str());
     let told = row().field("pull_idle").unwrap();
-    assert_eq!(told, json!({worker.as_str(): f.store.board().unwrap().sessions.iter().find(|s| s.row.handle == worker).unwrap().row.connected.to_string()}));
+    assert_eq!(
+        told,
+        json!({worker.as_str(): f.store.board().unwrap().sessions.iter().find(|s| s.row.handle == worker).unwrap().row.connected.to_string()})
+    );
     let recorded = |entry: &str| {
         let entries: Vec<(String, String)> =
             serde_json::from_value(row().field("pull_entries").unwrap()).unwrap();
@@ -678,27 +734,42 @@ fn an_older_dispatchers_pass_forgets_the_idle_entry_and_the_beat_told_keeps_it_s
     for _ in 0..3 {
         an_older_pass_forgets(&f, &orch, &worker);
         assert!(!recorded("idle"));
-        assert_eq!(row().field("pull_idle").unwrap(), told, "the older pass keeps the field");
-        assert_eq!(wake(1800.0), nothing, "forgotten by the older pass, not said again");
+        assert_eq!(
+            row().field("pull_idle").unwrap(),
+            told,
+            "the older pass keeps the field"
+        );
+        assert_eq!(
+            wake(1800.0),
+            nothing,
+            "forgotten by the older pass, not said again"
+        );
         // This build's pass leaves the record without the entry it did not say.
         tick(&f);
         assert_eq!(o.drain(&f, &sender, &orch), nothing);
     }
     // The older one acknowledges a PULL of its own, whose record says nothing of the beats.
     an_older_pass_forgets(&f, &orch, &worker);
-    row().set(json!({"pull_said": {"counts": {}, "entries": [], "liveness_unknown": []}})).unwrap();
+    row()
+        .set(json!({"pull_said": {"counts": {}, "entries": [], "liveness_unknown": []}}))
+        .unwrap();
     let again = wake(1800.0);
-    assert!(!again.iter().any(|line| line.starts_with("idle ")), "{again:?}");
+    assert!(
+        !again.iter().any(|line| line.starts_with("idle ")),
+        "{again:?}"
+    );
     // A tool call still re-arms it across both.
     f.advance(1800.0 - 60.0);
     tool_call(&f, &symphony_board::Beat::default());
     wake(60.0);
     an_older_pass_forgets_nothing_it_lacks(&f, &orch, &worker);
-    assert!(wake(1800.0).contains(&format!("idle {worker}")), "a new rest is said");
+    assert!(
+        wake(1800.0).contains(&format!("idle {worker}")),
+        "a new rest is said"
+    );
     an_older_pass_forgets(&f, &orch, &worker);
     assert!(!wake(1800.0).iter().any(|line| line.starts_with("idle ")));
     drop(w);
-}
 }
 
 /// While the worker works no build lists it idle: the record holds no entry of it.
@@ -717,19 +788,24 @@ fn an_older_pass_forgets_nothing_it_lacks(f: &Fixture, orch: &str, worker: &str)
     );
 }
 
-on_both! {
-fn hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_answer(backend: Backend) {
-    if !paired_child("blocked_panes::hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_answer", backend) {
+#[test]
+fn hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_answer() {
+    if !in_child_with_hc(
+        "blocked_panes::hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_answer",
+    ) {
         return;
     }
-    let f = Fixture::on(backend, crate::common::Seed::default());
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, worker, o) = waiting_worker(&f);
     tick(&f);
     assert_eq!(o.drain(&f, &worker, &orch).len(), 1, "its block, once");
     // The WATCH lines said since the last read; a sleep's gap may say the worker is quiet too.
     let watching = || {
         let lines = o.drain(&f, &worker, &orch);
-        assert!(!lines.iter().any(|l| l.starts_with("BLOCKED ")), "{lines:?}");
+        assert!(
+            !lines.iter().any(|l| l.starts_with("BLOCKED ")),
+            "{lines:?}"
+        );
         (lines.iter())
             .filter(|l| l.starts_with("WATCH hc unanswered at observation: "))
             .count()
@@ -741,7 +817,11 @@ fn hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_ans
         panes((second % 4 != 3).then(|| json!([pane("t2", "blocked")])));
         tick(&f);
     }
-    assert_eq!(watching(), 0, "a failed sample between answers is a slow answer");
+    assert_eq!(
+        watching(),
+        0,
+        "a failed sample between answers is a slow answer"
+    );
     // Failing at every tick for the stretch: one WATCH, at its end and not before.
     answering();
     f.advance(1.0);
@@ -777,5 +857,4 @@ fn hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_ans
     f.advance(1.0);
     tick(&f);
     assert_eq!(watching(), 1, "a stretch awake after the wake");
-}
 }

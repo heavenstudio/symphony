@@ -1,14 +1,14 @@
 //! The cap on an orchestrator's open tasks as a rule's write holds to it ([`crate::slots`]).
 //!
 //! A rule that may start work ([`super::Opens`]) reads, in the same transaction as its task, what
-//! the cap decides on (`Which::Starting`): every slot counter (`counter:['slots', HANDLE]`), the
-//! open tasks through `task_status`, the holds ([`sql::HOLDS`]) and their tasks by id, and their
-//! orchestrator and executor roles through `role_slug`. Then, by id, the tasks above them and the
+//! the cap decides on (`Which::Starting`): every slot counter (`counter` `['slots', HANDLE]`), the
+//! open tasks through `task_status`, the holds (`counter` `['hold', SLUG]`) and their tasks by id,
+//! and their orchestrator and executor roles through `role_slug`. Then, by id, the tasks above them and the
 //! tasks they review, a level a round trip, with their roles. Each task comes with its red mark
 //! ([`crate::red`]), so red work is told apart where the tree is read. Nothing reads a table whole.
 //!
 //! A hold (`Store::hold_blocked`, a landing's while it waits on stamps) moves open work to blocked and
-//! keeps its slot: `counter:['hold', SLUG]`, its `ts` the task's `updated` as the hold left it. It
+//! keeps its slot: `counter` `['hold', SLUG]`, its `ts` the task's `updated` as the hold left it. It
 //! lasts while the task is blocked and that stamp is the task's: every move, change of parent or
 //! of dependencies stamps the task anew, and the board's own writes delete the record then too.
 //! A record and not a field of the task: a reader built before it would refuse a task row holding
@@ -17,7 +17,7 @@
 //! A red's close ([`closing`]) is read so too: never refused, it raises the counts of the open work
 //! under the red, and holds the counters a start would, whether the closing store caps starts or
 //! not (the release run's does not), since a store that does may have decided on the board before it. A
-//! red's own counter (`counter:['red', SLUG]`) is held by its close and by every start that takes
+//! red's own counter (`counter` `['red', SLUG]`) is held by its close and by every start that takes
 //! no slot under it ([`crate::slots::reds`]).
 //!
 //! The write holds the counter of every orchestrator whose open tasks it changes, a start into a
@@ -29,7 +29,6 @@
 //! caught by the write, and one that wrote before it is in what was read.
 
 use super::branches::{self, Recorded};
-use super::surreal::cap as sql;
 use super::{Change, Error, Failure, Opens, Store, View, Which, refused};
 use crate::maps::Collect as _;
 use crate::slots::{self, OPEN};
@@ -40,12 +39,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 mod ledger;
 use ledger::Observation;
 
-pub use super::surreal::cap::STATEMENTS;
-
 /// Rounds of reads by id above the open tasks: deeper than any tree the board holds.
 const DEPTH: usize = 32;
 
-/// The variables [`sql::lets`] and [`sql::field`] read beside the wanted tasks.
+/// The variables `postgres::cap::lets` and `postgres::cap::field` read beside the wanted tasks.
 pub(super) fn vars() -> Value {
     json!({"slot_statuses": OPEN})
 }
@@ -64,7 +61,7 @@ pub(super) fn closing(view: &View, slug: &str, status: Option<&str>) -> Option<O
     })
 }
 
-/// The counters of `kind` a write holds ([`sql::GUARD`]), one for each of `names`, at the `last` of
+/// The counters of `kind` a write holds (`postgres::cap::GUARD`), one for each of `names`, at the `last` of
 /// each as `read` gave it.
 fn held(kind: &str, read: &[(String, i64)], names: &[&str]) -> Vec<Value> {
     let last: HashMap<&str, i64> = read.iter().map(|(n, l)| (n.as_str(), *l)).collect();
@@ -80,7 +77,7 @@ pub(super) struct Ruled {
     pub(super) view: View,
     /// What the rule decided on `view`.
     pub(super) change: Change,
-    /// The counters its write holds ([`sql::GUARD`]): a start's under the cap, refused past it
+    /// The counters its write holds (`postgres::cap::GUARD`): a start's under the cap, refused past it
     /// ([`Store::slots_taken`]), and a red's close's ([`closing`]); none for any other change.
     pub(super) slots: Vec<Value>,
 }
@@ -88,26 +85,26 @@ pub(super) struct Ruled {
 /// An owner's close as the cap judged it ([`Store::closing_slots`]).
 #[derive(Default)]
 pub(super) struct Closed {
-    /// The task's version as read, which the write must still find ([`sql::FENCE`]); none for a
+    /// The task's version as read, which the write must still find (`postgres::cap::FENCE`); none for a
     /// move that reads nothing, into an open status.
     pub(super) version: Option<i64>,
-    /// The counters its write holds ([`sql::GUARD`]).
+    /// The counters its write holds (`postgres::cap::GUARD`).
     pub(super) slots: Vec<Value>,
 }
 
 impl Closed {
-    /// Whether this close's write is fenced on the version read ([`sql::FENCE`]).
+    /// Whether this close's write is fenced on the version read (`postgres::cap::FENCE`).
     pub(super) fn fenced(&self) -> bool {
         self.version.is_some()
     }
 
-    /// Whether this close's write holds counters ([`sql::GUARD`]).
+    /// Whether this close's write holds counters (`postgres::cap::GUARD`).
     pub(super) fn guarded(&self) -> bool {
         !self.slots.is_empty()
     }
 }
 
-/// The version of `slug` as `view` read it, for a write to fence on ([`sql::FENCE`]). A task not on
+/// The version of `slug` as `view` read it, for a write to fence on (`postgres::cap::FENCE`). A task not on
 /// the board is refused at the read: no write goes on unfenced to find one filed since, a red with
 /// work started under it that its counters, judged on nothing, would let count past the cap.
 fn version_read(view: &View, slug: &str) -> Result<i64, Failure> {
@@ -213,10 +210,9 @@ impl Store {
                 .holdings()
                 .into_iter()
                 .map(|(owner, slots)| {
-                    (
-                        owner.to_string(),
-                        slots.into_keys().map(String::from).collect(),
-                    )
+                    let mut held = BTreeSet::new();
+                    held.extend(slots.into_keys().map(String::from));
+                    (owner.to_string(), held)
                 })
                 .collect_map())
         })
@@ -269,7 +265,7 @@ impl Store {
         self.holding(view, slug, opens, Some(cap))
     }
 
-    /// The counters the change `opens` describes holds ([`sql::GUARD`]): refused past `cap` as
+    /// The counters the change `opens` describes holds (`postgres::cap::GUARD`): refused past `cap` as
     /// [`Store::slots_taken`] is, and never with none, a red's close ([`closing`]).
     fn holding(
         &self,
@@ -326,7 +322,7 @@ impl Store {
     /// What a move of `slug` into `status` holds, for a write that reads nothing the cap decides
     /// on, the owner's: no counters unless it closes an open red ([`closing`]), whether this store
     /// caps starts or not, since a store that does may have read the board before it; and, for a
-    /// close, the task's version they were judged at, which the write fences on ([`sql::FENCE`]), a
+    /// close, the task's version they were judged at, which the write fences on (`postgres::cap::FENCE`), a
     /// task not on the board refused at that read ([`version_read`]). A move into an open status
     /// reads nothing.
     pub(super) fn closing_slots(&self, slug: &str, status: &str) -> Result<Closed, Failure> {
@@ -372,7 +368,7 @@ impl Store {
         by: &str,
         kept: Option<&str>,
     ) -> Result<Vec<Value>, Failure> {
-        let Some(cap) = self.slots().filter(|_| by != super::work::OWNER) else {
+        let Some(cap) = self.slots().filter(|_| !self.is_person(by)) else {
             return Ok(Vec::new());
         };
         let opens = Opens {

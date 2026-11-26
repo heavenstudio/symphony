@@ -4,26 +4,31 @@
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::cell::Cell;
-use std::convert::Infallible;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, mpsc};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use symphony_board::port::Start;
 use symphony_board::sys::{Child, Command};
-use symphony_board::{Store, port, rpc, sys};
+use symphony_board::{Store, pg, sys};
 use symphony_server::sys::Taken;
 
+#[expect(
+    dead_code,
+    reason = "Only the private database is needed by this fixture"
+)]
+#[path = "../../../crates/tasks/tests/store/common.rs"]
+mod board;
 #[path = "after_reload/first_run.rs"]
 mod first_run;
 #[path = "after_reload/gate.rs"]
 mod gate;
-#[path = "common/leashed_surreal.rs"]
-mod leashed_surreal;
 #[path = "after_reload/lines.rs"]
 mod lines;
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "common/test_channel.rs"]
+mod test_channel;
 use gate::{Entry, Gate};
 use lines::Lines;
 
@@ -79,7 +84,6 @@ impl OwnedChild {
 }
 impl Drop for OwnedChild {
     fn drop(&mut self) {
-        leashed_surreal::release(&mut self.0);
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -253,8 +257,9 @@ struct Fixture {
     home: PathBuf,
     gate: Gate,
     board: Store,
-    database: OwnedChild,
-    board_address: String,
+    /// The board's database, of its own on the test binary's PostgreSQL, which ends with this
+    /// process however it ends.
+    database: pg::Client,
     /// Each server generation seen, by the start the kernel stamped on it: the drop signals only
     /// one its pid still names, never a process given the pid since.
     generations: Vec<Taken>,
@@ -392,69 +397,15 @@ impl Fixture {
             "source": symphony::reload::client_fingerprint(&root).unwrap(), "distribution": distribution
         }).to_string());
 
-        let surreal = leashed_surreal::binary();
-        // Surreal prints its configured address for :0, so it is told a reserved port, and started
-        // again on another when that port was taken before it bound it (port), every start
-        // within the one backstop, [`LIMIT`]. A readiness announcement from this exact child, and
-        // its own listener on that port, are required before any fixture writes can be sent.
-        let deadline = Instant::now() + LIMIT;
-        let started = port::start_on_free_port(port::ATTEMPTS, deadline, |reserved| {
-            assert_ne!(reserved.port(), 8765);
-            let board_address = reserved.to_string();
-            // Leashed: it ends with this test process, however that ends.
-            let mut database = OwnedChild(
-                sys::spawn_piped(&mut leashed_surreal::memory(&surreal, &board_address)).unwrap(),
-            );
-            let mut database_lines = Lines::of(&mut database.0, &dir.join("board.log"));
-            let server = match database_lines.seen_before("server pid ", deadline) {
-                Ok(said) => leashed_surreal::pid_of(&said).expect("the database's pid"),
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Ok::<_, Infallible>(Start::Ended(database_lines.said()));
-                }
-                Err(_) => panic!(
-                    "{}; {:?}",
-                    stalled("the private database's pid"),
-                    database_lines.history
-                ),
-            };
-            let ready = match database_lines.seen_before("Started web server on ", deadline) {
-                Ok(ready) => ready,
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Ok::<_, Infallible>(Start::Ended(database_lines.said()));
-                }
-                Err(_) => panic!(
-                    "{}; {:?}",
-                    stalled("the private database's announcement"),
-                    database_lines.history
-                ),
-            };
-            assert!(ready.ends_with(&board_address), "{ready}");
-            // Surreal emits that line before binding. Wait for an actual response, including under
-            // instrumentation/load, before schema setup; a log message is not a listening socket,
-            // and an answer counts only once this child itself listens on the port.
-            // Up once it answers; ended once it exits first.
-            let up = test_time::until(
-                "the private database's answer to its health check",
-                deadline.saturating_duration_since(Instant::now()),
-                || {
-                    if database.0.try_wait().unwrap().is_some() {
-                        return Some(false);
-                    }
-                    (rpc::healthy(&board_address)
-                        && port::listens(server, reserved, sys::output).unwrap())
-                    .then_some(true)
-                },
-            )
-            .unwrap_or_else(|stall| panic!("{stall}"));
-            Ok(if up {
-                Start::Up((database, database_lines, board_address))
-            } else {
-                Start::Ended(database_lines.said())
-            })
-        });
-        let ((database, _database_lines, board_address), _) =
-            started.unwrap_or_else(|why| panic!("private database exited before readiness: {why}"));
-        let board = Store::open(rpc::Client::new(&board_address, "sf", "after_reload")).unwrap();
+        let database = board::postgresql();
+        let board = Store::opening_on(
+            database.another().into(),
+            Box::new(symphony_board::sweep::trigger::now),
+            Box::new(sys::pid_alive),
+            &sys::hostname(),
+            &symphony_board::Opening::write(),
+        )
+        .unwrap();
         Self {
             name: name.into(),
             dir,
@@ -463,7 +414,6 @@ impl Fixture {
             gate: Gate::new(),
             board,
             database,
-            board_address,
             generations: Vec::new(),
             began: Instant::now(),
             edited: Cell::new(None),
@@ -508,8 +458,8 @@ impl Fixture {
             .env("SYMPHONY_AFTER_RELOAD_ROOT", &self.root)
             .env("SYMPHONY_AFTER_RELOAD_SERVER", first_run::server_image())
             .env("SYMPHONY_TEST_PID", std::process::id().to_string())
-            .env("TASKS_SERVER", &self.board_address)
-            .env("TASKS_DATABASE", "after_reload")
+            .env("TASKS_SERVER", self.database.addr())
+            .env("TASKS_DATABASE", self.database.database())
             .env(
                 "SYMPHONY_TASKS_CLI",
                 format!("'{}'", tasks_binary().display()),
@@ -650,8 +600,6 @@ impl Drop for Fixture {
         for server in &self.generations {
             server.signal(libc::SIGTERM, || {});
         }
-        let _ = self.database.0.kill();
-        let _ = self.database.0.wait();
         println!(
             "after_reload wall time {:.3}s; logs {}",
             self.began.elapsed().as_secs_f64(),
@@ -822,78 +770,6 @@ fn installations_and_stand_ins_link_the_files_setup_ran() {
     install.wait();
     assert_eq!(resolved(&image), driver, "the install links the stand-in");
     assert!(!f.home.join("bin/next").exists());
-}
-
-/// Names, in a rerun of the test below, the file the rerun writes its database's pid to.
-const LEASH_HELPER: &str = "SYMPHONY_AFTER_RELOAD_LEASH_HELPER";
-const LEASH_TEST: &str = "a_fixtures_leashed_database_ends_when_the_test_that_started_it_is_killed";
-
-/// The private database this binary's fixture and the host-origin one start ends with the test
-/// process that started it, even one killed by a signal, which runs no destructor. The test
-/// reruns itself as that process: the rerun starts the database as the fixtures do, says its
-/// pid once it answers, and waits to be killed.
-#[test]
-fn a_fixtures_leashed_database_ends_when_the_test_that_started_it_is_killed() {
-    if let Some(said) = std::env::var_os(LEASH_HELPER) {
-        let address = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .to_string();
-        let mut database = sys::spawn_piped(&mut leashed_surreal::memory(
-            &leashed_surreal::binary(),
-            &address,
-        ))
-        .unwrap();
-        let mut lines = BufReader::new(database.stdout.take().unwrap()).lines();
-        let pid = lines
-            .find_map(|line| leashed_surreal::pid_of(&line.unwrap()))
-            .expect("the database's pid");
-        test_time::until_true("the database's answer", LIMIT, || rpc::healthy(&address))
-            .unwrap_or_else(|stall| panic!("{stall}"));
-        fs::write(
-            format!("{}.partial", said.to_string_lossy()),
-            pid.to_string(),
-        )
-        .unwrap();
-        fs::rename(format!("{}.partial", said.to_string_lossy()), &said).unwrap();
-        // Its input stays open until this process is killed.
-        loop {
-            std::thread::park();
-        }
-    }
-    let dir = std::env::temp_dir().join(format!("symphony-leash-{}", std::process::id()));
-    fs::create_dir_all(&dir).unwrap();
-    let said = dir.join("database-pid");
-    let mut starter = OwnedChild(
-        sys::spawn_output(
-            Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", LEASH_TEST, "--nocapture"])
-                .env(LEASH_HELPER, &said),
-        )
-        .unwrap(),
-    );
-    let database: i64 = test_time::until("the starter's database's answer", LIMIT, || {
-        let written = fs::read_to_string(&said).ok();
-        assert!(
-            written.is_some() || starter.0.try_wait().unwrap().is_none(),
-            "the starter ended before its database answered"
-        );
-        Some(written?.trim().parse().unwrap())
-    })
-    .unwrap_or_else(|stall| panic!("{stall}"));
-    assert!(sys::pid_alive(database));
-    // The abrupt end: SIGKILL, so nothing of the starter's runs after it.
-    starter.0.kill().unwrap();
-    starter.0.wait().unwrap();
-    // Only the leash ends the database now: it would otherwise serve on until the backstop.
-    test_time::until_true(
-        format!("database {database} to end with the test that started it"),
-        LIMIT,
-        || !sys::pid_alive(database),
-    )
-    .unwrap_or_else(|stall| panic!("{stall}"));
-    fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

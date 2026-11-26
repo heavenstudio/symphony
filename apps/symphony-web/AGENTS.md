@@ -25,18 +25,21 @@ A page kind is an entry under `kinds/` that exports `run` and `stop`, named in `
   `document.ts`, `editor.tsx`, `asks.tsx` ([REVIEW](../../docs/workflow/REVIEW.md#commenting-in-place)).
 - `board`, `/tasks`: `board.tsx`, `boardlive.tsx`, `boardwait.tsx`, `flow.tsx`
   ([the board's design](../../docs/product/analysis/board-design.md)).
-- `task`, `/task/SLUG`: `task-page.tsx`, `task-live.ts`, `parts.ts`, `gates.tsx`, `timeline.tsx`,
-  `timeline-cost.ts`, `task-diff.tsx`, `task-diff-files.tsx`, `attempts.tsx`, and for a custom
-  workflow's task `nextactions.tsx`, `guards.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
+- `task`, `/task/SLUG`: `task-page.tsx`, `task-live.ts`, `parts.ts`, `gates.tsx`, `kind.ts`,
+  `timeline.tsx`, `timeline-cost.ts`, `task-diff.tsx`, `task-diff-files.tsx`, `attempts.tsx`, for
+  a task with an owner `owner-part.tsx`, for a holder with a session `session-part.tsx`, and for a
+  custom workflow's task `nextactions.tsx`, `guards.tsx` ([TASKS](../../docs/workflow/TASKS.md#gates),
   [the timeline](../../docs/workflow/TASKS.md#the-timeline),
   [WORKFLOW](../../docs/workflow/WORKFLOW.md#the-app)).
-- `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx` (what a press does,
-  `session-press.ts`)
-  ([TASKS](../../docs/workflow/TASKS.md#the-agents-api)).
-- `reports`, `/reports`: `reports.tsx`, `chart.tsx`.
+- `agents`, `/agents`: `agents.tsx`, `agents-live.ts`, `session.tsx` (which control a session is
+  given `session-control.ts`, which a task's role chips read too; what a press does
+  `session-press.ts`) ([TASKS](../../docs/workflow/TASKS.md#the-agents-api)).
+- `reports`, `/reports`: `reports.tsx`, its Landed tasks tab `reports-landed.tsx`, `chart.tsx`
+  ([REPORTS](../../docs/product/REPORTS.md)).
 - `runs`, `/runs`: `runs.tsx` ([RUNS](../../docs/workflow/RUNS.md#the-runs-page)).
 - `settings`, `/settings`: `settings.tsx`
   ([PROJECT_FILE](../../docs/operations/PROJECT_FILE.md#the-settings-page)).
+- `people`, `/people`: `people.tsx` ([TASKS](../../docs/workflow/TASKS.md#the-people-page)).
 - `panel`, persistent (the chat, add task, activity, toasts, the pending bar, Appearance):
   `panel.tsx`, `quick.tsx`, `panel-model.ts`, `panel-focus.ts`, `appearance.tsx`
   ([REVIEW](../../docs/workflow/REVIEW.md#chat)).
@@ -67,7 +70,8 @@ What the kinds share:
   draws as the blocks do, are `media-picture.tsx`.
 - **The shared controls** (`button.tsx`, `input.tsx`, `textarea.tsx`, `select.tsx`, `tabs.tsx`,
   `tooltip.tsx`), the attach control (`attach.tsx`, its sending `attach-upload.ts`), the task card
-  (`taskcard.tsx`) and a task's work phases (`work-phases.tsx`).
+  (`taskcard.tsx`), a task's work phases (`work-phases.tsx`) and whose a card or a task is, with
+  its hand-over (`owner.tsx`, its read `owner-read.ts`).
 - **Styles** (`styles/`, [their README](src/styles/README.md)): the shared sheet
   `styles/shared.css`, which states the cascade's order, the media layer's `styles/media.css`,
   and a kind's own sheet, imported by its module.
@@ -102,6 +106,9 @@ Each is one a lint or a test does not hold by itself, or names the one that does
   `NO_ANSWER`, and is tried again through `tryAgain` (`state.ts`) while nothing is drawn. Such a
   part looks on this device again (`parts.ts`), so a database that opened after the store's
   500 ms deadline still gives the copy when the server does not answer.
+- **A page explains nothing of itself** (RULES.md `code/pages-explain-nothing`): no lead, legend
+  or note says what it shows, a heading is a short label, and a control that cannot act is not
+  drawn.
 - **No wait by a number** (RULES.md `code/no-timed-waits`): a wait is for its event, and a number
   paces one only through `timing.ts`'s helpers. Biome refuses the rest.
 - **Every key the browser stores goes through `stored`, and every link through `href`**
@@ -137,13 +144,13 @@ Each is one a lint or a test does not hold by itself, or names the one that does
 `/` and `/tasks` each have a 300 KB first-visit gzip cap and a 20 KB return-visit cap, the
 owner's, which no agent loosens. Under them the first visits of home, the task board and a task's
 page are held to `HOME_FIRST_VISIT_BYTES`, `TASKS_FIRST_VISIT_BYTES` and `TASK_FIRST_VISIT_BYTES`
-(`apps/symphony-web-tests/tests/browser/main.rs`, whose `budget` tests print each page's requests
-and say what a visit counts). One is raised only by its task's orchestrator's recorded decision
-once the cut came first, naming the constant (`just tasks gate SLUG
+(`apps/symphony-web-tests/tests/browser/main.rs`), whose `budget` tests print each page's requests
+and run at the tip of every client change
+(`just test-rs -p symphony-web-tests --test browser -- budget`). One is raised only by its task's
+orchestrator once the cut came first (`just tasks gate SLUG
 apps/symphony-web-tests/tests/browser/main.rs:NAME --raise NEW`,
-[TASKS](../../docs/workflow/TASKS.md#gate-decisions)), never by an agent's own word. `report.sh OUT` says
-what each kind of a build makes a browser fetch and why a kind grew; the budget test stays the
-measure of a visit.
+[TASKS](../../docs/workflow/TASKS.md#gate-decisions)). `report.sh OUT` says what each kind of a build
+makes a browser fetch and why a kind grew; the budget test stays the measure of a visit.
 
 ## The tools
 

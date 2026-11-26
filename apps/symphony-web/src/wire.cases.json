@@ -74,6 +74,7 @@
         ["/tasks", "Board"],
         ["/reports", "Reports"],
         ["/settings", "Settings"],
+        ["/people", "People"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -123,6 +124,7 @@
         ["/tasks", "Board"],
         ["/reports", "Reports"],
         ["/settings", "Settings"],
+        ["/people", "People"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -172,6 +174,7 @@
         ["/tasks", "Board"],
         ["/reports", "Reports"],
         ["/settings", "Settings"],
+        ["/people", "People"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -221,6 +224,7 @@
         ["/tasks", "Board"],
         ["/reports", "Reports"],
         ["/settings", "Settings"],
+        ["/people", "People"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -278,6 +282,7 @@
         ["/tasks", "Board"],
         ["/reports", "Reports"],
         ["/settings", "Settings"],
+        ["/people", "People"],
         ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
@@ -4084,6 +4089,14 @@
               { "id": "working", "label": "Working", "hours": 30.5 },
               { "id": "awaiting", "label": "Awaiting", "hours": 6.0 }
             ]
+          },
+          "landed": {
+            "tasks": 3,
+            "median": 1.5,
+            "p90": 2.8,
+            "lined_cost": 2.0,
+            "lines": 400,
+            "unread": 1
           }
         }
       ],
@@ -4097,89 +4110,6 @@
         }
       ],
       "unread": ["/repo/.git/symphony/reports/2026-11-08.json: not read"],
-      "landed": {
-        "tasks": 2,
-        "without": 1,
-        "median": 1.5,
-        "dearest": [
-          {
-            "slug": "sim/jump",
-            "at": 1794189600.0,
-            "tokens": {
-              "input": 10,
-              "cache_write_5m": 2000,
-              "cache_write_1h": 300,
-              "cache_read": 90000,
-              "output": 1500,
-              "calls": 4
-            },
-            "cost": {
-              "dollars": 2.0,
-              "input": 0.01,
-              "cache_write_5m": 0.25,
-              "cache_write_1h": 0.05,
-              "cache_read": 0.45,
-              "output": 1.24,
-              "unpriced": [],
-              "prices": "2026-11-16"
-            }
-          }
-        ],
-        "first_round": {
-          "tokens": {
-            "input": 10,
-            "cache_write_5m": 2000,
-            "cache_write_1h": 300,
-            "cache_read": 90000,
-            "output": 1500,
-            "calls": 4
-          },
-          "cost": {
-            "dollars": 2.0,
-            "input": 0.01,
-            "cache_write_5m": 0.25,
-            "cache_write_1h": 0.05,
-            "cache_read": 0.45,
-            "output": 1.24,
-            "unpriced": [],
-            "prices": "2026-11-16"
-          }
-        },
-        "later_rounds": {
-          "tokens": {
-            "input": 10,
-            "cache_write_5m": 2000,
-            "cache_write_1h": 300,
-            "cache_read": 90000,
-            "output": 1500,
-            "calls": 4
-          },
-          "cost": {
-            "dollars": 1.0,
-            "input": 0.01,
-            "cache_write_5m": 0.25,
-            "cache_write_1h": 0.05,
-            "cache_read": 0.45,
-            "output": 0.24,
-            "unpriced": [
-              {
-                "model": "gpt-x",
-                "speed": "standard",
-                "tokens": {
-                  "input": 10,
-                  "cache_write_5m": 2000,
-                  "cache_write_1h": 300,
-                  "cache_read": 90000,
-                  "output": 1500,
-                  "calls": 4
-                }
-              }
-            ],
-            "prices": "2026-11-16"
-          }
-        },
-        "again": 1
-      },
       "prices": "2026-11-16"
     },
     "emptyReports": {
@@ -4191,8 +4121,109 @@
       "first": null,
       "marks": [],
       "unread": [],
-      "landed": null,
       "prices": ""
+    },
+    "landed": {
+      "grain": "day",
+      "days": 1,
+      "from": 1794182400.0,
+      "to": 1794268800.0,
+      "tasks": [
+        {
+          "slug": "app/charts",
+          "at": 1794189600.0,
+          "kind": "feature",
+          "first": 2.0,
+          "later": 1.5,
+          "tokens": 120000,
+          "unpriced": true,
+          "reviews": 2,
+          "lines": 400
+        },
+        {
+          "slug": "docs/guide",
+          "at": 1794189600.0,
+          "kind": "docs",
+          "first": 1.0,
+          "later": 0.0,
+          "tokens": 120000,
+          "unpriced": false,
+          "reviews": 0,
+          "lines": null
+        },
+        {
+          "slug": "generated/outputs",
+          "at": 1794189600.0,
+          "kind": null,
+          "first": 0.5,
+          "later": 0.0,
+          "tokens": 120000,
+          "unpriced": false,
+          "reviews": 0,
+          "lines": 0
+        }
+      ],
+      "without": 1,
+      "figures": {
+        "tasks": 3,
+        "median": 1.0,
+        "mean": 1.6666666666666667,
+        "p90": 3.0,
+        "cost": 5.0,
+        "later": 1.5,
+        "back": 1,
+        "lined": 1,
+        "lined_cost": 3.5,
+        "lines": 400,
+        "unlined": 1,
+        "unread": 1
+      },
+      "kinds": [
+        {
+          "kind": "feature",
+          "tasks": 1,
+          "median": 3.5,
+          "cost": 3.5,
+          "lined_cost": 3.5,
+          "lines": 400
+        },
+        { "kind": "docs", "tasks": 1, "median": 1.0, "cost": 1.0, "lined_cost": 0.0, "lines": 0 },
+        { "kind": null, "tasks": 1, "median": 0.5, "cost": 0.5, "lined_cost": 0.0, "lines": 0 }
+      ],
+      "reviews": [
+        { "reviews": 0, "tasks": 2, "first": 0.75, "later": 0.0, "median": 0.75 },
+        { "reviews": 2, "tasks": 1, "first": 2.0, "later": 1.5, "median": 3.5 }
+      ],
+      "kinds_from": 1794186000.0,
+      "prices": "2026-11-16",
+      "unread": ["/repo/.git/symphony/reports/2026-11-08.json: not read"]
+    },
+    "emptyLanded": {
+      "grain": "day",
+      "days": 0,
+      "from": 0.0,
+      "to": 0.0,
+      "tasks": [],
+      "without": 0,
+      "figures": {
+        "tasks": 0,
+        "median": null,
+        "mean": null,
+        "p90": null,
+        "cost": 0.0,
+        "later": 0.0,
+        "back": 0,
+        "lined": 0,
+        "lined_cost": 0.0,
+        "lines": 0,
+        "unlined": 0,
+        "unread": 0
+      },
+      "kinds": [],
+      "reviews": [],
+      "kinds_from": null,
+      "prices": "",
+      "unread": []
     },
     "settings": {
       "files": [
@@ -4214,7 +4245,6 @@
         {
           "id": "integrations",
           "title": "Integrations and tools",
-          "about": "About Integrations and tools.",
           "entries": [
             {
               "id": "herdr",
@@ -4268,7 +4298,6 @@
         {
           "id": "models",
           "title": "Models and limits",
-          "about": "About Models and limits.",
           "entries": [
             {
               "id": "models",
@@ -4318,8 +4347,7 @@
         },
         {
           "id": "reviewed",
-          "title": "Shown here, changed by a reviewed task",
-          "about": "About Shown here, changed by a reviewed task.",
+          "title": "Reviewed settings",
           "entries": [
             {
               "id": "landing",
@@ -4363,7 +4391,6 @@
         {
           "id": "device",
           "title": "This device",
-          "about": "About This device.",
           "entries": [
             {
               "id": "appearance",
@@ -4407,6 +4434,102 @@
       ]
     },
     "emptySettings": { "files": [], "sections": [] },
+    "people": {
+      "people": [
+        {
+          "name": "ana",
+          "display": "Ana Lima",
+          "powers": ["read", "speak", "decide"],
+          "own": ["speak"],
+          "groups": ["staff"],
+          "signins": ["tailscale", "github"],
+          "git": ["ana-lima"],
+          "profile": true,
+          "addresses": { "email": "ana@example.com", "slack": "U024BE7LH" },
+          "notices": [
+            { "kind": "card", "way": "slack" },
+            { "kind": "question" },
+            { "kind": "verdict", "way": "email" }
+          ]
+        },
+        {
+          "name": "bo",
+          "display": "bo",
+          "powers": ["read", "administer"],
+          "own": ["administer"],
+          "groups": [],
+          "signins": [],
+          "git": [],
+          "profile": false
+        },
+        {
+          "name": "cy",
+          "display": "Cy Okafor",
+          "powers": ["read"],
+          "own": ["read"],
+          "groups": [],
+          "signins": ["tailscale"],
+          "git": [],
+          "profile": true,
+          "addresses": {},
+          "notices": [{ "kind": "card" }, { "kind": "question" }, { "kind": "verdict" }]
+        }
+      ],
+      "groups": [{ "name": "staff", "powers": ["decide"] }],
+      "log": [
+        {
+          "n": 1,
+          "at": 1763003600.0,
+          "by": "owner",
+          "did": "group-add",
+          "name": "staff",
+          "powers": ["decide"]
+        },
+        {
+          "n": 2,
+          "at": 1763007200.0,
+          "by": "owner",
+          "did": "add",
+          "name": "ana",
+          "powers": ["speak"]
+        },
+        {
+          "n": 3,
+          "at": 1763010800.0,
+          "by": "owner",
+          "did": "join",
+          "name": "ana",
+          "group": "staff"
+        },
+        {
+          "n": 4,
+          "at": 1763014400.0,
+          "by": "owner",
+          "did": "add",
+          "name": "bo",
+          "powers": ["administer"]
+        },
+        {
+          "n": 5,
+          "at": 1763018000.0,
+          "by": "owner",
+          "did": "add",
+          "name": "cy",
+          "powers": ["read"]
+        }
+      ],
+      "revision": 5,
+      "administers": true,
+      "machine": true
+    },
+    "emptyPeople": {
+      "people": [],
+      "groups": [],
+      "log": [],
+      "revision": 0,
+      "administers": true,
+      "machine": true
+    },
     "taskTokens": {
       "total": {
         "input": 20,
@@ -5673,9 +5796,10 @@
         }
       ],
       "listening": true,
-      "recipient": "amber-heron"
+      "recipient": "amber-heron",
+      "may_ask": true
     },
-    "noAsks": { "asks": [], "listening": false, "recipient": null }
+    "noAsks": { "asks": [], "listening": false, "recipient": null, "may_ask": false }
   },
   "carried": [
     {
@@ -5781,8 +5905,8 @@
       "rust": "crates/symphony-api/src/project.rs own_pages",
       "typescript": "ownPages, src/project.ts",
       "source": [
-        "    pub fn own_pages(&self) -> [(String, &'static str); 8] {",
-        "        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE, REPORTS, RUNS, SETTINGS};",
+        "    pub fn own_pages(&self) -> [(String, &'static str); 9] {",
+        "        use page_names::{AGENTS, BOARD, DOCS, HOME, PEOPLE, QUEUE, REPORTS, RUNS, SETTINGS};",
         "        [",
         "            (\"/\".into(), HOME),",
         "            (\"/queue\".into(), QUEUE),",
@@ -5790,6 +5914,7 @@
         "            (\"/tasks\".into(), BOARD),",
         "            (\"/reports\".into(), REPORTS),",
         "            (\"/settings\".into(), SETTINGS),",
+        "            (\"/people\".into(), PEOPLE),",
         "            (\"/runs\".into(), RUNS),",
         "            (\"/agents\".into(), AGENTS),",
         "        ]",
@@ -6210,7 +6335,7 @@
     },
     {
       "rust": "crates/symphony-api/src/agents.rs control",
-      "typescript": "sessionControl, src/session.tsx",
+      "typescript": "sessionControl, src/session-control.ts",
       "source": [
         "    pub fn control(&self, local: bool) -> Option<SessionControl<'_>> {",
         "        let url = self.url.as_deref().filter(|url| web_address(url));",
@@ -6225,7 +6350,7 @@
     },
     {
       "rust": "crates/symphony-api/src/agents.rs via_parent",
-      "typescript": "viaParent, src/session.tsx",
+      "typescript": "viaParent, src/session-control.ts",
       "source": [
         "    pub fn via_parent(&self, handle: &str) -> bool {",
         "        self.handle != handle",

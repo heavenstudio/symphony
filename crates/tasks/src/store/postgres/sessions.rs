@@ -7,6 +7,23 @@ pub(in crate::store) const HANDLES: Pg<'static> = Pg::Read(std::borrow::Cow::Bor
     "coalesce((SELECT jsonb_agg(handle) FROM session), '[]'::jsonb)",
 ));
 
+/// Every name a new session's handle may not be: each session's handle, and on a board with the
+/// step that keeps them each person's and each group's name. One request, a block that names the
+/// people's tables only where the board has them.
+pub(in crate::store) const TAKEN: Pg<'static> = Pg::Script(
+    std::borrow::Cow::Borrowed(concat!(
+        "board_answer := coalesce((SELECT jsonb_agg(handle) FROM session), '[]'::jsonb);
+IF ",
+        super::people::people_held!(),
+        " THEN
+    board_answer := board_answer
+        || coalesce((SELECT jsonb_agg(doc -> 'name') FROM people), '[]'::jsonb)
+        || coalesce((SELECT jsonb_agg(doc -> 'name') FROM people_group), '[]'::jsonb);
+END IF;"
+    )),
+    None,
+);
+
 /// A session, its parent there when it names one, and a handle nobody took meanwhile.
 const REGISTER: &str = "IF v ? 'parent' AND NOT EXISTS (SELECT 1 FROM session WHERE handle = v ->> 'parent') THEN
     RAISE EXCEPTION '%', v ->> 'orphan';
@@ -21,7 +38,7 @@ IF NOT FOUND THEN
     RAISE EXCEPTION 'stale';
 END IF;";
 
-/// The tasks `v ->> 'handle'` holds that another could take over (`super::super::surreal::CLAIMABLE`).
+/// The tasks `v ->> 'handle'` holds that another could take over.
 /// Needs `executing`.
 pub(in crate::store) const CLAIMABLE: &str =
     "coalesce((SELECT jsonb_agg(r.slug) FROM role r JOIN task t ON t.slug = r.slug

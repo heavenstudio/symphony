@@ -16,7 +16,7 @@ use crate::Database;
 use crate::pg::Step;
 use crate::store::messages::DELIVERED;
 use crate::store::reading::native_bounds;
-use crate::store_fixture::{Backend, Fixture, Seed};
+use crate::store_fixture::{Fixture, Seed};
 use serde_json::{Value, json};
 
 /// The tables no read of a write, a recipient or a tick scans to keep a few rows.
@@ -81,15 +81,13 @@ fn by_any(node: &Value, table: &str) -> bool {
 /// The plan PostgreSQL gives the read `statement` with `vars`, as the store sends it, on `f`'s
 /// board, made without the ways [`OFF`] names for its transaction alone.
 fn planned(f: &Fixture, statement: &Pg, vars: &Value) -> Value {
-    let Some(Request::Steps { steps, .. }) = request(statement, false) else {
+    let Request::Steps { steps, .. } = request(statement, false) else {
         panic!("a read is steps: {statement:?}");
     };
     let [(sql, true)] = steps.as_slice() else {
         panic!("a read is one statement binding its variables: {steps:?}");
     };
-    let Database::PostgreSql(client) = f.other_database() else {
-        panic!("this board is on PostgreSQL");
-    };
+    let Database::PostgreSql(client) = f.other_database();
     let explain = format!("EXPLAIN (FORMAT JSON) {sql}");
     let vars = vars.to_string();
     let settings = OFF.map(|setting| format!("SELECT set_config('{setting}', 'off', true)"));
@@ -106,7 +104,7 @@ fn board() -> Fixture {
         .session("amber-heron")
         .session("swift-hare")
         .task("sim/jump", "in_progress");
-    let f = Fixture::on(Backend::PostgreSql, seed);
+    let f = Fixture::new(seed);
     f.store
         .callback("amber-heron", Some("codex:0a1b2c3d"), false, false)
         .unwrap();
@@ -203,7 +201,7 @@ fn a_read_of_a_watched_table_by_no_index_is_found_however_deep_it_is_planned() {
          AND EXISTS (SELECT 1 FROM message m WHERE strpos(m.text, v ->> 'kind') > 0))",
     );
     let mut found = unindexed(&planned(&f, &scan, &json!({"kind": "worker"})));
-    found.sort();
+    crate::order::sort_by(&mut found, &Ord::cmp);
     assert_eq!(found, ["Seq Scan on message", "Seq Scan on session"]);
     // An index walked whole for its order, under a condition it does not serve.
     let walk = Pg::read(
@@ -228,9 +226,7 @@ fn a_join_whose_index_is_gone_is_found_by_the_inner_scan_its_join_filter_keeps_r
         unindexed(&plan).is_empty(),
         "session by session_handle: {plan:#}"
     );
-    let Database::PostgreSql(client) = f.other_database() else {
-        panic!("this board is on PostgreSQL");
-    };
+    let Database::PostgreSql(client) = f.other_database();
     client
         .request(&[Step::bare("DROP INDEX session_handle")])
         .unwrap();

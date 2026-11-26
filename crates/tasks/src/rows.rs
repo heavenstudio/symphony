@@ -6,10 +6,10 @@
 //!
 //! A row of an open table ([`crate::schema::OPEN`]) is read past a field its struct does not know:
 //! an additive step's, which a build without the step reads around and whose writes keep it. Each
-//! row refuses one read exactly, as a dump is read ([`crate::objects::read_exact`]), since a copy,
-//! an export or a move to another engine made of it would drop it; every other read hands the row
-//! only the fields it names ([`open_row`], [`crate::objects::read`]), as a task's record does
-//! ([`crate::store`]'s `Beside`).
+//! row refuses one read exactly, as a dump is read ([`crate::objects::read_exact`]), since a copy
+//! or an export made of it would drop it; every other read hands the row only the fields it names
+//! ([`open_row`], [`crate::objects::read`]), as a task's record does ([`crate::store`]'s
+//! `Beside`).
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -49,7 +49,7 @@ impl Dump {
     /// A dump as `tasks-copy --board --out` writes it, refused whole if it has a table or a column the copy
     /// does not know, naming it: the copy would drop it.
     pub fn from_json(text: &str) -> Result<Dump, String> {
-        let tables: Map<String, Value> = serde_json::from_str(text)
+        let tables: Map<String, Value> = serde_json::from_slice(text.as_bytes())
             .map_err(|e| format!("the dump is not a board's JSON: {e}"))?;
         Dump::from_tables(tables)
     }
@@ -122,7 +122,7 @@ pub(crate) fn open_row(name: &str) -> bool {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRow {
-    /// SQLite's row id: the order tasks were created in (`sid` in SurrealDB, whose `id` is the record's).
+    /// SQLite's row id: the order tasks were created in (`sid` on the board, whose `id` is the record's).
     #[serde(alias = "sid")]
     pub id: i64,
     pub slug: String,
@@ -213,6 +213,18 @@ pub struct MessageRow {
     pub kind: String,
     pub text: String,
     pub ts: f64,
+    /// A person's line: one a person a board named wrote ([`crate::Store::for_person`]), never the
+    /// owner's or a session's. A board without the step that adds it holds none
+    /// ([`crate::schema::ADDED`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub person: bool,
+}
+
+impl MessageRow {
+    /// Whether a person wrote it: the owner, or a person a board named ([`MessageRow::person`]).
+    pub fn by_person(&self) -> bool {
+        self.sender == "owner" || self.person
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -246,7 +258,7 @@ pub struct DeliveryKeyRow {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AskRow {
-    /// The order asks were opened in: `ask N` (`sid` in SurrealDB, whose `id` is the record's).
+    /// The order asks were opened in: `ask N` (`sid` on the board, whose `id` is the record's).
     #[serde(alias = "sid")]
     pub id: i64,
     /// `verdict`, `message` (a card's), `comment`, `chat` or `task` (a message on a task's thread).
@@ -366,7 +378,7 @@ pub struct UsageRow {
     pub last: f64,
 }
 
-/// A custom delivery workflow's record (`crate::schema`'s `workflow`, from schema 24): the parts
+/// A custom delivery workflow's record (the table `workflow`, from schema 24): the parts
 /// of its id, its kind, what it records and when it was written. Its key is its id because a
 /// record names what it is of (`['event', slug, revision]`), and the task fence finds a task's
 /// transition by it.
@@ -383,7 +395,7 @@ fn two() -> i64 {
     2
 }
 
-/// A boolean as SQLite writes it (0 or 1) or as SurrealDB does.
+/// A boolean as SQLite writes it (0 or 1) or as the board does.
 fn flag<'de, D: Deserializer<'de>>(from: D) -> Result<bool, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]

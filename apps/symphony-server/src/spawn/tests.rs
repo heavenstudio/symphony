@@ -1,5 +1,4 @@
 use super::{blocking, task};
-use std::sync::mpsc;
 use test_time::wait::{FLOOR, until};
 
 #[tokio::test]
@@ -39,9 +38,9 @@ async fn calls_at_once_each_get_their_own_answer() {
 
 #[tokio::test]
 async fn a_call_dropped_before_its_end_still_runs_its_work_to_the_end() {
-    let (started, wait_start) = mpsc::channel();
-    let (go, wait_go) = mpsc::channel::<()>();
-    let (ended, wait_end) = mpsc::channel();
+    let (started, wait_start) = crate::test_channel::channel();
+    let (go, wait_go) = crate::test_channel::channel::<()>();
+    let (ended, wait_end) = crate::test_channel::channel();
     let call = blocking(move || {
         started.send(()).unwrap();
         wait_go.recv().unwrap();

@@ -8,8 +8,9 @@ use crate::protocol::{
     Ask, CacheVersion, CardData, CardGates, Chosen, Declare, PROTOCOL, ReadCards, Recognises,
     Render, Slot, Validate,
 };
+use crate::vocabulary::TaskOffer;
 use crate::vocabulary::{Block, FieldValue, Picture, Span};
-use crate::{Card, CardKind, Component};
+use crate::{BoardAction, Card, CardKind, Component, Sender, Submission, Submitted, TaskRef};
 
 /// What `plugin` answers to `lines`, by id: each answer line read raw, with the plugin's time.
 fn served(plugin: &dyn Plugin, lines: &[String]) -> BTreeMap<u64, (String, Option<f64>)> {
@@ -744,5 +745,137 @@ fn a_reads_cards_are_each_answered_by_every_kind_in_the_plugins_order_as_linked(
         panicked[&4].0.starts_with(r#"{"answer":[[{"#),
         "{}",
         panicked[&4].0
+    );
+}
+
+/// A board action that answers who sent its submission, where it is told, in the line it says.
+struct Signing;
+
+impl BoardAction for Signing {
+    fn name(&self) -> &str {
+        "sign"
+    }
+    fn offer(&self, _: &std::path::Path, _: &TaskRef<'_>) -> Result<TaskOffer, String> {
+        Ok(TaskOffer::default())
+    }
+    fn submit(
+        &self,
+        _: &std::path::Path,
+        _: &TaskRef<'_>,
+        submission: &Submission,
+    ) -> Result<Submitted, String> {
+        Ok(Submitted {
+            said: format!("signed {} by nobody", submission.payload),
+            released: Vec::new(),
+        })
+    }
+    fn submit_from(
+        &self,
+        _: &std::path::Path,
+        _: &TaskRef<'_>,
+        submission: &Submission,
+        sender: &Sender,
+    ) -> Result<Submitted, String> {
+        Ok(Submitted {
+            said: format!(
+                "signed {} by {} ({}, {})",
+                submission.payload,
+                sender.name,
+                sender.display,
+                sender.git.join(" ")
+            ),
+            released: Vec::new(),
+        })
+    }
+}
+
+/// A board action written before submissions said who sent them: `submit` alone.
+struct Unsigned;
+
+impl BoardAction for Unsigned {
+    fn name(&self) -> &str {
+        "unsigned"
+    }
+    fn offer(&self, _: &std::path::Path, _: &TaskRef<'_>) -> Result<TaskOffer, String> {
+        Ok(TaskOffer::default())
+    }
+    fn submit(
+        &self,
+        _: &std::path::Path,
+        _: &TaskRef<'_>,
+        submission: &Submission,
+    ) -> Result<Submitted, String> {
+        Ok(Submitted {
+            said: format!("took {}", submission.payload),
+            released: Vec::new(),
+        })
+    }
+}
+
+struct Acting;
+
+impl Plugin for Acting {
+    fn name(&self) -> &str {
+        "acting"
+    }
+    fn board_actions(&self) -> Vec<&dyn BoardAction> {
+        vec![&Signing, &Unsigned]
+    }
+}
+
+fn submitting(id: u64, action: &str, sender: Option<Sender>) -> String {
+    let mut asked = crate::protocol::Submit::new(
+        action.into(),
+        "/r".into(),
+        crate::protocol::TaskData::of(&TaskRef {
+            slug: "a/b",
+            status: "review",
+            branch: "a/b",
+        }),
+        Submission {
+            payload: "tip".into(),
+            note: String::new(),
+        },
+    );
+    asked.sender = sender;
+    asking(id, asked)
+}
+
+#[test]
+fn a_submission_hands_its_sender_to_submit_from_and_one_with_none_to_submit() {
+    let ana = Sender::new("ana", "Ana Lima", vec!["ana-l".into(), "al".into()]);
+    let answers = served(
+        &Acting,
+        &[
+            submitting(1, "sign", Some(ana.clone())),
+            submitting(2, "sign", None),
+            // An action that reads no sender answers by `submit`, told or not.
+            submitting(3, "unsigned", Some(ana)),
+        ],
+    );
+    let said = |said: &str| {
+        answer_text::<crate::protocol::Submit>(&Ok(Submitted {
+            said: said.into(),
+            released: Vec::new(),
+        }))
+    };
+    assert_eq!(
+        answers[&1].0,
+        said("signed tip by ana (Ana Lima, ana-l al)")
+    );
+    assert_eq!(answers[&2].0, said("signed tip by nobody"));
+    assert_eq!(answers[&3].0, said("took tip"));
+}
+
+#[test]
+fn a_submission_from_a_host_of_an_older_minor_reads_with_no_sender() {
+    let line = r#"{"id":1,"request":{"board_actions.submit":{"action":"sign","root":"/r","task":{"slug":"a/b","status":"review","branch":"a/b"},"submission":{"payload":"tip","note":""}}}}"#;
+    let answers = served(&Acting, &[line.to_string()]);
+    assert_eq!(
+        answers[&1].0,
+        answer_text::<crate::protocol::Submit>(&Ok(Submitted {
+            said: "signed tip by nobody".into(),
+            released: Vec::new(),
+        }))
     );
 }

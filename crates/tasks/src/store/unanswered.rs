@@ -4,8 +4,7 @@
 //! after each of its posts.
 
 use super::postgres::unanswered as pg;
-use super::statement::both;
-use super::surreal::unanswered as sql;
+use super::statement::Statement;
 use super::work::{Tree, above};
 use super::{Board, Error, Failure, Health, Message, Store, Task};
 use crate::maps::Collect as _;
@@ -210,12 +209,13 @@ fn owed(
             post.kind = "activity".into();
         }
     }
-    let mut holders: BTreeSet<(String, String)> = task
-        .roles
-        .iter()
-        .filter(|r| matches!(r.role.as_str(), "executor" | "reviewer"))
-        .map(|r| (r.handle.clone(), r.role.clone()))
-        .collect();
+    let mut holders: BTreeSet<(String, String)> = BTreeSet::new();
+    holders.extend(
+        task.roles
+            .iter()
+            .filter(|r| matches!(r.role.as_str(), "executor" | "reviewer"))
+            .map(|r| (r.handle.clone(), r.role.clone())),
+    );
     for launch in launches {
         if let Some(role) = recorded_role(launch, task, by_slug) {
             holders.insert((launch.handle.clone(), role.into()));
@@ -319,18 +319,15 @@ impl Store {
         let confirmed = self.confirmed_callbacks()?;
         // The raw session list has heartbeat health only. Board health also applies native
         // presence and its Unknown grace, so a quiet but confirmed agent is never recovered.
-        let sessions: Seen<'_> = board
-            .sessions
-            .iter()
-            .map(|s| {
-                let health = if confirmed.contains(&s.row.handle) {
-                    Health::Live
-                } else {
-                    s.health
-                };
-                (s.row.handle.as_str(), (health, s.row.last_seen))
-            })
-            .collect();
+        let mut sessions: Seen<'_> = BTreeMap::new();
+        sessions.extend(board.sessions.iter().map(|s| {
+            let health = if confirmed.contains(&s.row.handle) {
+                Health::Live
+            } else {
+                s.health
+            };
+            (s.row.handle.as_str(), (health, s.row.last_seen))
+        }));
         let read = self.threads_and_launches(&tasks, board)?;
         let mut pending = Vec::new();
         for (task, rows) in tasks.iter().zip(read.threads) {
@@ -358,19 +355,19 @@ impl Store {
     /// claims, joins and releases: its role history), by the recipient and sender indexes.
     fn threads_naming(&self, handles: &BTreeSet<String>) -> Result<BTreeSet<String>, Error> {
         let named: Vec<Vec<String>> = self
-            .bounded_read(
-                both(sql::naming(""), pg::naming()),
-                json!({"handles": handles}),
-            )
+            .bounded_read(Statement::from(pg::naming()), json!({"handles": handles}))
             .map_err(recovery_error)?;
-        Ok(named.into_iter().flatten().collect())
+        let mut slugs = BTreeSet::new();
+        slugs.extend(named.into_iter().flatten());
+        Ok(slugs)
     }
 
     /// `tasks`' threads and the launches on them and on the instructions under them, in one read
     /// of their record ranges: only the metadata of posts, deliberate actions and releases crosses
     /// the boundary.
     fn threads_and_launches(&self, tasks: &[&Task], board: &Board) -> Result<Threads, Error> {
-        let slugs: BTreeSet<&str> = tasks.iter().map(|t| t.slug.as_str()).collect();
+        let mut slugs: BTreeSet<&str> = BTreeSet::new();
+        slugs.extend(tasks.iter().map(|t| t.slug.as_str()));
         let mut launched = slugs.clone();
         launched.extend(
             board
@@ -382,11 +379,15 @@ impl Store {
         let in_order: Vec<&str> = tasks.iter().map(|t| t.slug.as_str()).collect();
         let mut read: Threads = self
             .bounded_read(
-                both(sql::threads(""), pg::threads()),
+                Statement::from(pg::threads()),
                 json!({"slugs": in_order, "launched": launched}),
             )
             .map_err(recovery_error)?;
         // As the board lists them, so the latest launch of a handle is its last.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a busy board path keeps std's in-place sort (crate::order): PULL's unanswered posts"
+        )]
         read.launches.sort_by(|a, b| {
             (a.started.total_cmp(&b.started))
                 .then_with(|| a.slug.cmp(&b.slug))
@@ -400,17 +401,19 @@ impl Store {
     /// for those handles alone.
     fn reviewer_launches(&self, pending: &mut [Pending]) -> Result<(), Error> {
         let wants = |p: &Pending| p.role == "reviewer" && p.launch.is_none();
-        let handles: BTreeSet<&str> = pending
-            .iter()
-            .filter(|p| wants(p))
-            .map(|p| p.handle.as_str())
-            .collect();
+        let mut handles: BTreeSet<&str> = BTreeSet::new();
+        handles.extend(
+            pending
+                .iter()
+                .filter(|p| wants(p))
+                .map(|p| p.handle.as_str()),
+        );
         if handles.is_empty() {
             return Ok(());
         }
         let launches: Vec<TaskSessionRow> = self
             .bounded_read(
-                both(sql::REVIEWER_LAUNCHES, pg::reviewer_launches()),
+                Statement::from(pg::reviewer_launches()),
                 json!({"handles": handles}),
             )
             .map_err(recovery_error)?;
@@ -437,7 +440,8 @@ impl Store {
             .iter()
             .map(|t| (t.slug.clone(), t.parent.clone()))
             .collect();
-        let asked: BTreeSet<&str> = pending.iter().map(|p| p.slug.as_str()).collect();
+        let mut asked: BTreeSet<&str> = BTreeSet::new();
+        asked.extend(pending.iter().map(|p| p.slug.as_str()));
         let mut below: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
         for task in &board.tasks {
             for over in above(&tree, &task.slug) {
@@ -466,7 +470,7 @@ impl Store {
             })
             .collect();
         let found: Vec<Vec<i64>> = self
-            .bounded_read(both(sql::below(""), pg::below()), json!({"asks": asks}))
+            .bounded_read(Statement::from(pg::below()), json!({"asks": asks}))
             .map_err(recovery_error)?;
         let latest: BTreeMap<(String, String), i64> = after
             .keys()
@@ -546,14 +550,14 @@ impl Store {
         successors: Option<&successors::Observation>,
     ) -> Result<bool, Error> {
         self.transact(
-            both(sql::reserve(), pg::reserve()),
+            Statement::from(pg::reserve()),
             json!({"slug": pending.slug, "handle": pending.handle, "post": pending.post.id, "seen":pending.seen, "role":pending.role, "answers":rows, "parents":parents, "successors":successors.map(|s| &s.value)}),
         )
         .map_err(recovery_error)
     }
 
     pub(crate) fn record_unanswered_restore(&self, slug: &str, text: &str) -> Result<(), Error> {
-        let body = both(sql::restore_said(), pg::restore_said()).posting();
+        let body = Statement::from(pg::restore_said()).posting();
         self.transact::<serde_json::Value>(
             body,
             json!({"slug":slug, "text":text, "now":self.now()}),

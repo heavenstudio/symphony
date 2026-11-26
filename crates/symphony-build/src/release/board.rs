@@ -169,6 +169,10 @@ pub(crate) struct Night<'a> {
     /// The release candidate's tip, when the run's reds are a release candidate's
     /// ([`super::candidate`]): their tasks say how a fix of one starts, merges and lands.
     pub(crate) candidate: Option<&'a str>,
+    /// Whether the project's land delivers by pull request (`[land] delivery`): a candidate's red
+    /// then says its fix never merges the candidate's branch, which an advance moves to a head
+    /// main's history does not hold, and is rebased onto it instead ([`held`], [`again`]).
+    pub(crate) delivered: bool,
     /// Whether the run reran the release candidate, whose tip it checked, rather than main's.
     pub(crate) rerun: bool,
     /// How long the machine slept under the run, in seconds; 0 when it did not
@@ -512,18 +516,49 @@ fn environment(ran: &Ran) -> String {
 
 /// What a red task of the release candidate held at `tip` says of its fix ([`super::candidate`]):
 /// where its branch starts and what it merges, when it commits the client, how its approve and its
-/// land move the candidate, and what reruns it.
-fn held(tip: &str) -> String {
+/// land move the candidate, and what reruns it. Where a pull request `delivered` the land, the
+/// branch never merges the candidate's, which an advance moves to a head main's history does not
+/// hold, and a client fix merges main once, from a second head (RELEASES, the advance of a fix a
+/// pull request delivered).
+fn held(tip: &str, delivered: bool) -> String {
     let branch = super::candidate::BRANCH;
+    let (merges, client) = if delivered {
+        (
+            format!(
+                "never merge `{branch}`, as this project's land delivers by pull request: another \
+                 red's fix that lands advances the candidate to a commit of that fix's own branch, \
+                 which main's history does not hold, and a delivery refuses a head that merges a \
+                 commit main lacks. A branch started before that advance and not yet published or \
+                 approved is rebased onto `{branch}` before its assessment and review: a new head, \
+                 so its assessment, each stamp and its approve are of the rebased head, and \
+                 nothing gathered on the old one counts. One already published, or approved, is \
+                 left as it is: its land then answers no advance, as it does not descend from the \
+                 candidate's tip, and drops the candidate, so main's tip, which holds both \
+                 squashes, is what is run. Never merge main before its land, but for the one merge \
+                 of a client fix."
+            ),
+            ". Its delivered land refuses that head and says how it lands: that head approved \
+             naming it, by a fresh reviewer, and nothing committed on it after, then merged with \
+             main once, keeping main's side of every generated path, a second head assessed, \
+             tested and approved as any; the candidate takes the first.",
+        )
+    } else {
+        (
+            format!(
+                "merge `{branch}` again before review, as it moves when another red's fix lands; \
+                 and never merge main before its land."
+            ),
+            ", and the land keeps main's side of it.",
+        )
+    };
     format!(
         "The release candidate: this run holds {tip} as the commit to release, the local branch \
          `{branch}` (never pushed), so the release is that commit and its reds' fixes alone, however \
          fast main moves. Fix it there, not on main: start this task's branch, named for its slug, \
-         at `{branch}`, never at main; merge `{branch}` again before review, as it moves when \
-         another red's fix lands; and never merge main before its land. When the fix changes \
-         what the client is built from, commit the distribution its own sources make (`just \
-         client-update`): the one kind of branch that commits it, as no regenerator builds the \
-         candidate, and the land keeps main's side of it. Its approve, where it needs review, names \
+         at `{branch}`, never at main; {merges} When the fix changes what the client is built \
+         from, commit the distribution its own sources make (`just client-update`): the one kind \
+         of branch that commits it, as no regenerator builds the candidate{client} Its approve, \
+         where it needs review, names \
          the full tip it read. It lands by `just land` like any task, and its land advances the \
          candidate to the newest commit of this branch that holds the candidate and the fix alone \
          among those an approve names, or, where it needed no review, the tip its landing's line \
@@ -622,10 +657,12 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
          key: {key}\ncheck: {name}",
         between = between(night),
         held = (night.candidate)
-            .map(if administered {
-                held_administered
-            } else {
-                held
+            .map(|tip| {
+                if administered {
+                    held_administered(tip)
+                } else {
+                    held(tip, night.delivered)
+                }
             })
             .unwrap_or_default(),
         who = if administered {
@@ -662,14 +699,26 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
 }
 
 /// The line a red task that is still open gets on a later red run: for a release candidate's, its
-/// tip, which its fix starts from or merges, or, for the project's rulesets check
-/// ([`administered`]), which no branch starts from.
+/// tip, which its fix starts from or merges (is rebased onto, where a pull request delivers:
+/// [`held`]), or, for the project's rulesets check ([`administered`]), which no branch starts
+/// from.
 fn again(ran: &Ran, night: &Night<'_>) -> String {
     let held = night.candidate.map_or_else(String::new, |tip| {
         if administered(ran, night) {
             return format!(
                 "\n\nThe release candidate is {}, the branch `{}`: no fix of this red starts \
                  there, as who administers the repository puts it right on GitHub.",
+                short(tip),
+                super::candidate::BRANCH
+            );
+        }
+        if night.delivered {
+            return format!(
+                "\n\nThe release candidate is {}, the branch `{}`: a fix of this red starts from it \
+                 and never merges it, as a pull request delivers here. One started at an earlier \
+                 tip is rebased onto it before review while not yet published or approved; one \
+                 already published or approved is left as it is, and its land drops the candidate. \
+                 None merges main before the approve.",
                 short(tip),
                 super::candidate::BRANCH
             );
@@ -1372,6 +1421,7 @@ mod tests {
             closes: &|_| true,
             whole: true,
             candidate: None,
+            delivered: false,
             rerun: false,
             slept: 0.0,
             rulesets: false,
@@ -1992,9 +2042,13 @@ mod tests {
              branch `release-candidate` (never pushed), so the release is that commit and its \
              reds' fixes alone",
             "start this task's branch, named for its slug, at `release-candidate`, never at main; \
-             merge `release-candidate` again before review",
-            "never merge main before its land",
-            "commit the distribution its own sources make (`just client-update`)",
+             merge `release-candidate` again before review, as it moves when another red's fix \
+             lands; and never merge main before its land.",
+            // The client sentence whole, to its last clause: the land keeps main's side.
+            "When the fix changes what the client is built from, commit the distribution its own \
+             sources make (`just client-update`): the one kind of branch that commits it, as no \
+             regenerator builds the candidate, and the land keeps main's side of it. Its approve, \
+             where it needs review, names the full tip it read.",
             "A land that conflicts comes back to its executor: merge main then and ask for a fresh \
              approve, and the candidate takes the commit approved before that merge; a fix that \
              needed no review has none, and drops it.",
@@ -2016,6 +2070,10 @@ mod tests {
             !filed.contains("The next run of `just release` closes"),
             "{filed}"
         );
+        // A land made here says nothing of the pull-request line ([`held`]).
+        for unsaid in ["pull request", "rebase", "never merge `release-candidate`"] {
+            assert!(!filed.contains(unsaid), "{unsaid}\n\n{filed}");
+        }
         let again = &board.thread("tests/release-red-lint")[0];
         assert!(
             again.ends_with(
@@ -2060,6 +2118,92 @@ mod tests {
             "{filed}"
         );
         assert!(!board.thread("tests/release-red-lint")[0].contains("candidate"));
+    }
+
+    /// Where a pull request delivers the land, a candidate's red says its fix never merges
+    /// `release-candidate`, which an advance moves to a head main's history does not hold:
+    /// rebased onto it while not yet published or approved, left as it is after, and a client fix
+    /// merging main once, from a second head (RELEASES, the advance of a fix a pull request
+    /// delivered). The open red it updates says so too; the rest of the text is the same.
+    #[test]
+    fn under_delivery_by_pull_request_a_candidates_red_says_rebase_and_never_merge() {
+        let board = Fake::with(&[("tests/release-red-lint", "in_progress")]);
+        let mut held = night(&[]);
+        held.candidate = Some("cafe0123456789abcdef");
+        held.delivered = true;
+        let checks = [ran("verify", 101), ran("lint", 1)];
+        report(&board, &held, &checks);
+        let filed = board.thread("tests/release-red-verify").join("\n");
+        for said in [
+            "start this task's branch, named for its slug, at `release-candidate`, never at main; \
+             never merge `release-candidate`, as this project's land delivers by pull request: \
+             another red's fix that lands advances the candidate to a commit of that fix's own \
+             branch, which main's history does not hold, and a delivery refuses a head that merges \
+             a commit main lacks.",
+            "A branch started before that advance and not yet published or approved is rebased \
+             onto `release-candidate` before its assessment and review: a new head, so its \
+             assessment, each stamp and its approve are of the rebased head, and nothing gathered \
+             on the old one counts.",
+            "One already published, or approved, is left as it is: its land then answers no \
+             advance, as it does not descend from the candidate's tip, and drops the candidate, so \
+             main's tip, which holds both squashes, is what is run.",
+            "Never merge main before its land, but for the one merge of a client fix. When the fix \
+             changes what the client is built from, commit the distribution its own sources make \
+             (`just client-update`): the one kind of branch that commits it, as no regenerator \
+             builds the candidate. Its delivered land refuses that head and says how it lands: \
+             that head approved naming it, by a fresh reviewer, and nothing committed on it after, \
+             then merged with main once, keeping main's side of every generated path, a second \
+             head assessed, tested and approved as any; the candidate takes the first. Its \
+             approve, where it needs review, names the full tip it read.",
+            // What either line says alike stays as it was.
+            "The release candidate: this run holds cafe01234567 as the commit to release",
+            "A land that conflicts comes back to its executor: merge main then and ask for a fresh \
+             approve, and the candidate takes the commit approved before that merge",
+            "Its own land closes this task and answers it for the release candidate",
+        ] {
+            assert!(filed.contains(said), "{said}\n\n{filed}");
+        }
+        for unsaid in [
+            "merge `release-candidate` again",
+            "the land keeps main's side of it",
+            "and never merge main before its land.",
+        ] {
+            assert!(!filed.contains(unsaid), "{unsaid}\n\n{filed}");
+        }
+        let again = &board.thread("tests/release-red-lint")[0];
+        assert!(
+            again.ends_with(
+                "\n\nThe release candidate is cafe01234567, the branch `release-candidate`: a fix \
+                 of this red starts from it and never merges it, as a pull request delivers here. \
+                 One started at an earlier tip is rebased onto it before review while not yet \
+                 published or approved; one already published or approved is left as it is, and \
+                 its land drops the candidate. None merges main before the approve."
+            ),
+            "{again}"
+        );
+
+        // A red of the project's rulesets check asks for no branch, delivered or not.
+        let board = Fake::default();
+        let rulesets = Night {
+            rulesets: true,
+            ..held
+        };
+        report(&board, &rulesets, &[ran("rulesets", 1)]);
+        let filed = board.thread("tests/release-red-rulesets").join("\n");
+        assert!(filed.contains("This red asks for no branch and no fix there."));
+        assert!(!filed.contains("pull request"), "{filed}");
+
+        // A red run that holds no candidate says nothing of either line.
+        let board = Fake::default();
+        let unheld = Night {
+            candidate: None,
+            ..held
+        };
+        report(&board, &unheld, &checks);
+        let filed = board.thread("tests/release-red-verify").join("\n");
+        for unsaid in ["release candidate", "pull request", "rebase"] {
+            assert!(!filed.contains(unsaid), "{unsaid}\n\n{filed}");
+        }
     }
 
     #[test]

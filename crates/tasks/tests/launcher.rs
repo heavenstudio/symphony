@@ -16,6 +16,10 @@
 mod children;
 
 // Each run's scratch in a folder of its own under the temp folder, swept when a killed run left it.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "symphony-chrome's harness file, read by path: a published package the shared sorter's rule leaves out"
+)]
 #[path = "../../chrome-devtools/src/harness_scratch.rs"]
 mod harness_scratch;
 // `tools/seed-target.sh`, which `tools/cargo.sh` runs before Cargo.
@@ -225,13 +229,6 @@ impl Fixture {
             cwd.display()
         )
     }
-
-    /// The live board's server record, as the board writes it in the common dir.
-    fn record(&self, text: &str) {
-        let folder = self.main.join(".git/symphony/tasks");
-        fs::create_dir_all(&folder).unwrap();
-        fs::write(folder.join("server.json"), text).unwrap();
-    }
 }
 
 struct Ran {
@@ -332,36 +329,49 @@ fn a_scratch_board_runs_the_worktrees_own_build() {
 }
 
 #[test]
-fn a_server_on_the_live_servers_port_is_the_live_board() {
+fn a_server_on_the_live_boards_socket_is_the_live_board() {
     let f = Fixture::new("server");
-    f.record(r#"{"addr":"127.0.0.1:4321","pid":1,"version":"3.3.0"}"#);
     let main = f.said("tasks", &f.main, &f.wt, "list");
     let own = f.said("tasks", &f.wt, &f.wt, "list");
-    // The port is the number the binary reads (Rust's `u16`); a spelling it reads as no number is
-    // the live one too, since the binary reaches nothing with it.
-    for (server, database, expected) in [
-        ("127.0.0.1:4321", "", &main),
-        ("localhost:4321", "tasks", &main),
-        ("127.0.0.1:04321", "", &main),
-        ("127.0.0.1:+4321", "", &main),
-        ("127.0.0.1:+004321", "", &main),
-        ("127.0.0.1:4321x", "", &main),
-        ("127.0.0.1:", "", &main),
-        ("127.0.0.1:4322", "", &own),
-        ("127.0.0.1:04322", "", &own),
-        ("127.0.0.1:4321", "scratch", &own),
-    ] {
-        let vars = [("TASKS_SERVER", server), ("TASKS_DATABASE", database)];
+    // The board names its socket by its data's path, the common dir's links followed.
+    let common = f.main.join(".git").canonicalize().unwrap();
+    let socket = symphony_board::server::postgres::socket_folder(
+        &common
+            .join(symphony_board::server::FOLDER)
+            .join("postgresql"),
+    );
+    let live = format!("postgresql:{}", socket.display());
+    let other = symphony_board::server::postgres::socket_folder(Path::new("/elsewhere/postgresql"));
+    let other = format!("postgresql:{}", other.display());
+    let mut cases = vec![
+        (live.clone(), "", &main),
+        (live.clone(), "tasks", &main),
+        (other, "", &own),
+        (live.clone(), "scratch", &own),
+        // A SurrealDB server's address, which every board binary refuses, is no live board's.
+        ("127.0.0.1:4321".to_string(), "", &own),
+    ];
+    // Where `/tmp` is a link (`/private/tmp` on macOS), the socket's folder named through the link's
+    // target is the live board's too, once there is that folder to follow, as the board follows it.
+    let followed = Path::new("/private").join(socket.strip_prefix("/").unwrap());
+    let made = Path::new("/private/tmp").is_dir() && fs::create_dir(&socket).is_ok();
+    if made {
+        cases.push((format!("postgresql:{}", followed.display()), "", &main));
+    }
+    for (server, database, expected) in &cases {
+        let vars = [
+            ("TASKS_SERVER", server.as_str()),
+            ("TASKS_DATABASE", *database),
+        ];
         assert_eq!(
             &f.in_wt(&vars, &["tasks", "list"]).ok(),
-            expected,
+            *expected,
             "{vars:?}"
         );
     }
-    // A record naming no address may be the live server's still: the main checkout's build runs.
-    f.record("{}");
-    let vars = [("TASKS_SERVER", "127.0.0.1:4322")];
-    assert_eq!(f.in_wt(&vars, &["tasks", "list"]).ok(), main);
+    if made {
+        fs::remove_dir(&socket).unwrap();
+    }
 }
 
 #[test]

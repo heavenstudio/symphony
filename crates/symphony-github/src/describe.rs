@@ -77,15 +77,13 @@ fn state(loaded: &Loaded) -> EntryState {
         EntryState {
             word: "Off".into(),
             on: Some(false),
-            why: format!("Off: no {place}, so nothing is read from or written to GitHub."),
+            why: format!("Off: no {place}."),
         }
     } else {
         EntryState {
             word: "Off".into(),
             on: Some(false),
-            why: format!(
-                "Off: {place} does not enable it, so nothing is read from or written to GitHub."
-            ),
+            why: format!("Off: {place} does not enable it."),
         }
     }
 }

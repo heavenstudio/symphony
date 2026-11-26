@@ -88,6 +88,9 @@ fn cpu_millis() -> Option<f64> {
 pub(crate) struct Event {
     pub version: u64,
     pub json: String,
+    /// What of the page waits before and after it, where that moved while its board names
+    /// someone: what a named reader's feed sends in place of its regions of it ([`theirs`]).
+    pub waits: Option<(Arc<theirs::Waits>, Arc<theirs::Waits>)>,
 }
 
 pub(crate) struct Page {
@@ -125,6 +128,11 @@ pub(crate) struct Page {
     /// The branches whose worktree the scan that page read could not read
     /// ([`branches::Scan::failed`]): where their cards are, `held` does not say.
     unscanned: Arc<BTreeSet<String>>,
+    /// Who decides each card its queue holds as waiting, main's own on a branch's page: none on a
+    /// board that names nobody ([`theirs`]).
+    pub deciders: Option<Arc<symphony::owners::theirs::Deciders>>,
+    /// What of it waits as its last event left it, while its board names someone.
+    waits: Option<Arc<theirs::Waits>>,
 }
 
 pub(crate) struct Hub {
@@ -194,6 +202,10 @@ pub(crate) struct Hub {
     /// The owner's open asks as the board last gave them, which the agent queue's cards are told
     /// ([`Hub::note_asks`]); none until the board is read.
     queue_asks: Mutex<Arc<Vec<symphony_board::Ask>>>,
+    /// The board's people and map as its last look read them ([`Hub::people_read`]), which the
+    /// pages read who decides their cards with ([`theirs`]) and the notices tell by
+    /// ([`notices`]); none before the first.
+    people: Mutex<theirs::Looked>,
     /// The shared server's hourly roll-up of the project into its day files ([`reports::Rollup`]);
     /// none on a private server, which writes none.
     pub(crate) reports: Mutex<Option<reports::Rollup>>,
@@ -245,9 +257,6 @@ pub(crate) struct Hub {
     /// updates' route read ([`symphony::machine::updates`]): the machine's, none where it cannot be
     /// found and in the library's tests, which read no machine's unless they give one.
     pub(crate) machine: Option<PathBuf>,
-    /// What the pages say of a replay of the board's store's log while the worker's last reach of
-    /// the board was refused for one ([`symphony_board::server::replaying_in`]).
-    replaying: Mutex<Option<String>>,
     /// The time the board's health is recorded and read at, in seconds since the epoch: the wall
     /// clock's, or a test's.
     pub(crate) clock: Box<dyn Fn() -> f64 + Send + Sync>,
@@ -269,6 +278,10 @@ pub(crate) struct Hub {
     renders: AtomicU64,
     /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
     reader: Mutex<BoardReader>,
+    /// The machine's one server's notices for the project, its worker started as the hub is
+    /// published under the project's id ([`notices`]); none on a private server, which tells no
+    /// one.
+    notice_worker: OnceLock<notices::Worker>,
     /// Independent deadlines for failed board work ([`retry`]).
     board_retry: Mutex<retry::Retry>,
     chat_retry: Mutex<retry::Retry>,
@@ -424,6 +437,7 @@ impl Hub {
             owner_asks: Mutex::new(None),
             decided: Mutex::new(None),
             queue_asks: Mutex::default(),
+            people: Mutex::default(),
             reports: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
@@ -445,7 +459,6 @@ impl Hub {
             notices: Mutex::new(health::Notices::of(root)),
             base: OnceLock::new(),
             machine: health::machine_folder(),
-            replaying: Mutex::new(None),
             clock: Box::new(symphony_board::sweep::trigger::now),
             asks: Mutex::new(asks::AskWatch::default()),
             chat: Mutex::new(None),
@@ -453,6 +466,7 @@ impl Hub {
             reads: AtomicU64::new(0),
             renders: AtomicU64::new(0),
             reader: Mutex::default(),
+            notice_worker: OnceLock::new(),
             board_retry: Mutex::default(),
             chat_retry: Mutex::default(),
             dispatch_retry: Mutex::default(),
@@ -928,7 +942,15 @@ impl Hub {
         }
     }
 
-    pub fn folder(&self, scope: &str, rel: &str) -> Result<symphony_api::Folder, String> {
+    /// The folder `rel` of `scope`'s checkout, each entry counting the cards under it that wait on
+    /// `reader`, a person a board named: of the queue's cards those they decide ([`theirs`]), and
+    /// every one for anyone else.
+    pub fn folder(
+        &self,
+        scope: &str,
+        rel: &str,
+        reader: Option<&str>,
+    ) -> Result<symphony_api::Folder, String> {
         let root = self.checkout(scope).ok_or("this worktree was removed")?;
         let board = self.tasks_read().ok();
         let mut folder = symphony::docview::folder(
@@ -939,7 +961,17 @@ impl Hub {
         )?;
         let pages = self.pages.read().recover();
         if let Some(main) = pages.get("") {
-            symphony::docview::count_waiting(&mut folder, &main.queue.waiting);
+            match reader {
+                Some(name) => {
+                    let theirs = symphony::owners::theirs::queue(
+                        &main.queue,
+                        main.deciders.as_deref(),
+                        name,
+                    );
+                    symphony::docview::count_waiting(&mut folder, &theirs.waiting);
+                }
+                None => symphony::docview::count_waiting(&mut folder, &main.queue.waiting),
+            }
         }
         Ok(folder)
     }
@@ -972,7 +1004,7 @@ impl Hub {
         ))
     }
 
-    fn refresh_docs(&self, dirty: Option<&BTreeSet<PathBuf>>) -> Result<(), String> {
+    pub(crate) fn refresh_docs(&self, dirty: Option<&BTreeSet<PathBuf>>) -> Result<(), String> {
         let listing = branches::listed(&self.root);
         if listing.is_none() {
             eprintln!("branch worktrees not listed: the owner's asks on a branch wait");
@@ -1303,7 +1335,15 @@ impl Hub {
             .map(|(rel, _, _)| rel)
             .collect();
         let rendered = self.render_again(root, scope, followed);
+        // Who decides main's cards, read before the pages are locked: a branch's page takes main's.
+        let deciders = scope.is_empty().then(|| self.deciders_of(&snapshot.queue));
         let mut pages = self.pages.write().recover();
+        let deciders = match deciders {
+            Some(Ok(read)) => read,
+            // Before the board's first look, a page keeps the ones it had.
+            Some(Err(())) => pages.get(scope).and_then(|page| page.deciders.clone()),
+            None => pages.get("").and_then(|main| main.deciders.clone()),
+        };
         // Preferences can change while a watched source snapshot is being prepared.
         if scope.is_empty() {
             if let Ok(waiting) = snapshot.order.waiting(
@@ -1401,30 +1441,32 @@ impl Hub {
             page.held = snapshot.held;
             page.said = snapshot.said;
             page.unscanned = unscanned;
+            page.deciders = deciders;
             self.publish(page, changes);
         } else {
             snapshot.board.version = 1;
-            pages.insert(
-                scope.into(),
-                Page {
-                    board: snapshot.board,
-                    queue: snapshot.queue,
-                    pending: snapshot.pending,
-                    activity,
-                    order: snapshot.order,
-                    history: VecDeque::new(),
-                    documents: BTreeMap::new(),
-                    copied: BTreeMap::new(),
-                    renews_from: 0,
-                    stale: BTreeSet::new(),
-                    outlines: Mutex::default(),
-                    missing: BTreeSet::new(),
-                    read_at,
-                    held: snapshot.held,
-                    said: snapshot.said,
-                    unscanned,
-                },
-            );
+            let mut page = Page {
+                board: snapshot.board,
+                queue: snapshot.queue,
+                pending: snapshot.pending,
+                activity,
+                order: snapshot.order,
+                history: VecDeque::new(),
+                documents: BTreeMap::new(),
+                copied: BTreeMap::new(),
+                renews_from: 0,
+                stale: BTreeSet::new(),
+                outlines: Mutex::default(),
+                missing: BTreeSet::new(),
+                read_at,
+                held: snapshot.held,
+                said: snapshot.said,
+                unscanned,
+                deciders,
+                waits: None,
+            };
+            theirs::begin(&mut page);
+            pages.insert(scope.into(), page);
         }
         Ok(())
     }
@@ -1487,7 +1529,8 @@ impl Hub {
     }
 
     fn publish(&self, page: &mut Page, changes: Vec<Value>) {
-        if changes.is_empty() {
+        let waits = theirs::moved(page);
+        if changes.is_empty() && waits.is_none() {
             return;
         }
         page.board.version += 1;
@@ -1498,6 +1541,7 @@ impl Hub {
         page.history.push_back(Event {
             version,
             json: Value::Object(data).to_string(),
+            waits,
         });
         while page.history.len() > HISTORY {
             page.history.pop_front();
@@ -1538,7 +1582,7 @@ impl Hub {
             .filter(|agent| agent.state == "running_test")
             .map(|agent| agent.handle.clone())
             .collect();
-        busy.sort_unstable();
+        symphony_board::order::sort_by(&mut busy, &Ord::cmp);
         let unchanged = {
             let state = self.tasks.lock().recover();
             (state.raw.as_ref() == Some(&snapshot) && state.busy == busy)
@@ -1637,17 +1681,28 @@ impl Hub {
             && since < latest
         {
             let render = symphony::render::Render::new(&self.root);
-            lines = store
-                .messages_after(since, latest)
+            // As the board holds them: a person's line goes out marked as theirs.
+            let rows = store
+                .messages_after_rows(since, latest)
                 .map_err(|e| e.to_string())?;
-            for message in &lines {
-                let record = taskview::message(message);
+            // A message held for people goes to the pages with the lines it is of.
+            let held = taskview::held_words(store, &rows.iter().collect::<Vec<_>>())
+                .map_err(|e| e.to_string())?;
+            for row in &rows {
+                let record = taskview::message_row(row);
                 let mut data = json!(record);
                 let entry = taskview::entry(&record, &render);
                 data["blocks"] = json!(entry.blocks);
                 data["stamp"] = entry.stamp.into();
+                if let Some(words) = held.get(&row.id) {
+                    data["held"] = json!(words);
+                }
                 changed.push(region_event("message", data));
             }
+            lines = rows
+                .into_iter()
+                .map(symphony_board::Message::from)
+                .collect();
         }
         *cursor = Some(latest);
         drop(cursor);
@@ -1706,12 +1761,13 @@ impl Hub {
                     json!({"day":recent(1.0),"week":recent(7.0)}),
                 ));
                 // A task closed or gone holds no page's room for its gates any more.
-                let open: BTreeSet<&str> = next
-                    .tasks
-                    .iter()
-                    .filter(|task| !task.is_finished())
-                    .map(|task| task.slug.as_str())
-                    .collect();
+                let mut open: BTreeSet<&str> = BTreeSet::new();
+                open.extend(
+                    next.tasks
+                        .iter()
+                        .filter(|task| !task.is_finished())
+                        .map(|task| task.slug.as_str()),
+                );
                 self.gates.keep_open(|slug| open.contains(slug));
             }
             // Heartbeats are not displayed. Sending last_seen/last_tool on every beat makes every
@@ -1931,7 +1987,7 @@ fn watched(root: &Path) -> Vec<String> {
         .into_iter()
         .flat_map(|watch| watch.paths())
         .collect();
-    paths.sort();
+    symphony_board::order::sort_by(&mut paths, &Ord::cmp);
     paths.dedup();
     paths
 }
@@ -1969,7 +2025,7 @@ fn moved_branches(common: Option<&Path>, dirty: Option<&BTreeSet<PathBuf>>) -> V
             parts.filter(|parts| !parts.is_empty()).map(|p| p.join("/"))
         })
         .collect();
-    moved.sort();
+    symphony_board::order::sort_by(&mut moved, &Ord::cmp);
     moved.dedup();
     moved
 }
@@ -2158,7 +2214,7 @@ fn run(
     board: Option<symphony_board::Store>,
     connect: impl FnMut(&Path) -> Result<symphony_board::Store, String> + Send,
 ) {
-    let (stop, stopped) = mpsc::channel();
+    let (stop, stopped) = crate::wake::channel();
     {
         let Some(hub) = weak.upgrade() else { return };
         let _ = hub.documents_waker.set(backstop.waker());
@@ -2268,6 +2324,8 @@ fn documents(
             if let Some(then) = hub.refreshed.get() {
                 then();
             }
+            // The cards waiting may have moved: the notices look again ([`notices`]).
+            hub.wake_notices();
         }
         hub.watch(&mut watcher, &mut watched);
     }
@@ -2582,7 +2640,9 @@ pub(crate) mod agent_activity;
 mod asks;
 mod board_status;
 mod health;
+mod held;
 mod machine_work;
+mod notices;
 
 pub(crate) use health::{Signal, Standing};
 mod decided;
@@ -2598,6 +2658,7 @@ mod retry;
 mod retry_tests;
 mod startup;
 mod task_asks;
+pub(crate) mod theirs;
 
 #[cfg(test)]
 mod decided_tests;
@@ -2795,7 +2856,7 @@ mod tests {
         let signoff_inputs = hub.signoff_pending.lock().unwrap().clone();
         f.advance(91.0);
         let board = f.store.board().unwrap();
-        let before = f.store.client().requests();
+        let before = f.store.database().requests();
         hub.update_board(&f.store, board, hub.agent_snapshot().unwrap())
             .unwrap();
         let pages = hub.pages.read().unwrap();
@@ -2808,13 +2869,13 @@ mod tests {
             .collect();
         eprintln!(
             "health flip: {} requests; regions: {}",
-            f.store.client().requests() - before,
+            f.store.database().requests() - before,
             regions.join(", ")
         );
         // Two small reads: no sign-off thread read, no column counts, and no read of the active
         // workflow, whose generation the board read carries (`Hub::workflow_read`).
         assert_eq!(
-            f.store.client().requests() - before,
+            f.store.database().requests() - before,
             2,
             "no sign-off thread read"
         );
@@ -2942,7 +3003,7 @@ mod tests {
         hub.ensure_page("design~policy").unwrap();
         assert_eq!(pending(&hub, "design~policy"), ["main-card", "branch-card"]);
         for scope in ["", "design~policy"] {
-            let folder = hub.folder(scope, "docs").unwrap();
+            let folder = hub.folder(scope, "docs", None).unwrap();
             let entry = folder
                 .entries
                 .iter()
@@ -3028,7 +3089,7 @@ mod tests {
             3
         );
         assert_eq!(
-            hub.folder("design~policy", "docs")
+            hub.folder("design~policy", "docs", None)
                 .unwrap()
                 .entries
                 .iter()
@@ -3124,7 +3185,7 @@ mod tests {
         hub.ensure_page("design~policy").unwrap();
         for scope in ["", "design~policy"] {
             let waiting = |rel: &str, path: &str| {
-                let folder = hub.folder(scope, rel).unwrap();
+                let folder = hub.folder(scope, rel, None).unwrap();
                 let found = folder.entries.iter().find(|e| e.path.ends_with(path));
                 found.unwrap().waiting
             };
@@ -3139,7 +3200,7 @@ mod tests {
                 .iter()
                 .map(|card| card.slug.as_str())
                 .collect();
-            queued.sort();
+            symphony_board::order::sort_by(&mut queued, &Ord::cmp);
             assert_eq!(queued, ["answered", "proposed", "waits"], "{scope}");
             assert_eq!(
                 (design, topic, pages[scope].board.progress.decisions_waiting),

@@ -13,8 +13,15 @@ export const BOARD_CARDS = 5;
 export const ASK_LATE_SECONDS = 600;
 export const FILE_QUERY = "raw";
 export const REPORTS_PATH = "/api/reports";
+export const REPORTS_LANDED_PATH = "/api/reports/landed";
 export const SETTINGS_PATH = "/api/settings";
 export const SETTING_WRITE_PATH = "/api/setting";
+export const PEOPLE_PATH = "/api/people";
+export const PEOPLE_CHANGE_PATH = "/api/people-change";
+export const PROFILE_PATH = "/api/people-profile";
+export const CARD_OWNERS_PATH = "/api/card-owners";
+export const TASK_HAND_ROUTE = "/api/task-hand";
+export const CARD_HAND_ROUTE = "/api/card-hand";
 export const RUNS_PATH = "/api/runs";
 export const RUN_PATH = "/api/run";
 export const RUN_LOG_PATH = "/api/run-log";
@@ -32,6 +39,9 @@ export const UPLOAD_ACCEPT =
   "image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log,.docx,.xlsx,.pptx";
 export const QUICK_TASK_TITLE_MAX = 200;
 export const TASK_ACTION_ROUTE = "/api/task-action";
+export const TASK_PASS_ROUTE = "/api/task-pass";
+export const DOCUMENT_HELD_PATH = "/api/document-held";
+export const DOCUMENT_PASS_ROUTE = "/api/document-pass";
 export const TASK_TOKENS_PATH = "/api/task-tokens";
 export const TASK_COSTS_PATH = "/api/task-costs";
 export const TASK_COSTS_MOST = 200;
@@ -59,6 +69,7 @@ export const SYMPHONY_ROUTES = [
   "reports",
   "runs",
   "settings",
+  "people",
   "api",
   "assets",
   "static",
@@ -78,6 +89,7 @@ export const PAGE_NAMES = {
   BOARD: "Board",
   REPORTS: "Reports",
   SETTINGS: "Settings",
+  PEOPLE: "People",
   RUNS: "Runs",
   AGENTS: "Agents",
   PROJECTS: "Projects",
@@ -403,48 +415,151 @@ export type ReportMark = {
   changed: Array<string>;
 };
 
-export type LandedSpend = {
+export type Spend = { tokens: AgentTokens; cost: AgentCost };
+
+export type LandedPage = {
+  grain: Grain;
   /**
-   * The landed tasks the board recorded tokens for.
+   * The days the window reaches back, as [`Grain::days`] took the ask.
    */
-  tasks: number;
+  days: number;
   /**
-   * The landed tasks it recorded none for: in no figure here.
+   * The first second of its first period and where it ends, as [`ReportsPage`]'s.
+   */
+  from: number;
+  to: number;
+  /**
+   * Each one the board recorded tokens for, the dearest first, then by slug: the first ten are
+   * the dearest, and all of them the dots and the table.
+   */
+  tasks: Array<LandedRow>;
+  /**
+   * Those it recorded none for: in no figure.
    */
   without: number;
   /**
-   * The median estimated cost of those with a priced token, in US dollars; none with none.
+   * The window's figures, of the tasks with a priced cost.
    */
-  median: number | null;
+  figures: LandedFigures;
   /**
-   * The dearest of them, at most ten, the dearest first.
+   * By the kind each was given, those that cost the most in all first, the tasks given none
+   * last.
    */
-  dearest: Array<LandedTask>;
+  kinds: Array<KindRow>;
   /**
-   * What they took up to their first review, all told.
+   * By how many reviews each took, the fewest first, the last one of four or more.
    */
-  first_round: Spend;
+  reviews: Array<ReviewRow>;
   /**
-   * What they took in every round after it: each review, and the fixes it asked for.
+   * When the first landing of the window that names a kind landed; none when none does, as in
+   * a window from before kinds were kept.
    */
-  later_rounds: Spend;
+  kinds_from: number | null;
   /**
-   * How many of them took anything after their first round.
+   * The day the price table's prices were read (`YYYY-MM-DD`).
    */
-  again: number;
+  prices: string;
+  /**
+   * What was not read, each in a sentence naming its file and why: a task it held is missing.
+   */
+  unread: Array<string>;
 };
 
-export type LandedTask = {
+export type LandedRow = {
   slug: string;
   /**
    * When it landed.
    */
   at: number;
-  tokens: AgentTokens;
-  cost: AgentCost;
+  /**
+   * Its kind; none for one given none.
+   */
+  kind: string | null;
+  /**
+   * What its work up to its first review cost, and every round after it.
+   */
+  first: number;
+  later: number;
+  /**
+   * Its tokens, all told.
+   */
+  tokens: number;
+  /**
+   * Whether some of its tokens had no price, and are in no dollar here; one none of whose had
+   * one has no cost to rank, and is in no figure.
+   */
+  unpriced: boolean;
+  /**
+   * How many reviews it took: the last round it took tokens in, less the first.
+   */
+  reviews: number;
+  /**
+   * The lines its landing changed, added and removed; none where they were not read.
+   */
+  lines: number | null;
 };
 
-export type Spend = { tokens: AgentTokens; cost: AgentCost };
+export type LandedFigures = {
+  /**
+   * The tasks with a priced cost.
+   */
+  tasks: number;
+  median: number | null;
+  mean: number | null;
+  p90: number | null;
+  /**
+   * What they cost, all told, and what their review rounds cost of it.
+   */
+  cost: number;
+  later: number;
+  /**
+   * Those back after review: reviewed twice or more, a round past the second.
+   */
+  back: number;
+  /**
+   * Those whose landing changed a counted line, what those cost and their lines.
+   */
+  lined: number;
+  lined_cost: number;
+  lines: number;
+  /**
+   * Those whose landing changed no counted line, and those whose lines were not read.
+   */
+  unlined: number;
+  unread: number;
+};
+
+export type KindRow = {
+  /**
+   * The kind; none for the tasks given none.
+   */
+  kind: string | null;
+  tasks: number;
+  median: number | null;
+  /**
+   * What they cost, all told.
+   */
+  cost: number;
+  /**
+   * Of them, what those whose landing changed a counted line cost, and those lines.
+   */
+  lined_cost: number;
+  lines: number;
+};
+
+export type ReviewRow = {
+  /**
+   * The reviews; the last row's is four, for four or more.
+   */
+  reviews: number;
+  tasks: number;
+  /**
+   * The mean cost of one's first round and of its review rounds.
+   */
+  first: number;
+  later: number;
+  median: number | null;
+};
 
 export type SettingsPage = {
   /**
@@ -481,15 +596,7 @@ export type SettingsFile = {
   found: boolean;
 };
 
-export type SettingsSection = {
-  id: string;
-  title: string;
-  /**
-   * One line under the heading.
-   */
-  about: string;
-  entries: Array<SettingsEntry>;
-};
+export type SettingsSection = { id: string; title: string; entries: Array<SettingsEntry> };
 
 export type SettingsEntry = {
   /**
@@ -498,7 +605,9 @@ export type SettingsEntry = {
   id: string;
   name: string;
   /**
-   * What it is for.
+   * What it is for, which no page draws (RULES.md `code/pages-explain-nothing`): kept, and
+   * read when left out, for the plugins that write it, until a later release removes it
+   * (`code/consumer-api-two-releases`).
    */
   about: string;
   state?: EntryState | null;
@@ -669,6 +778,277 @@ export type SettingWritten = {
    * Whether the commit waits for its delivery by pull request, its entry kept meanwhile.
    */
   waiting: boolean;
+};
+
+export type PeoplePage = {
+  /**
+   * The people the board named, by short name.
+   */
+  people: Array<PersonRow>;
+  /**
+   * Its groups, by name.
+   */
+  groups: Array<GroupRow>;
+  /**
+   * Every change made to them, oldest first.
+   */
+  log: Array<PeopleLogLine>;
+  /**
+   * The number of the newest change: 0 on a board none was made on.
+   */
+  revision: number;
+  /**
+   * Whether the one reading may change who is on the board: the person at the machine, or a
+   * person holding administer.
+   */
+  administers: boolean;
+  /**
+   * Whether the one reading is the person at the machine, who writes any profile.
+   */
+  machine: boolean;
+  /**
+   * The one reading's short name on the board; none for the person at the machine.
+   */
+  you?: string | null;
+  /**
+   * Why the board's people could not be read, said whole; the page then lists nobody.
+   */
+  problem?: string | null;
+};
+
+export type PersonRow = {
+  name: string;
+  /**
+   * How pages show them: their profile's display name, else their short name.
+   */
+  display: string;
+  /**
+   * Every power they hold, their own and their groups', read among them.
+   */
+  powers: Array<string>;
+  /**
+   * The powers given to them, not their groups'.
+   */
+  own: Array<string>;
+  groups: Array<string>;
+  /**
+   * The services they sign in by, each once: never a subject.
+   */
+  signins: Array<string>;
+  /**
+   * Their git handles.
+   */
+  git: Array<string>;
+  /**
+   * Whether the machine holds a profile of theirs.
+   */
+  profile: boolean;
+  /**
+   * Where their notices reach them: in the answer of the person themself, of the person at the
+   * machine and of the board's admins; in no one else's.
+   */
+  addresses?: Addresses | null;
+  /**
+   * The way each kind of notice goes by, every kind the board knows in its order: in the answer
+   * of the person themself and of the person at the machine; in no one else's.
+   */
+  notices?: Array<NoticeWay> | null;
+};
+
+export type Addresses = {
+  /**
+   * The email a notice by mail goes to: the first of their emails.
+   */
+  email?: string | null;
+  /**
+   * Their Slack member id (`U024BE7LH`).
+   */
+  slack?: string | null;
+  /**
+   * Their WhatsApp number, `+` and its digits.
+   */
+  whatsapp?: string | null;
+};
+
+export type NoticeWay = {
+  /**
+   * The kind, as a notice writes it: `card`, `question`, `verdict`.
+   */
+  kind: string;
+  /**
+   * The way it goes by, `email`, `slack` or `whatsapp`; none where it goes by none, as the page
+   * and the Mac app show every notice.
+   */
+  way?: string | null;
+};
+
+export type GroupRow = { name: string; powers: Array<string> };
+
+export type PeopleLogLine = {
+  /**
+   * Its number, from 1.
+   */
+  n: number;
+  /**
+   * When, in seconds since the epoch.
+   */
+  at: number;
+  /**
+   * Who made it: a session's handle, a person's short name, or `owner`.
+   */
+  by: string;
+  /**
+   * What it did, as the log writes it (`add`, `group-remove`).
+   */
+  did: string;
+  name: string;
+  group?: string | null;
+  powers?: Array<string>;
+};
+
+export type PeopleAction =
+  | "add"
+  | "remove"
+  | "join"
+  | "leave"
+  | "grant"
+  | "revoke"
+  | "group-add"
+  | "group-remove";
+
+export type PeopleChange = {
+  action: PeopleAction;
+  /**
+   * The person's short name; the group's for a group's add or removal.
+   */
+  name: string;
+  /**
+   * The group a join or a leave names, or whose powers a grant or a revoke changes.
+   */
+  group?: string | null;
+  /**
+   * The powers an add, a group's add, a grant or a revoke names.
+   */
+  powers?: Array<string>;
+  /**
+   * The groups an add puts the person in.
+   */
+  groups?: Array<string>;
+  /**
+   * An add's profile, made where the person has none: their display name.
+   */
+  display?: string | null;
+  /**
+   * An add's profile: the sign-ins it is given, each `SERVICE:SUBJECT`.
+   */
+  signins?: Array<string>;
+  /**
+   * An add's profile: its git handles.
+   */
+  git?: Array<string>;
+};
+
+export type ProfileWrite = {
+  /**
+   * The person whose profile it is.
+   */
+  name: string;
+  display?: string | null;
+  /**
+   * Git handles added to the profile.
+   */
+  git?: Array<string>;
+  /**
+   * Sign-ins added to it, each `SERVICE:SUBJECT`: the person at the machine's alone to give.
+   */
+  signins?: Array<string>;
+  /**
+   * The email a notice by mail goes to, in place of the first of their emails, those after it
+   * kept; an empty one takes the first away.
+   */
+  email?: string | null;
+  /**
+   * Their Slack member id; an empty one takes it away.
+   */
+  slack?: string | null;
+  /**
+   * Their WhatsApp number, `+` and its country code; an empty one takes it away.
+   */
+  whatsapp?: string | null;
+  /**
+   * The ways kinds of notice go by, each kind named set: a way of none sends it by none.
+   */
+  notices?: Array<NoticeWay>;
+};
+
+export type Owner = {
+  /**
+   * The group's or the person's short name, or `owner` for the person at the machine.
+   */
+  name: string;
+  /**
+   * `group`, `person` or `machine`.
+   */
+  kind: string;
+  /**
+   * What gave it: `named` (a name written on it), `map` or `default`.
+   */
+  by: string;
+  /**
+   * What gave it, as words a page shows beside the name: `named on it`, `from the area app`.
+   */
+  said: string;
+  /**
+   * Whom the one reading may hand it to, groups then people: empty where they may not.
+   */
+  hand_to?: Array<string>;
+  /**
+   * Whether the one reading may decide it: a card's verdict, a task's move, priority, cancel
+   * and approve. A page draws those controls for them alone.
+   */
+  decides: boolean;
+};
+
+export type CardOwners = { cards: { [key in string]: Owner } };
+
+export type DocumentHeld = {
+  held: Array<HeldComment>;
+  /**
+   * The one reading may pass them on ([`DOCUMENT_PASS_ROUTE`]): the person at the machine, or
+   * a person holding speak and direct agents.
+   */
+  passes: boolean;
+};
+
+export type HeldComment = {
+  /**
+   * Its number, which a pass names.
+   */
+  id: number;
+  /**
+   * Who wrote it, by their short name.
+   */
+  author: string;
+  /**
+   * A callout's kind (`comment`, `question`, `decision`), or `message` for a card's message.
+   */
+  kind: string;
+  /**
+   * Their words; a callout's title is the first line.
+   */
+  text: string;
+  /**
+   * The card, for a message.
+   */
+  card?: string | null;
+  /**
+   * The section a callout was left after, by its key ([`Section::key`]).
+   */
+  key?: string | null;
+  /**
+   * That section's last line then.
+   */
+  line?: number | null;
 };
 
 export type RunsPage = {
@@ -2180,9 +2560,48 @@ export type TaskPage = {
    * at none: a page draws their history only for a task that has some.
    */
   attempts?: number;
+  /**
+   * The one reading may pass a held message on ([`TASK_PASS_ROUTE`]): the person at the machine,
+   * or a person holding speak and direct agents.
+   */
+  passes: boolean;
+  /**
+   * Whose the task is ([`Owner`]): none on a board that names nobody.
+   */
+  owner?: Owner | null;
 };
 
-export type TaskEntry = { message: Message; stamp: string; blocks: Array<Block> };
+export type TaskEntry = {
+  message: Message;
+  stamp: string;
+  blocks: Array<Block>;
+  /**
+   * The message held for people this line is of: on the board's line that says it is held,
+   * `id` its own, and on the line its words became once passed on, `id` the board's line. Only
+   * a person's read of the thread carries it; none on every other line.
+   */
+  held?: HeldWords | null;
+};
+
+export type HeldWords = {
+  /**
+   * The number of the board's line that says it is held, which a pass names.
+   */
+  id: number;
+  /**
+   * Who wrote it, by their short name.
+   */
+  author: string;
+  text: string;
+  /**
+   * Whom it was written to: a role, a session's handle, or nobody.
+   */
+  to?: string | null;
+  /**
+   * Who passed it on: none while it is held.
+   */
+  passed_by?: string | null;
+};
 
 export type Message = {
   id: number;
@@ -2192,6 +2611,12 @@ export type Message = {
   kind: string;
   text: string;
   ts: number;
+  /**
+   * A person a board named wrote it, `sender` their short name: drawn as a person's line, as
+   * the owner's is. False for the owner's, whose sender says so, and for a session's; an older
+   * server sends none.
+   */
+  person: boolean;
 };
 
 export type TaskHistory = {

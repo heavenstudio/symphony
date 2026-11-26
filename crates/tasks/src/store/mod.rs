@@ -1,18 +1,17 @@
-//! The board over SurrealDB: the reads, the rules and the copy (`tools/tasks_store.py` `Store`).
+//! The board over PostgreSQL: the reads, the rules and the copy (`tools/tasks_store.py` `Store`).
 //!
 //! Every read is one request whose statements run in one transaction, so it sees the board as of one
 //! commit (the Python store's `_snapshot`). A rule reads the task it acts on, decides here, and writes
 //! in a transaction that throws `stale` if what it decided on has moved since: the task's `version`,
 //! the actor's session, and the `last_seen` of every session it took to be gone (each write that
-//! could make a session healthier moves its `last_seen`). A write that meets another's (SurrealDB's
-//! optimistic conflict) or finds itself stale reads and decides again.
+//! could make a session healthier moves its `last_seen`). A write that meets another's (a
+//! serialization conflict) or finds itself stale reads and decides again.
 
 use crate::db::DbError;
 use crate::health::{self, EXECUTING, Health};
 use crate::maps::Collect as _;
 pub(crate) use crate::quote::repr;
 use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
-use crate::rpc::Client;
 use crate::schema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -38,11 +37,14 @@ mod dispatcher;
 pub(crate) mod execution;
 mod fields;
 pub(crate) mod guard;
+mod held;
 mod history;
 mod kept;
 mod launches;
 mod messages;
 mod opening;
+mod ownership;
+mod people;
 mod pool;
 mod postgres;
 mod pull_account;
@@ -62,7 +64,6 @@ mod stage_lines;
 mod stamp;
 mod statement;
 pub(crate) mod stored_settings;
-mod surreal;
 mod thread_window;
 mod transaction;
 pub(crate) mod unanswered;
@@ -74,16 +75,13 @@ mod writers;
 
 use beside::Beside;
 use postgres::{self as pg, Pg};
-use statement::{Statement, both};
-use surreal::reading::reading;
-use surreal::session_read;
+use statement::Statement;
 
 pub(crate) use crate::stages::BLOCK_LINE;
 pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
 pub use callbacks::{Callback, ChatSeat, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
-pub use cap::STATEMENTS as SLOT_READS;
-pub use copy::{CARRIED, leases_ended, leases_past};
+pub use copy::{CARRIED, leases_past};
 pub use database::Database;
 pub use launches::NewLaunch;
 pub use messages::reviewer_verdict;
@@ -92,6 +90,7 @@ pub use raw::{Raw, Rows as RawRows};
 use reading::{native_bounds, native_health};
 pub use report_lines::{ReportPlace, ReportRead, ReportTask};
 pub use search::{SearchHit, SearchSource};
+pub(crate) use sessions::could_be_handle;
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use stamp::TaskStamp;
@@ -229,7 +228,7 @@ pub struct Store {
     db: database::Board,
     /// The client the unanswered-post lookup reads through when one is set
     /// ([`Store::looking_up_within`]): this one's board, a read that ran out its shorter wait not
-    /// sent again ([`Client::bounded`]). None reads through `db`, as every other read.
+    /// sent again ([`crate::pg::Client::bounded`]). None reads through `db`, as every other read.
     lookup: Option<database::Board>,
     clock: Clock,
     pid_alive: Probe,
@@ -258,7 +257,7 @@ pub struct Store {
     /// machine runs and when the pipeline alarm raises and clears; set, or the project file's as
     /// it is now.
     limits: crate::limits::Held,
-    /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
+    /// The schema version this store writes, which every write's [`postgres::GUARD`] checks.
     schema: i64,
     /// How many additive steps on that contract it has ([`schema::ADDED`]): a whole-board copy's
     /// and a rebind's guard holds the board to exactly these.
@@ -279,6 +278,9 @@ pub struct Store {
     /// of its schema write it ([`schema::COMPATIBLE`]); set only by an opening that read the board,
     /// never by a store taken unchecked.
     reader: bool,
+    /// The person a board named whose writes this store makes ([`Store::for_person`]): none for
+    /// the owner's and a session's.
+    person: Option<String>,
 }
 
 /// The command that reaches the board on `database` again: `just tasks`, naming the database when
@@ -318,17 +320,6 @@ impl Store {
             self.named_server.then(|| self.db.addr()).as_deref(),
             self.db.database(),
         )
-    }
-
-    /// The SurrealDB client of a board on SurrealDB. A board on PostgreSQL has none: its client is
-    /// [`Store::database`]'s.
-    pub fn client(&self) -> &Client {
-        match self.db.reach() {
-            database::Reach::SurrealDb(client) => client,
-            database::Reach::PostgreSql(_) => {
-                panic!("this board is on PostgreSQL, which no SurrealDB client reaches")
-            }
-        }
     }
 
     /// The database the board is in.
@@ -379,7 +370,7 @@ impl Store {
     /// Eligibility without transferring briefs, roles or session health for the entire board.
     pub(crate) fn task_slugs(&self, status: Option<&str>) -> Result<Vec<String>, Error> {
         let by_status = status.is_some();
-        let read = || both(surreal::task_slugs(by_status), pg::task_slugs(by_status));
+        let read = || Statement::from(pg::task_slugs(by_status));
         self.retrying(|| self.read_together(read(), json!({"status":status})))
     }
 
@@ -399,7 +390,7 @@ impl Store {
     pub fn session(&self, handle: &str) -> Result<Session, Error> {
         let found: Found = self.retrying(|| {
             self.read_together(
-                both(session_read(), Pg::read(pg::sessions::session_read())),
+                Statement::from(Pg::read(pg::sessions::session_read())),
                 json!({"handle": handle, "executing": EXECUTING}),
             )
         })?;
@@ -424,16 +415,22 @@ impl Store {
 
     /// The tasks another session could take over if `handle` were gone.
     pub fn claimable(&self, handle: &str) -> Result<Vec<String>, Error> {
-        let read = || both(surreal::claimable(), pg::claimable());
+        let read = || Statement::from(pg::claimable());
         let mut slugs: Vec<String> = self.retrying(|| {
             self.read_together(read(), json!({"handle": handle, "executing": EXECUTING}))
         })?;
-        slugs.sort_unstable();
+        crate::order::sort_by(&mut slugs, &Ord::cmp);
         slugs.dedup();
         Ok(slugs)
     }
 
     pub fn thread(&self, slug: &str) -> Result<Vec<Message>, Error> {
+        Ok(self.thread_rows(slug)?.into_iter().map(message).collect())
+    }
+
+    /// [`Store::thread`] as the board holds its lines, each with whether a person wrote it
+    /// ([`MessageRow::by_person`]).
+    pub fn thread_rows(&self, slug: &str) -> Result<Vec<MessageRow>, Error> {
         #[derive(Deserialize)]
         struct Thread {
             known: bool,
@@ -441,39 +438,43 @@ impl Store {
         }
         let thread: Thread = self.retrying(|| {
             self.read_together(
-                both(surreal::THREAD, pg::messages::thread()),
+                Statement::from(pg::messages::thread()),
                 json!({"slug": slug}),
             )
         })?;
         if !thread.known {
             return Err(work::no_task(slug));
         }
-        Ok(thread.messages.into_iter().map(message).collect())
+        Ok(thread.messages)
     }
 
     /// The threads of `slugs`, each in order, in one round trip; a slug no task has is refused, as
     /// [`Store::thread`] refuses it.
     pub fn threads(&self, slugs: &[String]) -> Result<BTreeMap<String, Vec<Message>>, Error> {
+        let threads = self.threads_rows(slugs)?.into_iter();
+        Ok(
+            (threads.map(|(slug, rows)| (slug, rows.into_iter().map(message).collect())))
+                .collect_map(),
+        )
+    }
+
+    /// [`Store::threads`] as the board holds their lines ([`Store::thread_rows`]).
+    pub fn threads_rows(
+        &self,
+        slugs: &[String],
+    ) -> Result<BTreeMap<String, Vec<MessageRow>>, Error> {
         #[derive(Deserialize)]
         struct Threads {
             unknown: Vec<String>,
             threads: Vec<Vec<MessageRow>>,
         }
-        let read = || both(surreal::THREADS, pg::messages::threads());
+        let read = || Statement::from(pg::messages::threads());
         let read: Threads =
             self.retrying(|| self.read_together(read(), json!({"slugs": slugs})))?;
         if let Some(slug) = read.unknown.first() {
             return Err(work::no_task(slug));
         }
-        Ok(slugs
-            .iter()
-            .cloned()
-            .zip(
-                read.threads
-                    .into_iter()
-                    .map(|rows| rows.into_iter().map(message).collect()),
-            )
-            .collect_map())
+        Ok(slugs.iter().cloned().zip(read.threads).collect_map())
     }
 
     /// Become the executor. Of any number of claims at once, one wins. A claim that starts ready
@@ -720,8 +721,8 @@ impl Store {
     /// project file changed meanwhile never splits one decision.
     ///
     /// A task with no workflow position that the change moves out of done or cancelled while a
-    /// custom workflow is active is refused by the database (`workflow_position`), and the rule is
-    /// then written again placing it at its mapped pair in the same write
+    /// custom workflow is active is refused by the database (the trigger `task_workflow`), and the
+    /// rule is then written again placing it at its mapped pair in the same write
     /// ([`crate::workflow::activate::Placing::reopened`]): a board with no workflow writes as it
     /// always did, in one write.
     fn ruling(
@@ -779,7 +780,7 @@ impl Store {
             };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
             let parts = change.parts(&ruled.slots, placing.as_ref());
-            let body = both(surreal::rule(parts), pg::rule(parts)).posting();
+            let body = Statement::from(pg::rule(parts)).posting();
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
             if let Some(placing) = placing {
@@ -818,11 +819,7 @@ impl Store {
             .filter(|r| r.slug == slug)
             .map(|r| (r.handle.clone(), r.role.clone(), true))
             .collect();
-        let principal = if actor == work::OWNER {
-            crate::workflow::local_owner()
-        } else {
-            crate::workflow::agent_session(actor)
-        };
+        let principal = self.principal_of(actor);
         let reopening = crate::workflow::activate::Reopening {
             slug,
             left: &task.status,
@@ -874,20 +871,17 @@ impl Store {
         deliver: bool,
     ) -> Result<Task, Failure> {
         let which = Which::Slug(slug);
-        let (read, more) = (reading(&which, Sessions::Shown), reading::vars(&which));
-        if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
+        if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), reading::vars(&which)) {
             vars.extend(more);
         }
-        // On PostgreSQL the write's block, then the read, its answer.
-        let postgres = match body.postgres {
-            Some(Pg::Script(block, None)) => {
-                Some(Pg::script_then(block, pg::reading::written(&which)))
-            }
-            _ => None,
+        // The write's block, then the read, its answer.
+        let Pg::Script(block, None) = body.postgres else {
+            return Err(Failure::Stop(Error::Db(
+                "a task's write is a block with no answer of its own: nothing was sent".into(),
+            )));
         };
         let written = Statement {
-            surreal: (body.surreal.as_deref()).map(|body| surreal::written(body, &read).into()),
-            postgres,
+            postgres: Pg::script_then(block, pg::reading::written(&which)),
             posts: body.posts,
             names: body.names,
         };
@@ -1287,7 +1281,7 @@ struct Change {
     unlanded: Option<Value>,
 }
 
-/// What a rule's write adds to the write every rule makes ([`surreal::rule`], [`pg::rule`]),
+/// What a rule's write adds to the write every rule makes ([`pg::rule`]),
 /// each part by its name ([`Change::parts`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct RuleParts {
@@ -1450,7 +1444,9 @@ fn left_actor(handle: &str) -> String {
 }
 
 impl Store {
-    /// `ACT`'s variables, and `more`'s.
+    /// `ACT`'s variables, and `more`'s; with `by_person`, the person the write is for, when `actor`
+    /// is the one this store writes for ([`Store::for_person`]), whose lines are marked theirs
+    /// (`postgres::logged`).
     fn acting(&self, actor: &str, now: f64, more: Value) -> Value {
         let mut vars = json!({
             "actor": actor,
@@ -1458,10 +1454,49 @@ impl Store {
             "unknown_actor": format!("{REFUSED}{}", unknown_actor(&self.board_command(), actor)),
             "left_actor": format!("{REFUSED}{}", left_actor(actor)),
         });
+        if actor != work::OWNER && self.is_person(actor) {
+            vars["by_person"] = actor.into();
+        }
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
         vars
+    }
+
+    /// This store, writing for `name`, a person a board named (docs/product/analysis/users-and-identity.md,
+    /// "How a person's name is written"): its writes by `name` are a person's, as the owner's are
+    /// (no session acts, and a line they write is marked a person's, [`MessageRow::person`]), never a
+    /// session's. The Symphony's saves vouch for the person their host admitted; the command line
+    /// never calls it, so `--as` stays a session's. `owner` is a person already, and a `name` that
+    /// is no short name ([`symphony_docs::syntax::is_short_name`]) is none: its writes are a
+    /// session's, refused as an unknown one is.
+    #[must_use]
+    pub fn for_person(mut self, name: &str) -> Store {
+        if name != work::OWNER {
+            self.person = Some(name.to_string());
+        }
+        self
+    }
+
+    /// Whether `actor` writes as a person, not a session: the owner, or the person this store
+    /// writes for ([`Store::for_person`]) when theirs is a short name.
+    pub fn is_person(&self, actor: &str) -> bool {
+        actor == work::OWNER
+            || (self.person.as_deref() == Some(actor)
+                && symphony_docs::syntax::is_short_name(actor))
+    }
+
+    /// The principal `actor`'s write is taken as: the person at the machine for the owner, a
+    /// person a board named for the one this store writes for ([`Store::is_person`]), else the
+    /// session of that handle.
+    pub(crate) fn principal_of(&self, actor: &str) -> symphony_plugin::execution::Principal {
+        if actor == work::OWNER {
+            crate::workflow::local_owner()
+        } else if self.is_person(actor) {
+            crate::workflow::person(actor)
+        } else {
+            crate::workflow::agent_session(actor)
+        }
     }
 
     /// Whether `error` is this board's refusal of `handle` as the session that acts: one it does
@@ -1474,22 +1509,31 @@ impl Store {
 }
 
 fn message(row: MessageRow) -> Message {
-    Message {
-        id: row.id,
-        slug: row.slug,
-        sender: row.sender,
-        recipient: row.recipient,
-        kind: row.kind,
-        text: row.text,
-        ts: row.ts,
+    Message::from(row)
+}
+
+/// A line as the board holds it, as its readers take it: its mark of a person's line
+/// ([`MessageRow::person`]) left behind.
+impl From<MessageRow> for Message {
+    fn from(row: MessageRow) -> Message {
+        Message {
+            id: row.id,
+            slug: row.slug,
+            sender: row.sender,
+            recipient: row.recipient,
+            kind: row.kind,
+            text: row.text,
+            ts: row.ts,
+        }
     }
 }
 
-/// The read of `which` with the sessions `sessions` asks for, in each database's language, and
-/// its variables.
+/// The read of `which` with the sessions `sessions` asks for, and its variables.
 fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
-    let (read, vars) = (reading(which, sessions), reading::vars(which));
-    (both(read, pg::reading::reading(which, sessions)), vars)
+    (
+        Statement::from(pg::reading::reading(which, sessions)),
+        reading::vars(which),
+    )
 }
 
 /// Whether a reservation that `expires` at a time (none: never) is past it at `now`.

@@ -290,8 +290,7 @@ impl Postgres {
             cut: None,
             ..self.home.clone()
         }
-        .supervised(true)
-        .snapshotting(false);
+        .supervised(true);
         made.identify(crate::server::Engine::PostgreSql)?;
         let copy = made.postgresql(&self.programs);
         fs::rename(&taking, copy.data()).map_err(io("could not place", &copy.data()))?;
@@ -403,7 +402,7 @@ mod tests {
     #[test]
     fn only_complete_named_snapshots_are_listed_in_numeric_order_within_a_second() {
         let dir = std::env::temp_dir().join(format!("pg-snapshot-list-{}", std::process::id()));
-        let home = crate::server::Home::new(&dir, Path::new("/no/surreal"));
+        let home = crate::server::Home::at(&dir);
         let pg = home.postgresql(Path::new("/no/postgres"));
         let folder = dir.join(SNAPSHOTS);
         let base = "1970-01-01T00-00-01Z";

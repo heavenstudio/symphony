@@ -118,6 +118,13 @@ docs-check:
 tasks *ARGS:
     @{{ _symphony_board }}{{ _symphony_unasked }}tools/rs-bin.sh tasks "$@"
 
+# Like the Symphony's, it sets no marker, and an agent's run of it asks first, as no allow rule
+# passes it.
+# A change to a board's people or a profile, on this workspace's build of the board.
+[no-exit-message]
+tasks-people *ARGS:
+    @tools/rs-bin.sh tasks people "$@"
+
 # Symphony's releases (docs/workflow/RELEASES.md), a release run: main's tip, fetched, verified in full
 # (`just verify`) in a clean checkout outside this folder, building and testing nothing of the
 # projects this machine serves; each red check filed on the board, a green tip tagged

@@ -72,21 +72,31 @@ pub fn request(path: &str) -> axum::http::Request<axum::body::Body> {
         .unwrap()
 }
 
-/// A store on `client`'s board at the fixture's time and host.
-pub fn store_on(client: &symphony_board::rpc::Client) -> symphony_board::Store {
-    symphony_board::Store::with(
-        symphony_board::rpc::Client::new(client.addr(), "sf", client.database()),
+/// A store of its own on the board in `db` at the fixture's time and host.
+pub fn store_on(db: &symphony_board::Database) -> symphony_board::Store {
+    symphony_board::Store::opening_on(
+        db.another(),
         Box::new(|| board::NOW),
         Box::new(|_| false),
         board::HOST,
+        &symphony_board::Opening::write(),
     )
     .unwrap()
+}
+
+/// The board `TASKS_SERVER` and `TASKS_DATABASE` name, as this process's commands reach it
+/// ([`symphony_board::cli::writable_board`]): a client of its own, for a test's child that a
+/// [`child_on`] handed the board.
+pub fn named_board() -> symphony_board::Database {
+    let env = symphony_board::cli::Env::of_process();
+    let reached = symphony_board::cli::writable_board(&env).unwrap();
+    reached.database().unwrap()
 }
 
 /// The test `test` run alone in a child of this test binary on `board`, `marker` set so it takes
 /// its child side, with nothing of this process's session, client build or git folder: what it
 /// printed and what it logged, once it passed.
-pub fn child_on(board: &symphony_board::rpc::Client, marker: &str, test: &str) -> (String, String) {
+pub fn child_on(board: &symphony_board::Database, marker: &str, test: &str) -> (String, String) {
     let done = symphony_board::sys::output(
         symphony_board::sys::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", test, "--nocapture"])
@@ -263,6 +273,62 @@ pub fn registered(machine: &std::path::Path, ids: &[&str]) {
         .unwrap();
 }
 
+/// A colleague's laptop under a login other than this machine's (`ana@example.com`), as a peer
+/// [`laptop_with`]'s whois names it.
+pub const LAPTOP: &str = "100.101.102.104:5000";
+
+/// A gate whose whois names a colleague's laptop at [`LAPTOP`], under a login other than this
+/// machine's, and whose roster is `roster`.
+pub fn laptop_with(roster: crate::gate::Roster) -> crate::gate::Gate {
+    crate::gate::Gate::new(
+        std::sync::Arc::new(|address: &str| {
+            Ok((address == "100.101.102.104").then(|| {
+                r#"{"Node": {"Name": "laptop"}, "UserProfile": {"ID": 12, "LoginName": "ana@example.com"}}"#.to_string()
+            }))
+        }),
+        std::sync::Arc::new(std::time::Instant::now),
+    )
+    .with_status(std::sync::Arc::new(|| {
+        Ok(r#"{"Self": {"DNSName": "studio.tail.ts.net.", "UserID": 11}}"#.to_string())
+    }))
+    .with_roster(roster)
+}
+
+/// The board of the project at a root, made on PostgreSQL as its command line makes it, in the
+/// checkout's git folder: its server stopped when it drops.
+pub struct Board(symphony_board::server::Home);
+
+impl Board {
+    /// The board at `root`, each of `people` on it with their powers, added by the person at the
+    /// machine.
+    pub fn holding(
+        root: &std::path::Path,
+        people: &[(&str, &[symphony_board::people::Power])],
+    ) -> Board {
+        let board = Board(symphony_board::server::Home::in_common(&root.join(".git")));
+        let store = Board::store(root);
+        for (name, powers) in people {
+            store.add_person(name, &[], powers, "owner").unwrap();
+        }
+        board
+    }
+
+    /// A store on the board at `root`, as its command line reaches it.
+    pub fn store(root: &std::path::Path) -> symphony_board::Store {
+        symphony_board::cli::connect(&symphony_board::cli::Env {
+            vars: Default::default(),
+            cwd: root.to_path_buf(),
+        })
+        .unwrap()
+    }
+}
+
+impl Drop for Board {
+    fn drop(&mut self) {
+        let _ = self.0.stop_board();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,15 +387,15 @@ mod tests {
         assert!(shared.api.get().is_none(), "no hub was started");
     }
 
-    /// A second store on a client's board reads what the first wrote, at the fixture's clock.
+    /// A second store on a board reads what the first wrote, at the fixture's clock.
     #[test]
-    fn a_store_on_a_clients_board_reads_that_board_at_the_fixtures_clock() {
+    fn a_store_on_a_board_reads_that_board_at_the_fixtures_clock() {
         let fixture = board::Fixture::new(board::Seed::default().task("tools/run", "ready"));
-        let store = store_on(fixture.store.client());
+        let store = store_on(fixture.store.database());
         assert_eq!(store.now(), board::NOW);
         assert_eq!(store.get("tools/run").unwrap().slug, "tools/run");
         assert!(store.get("tools/other").is_err());
-        let again = store_on(&fixture.other_client());
+        let again = store_on(&fixture.other_database());
         let slugs: Vec<_> = (again.tasks(None).unwrap().into_iter())
             .map(|task| task.slug)
             .collect();
@@ -339,7 +405,7 @@ mod tests {
     /// A child that ran no test passed nothing: the name it was given selects none.
     #[test]
     fn a_child_that_runs_no_test_is_refused() {
-        let board = board::client();
+        let board = board::database();
         let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             child_on(
                 &board,

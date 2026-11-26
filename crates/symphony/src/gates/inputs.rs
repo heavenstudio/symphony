@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use symphony_board::cli::machine_work::recorded::{self, Record};
 use symphony_board::lock::Recovered as _;
 use symphony_board::stamps::Catalogue;
-use symphony_board::stamps::posted::{self, Posted};
+use symphony_board::stamps::posted::{self, Approval};
 use symphony_board::{Error, Message, Store, Task, TaskStamp};
 
 /// How many times each part a task's gates are read from was read anew ([`super::Kept::reads`]):
@@ -62,6 +62,16 @@ pub struct OfBoard {
 }
 
 impl OfBoard {
+    /// The people of the task's owner who held decide as its stamp was read
+    /// ([`TaskStamp::task_deciders`]), so a read with nothing new asks the board for no more; read
+    /// now where it has no stamp.
+    pub fn deciders(&self, store: &Store) -> Vec<String> {
+        match &self.stamp {
+            Some(stamp) => stamp.task_deciders(&self.record),
+            None => store.task_deciders(&self.record),
+        }
+    }
+
     /// The task and every task under it ([`super::stamps::family`]), read once a stamp, when a
     /// gate first reads the runs of the work under it.
     pub fn ours(&self, store: &Store) -> &[String] {
@@ -91,7 +101,9 @@ struct Cards {
     tip: String,
     /// The default branch's.
     default_tip: Option<String>,
-    posted: Posted,
+    /// The task's deciders it was read with.
+    deciders: Vec<String>,
+    posted: Approval,
 }
 
 /// What tasks' gates are read from, kept between reads (the module's doc).
@@ -237,21 +249,31 @@ impl Inputs {
     }
 
     /// What the cards the branch of the task `slug` posted say of its `owner` stamp at `tip`, in
-    /// the main checkout `root` (`posted::read`), the default branch's tip `default_tip`: as kept
-    /// while both tips are the ones it was read at.
-    pub fn posted(&self, root: &Path, slug: &str, tip: &str, default_tip: Option<&str>) -> Posted {
+    /// the main checkout `root` on a board whose `deciders` hold decide (`posted::read_by`), the
+    /// default branch's tip `default_tip`: as kept while both tips and the deciders are the ones it
+    /// was read with.
+    pub fn posted(
+        &self,
+        root: &Path,
+        slug: &str,
+        tip: &str,
+        default_tip: Option<&str>,
+        deciders: &[String],
+    ) -> Approval {
         let key = (root.to_path_buf(), slug.to_string());
         if let Some(kept) = self.cards.lock().recover().get(&key)
             && kept.tip == tip
             && kept.default_tip.as_deref() == default_tip
+            && kept.deciders == deciders
         {
             return kept.posted.clone();
         }
         self.read_posted.fetch_add(1, Ordering::SeqCst);
-        let read = posted::read(root, tip);
+        let read = posted::read_by(root, tip, deciders);
         let kept = Cards {
             tip: tip.to_string(),
             default_tip: default_tip.map(str::to_string),
+            deciders: deciders.to_vec(),
             posted: read.clone(),
         };
         self.cards.lock().recover().insert(key, kept);

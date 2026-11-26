@@ -373,7 +373,7 @@ mod tests {
         let (input, mut writer) = symphony_board::sys::pipe().unwrap();
         let bytes = Arc::new(Mutex::new(Vec::new()));
         let reports = Arc::new(Mutex::new(Vec::new()));
-        let (failed, failures) = std::sync::mpsc::channel();
+        let (failed, failures) = crate::test_channel::channel();
         let out = Recovering {
             failures: 2,
             bytes: bytes.clone(),
@@ -713,7 +713,7 @@ mod tests {
             .set_read_timeout(Some(Duration::from_millis(10)))
             .unwrap();
         let out = File::create(&path).unwrap();
-        let (send, recv) = std::sync::mpsc::channel();
+        let (send, recv) = crate::test_channel::channel();
         let thread = std::thread::spawn(move || {
             send.send(forward(
                 input,

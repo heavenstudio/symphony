@@ -24,6 +24,7 @@ fn at(stamp: &str) -> f64 {
 
 fn line(stamp: &str, verdict: Option<&str>, text: &str) -> OwnerLine {
     OwnerLine {
+        by: "owner".into(),
         page: MAIN.into(),
         stamp: stamp.into(),
         at: at(stamp),
@@ -99,11 +100,18 @@ fn a_verdict_since_the_block_decides_the_card_in_its_word() {
         ("dismissed", "dismiss"),
     ] {
         let lines = [line("2026-11-20 04:20", Some(verdict), "")];
-        assert_eq!(super::word(&lines, block), Word::Decided(word), "{verdict}");
+        assert_eq!(
+            super::word(&lines, block),
+            Word::Decided(word, "owner"),
+            "{verdict}"
+        );
     }
     // In the block's own minute too: the owner's stamp says the minute alone.
     let lines = [line("2026-11-20 04:00", Some("approved"), "")];
-    assert_eq!(super::word(&lines, block), Word::Decided("approve"));
+    assert_eq!(
+        super::word(&lines, block),
+        Word::Decided("approve", "owner")
+    );
 }
 
 #[test]
@@ -123,7 +131,7 @@ fn his_newest_verdict_is_the_cards_and_a_line_without_one_leaves_it() {
         line("2026-11-20 04:10", Some("approved"), "wider"),
         line("2026-11-20 04:12", None, "and taller"),
     ];
-    assert_eq!(word(&lines, block), Word::Decided("approve"));
+    assert_eq!(word(&lines, block), Word::Decided("approve", "owner"));
     // Approved, then set back to pending: undecided, and only the pending line is told.
     let lines = [
         line("2026-11-20 04:10", Some("approved"), "wider"),
@@ -135,7 +143,7 @@ fn his_newest_verdict_is_the_cards_and_a_line_without_one_leaves_it() {
         line("2026-11-20 04:10", Some("question"), "why?"),
         line("2026-11-20 04:12", Some("rejected"), "no"),
     ];
-    assert_eq!(word(&lines, block), Word::Decided("reject"));
+    assert_eq!(word(&lines, block), Word::Decided("reject", "owner"));
 }
 
 #[test]
@@ -192,7 +200,7 @@ fn a_line_is_told_with_its_card_stamp_and_page_under_a_key_of_what_it_says() {
 #[test]
 fn the_whys_name_the_card_and_verdict_or_the_commit_approved() {
     assert_eq!(
-        decided_why("layout", "reject"),
+        decided_why("layout", "reject", "owner"),
         "the owner decided layout (reject)"
     );
     assert_eq!(
@@ -208,6 +216,49 @@ fn the_whys_name_the_card_and_verdict_or_the_commit_approved() {
     assert_eq!(
         approved_cards_why(&["layout".into(), "colour".into()], tip),
         "the owner approved cards layout, colour, at 1a2b3c4"
+    );
+}
+
+/// [`line`] of `by`'s, a person a board named.
+fn theirs(by: &str, stamp: &str, verdict: Option<&str>, text: &str) -> OwnerLine {
+    OwnerLine {
+        by: by.into(),
+        ..line(stamp, verdict, text)
+    }
+}
+
+#[test]
+fn a_persons_lines_are_kept_by_name_and_decide_and_are_told_as_theirs() {
+    let main = cards(
+        "  [2026-11-20 04:10] ana · approved — wider\n  [2026-11-20 04:10] owner · approved — wider\n",
+    );
+    let said = said(main.iter().map(|card| (MAIN, card)));
+    let by: Vec<&str> = said["layout"].iter().map(|line| line.by.as_str()).collect();
+    assert_eq!(
+        by,
+        ["ana", "owner"],
+        "two people's same words in one minute are two lines"
+    );
+    let block = at("2026-11-20 04:00");
+    let lines = [theirs("ana", "2026-11-20 04:10", Some("approved"), "")];
+    assert_eq!(word(&lines, block), Word::Decided("approve", "ana"));
+    assert_eq!(
+        decided_why("layout", "approve", "ana"),
+        "ana decided layout (approve)"
+    );
+    // Told as hers, under a key of her own, while the owner's key reads as it always has.
+    let hers = theirs("ana", "2026-11-20 04:10", None, "which screens?");
+    let mine = line("2026-11-20 04:10", None, "which screens?");
+    let (text, key) = told("layout", &hers);
+    assert!(
+        text.starts_with("ana on card layout [2026-11-20 04:10]"),
+        "{text}"
+    );
+    assert_ne!(key, told("layout", &mine).1);
+    assert!(
+        told("layout", &mine)
+            .0
+            .starts_with("the owner on card layout")
     );
 }
 
@@ -231,11 +282,19 @@ fn the_owners_approve_counts_where_it_names_the_tip() {
     let tip = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
     let other = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
     let nowhere = Path::new("/nowhere");
-    let approves = |thread: &[Message]| approves(thread, tip, nowhere);
+    let approves = |thread: &[Message]| approves(thread, tip, nowhere, &[]);
     assert_eq!(
         approves(&[post(1, "owner", "msg", &format!("approve {tip}"))]).as_deref(),
         Some("the owner approved 1a2b3c4")
     );
+    // A decider's approve counts while they decide, and is said as theirs.
+    let hers = [post(1, "ana", "msg", &format!("approve {tip}"))];
+    let deciders = ["ana".to_string()];
+    assert_eq!(
+        super::approves(&hers, tip, nowhere, &deciders).as_deref(),
+        Some("ana approved 1a2b3c4")
+    );
+    assert_eq!(approves(&hers), None, "no decide, no approve");
     for thread in [
         vec![post(1, "owner", "msg", &format!("approve {other}"))],
         vec![post(1, "orch", "msg", &format!("approve {tip}"))],

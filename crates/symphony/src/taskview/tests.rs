@@ -178,7 +178,7 @@ fn a_reviewers_verdict_is_news_for_every_person_and_any_other_line_is_none() {
 
 /// The activity list's `answered` and the questions still waiting on the owner
 /// ([`symphony_board::Store::questions_waiting`]) are one rule, written in Rust here and in the
-/// store's SurrealQL: on one board, a line both read (an agent's message to the owner on an open
+/// store's SQL: on one board, a line both read (an agent's message to the owner on an open
 /// task) is answered in the list exactly when it is not among those waiting.
 #[test]
 fn the_activity_says_answered_of_exactly_the_owners_questions_no_longer_waiting() {
@@ -193,6 +193,7 @@ fn the_activity_says_answered_of_exactly_the_owners_questions_no_longer_waiting(
             kind: kind.into(),
             text: format!("line {id}"),
             ts: NOW + f64::from(id),
+            person: false,
         }
     };
     let (agent, owner, to_owner) = ("amber-heron", "owner", Some("owner"));
@@ -381,6 +382,7 @@ fn agent_post(text: &str) -> Message {
         kind: "msg".into(),
         text: text.into(),
         ts: 1_795_132_459.79,
+        person: false,
     }
 }
 

@@ -285,7 +285,7 @@ describe("the agents page's view", () => {
   it("heads the page, and says what the machine probes answered", () => {
     const html = view();
     expect(html).toMatch(
-      /^<div class="page-head"><div><h1>Agents<\/h1><p class="lead">Who is connected, and what they are working on.<\/p><\/div><\/div><p class="muted">Terminal panes: ok · Test slots: unavailable<\/p><h2>Happening now<\/h2>/,
+      /^<div class="page-head"><div><h1>Agents<\/h1><\/div><\/div><p class="muted">Terminal panes: ok · Test slots: unavailable<\/p><h2>Happening now<\/h2>/,
     );
   });
 
@@ -358,7 +358,7 @@ describe("the machines' context", () => {
     expect(html).toContain(
       '<div class="machine-work-row" data-machine-id="beta"><strong>beta</strong><p>Machine observation unknown</p>',
     );
-    expect(html).toContain("These targets do not enforce admission.");
+    expect(html).not.toContain("These targets do not enforce admission.");
     expect(html).toContain('<p class="muted">Machine ID: <code>alpha</code></p>');
     expect(html).toContain("Observed Build queued · Alpha · partial inventory");
     expect(html).toContain('<p class="muted">inventory cut short</p>');

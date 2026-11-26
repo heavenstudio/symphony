@@ -14,7 +14,6 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use symphony_api::{EntryNeed, EntryState, Setting, SettingClass, SettingScope, SettingsEntry};
@@ -35,9 +34,8 @@ pub struct Program {
     pub args: &'static [&'static str],
     /// Its entry's id on the page, whatever id its answer gives.
     pub id: &'static str,
-    /// Its entry's name and what it is for, said in its place while it does not answer.
+    /// Its entry's name, said in its place while it does not answer.
     pub title: &'static str,
-    pub about: &'static str,
     /// Whether its settings decide what lands or what reaches an outside service: each is then
     /// reviewed, whatever it says.
     pub lands: bool,
@@ -50,21 +48,17 @@ pub const GITHUB: Program = Program {
     args: &["describe"],
     id: "github",
     title: "GitHub",
-    about: "Issues exchanged, lands delivered by pull request, releases published.",
     lands: true,
 };
 
 /// `program`'s entry, its own answer as this machine's build of it gives it for the project whose
-/// main checkout is `main`, judged ([`judged`]), with the program as its first need; absent, or
-/// failing, its entry says so and what holds. Its id is `program`'s.
+/// main checkout is `main`, within the machine's time to answer ([`Machine::answers_in`]), judged
+/// ([`judged`]), with the program as its first need; absent, or failing, its entry says so and
+/// what holds. Its id is `program`'s.
 pub fn program(machine: &Machine, main: &Path, program: &Program) -> SettingsEntry {
     let Some(found) = builds::of_main(main, program.name, &machine.beyond) else {
         return SettingsEntry {
-            state: unknown(format!(
-                "Unknown: its state is its program's to say, and this machine has no {}: nothing \
-                 is exchanged from here.",
-                program.name
-            )),
+            state: unknown(format!("Unknown: this machine has no {}.", program.name)),
             needs: vec![EntryNeed {
                 what: format!("the {} program", program.name),
                 met: false,
@@ -73,7 +67,7 @@ pub fn program(machine: &Machine, main: &Path, program: &Program) -> SettingsEnt
                     builds::missing(main, program.name)
                 ),
             }],
-            ..entry(program.id, program.title, program.about)
+            ..entry(program.id, program.title)
         };
     };
     let need = EntryNeed {
@@ -85,7 +79,7 @@ pub fn program(machine: &Machine, main: &Path, program: &Program) -> SettingsEnt
     let answer = run(
         sys::command(&found).args(program.args).current_dir(main),
         &asked,
-        ANSWERS_IN,
+        machine.answers_in,
     )
     .and_then(|printed| {
         serde_json::from_slice::<SettingsEntry>(&printed)
@@ -100,7 +94,7 @@ pub fn program(machine: &Machine, main: &Path, program: &Program) -> SettingsEnt
         Err(why) => SettingsEntry {
             state: unknown(format!("Unknown: its program could not say: {why}.")),
             needs: vec![need],
-            ..entry(program.id, program.title, program.about)
+            ..entry(program.id, program.title)
         },
     }
 }
@@ -111,7 +105,7 @@ pub fn program(machine: &Machine, main: &Path, program: &Program) -> SettingsEnt
 fn run(command: &mut sys::Command, asked: &str, within: Duration) -> Result<Vec<u8>, String> {
     let child = sys::spawn_output(command).map_err(|e| format!("{asked} did not start: {e}"))?;
     let pid = i64::from(child.id());
-    let (send, receive) = mpsc::channel();
+    let (send, receive) = crate::channel::channel();
     std::thread::spawn(move || {
         let _ = send.send(sys::wait_output(child));
     });
@@ -159,11 +153,7 @@ pub fn plugins(plugins: &Plugins, root: &Path) -> Vec<SettingsEntry> {
                     state: unknown(format!(
                         "Unknown: the plugin {plugin} could not say: {why}."
                     )),
-                    ..entry(
-                        &id,
-                        describer.id(),
-                        &format!("Described by the plugin {plugin}."),
-                    )
+                    ..entry(&id, describer.id())
                 },
             }
         })

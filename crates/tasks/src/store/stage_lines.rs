@@ -5,8 +5,7 @@
 
 use super::postgres::stage_lines as pg;
 use super::report_lines::line_of;
-use super::statement::both;
-use super::surreal::stage_lines as sql;
+use super::statement::Statement;
 use super::{Error, Store};
 use crate::stages::{self, Facts, InStatus, Line};
 use serde::Deserialize;
@@ -54,10 +53,7 @@ impl Store {
             return Ok(BTreeMap::new());
         }
         let answer: Value = self.retrying(|| {
-            self.read_together(
-                both(sql::SINCE_READ, pg::since_read()),
-                json!({"slugs": slugs}),
-            )
+            self.read_together(Statement::from(pg::since_read()), json!({"slugs": slugs}))
         })?;
         let read = since_taken_apart(slugs, &answer).ok_or_else(|| {
             Error::Db("the read of when tasks took their status is not in the board's shape".into())
@@ -101,7 +97,7 @@ impl Store {
             lines: Vec<Vec<LineRow>>,
         }
         let read: Read = self.retrying(|| {
-            self.read_together(both(sql::READ, pg::read()), json!({"since": since}))
+            self.read_together(Statement::from(pg::read()), json!({"since": since}))
         })?;
         Ok(read
             .tasks
@@ -132,7 +128,7 @@ impl Store {
     }
 }
 
-/// A task as [`sql::SINCE_READ`] finds it.
+/// A task as [`pg::since_read`] finds it.
 #[derive(Debug, PartialEq)]
 struct Found {
     status: String,
@@ -141,7 +137,7 @@ struct Found {
     lines: Vec<Line>,
 }
 
-/// [`sql::SINCE_READ`]'s `answer` for `slugs`, in their order: each one's task and lines, taken apart by
+/// [`pg::since_read`]'s `answer` for `slugs`, in their order: each one's task and lines, taken apart by
 /// hand as the roll-up's read is ([`line_of`]), so no reader of its own shape is added to the
 /// server's binary (docs/workflow/CHECKS.md, size budgets); none for a slug no task has. None for the whole
 /// when a list does not pair with the slugs or a row lacks a field it must have.

@@ -1,5 +1,5 @@
-//! `stats`' tokens: what the board recorded per UTC day by role, what each landed task took and
-//! what review rounds cost against first rounds, with their cost estimated at API list prices
+//! `stats`' tokens: what the board recorded per UTC day by role, what each landed task took,
+//! what review rounds cost against first rounds and how many tasks were back after review, with their cost estimated at API list prices
 //! ([`crate::usage::price`]). All of it is read from the hourly roll-up's day files
 //! ([`crate::reports`]), the ones the Reports page sums, so the two say the same figures, and
 //! never from the board's `usage` table, which keeps no day.
@@ -149,21 +149,23 @@ pub(super) fn text(told: &Told) -> Vec<String> {
         without(landed),
         landed.median.map_or("unpriced".into(), price::dollars)
     ));
-    for (slug, _, spend) in landed.tasks.iter().take(DEAREST) {
+    for task in landed.tasks.iter().take(DEAREST) {
+        let spend = task.spend();
         lines.push(format!(
-            "  {slug:<40} {}  {} tokens",
+            "  {:<40} {}  {} tokens",
+            task.slug,
             spend.cost.said(),
-            tokens(spend)
+            tokens(&spend)
         ));
     }
     lines.push(format!(
-        "First rounds against review rounds, of those tasks: first rounds {} ({} tokens) · later \
-         rounds {} ({} tokens); {} of {} went past their first round",
+        "First rounds against review rounds, of those tasks: first rounds {} ({} tokens) · review \
+         rounds {} ({} tokens); back after review: {} of {} were reviewed twice or more",
         landed.first.cost.said(),
         tokens(&landed.first),
         landed.later.cost.said(),
         tokens(&landed.later),
-        landed.again,
+        landed.back,
         landed.tasks.len()
     ));
     lines
@@ -209,12 +211,12 @@ pub(super) fn json(told: &Told) -> Value {
         .collect();
     let landed = &told.landed;
     let dearest = (landed.tasks.iter().take(DEAREST))
-        .map(|(slug, at, spend)| {
+        .map(|task| {
             let mut fields = vec![
-                ("slug", Value::from(slug.as_str())),
-                ("at", Value::from(*at)),
+                ("slug", Value::from(task.slug.as_str())),
+                ("at", Value::from(task.at)),
             ];
-            fields.extend(spend_json(spend, prices));
+            fields.extend(spend_json(&task.spend(), prices));
             object(fields)
         })
         .collect();
@@ -235,7 +237,10 @@ pub(super) fn json(told: &Told) -> Value {
                 ("dearest", Value::Array(dearest)),
                 ("first_round", object(spend_json(&landed.first, prices))),
                 ("later_rounds", object(spend_json(&landed.later, prices))),
+                // `again` as it always was, every task reviewed, for a reader of it; the count
+                // that says something is `back_after_review`, the tasks reviewed twice or more.
                 ("again", count(landed.again)),
+                ("back_after_review", count(landed.back)),
             ]),
         ),
     ])
@@ -278,6 +283,41 @@ mod tests {
         assert_eq!(json["per_day"][0]["by_role"], Value::Null);
         assert_eq!(json["landed"]["median_dollars"], Value::Null);
         assert_eq!(json["landed"]["dearest"], Value::Array(Vec::new()));
+    }
+
+    #[test]
+    fn back_after_review_counts_the_tasks_reviewed_twice_beside_again() {
+        let task = |slug: &str| spend::LandedTask {
+            slug: slug.into(),
+            ..spend::LandedTask::default()
+        };
+        let landed = LandedCosts {
+            tasks: vec![task("a/one"), task("a/two"), task("a/three")],
+            again: 3,
+            back: 1,
+            ..LandedCosts::default()
+        };
+        let told = told(vec![("2026-11-18", Some(Vec::new()))], landed);
+        let lines = text(&told);
+        assert!(
+            lines
+                .last()
+                .unwrap()
+                .ends_with("back after review: 1 of 3 were reviewed twice or more"),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.starts_with("  a/one ")),
+            "{lines:?}"
+        );
+        let json = json(&told);
+        assert_eq!(
+            (
+                &json["landed"]["again"],
+                &json["landed"]["back_after_review"]
+            ),
+            (&Value::from(3), &Value::from(1))
+        );
     }
 
     #[test]

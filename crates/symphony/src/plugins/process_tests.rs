@@ -719,7 +719,7 @@ fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_p
     let refused = remote.declaration().unwrap_err();
     assert_eq!(
         refused,
-        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.5: install a \
+        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.6: install a \
          Symphony that speaks protocol 1; it is not started again until its program or the \
          project's settings change"
     );
@@ -1247,7 +1247,7 @@ fn an_answer_after_its_call_was_given_up_is_logged_and_dropped_and_the_process_k
     let wait = Duration::from_secs(1);
     // The first render is answered only once the test lets it, after its call was given up; the
     // others at once, an answer to no call before each.
-    let (let_go, held) = mpsc::channel::<()>();
+    let (let_go, held) = crate::test_channel::channel::<()>();
     let held = Mutex::new(Some(held));
     let respond: Respond = Arc::new(move |id, _| {
         if let Some(held) = held.lock().recover().take() {
@@ -2196,11 +2196,11 @@ fn lines_logged_by_threads_at_once_are_each_whole() {
             said
         })
         .collect();
-    said.sort_unstable();
+    symphony_board::order::sort_by(&mut said, &Ord::cmp);
     let mut every: Vec<String> = (0..8)
         .flat_map(|thread| (0..100).map(move |line| format!("thread {thread} line {line}")))
         .collect();
-    every.sort_unstable();
+    symphony_board::order::sort_by(&mut every, &Ord::cmp);
     assert_eq!(said, every);
 }
 
@@ -3098,7 +3098,7 @@ fn a_gates_answer_given_up_holds_its_turn_until_its_late_answer_comes() {
     let seen = Seen::default();
     // Its gates answer runs on until the test lets it go, past its cancel, as the SDK's worker
     // runs one on.
-    let (let_go, held) = mpsc::channel::<()>();
+    let (let_go, held) = crate::test_channel::channel::<()>();
     let held = Mutex::new(held);
     let respond: Respond = Arc::new(move |id, _| {
         let _ = held.lock().recover().recv();

@@ -300,10 +300,13 @@ pub fn authority_pages(text: &str) -> std::collections::BTreeMap<String, String>
         .and_then(|value| taken::<Vec<WrittenAuthority>>(Some(value), "workflow_authorities").ok())
         .flatten()
         .unwrap_or_default();
-    (written.into_iter())
-        .filter(|authority| authority.check_page().is_ok())
-        .filter_map(|authority| Some((authority.adapter, authority.page?)))
-        .collect()
+    let mut pages = std::collections::BTreeMap::new();
+    pages.extend(
+        (written.into_iter())
+            .filter(|authority| authority.check_page().is_ok())
+            .filter_map(|authority| Some((authority.adapter, authority.page?))),
+    );
+    pages
 }
 
 /// The `[project] id` the file commits, which every attestation names as the project it is for:
@@ -549,16 +552,34 @@ impl Grants {
 
     /// The capabilities granted to anyone: the ones the host supports.
     pub fn supported(&self) -> BTreeSet<&str> {
-        self.0
-            .iter()
-            .map(|(capability, _)| capability.as_str())
-            .collect()
+        let mut supported = BTreeSet::new();
+        supported.extend(self.0.iter().map(|(capability, _)| capability.as_str()));
+        supported
     }
 }
 
 /// The local owner, as the local host authenticates it: the person at this machine's board.
 pub fn local_owner() -> Principal {
     Principal::new(PrincipalKind::Human, "local".into(), "owner".into())
+}
+
+/// The issuer of a person a board named ([`person`]).
+pub const PEOPLE: &str = "people";
+
+/// A person a board named, `name` their short name, as the board takes their write
+/// ([`crate::Store::for_person`]): a human, never a session the write checks.
+pub fn person(name: &str) -> Principal {
+    Principal::new(PrincipalKind::Human, PEOPLE.into(), name.into())
+}
+
+/// The local owner as the actor of a write ([`symphony_plugin::Actor`]): the person at this
+/// machine, whose lines carry `owner` while a board names nobody, shown as `owner`, with no git
+/// handles of their own (a save is authored by the machine's git identity, as always), and the
+/// principal [`local_owner`], whose subject is that name.
+pub fn local_actor() -> symphony_plugin::Actor {
+    let owner = local_owner();
+    let sender = symphony_plugin::Sender::new(&owner.subject, &owner.subject, Vec::new());
+    symphony_plugin::Actor::new(sender, owner)
 }
 
 /// The board's own service `name` (its activation, its recovery), acting for no person.
@@ -577,12 +598,12 @@ fn normalize(mut d: Definition) -> Definition {
     ordered(&mut d.positions, |position| pair_key(&position.at));
     ordered(&mut d.edges, |edge| edge.id.clone());
     ordered(&mut d.guards, |guard| guard.id.clone());
-    d.capabilities.sort();
-    d.adapters.sort();
-    d.task_kinds.sort();
+    crate::order::sort_by(&mut d.capabilities, &Ord::cmp);
+    crate::order::sort_by(&mut d.adapters, &Ord::cmp);
+    crate::order::sort_by(&mut d.task_kinds, &Ord::cmp);
     for edge in &mut d.edges {
-        edge.inputs.sort();
-        edge.guards.sort();
+        crate::order::sort_by(&mut edge.inputs, &Ord::cmp);
+        crate::order::sort_by(&mut edge.guards, &Ord::cmp);
         // Authority is an unordered OR; effects remain in application order.
         ordered(&mut edge.authority, authority_key);
     }
@@ -602,7 +623,7 @@ pub(crate) fn canonical(value: &impl serde::Serialize) -> Result<Vec<u8>, String
 /// link a sort each.
 pub(crate) fn ordered<T>(items: &mut Vec<T>, key: impl Fn(&T) -> String) {
     let mut keyed: Vec<(String, usize)> = items.iter().map(key).zip(0..).collect();
-    keyed.sort_unstable();
+    crate::order::sort_by(&mut keyed, &Ord::cmp);
     let mut slots: Vec<Option<T>> = std::mem::take(items).into_iter().map(Some).collect();
     items.extend((keyed.into_iter()).map(|(_, at)| slots[at].take().expect("each index once")));
 }

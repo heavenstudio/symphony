@@ -175,6 +175,10 @@ fn picture_offset_ties_preserve_complete_payloads_and_report_cost() {
             })
             .collect();
         let mut old = rows.clone();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the standard sort this test holds the shared sorter to"
+        )]
         let (_, old_cpu) = test_time::cpu::spent(|| old.sort_by_key(|(start, _)| *start));
         let (_, new_cpu) = test_time::cpu::spent(|| {
             symphony_board::order::sort_by_key(&mut rows, &|(start, _)| *start)

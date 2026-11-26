@@ -1,9 +1,12 @@
 // The Reports page, `/reports`: how the project's work flows, how many agents work it and in which
 // roles, its decisions, its code and its board's health, by the hour, the day or the week, so a
-// change to a gate or a limit shows in the speed and the quality of what lands. It draws the one
-// read REPORTS_PATH answers (crates/symphony-api's `report_page`), summed by the server from the
+// change to a gate or a limit shows in the speed and the quality of what lands. Two tabs read the
+// same window, the address naming the one shown (`?view=landed`). Over time draws the read
+// REPORTS_PATH answers (crates/symphony-api's `report_page`), summed by the server from the
 // project's day files: four figures over the window, then the charts on one time axis, two columns
-// on a wide screen. A period a source has no record of is a gap, hatched, never a zero.
+// on a wide screen. A period a source has no record of is a gap, hatched, never a zero. Landed
+// tasks draws the tasks landed in the window, by task (reports-landed.tsx), from a read of its own
+// made while it is shown.
 
 import { type CSSProperties, useEffect, useState } from "react";
 import { Button } from "./button";
@@ -21,19 +24,11 @@ import {
   type Unit,
 } from "./chart";
 import { PageNotices } from "./live";
-import { href } from "./project";
+import { href, scoped } from "./project";
+import { FigureCards, LandedView, readLanded } from "./reports-landed";
 import { getIf, said } from "./request";
 import { field } from "./shared";
-import {
-  amount,
-  costSaid,
-  dollars,
-  estimate,
-  isCost,
-  isTokens,
-  total,
-  unpricedSaid,
-} from "./spend";
+import { amount, dollars, estimate, isCost, isTokens, total, unpricedSaid } from "./spend";
 import { Backoff } from "./state";
 import { load, save } from "./storage";
 // biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: reports reads again every EVERY_MS with no feed of its own, where a feed event of a roll-up is the wait
@@ -43,11 +38,12 @@ import { NearViewport } from "./viewport";
 import {
   type AgentCost,
   type Grain,
-  type LandedSpend,
+  type LandedPage,
+  REPORTS_LANDED_PATH,
   REPORTS_PATH,
   type ReportMark,
-  type Spend,
 } from "./wire";
+import { MONTHS, twoDigits, WEEKDAYS } from "./words";
 
 const HOUR = 3_600;
 const DAY = 86_400;
@@ -173,8 +169,6 @@ export interface Page {
   first: number | null;
   marks: ReportMark[];
   unread: string[];
-  /** What the tasks landed in the window took; none where none landed. */
-  landed: LandedSpend | null;
   /** The day the API list prices every dollar is estimated at were read; empty from a server that
    * prices nothing. */
   prices: string;
@@ -203,32 +197,6 @@ function isMark(value: unknown): value is Omit<ReportMark, "changed"> {
 /** What a mark that names nothing changed: the settings, all a mark said before it named any. */
 const SETTINGS = ["settings"];
 
-const isCount = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
-const isSpend = (value: unknown): value is Spend =>
-  isTokens(field(value, "tokens")) && isCost(field(value, "cost"));
-
-/**
- * The landed tasks' spend as the server writes it, or none where it is not: absent or `null` is
- * none landed, as from a server that wrote none.
- */
-function readLanded(value: unknown): LandedSpend | null | undefined {
-  if (value === undefined || value === null) return null;
-  const median = field(value, "median") ?? null;
-  const dearest = listed(field(value, "dearest"));
-  return ["tasks", "without", "again"].every((count) => isCount(field(value, count) ?? 0)) &&
-    (median === null || typeof median === "number") &&
-    dearest?.every(
-      (task) =>
-        typeof field(task, "slug") === "string" &&
-        typeof field(task, "at") === "number" &&
-        isSpend(task),
-    ) === true &&
-    isSpend(field(value, "first_round")) &&
-    isSpend(field(value, "later_rounds"))
-    ? ({ ...(value as LandedSpend), median, dearest } as LandedSpend)
-    : undefined;
-}
-
 /**
  * The reports as this client reads them, or none for a value without what the page draws: a grain,
  * its days, the window's ends, the periods (each read by path as it is drawn), the first roll-up,
@@ -243,10 +211,8 @@ export function readReports(value: unknown): Page | null {
   const buckets = listed(field(value, "buckets"));
   const marks = listed(field(value, "marks"));
   const unread = listed(field(value, "unread"));
-  const landed = readLanded(field(value, "landed"));
   const prices = field(value, "prices") ?? "";
   if (
-    landed === undefined ||
     typeof prices !== "string" ||
     typeof grain !== "string" ||
     parseGrain(grain) === null ||
@@ -276,7 +242,6 @@ export function readReports(value: unknown): Page | null {
       return { ...mark, changed: changed.length > 0 ? changed : SETTINGS };
     }),
     unread: unread as string[],
-    landed,
     prices,
   };
 }
@@ -286,14 +251,52 @@ export function readReports(value: unknown): Page | null {
  * answer always writes (none where it is missing, as in an answer from a server built before it);
  * the mean of the sessions running work in a role, or every other role's together for none; the
  * estimated dollars or the tokens of a role's model calls, or every other role's together for none;
- * or the sum of the numbers at two paths.
+ * the sum of the numbers at two paths; or a cost over what it bought (`Ratio`).
  */
 type Pick =
   | { at: string }
   | { written: string }
   | { role: string | null }
   | { spend: string | null; of: "dollars" | "tokens" }
-  | { sum: [string, string] };
+  | { sum: [string, string] }
+  | { ratio: Ratio };
+
+/**
+ * A period's cost over what it bought: its whole estimated cost over the top-level tasks it landed
+ * (`all-in`); what its landed tasks cost for each 100 lines their landings changed (`lines`); or
+ * its whole cost for each 100 lines that reached the default branch in it (`lines-all-in`). None
+ * where it bought nothing, or its cost or its count is not recorded.
+ */
+type Ratio = "all-in" | "lines" | "lines-all-in";
+
+/** The estimated dollars every role's model calls cost in `bucket`; none where it told none. */
+function periodCost(bucket: Bucket): number | null {
+  const roles = field(bucket.raw, "spend");
+  if (!Array.isArray(roles)) return null;
+  return (
+    sum(
+      roles.flatMap((one) => {
+        const value = field(field(one, "cost"), "dollars");
+        return typeof value === "number" ? [value] : [];
+      }),
+    ) + 0
+  );
+}
+
+/** The value `ratio` reads in `bucket` (`Ratio`). */
+function ratioOf(ratio: Ratio, bucket: Bucket): number | null {
+  const over = (cost: number | null, count: number | null, by = 1) =>
+    cost === null || count === null || count <= 0 ? null : (cost / count) * by;
+  if (ratio === "lines") {
+    return over(bucket.written("landed.lined_cost"), bucket.written("landed.lines"), 100);
+  }
+  const cost = periodCost(bucket);
+  if (ratio === "all-in") return over(cost, bucket.written("landed.tasks"));
+  const lines = bucket.has("git")
+    ? (bucket.number("git.added") ?? 0) + (bucket.number("git.removed") ?? 0)
+    : null;
+  return over(cost, lines, 100);
+}
 
 /** The roles a chart of the agents names; the rest are its other roles. */
 const NAMED = ["orchestrator", "executor", "reviewer"];
@@ -338,6 +341,7 @@ function picked(pick: Pick, bucket: Bucket): number | null {
         }),
     );
   }
+  if ("ratio" in pick) return ratioOf(pick.ratio, bucket);
   const [one, other] = pick.sum;
   const first = bucket.number(one);
   const second = bucket.number(other);
@@ -353,18 +357,21 @@ interface Series {
 
 /**
  * The source a chart's coverage is read from: the roll-up's hours, the agents' or the board's
- * health, or the hours whose tokens the roll-up told.
+ * health, the hours whose tokens the roll-up told, or the roll-up's hours from a server that counts
+ * the tasks landed in a period (one that writes its `landed`, null for none).
  */
-type Source = "rollup" | "agents" | "health" | "spend";
+type Source = "rollup" | "agents" | "health" | "spend" | "landed";
 
 interface Spec {
   id: string;
   title: string;
-  /** What it shows; `{per}` is the period's word. */
-  note: string;
   unit: Unit;
   source: Source;
   series: Series[];
+  /** What the readout says of a period its source recorded with no value (`ChartData.none`). */
+  none?: (bucket: Bucket) => string;
+  /** What the readout says after a period's name, none where it says nothing. */
+  when?: (bucket: Bucket) => string | null;
 }
 
 /** A series drawn as `mark`, read at `path`. */
@@ -390,13 +397,25 @@ const spent = (of: "dollars" | "tokens"): Series[] =>
     ] as const
   ).map(([name, which]) => ({ name, mark: "bar", pick: { spend: which, of } }));
 
-/** The heading of the section the landed tasks' costs follow the charts of. */
+/** The heading of the section of the charts of tokens, which the window's sum opens. */
 export const SPEND = "Tokens and cost";
 
-/** How the roll-up tells an hour's tokens, said under each chart of them. */
-const TOLD =
-  "An hour's tokens are what the board's usage gained between two hourly roll-ups, shared among " +
-  "the hours between them by time: an hour no two roll-ups span is a gap, never a zero.";
+/** How many top-level tasks a period landed, as the readout says it after its name. */
+function landedSaid(bucket: Bucket): string | null {
+  const tasks = bucket.written("landed.tasks");
+  return tasks === null ? null : `${tasks} landed`;
+}
+
+/**
+ * What the cost of 100 lines says of a period with none: that its lines were not read, where a
+ * task it landed with a priced cost landed before lines were kept and its roll-up counted no git
+ * line; else that no line changed, as of a period whose lines were read and none was counted.
+ */
+function linesNone(bucket: Bucket): string {
+  return !bucket.has("git") && (bucket.number("landed.unread") ?? 0) > 0
+    ? "lines not read"
+    : "no line changed";
+}
 
 /** The page's sections, each a heading and its charts. */
 export const SECTIONS: [string, Spec[]][] = [
@@ -406,10 +425,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "done",
         title: "Tasks done",
-        note:
-          "Top-level tasks done, per {per}, each once at its last close: one approved again after " +
-          "its landing sent it back counts once. Hours and days are UTC; just tasks stats counts " +
-          "the same tasks by this machine's days.",
         unit: "count",
         source: "rollup",
         series: [{ name: "Done", mark: "bar", pick: { written: "flow.done" } }],
@@ -417,7 +432,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "open",
         title: "Open work",
-        note: "Top-level tasks in each open status at the end of each {per}.",
         unit: "count",
         source: "rollup",
         series: [
@@ -430,7 +444,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "task-hours",
         title: "Task-hours",
-        note: "Hours top-level tasks spent in each open status, per {per}.",
         unit: "hours",
         source: "rollup",
         series: [
@@ -443,7 +456,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "lead",
         title: "Lead time",
-        note: "Creation to last close of the top-level tasks done in each {per}.",
         unit: "seconds",
         source: "rollup",
         series: [line("Median", "lead.median"), line("p90", "lead.p90")],
@@ -451,7 +463,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "waits",
         title: "Waits between hands",
-        note: "The median wait that ended in each {per}, by kind.",
         unit: "seconds",
         source: "rollup",
         series: [
@@ -469,9 +480,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "agents",
         title: "Agents at work",
-        note:
-          "Sessions running a role on a task in progress or in review, the mean over each {per}; " +
-          "a session with two roles counts in both.",
         unit: "mean",
         source: "agents",
         series: [
@@ -485,7 +493,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "sessions",
         title: "Sessions",
-        note: "Sessions that connected, and changes to stale and to lost, per {per}.",
         unit: "count",
         source: "agents",
         series: [
@@ -497,7 +504,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "load",
         title: "Machine load",
-        note: "The machine's load average over a minute, its peak and mean in each {per}.",
         unit: "load",
         source: "agents",
         series: [line("Peak", "agents.load_1m.peak"), line("Mean", "agents.load_1m.mean")],
@@ -510,10 +516,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "cost",
         title: "Estimated cost",
-        note:
-          "What the model calls the board recorded cost in each {per}, by role, estimated at API " +
-          "list prices read {prices}: never money spent, as a subscription is not billed by the " +
-          `token. Tokens of a model with no price are in no bar. ${TOLD}`,
         unit: "dollars",
         source: "spend",
         series: spent("dollars"),
@@ -521,12 +523,34 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "tokens",
         title: "Tokens",
-        note:
-          "The tokens the board recorded in each {per}, by role: input, cache writes, cache reads " +
-          `and output together, every model's. ${TOLD}`,
         unit: "tokens",
         source: "spend",
         series: spent("tokens"),
+      },
+      {
+        id: "landed-cost",
+        title: "Cost per landed task",
+        unit: "dollars",
+        source: "landed",
+        series: [
+          line("Median", "landed.median"),
+          line("p90", "landed.p90"),
+          { name: "All in", mark: "line", pick: { ratio: "all-in" } },
+        ],
+        none: () => "no task landed",
+        when: landedSaid,
+      },
+      {
+        id: "line-cost",
+        title: "Cost per 100 lines changed",
+        unit: "dollars",
+        source: "landed",
+        series: [
+          { name: "Landed tasks", mark: "line", pick: { ratio: "lines" } },
+          { name: "All in", mark: "line", pick: { ratio: "lines-all-in" } },
+        ],
+        none: linesNone,
+        when: landedSaid,
       },
     ],
   ],
@@ -536,7 +560,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "decisions",
         title: "Decisions",
-        note: "Cards answered and auto-approved in each {per}, and those open at its end.",
         unit: "count",
         source: "rollup",
         series: [
@@ -548,7 +571,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "commits",
         title: "Commits",
-        note: "Commits that reached the default branch, and its merges, per {per}.",
         unit: "count",
         source: "rollup",
         series: [bar("Commits", "git.commits"), bar("Merges", "git.merges")],
@@ -556,9 +578,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "lines",
         title: "Lines changed",
-        note:
-          "Lines added and removed on the default branch, per {per}; generated files and lock " +
-          "files left out.",
         unit: "count",
         source: "rollup",
         series: [bar("Added", "git.added"), at("Removed", "below", "git.removed")],
@@ -571,9 +590,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "defects",
         title: "Bounces, reds and reverts",
-        note:
-          "Moves from review back to work, reds filed, reverts, and changes asked by review, per " +
-          "{per}.",
         unit: "count",
         source: "rollup",
         series: [
@@ -586,7 +602,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "fix",
         title: "Time to fix a red",
-        note: "Filing to close of the reds closed done in each {per}.",
         unit: "seconds",
         source: "rollup",
         series: [line("Median", "red_fix.median"), line("p90", "red_fix.p90")],
@@ -599,9 +614,6 @@ export const SECTIONS: [string, Spec[]][] = [
       {
         id: "health",
         title: "Board requests",
-        note:
-          "Requests to the board that took a second or more, that got no answer, and failed " +
-          "dispatch and sweep passes, per {per}.",
         unit: "count",
         source: "health",
         series: [
@@ -641,6 +653,9 @@ export function paths(): [string, string, string][] {
 /** How much of `bucket` `source` recorded, from 0 to 1. */
 function cover(bucket: Bucket, source: Source): number {
   if (source === "spend") return Array.isArray(field(bucket.raw, "spend")) ? 1 : 0;
+  if (source === "landed") {
+    return field(bucket.raw, "landed") === undefined ? 0 : cover(bucket, "rollup");
+  }
   const [start, end] = bucket.span();
   const seconds =
     source === "rollup"
@@ -653,22 +668,9 @@ function cover(bucket: Bucket, source: Source): number {
 export const PLACES_NAMED = 4;
 
 /** The workflow's charts: by phase and by state, of the same hours, never added together. */
-const WORKFLOW: [string, string, string, string][] = [
-  [
-    "phases",
-    "Time by phase",
-    "phases",
-    "Task-hours top-level tasks spent in each phase of the project's workflow, per {per}, a phase " +
-      "renamed since under the name its hours were spent under. Time on builds and tests is the " +
-      "runs', never counted here.",
-  ],
-  [
-    "states",
-    "Time by state",
-    "states",
-    "Task-hours top-level tasks spent in each coordination state, per {per}: the same hours as by " +
-      "phase, counted again by state.",
-  ],
+const WORKFLOW: [string, string, string][] = [
+  ["phases", "Time by phase", "phases"],
+  ["states", "Time by state", "states"],
 ];
 
 /** One phase's or state's hours in a period as the server writes them: `[id, label, hours]`. */
@@ -733,10 +735,9 @@ export function workflowSection(page: Page, hidden: string[]): [string, ChartDat
   if (!page.buckets.some((bucket) => bucket.has("workflow"))) return null;
   return [
     "Workflow",
-    WORKFLOW.map(([id, title, list, note]) => ({
+    WORKFLOW.map(([id, title, list]) => ({
       id,
       title,
-      note: note.replaceAll("{per}", page.grain),
       unit: "hours" as const,
       series: placeSeries(page.buckets, list).map(([name, values]) => ({
         name,
@@ -769,9 +770,6 @@ function fixedCharts(page: Page, hidden: string[]): [string, ChartData[]][] {
     specs.map((spec) => ({
       id: spec.id,
       title: spec.title,
-      note: spec.note
-        .replaceAll("{per}", page.grain)
-        .replaceAll("{prices}", page.prices === "" ? "on a day not named" : page.prices),
       unit: spec.unit,
       series: spec.series.map((series) => ({
         name: series.name,
@@ -784,12 +782,11 @@ function fixedCharts(page: Page, hidden: string[]): [string, ChartData[]][] {
         spec.id === "lead" && page.grain === "hour"
           ? "The roll-up keeps lead time by the day: switch to Days or Weeks to see it."
           : null,
+      ...(spec.none === undefined ? {} : { none: page.buckets.map(spec.none) }),
+      ...(spec.when === undefined ? {} : { whens: page.buckets.map(spec.when) }),
     })),
   ]);
 }
-
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** The UTC date of `at`: its weekday's name, its day, its month's name and its hour. */
 function date(at: number): [string, number, string, number] {
@@ -797,8 +794,6 @@ function date(at: number): [string, number, string, number] {
   const hour = Math.floor((((at % DAY) + DAY) % DAY) / HOUR);
   return [WEEKDAYS[day.getUTCDay()] ?? "", day.getUTCDate(), MONTHS[day.getUTCMonth()] ?? "", hour];
 }
-
-const twoDigits = (n: number) => String(n).padStart(2, "0");
 
 /** A period as the readout and the table name it. */
 export function period(grain: Grain, start: number): string {
@@ -1032,65 +1027,40 @@ function unpricedOf(costs: AgentCost[]): AgentCost {
   return { ...(first as AgentCost), unpriced: merged };
 }
 
-/**
- * Under the charts of tokens: the window's all told; what the tasks landed in it took, each with
- * its subtasks (the median, the dearest ten, each a link to its page, and their first rounds
- * against the rounds after); and that every dollar is an estimate at API list prices, with the
- * day they were read, never money spent.
- */
-export function SpendSummary({ page }: { page: Page }) {
+/** What the window's periods told of tokens, all told: the sentence that opens Tokens and cost. */
+export function spendSaid(page: Page): string {
   const told = windowSpend(page);
-  const { landed, grain } = page;
   const periods = page.buckets.length;
-  const unpriced =
-    landed === null || landed.tasks === 0
-      ? ""
-      : unpricedSaid(unpricedOf([landed.first_round.cost, landed.later_rounds.cost]));
+  if (told === null) {
+    return `No ${page.grain} of the window told its tokens.`;
+  }
+  const where =
+    told.told === periods
+      ? "In the window"
+      : `In the ${told.told} of ${periods} ${page.grain}s that told them`;
+  return `${where}: ${dollarsSaid(told.dollars, told.unpriced)} estimated, ${amount(told.tokens)} tokens.`;
+}
+
+/**
+ * Under the charts of tokens, the dollars' unit: an estimate at API list prices, with the day they
+ * were read, never money spent, and the models the window's tokens had no price for.
+ */
+export function DollarNote({ page }: { page: Page }) {
+  const costs = page.buckets.flatMap((bucket) => {
+    const roles = field(bucket.raw, "spend");
+    return Array.isArray(roles)
+      ? roles.flatMap((role) => {
+          const cost = field(role, "cost");
+          return isCost(cost) ? [cost] : [];
+        })
+      : [];
+  });
+  const unpriced = costs.length === 0 ? "" : unpricedSaid(unpricedOf(costs));
   return (
-    <div className="reports-spend">
-      <p>
-        {told === null
-          ? `No ${grain} of the window told its tokens: an hour's are told once two roll-ups span it.`
-          : `${told.told === periods ? "In the window" : `In the ${told.told} of ${periods} ${grain}s that told them`}: ` +
-            `${dollarsSaid(told.dollars, told.unpriced)} estimated, ${amount(told.tokens)} tokens.`}
-      </p>
-      <h3>Cost per landed task</h3>
-      {landed === null ? (
-        <p>No task landed in the window.</p>
-      ) : landed.tasks === 0 ? (
-        <p>{`${landed.without} landed, none with tokens recorded.`}</p>
-      ) : (
-        <>
-          <p>
-            {`${landed.tasks} landed with tokens recorded` +
-              (landed.without > 0 ? ` (${landed.without} with none, in no figure)` : "") +
-              `, each with its subtasks: a median of ${
-                landed.median === null ? "unpriced" : dollars(landed.median)
-              } a task. The dearest:`}
-          </p>
-          <ol className="reports-dearest">
-            {landed.dearest.map((task) => (
-              <li key={task.slug} className="reports-landed-task">
-                <a href={href(`/task/${task.slug}`)}>{task.slug}</a>
-                <span>{`${costSaid(task.cost)} · ${amount(total(task.tokens))} tokens`}</span>
-              </li>
-            ))}
-          </ol>
-          <p>
-            {`First rounds ${costSaid(landed.first_round.cost)} ` +
-              `(${amount(total(landed.first_round.tokens))} tokens), the review rounds after them ` +
-              `${costSaid(landed.later_rounds.cost)} ` +
-              `(${amount(total(landed.later_rounds.tokens))} tokens): ${landed.again} of ` +
-              `${landed.tasks} went past their first round.`}
-          </p>
-        </>
-      )}
-      <p className="reports-note">
-        {`Every dollar here is ${estimate(page.prices === "" ? "on a day not named" : page.prices)}; ` +
-          "a figure marked + unpriced leaves out the tokens of a model the price table does not name" +
-          (unpriced === "" ? "." : `: ${unpriced}.`)}
-      </p>
-    </div>
+    <p className="reports-note">
+      {`Every dollar here is ${estimate(page.prices === "" ? "on a day not named" : page.prices)}` +
+        (unpriced === "" ? "." : `; unpriced: ${unpriced}.`)}
+    </p>
   );
 }
 
@@ -1127,11 +1097,7 @@ export function fromFirstRecord(page: Page): Page {
 /** What the page says while the roll-up has written no file: when the next one is due. */
 export function firstRollUp(page: Page): string {
   const [, , , hour] = date(page.to);
-  return (
-    "No roll-up yet. The machine's shared server writes this project's first day file at its " +
-    `first board tick after it starts, then once an hour: the next is due by ${twoDigits(hour)}:00 ` +
-    "UTC. A server of a project's own writes none."
-  );
+  return `No roll-up yet: the next is due by ${twoDigits(hour)}:00 UTC.`;
 }
 
 /** A style that sets custom properties. */
@@ -1139,10 +1105,29 @@ function css(properties: Record<string, string>): CSSProperties {
   return properties as CSSProperties;
 }
 
+/** The page's tabs: Over time, and Landed tasks. */
+export type View = "time" | "landed";
+
+/** The tab an address's query names (`?view=landed`): Over time for any other. */
+export function viewOf(search: string): View {
+  return new URLSearchParams(search).get("view") === "landed" ? "landed" : "time";
+}
+
+/** The address of tab `view` of the reports of the checkout `scope` names, under the project's base. */
+export function viewHref(scope: string, view: View): string {
+  return href(scoped(scope, view === "landed" ? "/reports?view=landed" : "/reports"));
+}
+
 export interface ReportsViewProps {
   grain: Grain;
   days: number;
   page: Page | null;
+  /** The tab shown, and the Landed tasks read once it has answered. */
+  view?: View;
+  landed?: LandedPage | null;
+  /** The checkout whose reports these are, which the tabs' links keep. */
+  scope?: string;
+  /** Why the read of the tab shown failed. */
   error?: string | null;
   /** The series hidden, by their keys (`seriesKey`). */
   hidden?: string[];
@@ -1170,6 +1155,9 @@ export function ReportsView({
   grain,
   days,
   page,
+  view = "time",
+  landed = null,
+  scope = "",
   error = null,
   hidden = [],
   onAsk,
@@ -1177,33 +1165,64 @@ export function ReportsView({
   lands = true,
   device = null,
 }: ReportsViewProps) {
-  // Busy while the window asked for is on its way, and no longer once its read failed: the page
-  // then says so, drawn, and a region busy on the screen would hold `symphony shot` to its timeout.
-  const busy = (page === null || page.grain !== grain || page.days !== days) && error === null;
-  const kept = page !== null ? device : null;
+  // The read of the tab shown: busy while the window asked for is on its way, and no longer once
+  // its read failed: the page then says so, drawn, and a region busy on the screen would hold
+  // `symphony shot` to its timeout.
+  const read = view === "landed" ? landed : page;
+  const busy = (read === null || read.grain !== grain || read.days !== days) && error === null;
+  const kept = read !== null ? device : null;
   return (
     <div
       className="reports"
-      data-ready={page !== null ? "reports" : ready(false, error !== null)}
+      data-ready={read !== null ? "reports" : ready(false, error !== null)}
       data-cache={kept !== null ? "device" : undefined}
       aria-busy={busy}
+      data-view={view}
     >
       <header className="reports-head">
         <div>
           <h1>Reports</h1>
-          <p className="reports-sub">
-            {`${grainName(grain)} · the last ${rangeName(grain, days)} · times in UTC`}
-          </p>
+          <p className="reports-unit">Times in UTC</p>
         </div>
         <Controls grain={grain} days={days} onAsk={onAsk} />
       </header>
+      <nav className="reports-tabs" aria-label="Reports views">
+        {(
+          [
+            ["time", "Over time"],
+            ["landed", "Landed tasks"],
+          ] as const
+        ).map(([each, name]) => (
+          <a
+            key={each}
+            className="tab"
+            href={viewHref(scope, each)}
+            aria-current={each === view ? "page" : undefined}
+          >
+            {name}
+          </a>
+        ))}
+      </nav>
       {error !== null && (
         <p className="reports-error" role="alert">
-          {`The reports could not be read. ${failed(error, true)}`}
+          {`${view === "landed" ? "The landed tasks" : "The reports"} could not be read. ${failed(error, true)}`}
         </p>
       )}
-      {page === null ? (
-        <GhostReports />
+      {view === "landed" ? (
+        landed === null ? (
+          <GhostReports said="Loading the landed tasks…" />
+        ) : (
+          // A new window is new rows: the row, column or dot picked on the last means nothing.
+          <LandedView
+            key={`${landed.grain}-${landed.days}-${landed.from}`}
+            page={landed}
+            hidden={hidden}
+            onToggle={onToggle}
+            lands={lands}
+          />
+        )
+      ) : page === null ? (
+        <GhostReports said="Loading the reports…" />
       ) : (
         // A new window is a new axis: the period tapped on the last one means nothing on it.
         <Report
@@ -1307,20 +1326,13 @@ function Report({ page: whole, hidden, onToggle, lands }: ReportProps) {
           </ul>
         </details>
       )}
-      <dl className="reports-figures">
-        {linkedFigures(page).map(([figure, chart]) => (
-          <div key={figure.label} className="reports-figure">
-            <dt>{drawn ? <a href={`#chart-${chart}`}>{figure.label}</a> : figure.label}</dt>
-            <dd className="value">{figure.value}</dd>
-            <dd className="detail">{figure.detail}</dd>
-          </div>
-        ))}
-      </dl>
+      <FigureCards figures={linkedFigures(page)} linked={drawn} />
       {shownAxis.marks.length > 0 && <MarkedChanges axis={shownAxis} />}
       {drawn &&
         charts(page, hidden).map(([heading, section]) => (
           <section key={heading} className="reports-section" aria-label={heading}>
             <h2>{heading}</h2>
+            {heading === SPEND && <p className="reports-spend">{spendSaid(page)}</p>}
             <div className="reports-charts">
               {section.map((chart) => (
                 <NearViewport
@@ -1341,7 +1353,7 @@ function Report({ page: whole, hidden, onToggle, lands }: ReportProps) {
                 </NearViewport>
               ))}
             </div>
-            {heading === SPEND && <SpendSummary page={page} />}
+            {heading === SPEND && <DollarNote page={page} />}
           </section>
         ))}
     </>
@@ -1377,12 +1389,12 @@ function MarkedChanges({ axis: { marks, periods } }: { axis: Axis }) {
   );
 }
 
-/** The page waiting for its first answer: one status line, four figures' boxes and two charts'. */
-function GhostReports() {
+/** A tab waiting for its first answer: one status line, four figures' boxes and two charts'. */
+function GhostReports({ said }: { said: string }) {
   return (
     <>
       <p className="status-text" role="status">
-        Loading the reports…
+        {said}
       </p>
       <div className="reports-figures ghost-figures" aria-hidden="true">
         {["a", "b", "c", "d"].map((figure) => (
@@ -1438,28 +1450,32 @@ export function toggle(hidden: string[], key: string): string[] {
 /** How often an open page reads its window again, in ms. */
 export const EVERY_MS = 300_000;
 
-/** What a read of the reports tells the page. */
-export interface ReportsCheck {
+/** What a read of one of the page's tabs tells it. */
+export interface Check<T> {
   /** They answered, with their tag; none for a `304` of the copy shown. */
-  answered(read: Page | null, etag: string): void;
-  /** A read failed, or answered what is not a report: said, and the copy shown kept. */
+  answered(read: T | null, etag: string): void;
+  /** A read failed, or answered what is not the tab's: said, and the copy shown kept. */
   failed(said: string): void;
 }
 
+/** What a read of the reports tells the page. */
+export type ReportsCheck = Check<Page>;
+
 /**
- * Reads the window (`grain`, `days`) at once and then every EVERY_MS (through `wait`), naming the
- * tag of the copy shown (`etag`) so an hour no file changed in answers `304`, until `signal` ends
- * it. A read that failed is tried again sooner, after Backoff's waits (1 s, doubling to 30 s).
+ * Reads `url` at once and then every EVERY_MS (through `wait`), each answer read by `read` (one it
+ * cannot read failing as `what` says), naming the tag of the copy shown (`etag`) so an hour no file
+ * changed in answers `304`, until `signal` ends it. A read that failed is tried again sooner, after
+ * Backoff's waits (1 s, doubling to 30 s).
  */
-export async function followReports(
-  grain: Grain,
-  days: number,
+export async function follow<T>(
+  url: string,
+  read: (value: unknown) => T | null,
+  what: string,
   etag: () => string,
   signal: AbortSignal,
-  check: ReportsCheck,
+  check: Check<T>,
   wait: (ms: number, signal: AbortSignal) => Promise<void> = sleep,
 ): Promise<void> {
-  const url = `${REPORTS_PATH}?grain=${grain}&days=${days}`;
   let backoff = new Backoff();
   while (!signal.aborted) {
     let next = EVERY_MS;
@@ -1469,9 +1485,9 @@ export async function followReports(
       if (answer.same) {
         check.answered(null, "");
       } else {
-        const read = readReports(answer.value);
-        if (read === null) throw new Error("The reports' answer is not a report");
-        check.answered(read, answer.etag);
+        const value = read(answer.value);
+        if (value === null) throw new Error(what);
+        check.answered(value, answer.etag);
       }
       backoff = new Backoff();
     } catch (failure) {
@@ -1483,10 +1499,23 @@ export async function followReports(
   }
 }
 
+/** The window (`grain`, `days`) of the reports, followed as `follow` follows a read. */
+export function followReports(
+  grain: Grain,
+  days: number,
+  etag: () => string,
+  signal: AbortSignal,
+  check: ReportsCheck,
+  wait?: (ms: number, signal: AbortSignal) => Promise<void>,
+): Promise<void> {
+  const url = `${REPORTS_PATH}?grain=${grain}&days=${days}`;
+  return follow(url, readReports, "The reports' answer is not a report", etag, signal, check, wait);
+}
+
 /**
- * The Reports page of the checkout `scope` names: each window it drew a part, the answer as the
- * server sent it (a few KB by the day or the week, some 140 KB for a week by the hour, nine windows
- * in all), so it is kept whole. It is named here, not in cache.ts, so the chunk the pages that follow
+ * The Reports page of the checkout `scope` names: each window of each tab it drew a part, the answer
+ * as the server sent it (a few KB by the day or the week, some 140 KB for a week by the hour, nine
+ * windows a tab; the landed tasks' a row a task), so it is kept whole. It is named here, not in cache.ts, so the chunk the pages that follow
  * the board load carries nothing of this page's.
  */
 export function reportsItem(scope: string): Item {
@@ -1498,52 +1527,63 @@ export function reportsWindow(grain: string, days: number): string {
   return `${grain}:${days}`;
 }
 
+/** The part that holds one window's landed tasks: `landed:hour:1`. */
+export function landedWindow(grain: string, days: number): string {
+  return `landed:${grain}:${days}`;
+}
+
 /** The answer `page` was read from, as this device keeps it: each period as the server sent it. */
 function asKept(page: Page): unknown {
   return { ...page, buckets: page.buckets.map((bucket) => bucket.raw) };
 }
 
-/** What a window's kept copy and its reads tell the page. */
-export interface ReportsShow {
+/** What a window's kept copy and its reads tell a tab. */
+export interface Show<T> {
   /** The copy this device kept, to draw at once: when it was kept, in ms. */
-  kept(page: Page, saved: number): void;
+  kept(read: T, saved: number): void;
   /** The server answered: the window as it is now, none where the copy shown still is. */
-  answered(page: Page | null): void;
+  answered(read: T | null): void;
   /** A read failed: what is shown stays. */
   failed(said: string): void;
 }
 
+/** What a window's kept copy and its reads tell the Over time tab. */
+export type ReportsShow = Show<Page>;
+
 /**
- * A window of the reports opened: the copy of it this device kept (`item`, a part a window) drawn
- * at once, then `followReports` naming that copy's tag, so a window no roll-up changed since costs
- * no body, and each new answer kept in its place. A window never kept, or kept in a form this
- * client cannot read, is read whole.
+ * A window of a tab opened: the copy of it this device kept (`item`'s `part`) drawn at once, then
+ * `follow` naming that copy's tag, so a window no roll-up changed since costs no body, and each new
+ * answer kept in its place as `kept` writes it. A window never kept, or kept in a form this client
+ * cannot read, is read whole.
  */
-export async function openReports(
+async function opened<T>(
   item: Item,
-  grain: Grain,
-  days: number,
+  part: string,
+  url: string,
+  read: (value: unknown) => T | null,
+  what: string,
+  kept: (read: T) => unknown,
   signal: AbortSignal,
-  show: ReportsShow,
+  show: Show<T>,
   wait?: (ms: number, signal: AbortSignal) => Promise<void>,
 ): Promise<void> {
-  const part = reportsWindow(grain, days);
-  const kept = await readKept(item, part, readReports);
+  const copy = await readKept(item, part, read);
   if (signal.aborted) return;
-  let etag = kept?.etag ?? "";
-  if (kept !== null) show.kept(kept.value, kept.saved);
-  await followReports(
-    grain,
-    days,
+  let etag = copy?.etag ?? "";
+  if (copy !== null) show.kept(copy.value, copy.saved);
+  await follow(
+    url,
+    read,
+    what,
     () => etag,
     signal,
     {
-      answered(read, tag) {
-        if (read !== null) {
+      answered(value, tag) {
+        if (value !== null) {
           etag = tag;
-          keepLater(item, part, tag, asKept(read));
+          keepLater(item, part, tag, kept(value));
         }
-        show.answered(read);
+        show.answered(value);
       },
       failed: show.failed,
     },
@@ -1551,59 +1591,137 @@ export async function openReports(
   );
 }
 
+/** A window of the reports opened (`opened`), kept a part a window (`reportsWindow`). */
+export function openReports(
+  item: Item,
+  grain: Grain,
+  days: number,
+  signal: AbortSignal,
+  show: ReportsShow,
+  wait?: (ms: number, signal: AbortSignal) => Promise<void>,
+): Promise<void> {
+  const url = `${REPORTS_PATH}?grain=${grain}&days=${days}`;
+  const what = "The reports' answer is not a report";
+  const part = reportsWindow(grain, days);
+  return opened(item, part, url, readReports, what, asKept, signal, show, wait);
+}
+
+/** A window's landed tasks opened (`opened`), kept a part a window (`landedWindow`) as answered. */
+export function openLanded(
+  item: Item,
+  grain: Grain,
+  days: number,
+  signal: AbortSignal,
+  show: Show<LandedPage>,
+  wait?: (ms: number, signal: AbortSignal) => Promise<void>,
+): Promise<void> {
+  const url = `${REPORTS_LANDED_PATH}?grain=${grain}&days=${days}`;
+  const what = "The landed tasks' answer is not one";
+  const part = landedWindow(grain, days);
+  return opened(item, part, url, readLanded, what, (page) => page, signal, show, wait);
+}
+
+/** The address's query, read again each time the shell says the page moved; none drawn where
+ * there is no address (a page drawn to text). */
+function useSearch(): string {
+  const [search, setSearch] = useState(() => globalThis.location?.search ?? "");
+  useEffect(() => {
+    const moved = () => setSearch(location.search);
+    addEventListener("review:navigate", moved);
+    return () => removeEventListener("review:navigate", moved);
+  }, []);
+  return search;
+}
+
+/** A tab's read as the page holds it: its answer, why its read failed and when this device kept it. */
+interface Held<T> {
+  read: T | null;
+  error: string | null;
+  device: number | null;
+}
+
 /**
- * The page, its read and its window: the window this browser last chose, read at once, again
- * whenever another is chosen, and every five minutes while the page is open, naming the copy shown
- * so an hour no file changed in answers `304`. A read that fails keeps what is shown and says why,
- * until a read answers or another window is chosen.
- * Each window's last answer is kept on this device (`openReports`) and drawn at once on a return,
- * or when its window is chosen again, marked as this device's until a read answers. The series
- * this browser hid stay hidden in every window, and each hidden or shown again is kept at once.
+ * The tab `view` names followed while `view` is the one shown (`open`, `openReports` or
+ * `openLanded`): its read of the window, again on each choice (`asked`), its kept copy drawn at
+ * once. What it last drew stays while another tab is shown.
+ */
+function useTab<T>(
+  shown: boolean,
+  scope: string,
+  grain: Grain,
+  days: number,
+  asked: number,
+  open: (
+    item: Item,
+    grain: Grain,
+    days: number,
+    signal: AbortSignal,
+    show: Show<T>,
+  ) => Promise<void>,
+): [Held<T>, (error: string | null) => void] {
+  const [held, setHeld] = useState<Held<T>>({ read: null, error: null, device: null });
+  useEffect(() => {
+    void asked;
+    if (!shown) return;
+    const controller = new AbortController();
+    void open(reportsItem(scope), grain, days, controller.signal, {
+      kept(read, saved) {
+        setHeld((was) => ({ ...was, read, device: saved }));
+      },
+      answered(read) {
+        setHeld((was) => ({ read: read ?? was.read, error: null, device: null }));
+      },
+      failed(said) {
+        setHeld((was) => ({ ...was, error: said }));
+      },
+    });
+    return () => controller.abort();
+  }, [shown, scope, grain, days, asked, open]);
+  return [held, (error) => setHeld((was) => ({ ...was, error }))];
+}
+
+/**
+ * The page, its reads and its window: the window this browser last chose, read at once for the tab
+ * the address names, again whenever another window is chosen, and every five minutes while the tab
+ * is shown, naming the copy shown so an hour no file changed in answers `304`. A read that fails
+ * keeps what is shown and says why, until a read answers or another window is chosen.
+ * Each window's last answer is kept on this device a tab apart (`openReports`, `openLanded`) and
+ * drawn at once on a return, or when its window is chosen again, marked as this device's until a
+ * read answers. The series this browser hid stay hidden in every window, and each hidden or shown
+ * again is kept at once.
  */
 export function ReportsPage({ scope = "" }: { scope?: string }) {
   const [[grain, days], setWindow] = useState(() => chosen(load));
   const [hidden, setHidden] = useState(() => hiddenSeries(load));
-  const [page, setPage] = useState<Page | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [device, setDevice] = useState<number | null>(null);
+  const view = viewOf(useSearch());
   useEffect(() => visitLater(reportsItem(scope)), [scope]);
   // Each choice reads again, the same window too, as a choice of it does. Once the reader has made
   // one, the address lands no chart.
   const [asked, setAsked] = useState(0);
-  useEffect(() => {
-    void asked;
-    const controller = new AbortController();
-    void openReports(reportsItem(scope), grain, days, controller.signal, {
-      kept(read, saved) {
-        setPage(read);
-        setDevice(saved);
-      },
-      answered(read) {
-        if (read !== null) setPage(read);
-        setDevice(null);
-        setError(null);
-      },
-      failed: setError,
-    });
-    return () => controller.abort();
-  }, [scope, grain, days, asked]);
+  const [time, timeFailed] = useTab(view === "time", scope, grain, days, asked, openReports);
+  const [landed, landedFailed] = useTab(view === "landed", scope, grain, days, asked, openLanded);
+  const shown = view === "landed" ? landed : time;
   return (
     <main className="reports-page">
       <ReportsView
         grain={grain}
         days={days}
-        page={page}
-        error={error}
+        page={time.read}
+        view={view}
+        landed={landed.read}
+        scope={scope}
+        error={shown.error}
         hidden={hidden}
         lands={asked === 0}
-        device={device}
+        device={shown.device}
         onAsk={(nextGrain, nextDays) => {
           save("reports-grain", nextGrain);
           save("reports-days", String(nextDays));
           setWindow([nextGrain, nextDays]);
           // The read that failed was the window left: the one chosen is not said unreachable
           // before its own read is tried.
-          setError(null);
+          timeFailed(null);
+          landedFailed(null);
           setAsked((count) => count + 1);
         }}
         onToggle={(key) => {

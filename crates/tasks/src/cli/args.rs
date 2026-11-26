@@ -227,6 +227,31 @@ const COMMANDS: &[Command] = &[
         opts: &[AS, opt("--json", "json", Takes::Bool)],
     },
     Command {
+        name: "people",
+        pos: &[
+            pos("action"),
+            Pos {
+                dest: "words",
+                optional: true,
+                choices: &[],
+                many: true,
+            },
+        ],
+        opts: &[
+            AS,
+            opt("--display", "display", STR),
+            opt("--signin", "signin", Takes::Append),
+            opt("--git", "git", Takes::Append),
+            opt("--email", "email", STR),
+            opt("--slack", "slack", STR),
+            opt("--whatsapp", "whatsapp", STR),
+            opt("--notice", "notice", Takes::Append),
+            opt("--power", "power", Takes::Append),
+            opt("--group", "group", Takes::Append),
+            opt("--json", "json", Takes::Bool),
+        ],
+    },
+    Command {
         name: "create",
         pos: &[pos("slug"), pos("title")],
         opts: &[
@@ -247,6 +272,8 @@ const COMMANDS: &[Command] = &[
             opt("--link", "link", Takes::Append),
             opt("--no-role", "no_role", Takes::Bool),
             opt("--arm", "arm", STR),
+            choice("--kind", "kind", &crate::kind::KINDS),
+            opt("--group", "group", STR),
         ],
     },
     Command {
@@ -257,6 +284,19 @@ const COMMANDS: &[Command] = &[
                 dest: "priority",
                 optional: false,
                 choices: PRIORITIES,
+                many: false,
+            },
+        ],
+        opts: &[AS],
+    },
+    Command {
+        name: "kind",
+        pos: &[
+            pos("slug"),
+            Pos {
+                dest: "kind",
+                optional: false,
+                choices: &crate::kind::KINDS,
                 many: false,
             },
         ],
@@ -391,6 +431,11 @@ const COMMANDS: &[Command] = &[
         name: "say",
         pos: &[pos("slug"), maybe("text")],
         opts: &[AS, opt("--to", "to", STR), opt("--file", "file", STR)],
+    },
+    Command {
+        name: "pass",
+        pos: &[pos("slug"), pos("id")],
+        opts: &[AS],
     },
     Command {
         name: "launch",
@@ -1079,14 +1124,14 @@ mod tests {
         assert_eq!(named, helped);
         // The top help lists each once, with `help` and the commands read before this table.
         let mut listed: Vec<&str> = usage::names().collect();
-        listed.sort_unstable();
+        crate::order::sort_by(&mut listed, &Ord::cmp);
         let mut every: Vec<&str> = named
             .iter()
             .copied()
             .chain(usage::BEFORE_TABLE)
             .chain([HELP])
             .collect();
-        every.sort_unstable();
+        crate::order::sort_by(&mut every, &Ord::cmp);
         assert_eq!(listed, every);
         for name in usage::names() {
             assert!(

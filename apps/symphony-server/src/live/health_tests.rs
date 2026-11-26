@@ -14,37 +14,50 @@ use crate::testing::{
     repository, shelf,
 };
 use axum::http::{Request, StatusCode};
-use std::net::{Shutdown, TcpListener, TcpStream};
-use std::path::Path;
+use std::net::Shutdown;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use symphony_api::run_day;
 use symphony_board::board_health::disk::{Low, THRESHOLD_GB};
 use symphony_board::board_health::{CLEARS_AFTER, RECENT, Recorder, Report, hours};
-use symphony_board::rpc::Client;
 use symphony_board::sweep::trigger::now;
 
-/// A loopback relay in front of a board's server that can be cut: cut, it ends every connection it
-/// carries and each one made to it, until it is mended.
+/// A relay in front of a board's PostgreSQL that can be cut: a socket folder of its own, each
+/// connection made to it carried to the server's socket. Cut, it ends every connection it carries
+/// and each one made to it, until it is mended.
 struct Relay {
-    addr: String,
+    /// The socket folder a client reaches the board through, short enough for a socket's path
+    /// (`symphony_board::server::postgres::SOCKET_PATH_MAX`).
+    folder: PathBuf,
     /// Whether it carries, and the ends of each connection it carries.
-    state: Arc<Mutex<(bool, Vec<TcpStream>)>>,
+    state: Arc<Mutex<(bool, Vec<UnixStream>)>>,
 }
 
 impl Relay {
-    fn to(server: &str) -> Relay {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
+    /// A relay to the PostgreSQL whose socket is in the folder `server`.
+    fn to(server: &Path) -> Relay {
+        use symphony_board::server::postgres::SOCKET_FILE;
+        static RELAYS: AtomicUsize = AtomicUsize::new(0);
+        let folder = PathBuf::from(format!(
+            "/tmp/symphony-relay-{}-{}",
+            std::process::id(),
+            RELAYS.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir(&folder).unwrap();
+        let listener = UnixListener::bind(folder.join(SOCKET_FILE)).unwrap();
         let state = Arc::new(Mutex::new((true, Vec::new())));
         let held = Arc::clone(&state);
-        let server = server.to_string();
+        let server = server.join(SOCKET_FILE);
         std::thread::spawn(move || {
             for client in listener.incoming() {
                 let Ok(client) = client else { return };
                 // Decided and kept under the lock a cut takes, so none it misses is carried.
                 let mut state = held.lock().unwrap();
-                let upstream = TcpStream::connect(&server);
+                let upstream = UnixStream::connect(&server);
                 let (true, Ok(upstream)) = (state.0, upstream) else {
                     let _ = client.shutdown(Shutdown::Both);
                     continue;
@@ -61,7 +74,7 @@ impl Relay {
                 state.1.extend([client, upstream]);
             }
         });
-        Relay { addr, state }
+        Relay { folder, state }
     }
 
     fn cut(&self) {
@@ -77,12 +90,32 @@ impl Relay {
     }
 }
 
-/// A store on `fixture`'s board through `relay`. A cut ends its connections at once; an answer that
-/// comes is waited for to a backstop only a stall reaches, never to a loaded machine's 10 s.
-fn through(relay: &Relay, fixture: &Fixture) -> symphony_board::Store {
-    let client = Client::new(&relay.addr, "sf", fixture.store.client().database())
+impl Drop for Relay {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.folder);
+    }
+}
+
+/// A store on `fixture`'s board through `relay`, or why it did not open. A cut ends its
+/// connections at once; an answer that comes is waited for to a backstop only a stall reaches,
+/// never to a loaded machine's 10 s.
+fn opened_through(relay: &Relay, fixture: &Fixture) -> Result<symphony_board::Store, String> {
+    let board = fixture.postgresql();
+    let client = symphony_board::pg::Client::new(&relay.folder, board.database())
         .waiting(test_time::backstop(Duration::from_secs(10)));
-    symphony_board::Store::with(client, Box::new(|| NOW), Box::new(|_| false), HOST).unwrap()
+    symphony_board::Store::opening_on(
+        client.into(),
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        HOST,
+        &symphony_board::Opening::write(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// A store on `fixture`'s board through `relay` ([`opened_through`]).
+fn through(relay: &Relay, fixture: &Fixture) -> symphony_board::Store {
+    opened_through(relay, fixture).unwrap()
 }
 
 /// The hub's clock, as the test moves it.
@@ -193,12 +226,9 @@ fn a_board_ahead_of_this_build_is_read_with_nothing_written_and_said_on_every_pa
     let clock = Clock::at(now());
     let hub = hub(&root, &file, &clock);
     let mut notices = hub.server_notice.subscribe();
-    let client = || {
-        let held = fixture.store.client();
-        Client::new(held.addr(), "sf", held.database())
-    };
     let opened = |how: &Opening| {
-        Store::opening(client(), Box::new(|| NOW), Box::new(|_| false), HOST, how).unwrap()
+        let db = fixture.other_database();
+        Store::opening_on(db, Box::new(|| NOW), Box::new(|_| false), HOST, how).unwrap()
     };
     let current = opened(&Opening::read());
     assert_eq!(hub.read_only_ahead(&current), None);
@@ -207,7 +237,8 @@ fn a_board_ahead_of_this_build_is_read_with_nothing_written_and_said_on_every_pa
         "a current board says nothing"
     );
     // A newer build moves the board one schema on; this build reads it and writes nothing.
-    let newer = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
+    let newer = Schema::this_build()
+        .then_each("CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY);");
     opened(&Opening::write().at(newer));
     let ahead = opened(&Opening::read());
     let lines = fixture.store.thread("tools/quiet").unwrap().len();
@@ -250,10 +281,9 @@ fn reader_at(
     fixture: &Fixture,
     schema: symphony_board::Schema,
 ) -> Result<symphony_board::Store, String> {
-    let held = fixture.store.client();
-    let client = Client::new(held.addr(), "sf", held.database());
+    let db = fixture.other_database();
     let how = symphony_board::Opening::read().at(schema);
-    symphony_board::Store::opening(client, Box::new(|| NOW), Box::new(|_| false), HOST, &how)
+    symphony_board::Store::opening_on(db, Box::new(|| NOW), Box::new(|_| false), HOST, &how)
         .map_err(|e| e.to_string())
 }
 
@@ -275,7 +305,8 @@ fn whether_this_server_writes_its_board_is_judged_by_its_last_read_and_never_rea
     hub.board_read(&current).unwrap();
     assert_eq!(hub.writes(), Some(true), "a board at this build's schema");
 
-    let newer = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
+    let newer = Schema::this_build()
+        .then_each("CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY);");
     // The schema rule's refusals, as a reach of a board behind this build, or two ahead, says them.
     let behind = reader_at(&fixture, newer.clone()).err().unwrap();
     let two_ahead = reader_at(&fixture, Schema::this_build().before().before())
@@ -302,9 +333,8 @@ fn whether_this_server_writes_its_board_is_judged_by_its_last_read_and_never_rea
     assert_eq!(hub.writes(), Some(true));
     // A newer build moves the board one schema on: this one reads it and writes nothing.
     let mover = Opening::write().at(newer);
-    let held = fixture.store.client();
-    let client = Client::new(held.addr(), "sf", held.database());
-    symphony_board::Store::opening(client, Box::new(|| NOW), Box::new(|_| false), HOST, &mover)
+    let db = fixture.other_database();
+    symphony_board::Store::opening_on(db, Box::new(|| NOW), Box::new(|_| false), HOST, &mover)
         .unwrap();
     let ahead = reader_at(&fixture, Schema::this_build()).unwrap();
     clock.pass(1.0);
@@ -371,11 +401,11 @@ fn the_read_only_notice_names_its_open_updates_task_and_is_sent_again_only_when_
     hub.machine = Some(machine.clone());
     hub.serve_at("/alpha");
     let mut notices = hub.server_notice.subscribe();
-    let newer = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
-    let held = fixture.store.client();
-    let client = Client::new(held.addr(), "sf", held.database());
+    let newer = Schema::this_build()
+        .then_each("CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY);");
+    let db = fixture.other_database();
     let mover = Opening::write().at(newer);
-    symphony_board::Store::opening(client, Box::new(|| NOW), Box::new(|_| false), HOST, &mover)
+    symphony_board::Store::opening_on(db, Box::new(|| NOW), Box::new(|_| false), HOST, &mover)
         .unwrap();
     let ahead = reader_at(&fixture, Schema::this_build()).unwrap();
     let schema = symphony_board::SCHEMA + 1;
@@ -515,7 +545,7 @@ fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_say
     let root = repository(&tree);
     let file = tree.path("symphony/tasks/health.json");
     let fixture = Fixture::new(Seed::default().task("tools/clock", "ready"));
-    let relay = Relay::to(fixture.store.client().addr());
+    let relay = Relay::to(fixture.postgresql().socket());
     let store = through(&relay, &fixture);
     let clock = Clock::at(now());
     let hub = hub(&root, &file, &clock);
@@ -616,17 +646,14 @@ fn a_failed_worker_read_keeps_its_backoff_across_reopening_and_success_resets_it
     let tree = Tree::new();
     let root = repository(&tree);
     let fixture = Fixture::empty();
-    let relay = Relay::to(fixture.store.client().addr());
+    let relay = Relay::to(fixture.postgresql().socket());
     let clock = Clock::at(now());
     let hub = hub(&root, &tree.path("health.json"), &clock);
     let mut board = Some(through(&relay, &fixture));
     let attempts = std::cell::Cell::new(0);
     let mut connect = |_: &Path| {
         attempts.set(attempts.get() + 1);
-        let client = Client::new(&relay.addr, "sf", fixture.store.client().database())
-            .waiting(test_time::backstop(Duration::from_secs(10)));
-        symphony_board::Store::with(client, Box::new(|| NOW), Box::new(|_| false), HOST)
-            .map_err(|error| error.to_string())
+        opened_through(&relay, &fixture)
     };
     hub.board_tick(&mut board, &mut connect);
     relay.cut();
@@ -1166,15 +1193,12 @@ fn a_board_that_went_back_is_said_unwell_with_its_line_on_every_page_until_a_sto
     let fixture = Fixture::new(Seed::default());
     clock.pass(1.0);
     let opened = hub.reconnect(&mut |_: &Path| {
-        symphony_board::Store::with(
-            Client::new(
-                fixture.store.client().addr(),
-                "sf",
-                fixture.store.client().database(),
-            ),
+        symphony_board::Store::opening_on(
+            fixture.other_database(),
             Box::new(|| NOW),
             Box::new(|_| false),
             HOST,
+            &symphony_board::Opening::write(),
         )
         .map_err(|e| e.to_string())
     });
@@ -1184,103 +1208,14 @@ fn a_board_that_went_back_is_said_unwell_with_its_line_on_every_page_until_a_sto
     assert_eq!(Report::read(&file).unwrap().unwrap().rollback, None);
 }
 
-/// While a reach of the board is refused because a start replays its store's log, this server's
-/// own, run apart from its reads, or another's it waited on, every page and the picker say the
-/// board is starting, with the log's size, in place of the dispatch's words; the failed pass is
-/// counted all the same. A refusal holding no replay, or a store that opens, ends it.
-#[test]
-fn a_board_replaying_its_log_is_said_starting_on_every_page_until_a_reach_finds_no_replay() {
-    let tree = Tree::new();
-    let root = repository(&tree);
-    let clock = Clock::at(now());
-    let hub = hub(&root, &tree.path("health.json"), &clock);
-    let log = tree.path(".git/symphony/tasks/server.log");
-    let apart = format!(
-        "the board's server is started apart from this read, by pid 4242, since 10:00: a private \
-         replay of the store's log of 412.4 MiB before the board's server starts: a log of \
-         gigabytes takes minutes, and its server's lines go to {}; this read does not wait for it, \
-         and the next one asks again",
-        log.display()
-    );
-    let starting = "The task board is starting: its store's log of 412.4 MiB is replayed in a \
-                    private server before the board's server starts (a log of gigabytes takes \
-                    minutes), and the board answers once that is through.";
-    assert!(hub.reconnect(&mut |_: &Path| Err(apart.clone())).is_none());
-    assert_eq!(
-        *hub.server_notice.borrow(),
-        starting,
-        "not the dispatch's words"
-    );
-    assert_eq!(
-        hub.health_notice(),
-        starting,
-        "and the picker says the same"
-    );
-    let report = hub.health.report(clock.now());
-    assert_eq!(report.dispatch.failed, 1, "a failed pass all the same");
-    assert!(
-        report
-            .dispatch
-            .error
-            .as_deref()
-            .is_some_and(|error| error.ends_with(&apart)),
-        "`tasks status` says why: {report:?}"
-    );
-
-    // Another's replay, the read refused once it waited its bound.
-    let waited = format!(
-        "the board's starters' lock ({}) is held by pid 77, since 10:01: a private replay of the \
-         store's log of 1.0 GiB before the board's server starts: a log of gigabytes takes \
-         minutes, and its server's lines go to {}; this read waits at most 5 s for it, and the \
-         next one tries again",
-        tree.path(".git/symphony/tasks/lock").display(),
-        log.display()
-    );
-    clock.pass(1.0);
-    assert!(hub.reconnect(&mut |_: &Path| Err(waited.clone())).is_none());
-    assert_eq!(
-        *hub.server_notice.borrow(),
-        starting.replace("412.4 MiB", "1.0 GiB")
-    );
-
-    // A refusal that holds no replay: the dispatch's words again.
-    clock.pass(1.0);
-    assert!(
-        hub.reconnect(&mut |_: &Path| Err("connection refused".to_string()))
-            .is_none()
-    );
-    assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
-
-    // A store that opens ends it; the failed passes stay a minute, as any do.
-    clock.pass(1.0);
-    assert!(hub.reconnect(&mut |_: &Path| Err(apart.clone())).is_none());
-    assert_eq!(*hub.server_notice.borrow(), starting);
-    let fixture = Fixture::new(Seed::default());
-    clock.pass(1.0);
-    let opened = hub.reconnect(&mut |_: &Path| {
-        symphony_board::Store::with(
-            Client::new(
-                fixture.store.client().addr(),
-                "sf",
-                fixture.store.client().database(),
-            ),
-            Box::new(|| NOW),
-            Box::new(|_| false),
-            HOST,
-        )
-        .map_err(|e| e.to_string())
-    });
-    assert!(opened.is_some());
-    assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
-    assert_eq!(hub.health_notice(), DISPATCH_FAILING);
-}
-
 #[test]
 fn a_project_with_no_board_counts_no_failed_pass_and_is_not_called_unwell() {
     let tree = Tree::new();
     let root = repository(&tree);
     let hub = hub(&root, &tree.path("health.json"), &Clock::at(now()));
-    let missing = symphony_board::server::ServerError::NoSurreal(tree.path("surreal")).to_string();
+    let missing = "the main board is not made yet, and a reader never makes a board: nothing was \
+                   made or started; `just tasks list` in main makes it, on PostgreSQL"
+        .to_string();
     assert!(
         hub.reconnect(&mut |_: &Path| Err(missing.clone()))
             .is_none()
@@ -1303,16 +1238,18 @@ fn a_project_with_no_board_counts_no_failed_pass_and_is_not_called_unwell() {
     assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
 }
 
+/// A board still on SurrealDB is refused, naming how it moves, and is a board all the same: a
+/// failed pass, and unwell.
 #[test]
-fn a_board_whose_store_cannot_be_served_is_a_failed_pass_and_unwell_not_boardless() {
+fn a_board_still_on_surrealdb_is_a_failed_pass_and_unwell_not_boardless() {
     let tree = Tree::new();
     let root = repository(&tree);
     let hub = hub(&root, &tree.path("health.json"), &Clock::at(now()));
-    let unserved = symphony_board::server::ServerError::Unserved {
-        surreal: tree.path("surreal"),
-        data: tree.path("symphony/tasks/data"),
-    }
-    .to_string();
+    let unserved = format!(
+        "the board in {} is on SurrealDB, which this build serves no more: {}. Nothing was started",
+        tree.path(".git/symphony/tasks").display(),
+        symphony_board::server::GONE
+    );
     assert!(
         hub.reconnect(&mut |_: &Path| Err(unserved.clone()))
             .is_none()
@@ -1388,7 +1325,7 @@ fn the_hubs_ticks_append_a_line_an_hour_its_stop_the_hour_so_far_and_none_asks_t
         clock.pass(600.0);
         hub.board_read(&fixture.store).unwrap();
     }
-    let log = fixture.store.client().queries();
+    let log = fixture.store.database().queries();
     let every = i64::MIN..=i64::MAX;
     let sent = log.within(&every).0.count;
     assert!(sent > 0, "the ticks asked the board");

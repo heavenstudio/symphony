@@ -1,12 +1,13 @@
 //! A bounded recorded range for role history and message metadata. This is separate from the
 //! full thread read used by existing consumers. Non-system bodies never enter this projection.
 
-use super::statement::both;
+use super::postgres::thread_window as pg;
+use super::statement::Statement;
 use super::{Error, Message, Store, message};
-use super::{postgres::thread_window as pg, surreal::thread_window as sql};
 use crate::rows::MessageRow;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::BTreeSet;
 
 /// Maximum lines returned by one history read, plus one probe row inside the query.
 pub const THREAD_WINDOW_LIMIT: usize = 256;
@@ -23,6 +24,9 @@ pub struct ThreadWindow {
     pub lines: Vec<Message>,
     pub more: bool,
     pub uncertain: bool,
+    /// The ids of its lines a person a board named wrote, by the board's mark of each
+    /// ([`MessageRow::person`]): their senders are people, never sessions of the task's.
+    pub by_person: BTreeSet<i64>,
 }
 
 impl Store {
@@ -44,7 +48,7 @@ impl Store {
         }
         let read: Read = self.retrying(|| {
             self.read(
-                both(sql::read(), pg::read()),
+                Statement::from(pg::read()),
                 json!({"slug": slug, "before": before.unwrap_or(i64::MAX)}),
             )
         })?;
@@ -58,6 +62,12 @@ impl Store {
             .take(THREAD_WINDOW_LIMIT)
             .collect();
         let uncertain = rows.iter().any(|row| row.cut);
+        let mut by_person = BTreeSet::new();
+        by_person.extend(
+            (rows.iter())
+                .filter(|row| row.message.person)
+                .map(|row| row.message.id),
+        );
         let mut lines: Vec<_> = rows.into_iter().map(|row| message(row.message)).collect();
         lines.reverse();
         Ok(ThreadWindow {
@@ -66,6 +76,7 @@ impl Store {
             lines,
             more,
             uncertain,
+            by_person,
         })
     }
 }

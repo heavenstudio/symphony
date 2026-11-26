@@ -25,6 +25,7 @@ task both /task/site/print-view
 task-thread wide /task/site/print-view --hover [id^=composer-] --wait-for #task-send --hover #task-send
 reports both /reports
 reports-days wide /reports --click [data-grain=day]
+reports-landed both /reports?view=landed --click [data-grain=day]
 settings both /settings
 settings-models both /settings --eval document.getElementById("settings-models").scrollIntoView()
 runs both /runs

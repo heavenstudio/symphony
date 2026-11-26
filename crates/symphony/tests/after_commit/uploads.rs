@@ -24,7 +24,7 @@ fn changed(root: &Path, commit: &str) -> Vec<String> {
     .lines()
     .map(str::to_owned)
     .collect();
-    names.sort();
+    symphony_board::order::sort_by(&mut names, &Ord::cmp);
     names
 }
 

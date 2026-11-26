@@ -21,12 +21,11 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::hc::Hc;
-use symphony_board::rpc::Client;
 use tower::ServiceExt;
 
 /// This machine's tailnet names, as `tailscale status` gives them.
 const STATUS: &str =
-    r#"{"Self": {"DNSName": "mac.tail.ts.net.", "TailscaleIPs": ["100.83.24.15"]}}"#;
+    r#"{"Self": {"DNSName": "mac.tail.ts.net.", "UserID": 11, "TailscaleIPs": ["100.83.24.15"]}}"#;
 const HERE: &str = "127.0.0.1:2";
 const OWN_TAILNET: &str = "100.83.24.15:2";
 const PHONE: &str = "100.83.24.99:2";
@@ -244,7 +243,7 @@ impl Served {
         .unwrap();
         let f = Fixture::new(seed);
         let mut hub = Hub::new(&root, &root.join("build/client"));
-        let board = f.other_client();
+        let board = f.other_database();
         let (opened, gone) = (
             Arc::new(AtomicUsize::new(0)),
             Arc::new(AtomicBool::new(false)),
@@ -253,14 +252,17 @@ impl Served {
         hub.connect_reader = Box::new(move |_| {
             opening.fetch_add(1, Ordering::SeqCst);
             if going.swap(false, Ordering::SeqCst) {
-                let left = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-                let addr = left.local_addr().unwrap().to_string();
-                drop(left);
-                return Ok(symphony_board::Store::unchecked(
-                    Client::new(&addr, "sf", "gone").waiting(Duration::from_secs(1)),
+                // A board whose server went: nothing listens where its socket would be.
+                let socket =
+                    std::path::PathBuf::from(format!("/tmp/symphony-gone-{}", std::process::id()));
+                let db = symphony_board::pg::Client::new(&socket, "gone")
+                    .waiting(Duration::from_secs(1));
+                return Ok(symphony_board::Store::unchecked_on(
+                    db.into(),
                     Box::new(|| NOW),
                     Box::new(|_| false),
                     HOST,
+                    &symphony_board::Opening::write(),
                 ));
             }
             Ok(store_on(&board))
@@ -272,7 +274,13 @@ impl Served {
         hub.refresh_page("", &root).unwrap();
         observe(&hub, &f);
         let peer_gate = Gate::new(
-            Arc::new(|_| Ok(Some(r#"{"Node": {}}"#.into()))),
+            // Every peer is a node under the login this machine is under.
+            Arc::new(|_| {
+                Ok(Some(
+                    r#"{"Node": {}, "UserProfile": {"ID": 11, "LoginName": "owner@example.com"}}"#
+                        .into(),
+                ))
+            }),
             Arc::new(Instant::now),
         )
         .with_status(Arc::new(|| Ok(STATUS.into())));

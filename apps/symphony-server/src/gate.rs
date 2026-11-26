@@ -9,12 +9,31 @@
 //! as the last `tailscale status` that listed any gave them. A status call that fails, hangs or
 //! lists no names is not an answer: the names it last gave stay, and it is asked again after
 //! [`FAILED_TTL`]. Only an answer that lists names, none of them this one, refuses a tailnet Host.
+//!
+//! The gate is the local host's admission, so it also says who a request it lets in is from
+//! ([`Gate::visitor`]): the person at the machine for loopback, for one of this machine's own
+//! tailnet addresses, and for a node under the machine's own Tailscale login, the user the last
+//! status that listed its names gave it (`Self.UserID`); that login's person for a node under
+//! another (a whois answer's `UserProfile`); nobody's for a tagged node, or one whose answer names
+//! no user. A status call that gives no answer keeps the login it last gave, as it keeps the
+//! names. Until one has answered only loopback is the person at the machine, as this machine's
+//! own tailnet addresses are known from that answer too. On a machine that is itself tagged, which
+//! is under no login, no node but this machine's own is its person.
+//!
+//! What a visitor reaches is each board's word ([`Gate::member`], the roster): the actor their
+//! writes there take, or none for a board that has not added them, which is then to them a project
+//! the server does not hold. The person at the machine is on every board, as the gate's person
+//! ([`Gate::person`], [`symphony_board::workflow::local_actor`]). The gate on this machine's own
+//! Tailscale asks the machine's profiles and each board's people ([`crate::roster`]); a gate made
+//! without a roster adds nobody else to any board.
 
 use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::lock::Recovered as _;
+use symphony_plugin::Actor;
 
 /// How long a whois answer, yes or no, and a status answer's names are trusted.
 pub const TTL: Duration = Duration::from_secs(30);
@@ -30,15 +49,65 @@ pub type Whois = Arc<dyn Fn(&str) -> Result<Option<String>, String> + Send + Syn
 pub type Status = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
 /// The gate's clock.
 pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
+/// A board's word on a visitor who is not the person at the machine: the actor their writes on
+/// the board at the root given take, or none when that board has not added them. It is asked on
+/// each request a visitor sends, so it answers from what it holds.
+pub type Roster = Arc<dyn Fn(&Path, &Visitor) -> Option<Actor> + Send + Sync>;
+
+/// Who a request the gate lets in is from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Visitor {
+    /// The person at the machine: loopback, one of this machine's own tailnet addresses, or a node
+    /// under the machine's own Tailscale login (the owner's phone).
+    Machine,
+    /// A node under another Tailscale login: that login's person.
+    Login(Login),
+    /// A node under no login, by its name: a tagged node, or one whose answer names no user.
+    /// Nobody's.
+    Node(String),
+}
+
+/// A Tailscale login, as a whois answer's `UserProfile` names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Login {
+    /// Tailscale's id of the user.
+    pub id: u64,
+    /// The login's name (an email, say): the subject a board knows them by.
+    pub name: String,
+    /// How Tailscale shows them: their display name, else the login's name.
+    pub display: String,
+}
 
 /// The client-address gate, with each tailnet peer's last whois answer, and the Host gate, with
-/// this machine's tailnet names as the last status answer that listed any gave them.
+/// this machine's tailnet names and login as the last status answer that listed any gave them.
 pub struct Gate {
     whois: Whois,
     status: Status,
     clock: Clock,
-    seen: Mutex<HashMap<IpAddr, Kept<bool>>>,
-    names: Mutex<Kept<BTreeSet<String>>>,
+    person: Actor,
+    roster: Roster,
+    /// The machine folder whose profiles the roster reads, and the People page reads and writes.
+    machine: Option<PathBuf>,
+    seen: Mutex<HashMap<IpAddr, Kept<Option<Peer>>>>,
+    own: Mutex<Kept<Own>>,
+}
+
+/// A node of this tailnet, as a whois answer names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Peer {
+    /// Its name, without the trailing dot.
+    node: String,
+    /// The login it is under: none for a tagged node, or an answer that names no user.
+    login: Option<Login>,
+}
+
+/// This machine, as a status answer that lists its names gives it.
+#[derive(Debug, PartialEq, Eq)]
+struct Own {
+    /// Its tailnet names ([`names_in`]).
+    names: BTreeSet<String>,
+    /// The Tailscale user it is under: none when it is tagged, or the answer names none.
+    user: Option<u64>,
 }
 
 /// The last answer a call gave, kept through the calls after it that gave none.
@@ -92,15 +161,63 @@ impl Gate {
             whois,
             status: Arc::new(tailscale_status),
             clock,
+            person: symphony_board::workflow::local_actor(),
+            roster: Arc::new(|_, _| None),
+            machine: None,
             seen: Mutex::new(HashMap::new()),
-            names: Mutex::new(Kept::default()),
+            own: Mutex::new(Kept::default()),
         }
     }
 
-    /// The same gate, asking `status` for this machine's tailnet names.
+    /// The same gate, asking `status` for this machine's tailnet names and login.
     #[must_use]
     pub fn with_status(self, status: Status) -> Gate {
         Gate { status, ..self }
+    }
+
+    /// The same gate, admitting the person at the machine as `person`: a test host's actor in
+    /// place of the local one.
+    #[must_use]
+    pub fn admitting(self, person: Actor) -> Gate {
+        Gate { person, ..self }
+    }
+
+    /// The same gate, asking `roster` which boards have added a visitor who is not the person at
+    /// the machine: the machine's people ([`crate::roster::of`]), or a test host's.
+    #[must_use]
+    pub fn with_roster(self, roster: Roster) -> Gate {
+        Gate { roster, ..self }
+    }
+
+    /// The same gate over the machine folder `machine`: its profiles the People page's, and its
+    /// people the roster ([`crate::roster::of`]).
+    #[must_use]
+    pub fn with_machine(self, machine: PathBuf) -> Gate {
+        Gate {
+            roster: crate::roster::of(machine.clone()),
+            machine: Some(machine),
+            ..self
+        }
+    }
+
+    /// The machine folder the profiles are kept in: none for a gate given none, whose roster adds
+    /// nobody but as a test's says.
+    pub fn machine(&self) -> Option<&Path> {
+        self.machine.as_deref()
+    }
+
+    /// The person at the machine: the actor their writes take.
+    pub fn person(&self) -> &Actor {
+        &self.person
+    }
+
+    /// Whether `visitor` is on the board at `root`, and as whom: the person at the machine is on
+    /// every board, as [`Gate::person`]; anyone else as the roster says, on none by default.
+    pub fn member(&self, root: &Path, visitor: &Visitor) -> Option<Actor> {
+        match visitor {
+            Visitor::Machine => Some(self.person.clone()),
+            other => (self.roster)(root, other),
+        }
     }
 
     /// The gate on this machine's own Tailscale.
@@ -109,12 +226,18 @@ impl Gate {
     }
 
     /// [`Gate::tailscale`], each `tailscale whois` given `patience` to answer where the server gives
-    /// it [`CLI_TIMEOUT`]: a test's, on a machine whose load a deadline must not judge.
+    /// it [`CLI_TIMEOUT`]: a test's, on a machine whose load a deadline must not judge. Its machine
+    /// folder is the one the environment names, its roster that folder's people
+    /// ([`crate::roster`]).
     pub fn tailscale_within(patience: Duration) -> Gate {
-        Gate::new(
+        let gate = Gate::new(
             Arc::new(move |ip: &str| whois_by(find_tailscale(), ip, patience)),
             Arc::new(Instant::now),
-        )
+        );
+        match crate::roster::this_machine() {
+            Some(machine) => gate.with_machine(machine),
+            None => gate,
+        }
     }
 
     /// Host validation for the routes served here. A loopback client can still be a browser
@@ -158,62 +281,141 @@ impl Gate {
         ip.is_loopback() || (in_tailnet(ip) && self.own_name(&ip.to_string()))
     }
 
-    /// Whether `name`, lowercase, is one of this machine's tailnet names, asking `status` when the
-    /// names it last gave are due.
+    /// Whether `name`, lowercase, is one of this machine's tailnet names.
     fn own_name(&self, name: &str) -> bool {
-        let now = (self.clock)();
-        // The call is made under the lock, so requests that find it due wait for one call.
-        let mut names = self.names.lock().recover();
-        if names.due(now) {
-            let listed = (self.status)()
-                .map(|text| names_in(&text))
-                .ok()
-                .filter(|listed| !listed.is_empty());
-            names.record(now, listed);
-        }
-        names.answer().is_some_and(|known| known.contains(name))
+        self.own(|own| own.names.contains(name)).unwrap_or(false)
     }
 
-    /// Whether a request from `ip` may be answered.
+    /// `read` of this machine as the last status answer that listed its names gave it, asking
+    /// `status` when that answer is due; none while no call has given one.
+    fn own<R>(&self, read: impl FnOnce(&Own) -> R) -> Option<R> {
+        let now = (self.clock)();
+        // The call is made under the lock, so requests that find it due wait for one call.
+        let mut own = self.own.lock().recover();
+        if own.due(now) {
+            let answer = (self.status)().ok().and_then(|text| own_in(&text));
+            own.record(now, answer);
+        }
+        own.answer().map(read)
+    }
+
+    /// Whether a request from `ip` may be answered: loopback, or an address of the tailnet's
+    /// ranges whose last whois answer named a node.
     pub fn allows(&self, ip: IpAddr) -> bool {
         let ip = unmapped(ip);
+        ip.is_loopback() || (in_tailnet(ip) && self.peer(ip).is_some())
+    }
+
+    /// Who a request from `ip` is from, or none when it may not be answered ([`Gate::allows`]).
+    /// Loopback asks nothing, and only a node of the tailnet asks `status`.
+    pub fn visitor(&self, ip: IpAddr) -> Option<Visitor> {
+        let ip = unmapped(ip);
         if ip.is_loopback() {
-            return true;
+            return Some(Visitor::Machine);
         }
         if !in_tailnet(ip) {
-            return false;
+            return None;
         }
+        let peer = self.peer(ip)?;
+        let address = ip.to_string();
+        let (own_address, own_user) = self
+            .own(|own| (own.names.contains(&address), own.user))
+            .unwrap_or((false, None));
+        Some(match peer.login {
+            _ if own_address => Visitor::Machine,
+            Some(login) if own_user == Some(login.id) => Visitor::Machine,
+            Some(login) => Visitor::Login(login),
+            None => Visitor::Node(peer.node),
+        })
+    }
+
+    /// The node `ip`, an address of the tailnet's ranges, is as the last whois that answered for
+    /// it named it, asking `whois` when that answer is due; none when it said no peer, or while no
+    /// call has answered.
+    fn peer(&self, ip: IpAddr) -> Option<Peer> {
         let now = (self.clock)();
         if let Some(peer) = self.seen.lock().recover().get(&ip)
             && !peer.due(now)
         {
-            return peer.answer() == Some(&true);
+            return peer.answer().cloned().flatten();
         }
         // The lookup is made outside the lock, so one slow peer does not hold up another.
         let answer = verdict((self.whois)(&ip.to_string()));
         let mut seen = self.seen.lock().recover();
         let peer = seen.entry(ip).or_default();
         peer.record(now, answer);
-        peer.answer() == Some(&true)
+        peer.answer().cloned().flatten()
     }
 }
 
-/// What a whois call says of an address: whether it is a node of this tailnet, or `None` when the
-/// call gave no answer: it failed (with no `tailscale` to run, too), timed out, or its output names
-/// no node.
-fn verdict(whois: Result<Option<String>, String>) -> Option<bool> {
+/// What a whois call says of an address: the node of this tailnet it is, `Some(None)` when it is no
+/// peer, or `None` when the call gave no answer: it failed (with no `tailscale` to run, too), timed
+/// out, or its output names no node.
+fn verdict(whois: Result<Option<String>, String>) -> Option<Option<Peer>> {
     match whois {
-        Ok(None) => Some(false),
-        Ok(Some(output)) => is_peer(&output).then_some(true),
+        Ok(None) => Some(None),
+        Ok(Some(output)) => peer_in(&output).map(Some),
         Err(_) => None,
     }
+}
+
+/// The node a whois answer names, with the login its `UserProfile` names unless the node is
+/// tagged; none when it names no node. A user is named by a non-zero id and a login name.
+fn peer_in(answer: &str) -> Option<Peer> {
+    let body: serde_json::Value = serde_json::from_slice(answer.as_bytes()).ok()?;
+    let node = body.get("Node").filter(|node| node.is_object())?;
+    let profile = &body["UserProfile"];
+    let login = profile["ID"]
+        .as_u64()
+        .filter(|id| *id != 0 && !tagged(node))
+        .zip(
+            profile["LoginName"]
+                .as_str()
+                .filter(|name| !name.is_empty()),
+        )
+        .map(|(id, name)| Login {
+            id,
+            name: name.to_string(),
+            display: profile["DisplayName"]
+                .as_str()
+                .filter(|display| !display.is_empty())
+                .unwrap_or(name)
+                .to_string(),
+        });
+    Some(Peer {
+        node: node["Name"]
+            .as_str()
+            .unwrap_or_default()
+            .trim_end_matches('.')
+            .to_string(),
+        login,
+    })
+}
+
+/// Whether a node, as a whois or status answer gives it, carries a tag: a tagged node is under no
+/// login.
+fn tagged(node: &serde_json::Value) -> bool {
+    node["Tags"].as_array().is_some_and(|tags| !tags.is_empty())
+}
+
+/// This machine as a `tailscale status --json` answer gives it, when the answer lists any of its
+/// names: those names, and the user it is under, `Self.UserID` when non-zero and it is untagged.
+fn own_in(status: &str) -> Option<Own> {
+    let names = names_in(status);
+    if names.is_empty() {
+        return None;
+    }
+    let status: serde_json::Value = serde_json::from_slice(status.as_bytes()).ok()?;
+    let me = &status["Self"];
+    let user = me["UserID"].as_u64().filter(|id| *id != 0 && !tagged(me));
+    Some(Own { names, user })
 }
 
 /// The names a `tailscale status --json` answer gives this machine: its MagicDNS name, without the
 /// trailing dot, and its tailnet addresses, all lowercase. Garbage gives none, as does an empty
 /// name.
 fn names_in(status: &str) -> BTreeSet<String> {
-    let Ok(status) = serde_json::from_str::<serde_json::Value>(status) else {
+    let Ok(status) = serde_json::from_slice::<serde_json::Value>(status.as_bytes()) else {
         return BTreeSet::new();
     };
     let addresses = |list: &serde_json::Value| {
@@ -224,15 +426,17 @@ fn names_in(status: &str) -> BTreeSet<String> {
             .map(str::to_string)
             .collect::<Vec<_>>()
     };
-    status["Self"]["DNSName"]
-        .as_str()
-        .map(|dns| dns.trim_end_matches('.').to_string())
-        .into_iter()
-        .chain(addresses(&status["TailscaleIPs"]))
-        .chain(addresses(&status["Self"]["TailscaleIPs"]))
-        .map(|name| name.to_lowercase())
-        .filter(|name| !name.is_empty())
-        .collect()
+    let mut names = BTreeSet::new();
+    names.extend(
+        (status["Self"]["DNSName"].as_str())
+            .map(|dns| dns.trim_end_matches('.').to_string())
+            .into_iter()
+            .chain(addresses(&status["TailscaleIPs"]))
+            .chain(addresses(&status["Self"]["TailscaleIPs"]))
+            .map(|name| name.to_lowercase())
+            .filter(|name| !name.is_empty()),
+    );
+    names
 }
 
 /// The address, with an IPv4-mapped IPv6 one unwrapped.
@@ -252,14 +456,6 @@ pub fn in_tailnet(ip: IpAddr) -> bool {
         }
         IpAddr::V6(v6) => v6.segments()[..3] == [0xfd7a, 0x115c, 0xa1e0],
     }
-}
-
-/// Whether a whois answer names a node of this tailnet.
-fn is_peer(answer: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(answer)
-        .ok()
-        .and_then(|body| body.get("Node").map(serde_json::Value::is_object))
-        .unwrap_or(false)
 }
 
 /// The macOS app's own command line, when `tailscale` is not on the PATH.
@@ -313,7 +509,8 @@ fn tailscale_status() -> Result<String, String> {
 
 /// This machine's MagicDNS name, without the trailing dot, when `tailscale status` gives one.
 pub fn magicdns_name() -> Option<String> {
-    let status: serde_json::Value = serde_json::from_str(&tailscale_status().ok()?).ok()?;
+    let status: serde_json::Value =
+        serde_json::from_slice(tailscale_status().ok()?.as_bytes()).ok()?;
     let name = status
         .get("Self")?
         .get("DNSName")?
@@ -325,6 +522,9 @@ pub fn magicdns_name() -> Option<String> {
 #[cfg(test)]
 #[path = "../tests/after_access/fixture.rs"]
 mod access_fixture;
+
+#[cfg(test)]
+mod visitor_tests;
 
 #[cfg(test)]
 mod tests {

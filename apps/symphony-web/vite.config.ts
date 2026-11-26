@@ -5,7 +5,18 @@ import { BACKSTOP_MS, UnitRunReport } from "./src/unit-run.ts";
 // (package.sh): `src/kinds/NAME.tsx` exports the kind's `run` and `stop`. The menus (`overlay`) and
 // the chat (`panel`) are no page's but the shell's persistent kinds every page mounts beside its
 // own.
-const PAGES = ["agents", "board", "docs", "queue", "reports", "review", "runs", "settings", "task"];
+const PAGES = [
+  "agents",
+  "board",
+  "docs",
+  "people",
+  "queue",
+  "reports",
+  "review",
+  "runs",
+  "settings",
+  "task",
+];
 const KINDS = [...PAGES, "overlay", "panel"].sort();
 // The stylesheet every kind shares, an entry of its own and no kind: its sheets in the order
 // `src/styles/shared.css` writes, one minified file package.sh puts first in every kind's styles.
@@ -69,10 +80,15 @@ export default defineConfig({
         //
         // Keep cache.ts with live.tsx even if their importers differ: Reports uses the cache and
         // the page's notices, so splitting them would add a file to every page following the board.
+        // So too a task's kind (kind.ts, which Reports reads as well), whose a task is
+        // (owner-read.ts, which a document's cards read as well) and which Go to session control a
+        // holder is given (session-control.ts, which the agents page reads as well): each a few
+        // hundred bytes that two pages share, which as a file of its own costs a first visit more
+        // in its answer's headers than in its code.
         codeSplitting: {
           groups: [
             { name: "shared", minShareCount: PAGES.length - 1 },
-            { name: "kept", test: /\/src\/(cache|live)\.tsx?$/ },
+            { name: "kept", test: /\/src\/(cache|live|kind|owner-read|session-control)\.tsx?$/ },
           ],
         },
       },

@@ -1,4 +1,3 @@
-
 #[path = "../../../tasks/tests/store/common.rs"]
 #[allow(dead_code)]
 mod board;
@@ -18,18 +17,18 @@ use std::path::{Path, PathBuf};
 #[allow(unused_imports)]
 use std::process::{Child, Command, Stdio};
 #[allow(unused_imports)]
-use symphony_board::sys::Spawning as _;
-#[allow(unused_imports)]
 use std::sync::{Arc, Barrier, Mutex};
 #[allow(unused_imports)]
 use std::time::{Duration, Instant};
+#[allow(unused_imports)]
+use symphony_board::sys::Spawning as _;
 
+#[allow(unused_imports)]
+use serde_json::{Value, json};
 #[allow(unused_imports)]
 use symphony::commit::{Committer, Edit};
 #[allow(unused_imports)]
 use symphony::save::Saves;
-#[allow(unused_imports)]
-use serde_json::{Value, json};
 
 const DOC: &str = "# A\n\nfirst paragraph\n\n<!-- register:start -->\n- [ ] **one** — proposal.\n<!-- register:end -->\n\nlast paragraph\n";
 const TWO: &str =
@@ -116,11 +115,12 @@ fn commit_verdicts(root: &Path, edits: &[Edit], message: &str) -> symphony::comm
 #[allow(dead_code)]
 fn git(root: &Path, args: &[&str]) -> String {
     stage(format_args!("git start {args:?}"));
-    let done = symphony_board::sys::output(symphony_board::sys::Command::new("git")
-        .args(args)
-        .current_dir(root)
-        )
-        .unwrap();
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
+            .args(args)
+            .current_dir(root),
+    )
+    .unwrap();
     stage(format_args!("git finished {args:?}: {}", done.status));
     assert!(
         done.status.success(),
@@ -178,10 +178,10 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
     stage(format_args!("case setup started: {name}"));
     let tree = common::Tree::new();
     stage(format_args!("private board setup started: {name}"));
-    let db = board::client();
+    let db = board::postgresql();
     // The board's command line makes the board; the Symphony, a reader, never does.
     symphony_board::Store::open(symphony_board::rpc::Client::new(
-        db.addr(),
+        &db.addr(),
         "sf",
         db.database(),
     ))
@@ -200,10 +200,7 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
     // Drop inherited board, callback, index and repository overrides. This process may only
     // reach this fixture; its CLI children receive the same private environment.
     for (key, _) in std::env::vars() {
-        if key.starts_with("TASKS_")
-            || key.starts_with("GIT_")
-            || key.starts_with("SYMPHONY_")
-        {
+        if key.starts_with("TASKS_") || key.starts_with("GIT_") || key.starts_with("SYMPHONY_") {
             child.env_remove(key);
         }
     }
@@ -234,7 +231,14 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
     let spawned = Instant::now();
     let mut exited = || child.0.try_wait().unwrap();
     let status = test_time::until(format!("{name}'s case child"), Duration::MAX, || {
-        watch_look(name, &tree.root, &child.2, &mut exited, spawned, Instant::now())
+        watch_look(
+            name,
+            &tree.root,
+            &child.2,
+            &mut exited,
+            spawned,
+            Instant::now(),
+        )
     })
     .unwrap_or_else(|stall| panic!("{stall}"))
     .unwrap_or_else(|report| panic!("{report}"));
@@ -325,11 +329,31 @@ impl Fixture {
     fn main(&self, rel: &str) -> String {
         git(&self.root(), &["show", &format!("main:{rel}")]) + "\n"
     }
+    /// The case's board as its server reaches it (`symphony::taskview::connect`): opened to read
+    /// by the schema rule, as its project's board, held to the project's cap. But its client
+    /// waits the board's own wait, not the server's 3 s on each request, which is the server's
+    /// promise to a page and no case's here: a loaded machine met it at a connection's startup.
     fn store(&self) -> symphony_board::Store {
         stage("connecting to private board");
-        let store = symphony::taskview::connect(&self.root()).unwrap();
+        let mut env = symphony_board::cli::Env::of_process();
+        env.cwd = self.root();
+        env.vars.remove("TASKS_SESSION");
+        let reached = symphony_board::cli::held_board(&env, None).unwrap();
+        let store = symphony_board::Store::reading_on(
+            reached.database().unwrap(),
+            Box::new(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs_f64()
+            }),
+            Box::new(symphony_board::sys::pid_alive),
+            &symphony_board::sys::hostname(),
+            &reached.opening(symphony_board::Opening::read()),
+        )
+        .unwrap();
         stage("connected to private board");
-        store
+        symphony_board::cli::capped(store, &env)
     }
     fn generate(&self) {
         script(
@@ -361,18 +385,19 @@ impl Fixture {
     /// Open the queued job's existing lock while a socket holds its worker. Acquiring this
     /// descriptor after releasing the socket observes job completion, including failure filing.
     fn pending_job(&self) -> std::fs::File {
-        let paths: Vec<_> = std::fs::read_dir(self.root().join(".git/symphony/server/verdict-backlog"))
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .filter(|p| {
-                p.file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .parse::<u64>()
-                    .is_ok()
-            })
-            .collect();
+        let paths: Vec<_> =
+            std::fs::read_dir(self.root().join(".git/symphony/server/verdict-backlog"))
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| {
+                    p.file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .parse::<u64>()
+                        .is_ok()
+                })
+                .collect();
         assert_eq!(paths.len(), 1, "exactly one queued job: {paths:?}");
         let held = std::fs::OpenOptions::new()
             .read(true)
@@ -395,9 +420,18 @@ impl Fixture {
                     && serde_json::from_slice::<Value>(&std::fs::read(path).unwrap()).unwrap()["edit"]["rel"] == rel
             })
             .expect("the socket-held save has a durable journal");
-        let held = std::fs::OpenOptions::new().read(true).write(true)
-            .open(root.join(".git/symphony/server/verdict-backlog").join(path.file_stem().unwrap())).unwrap();
-        assert!(matches!(held.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(
+                root.join(".git/symphony/server/verdict-backlog")
+                    .join(path.file_stem().unwrap()),
+            )
+            .unwrap();
+        assert!(matches!(
+            held.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
         held
     }
     fn clean_publication_state(&self) {
@@ -417,7 +451,7 @@ impl Fixture {
                 .unwrap()
                 .map(|e| e.unwrap().file_name())
                 .collect();
-            names.sort();
+            symphony_board::order::sort_by(&mut names, &Ord::cmp);
             assert_eq!(names, ["next"]);
         }
     }
@@ -594,6 +628,18 @@ impl ClosingSaves {
     fn post(&self, scope: &str, route: &str, payload: Value) -> Value {
         self.0
             .post(scope, route, &payload)
+            .unwrap_or_else(|e| panic!("{route}: {} {}", e.status, e.error))
+    }
+    /// [`Self::post`] asked by `actor`, as a host that admitted them hands it over.
+    fn post_as(
+        &self,
+        actor: &symphony_plugin::Actor,
+        scope: &str,
+        route: &str,
+        payload: Value,
+    ) -> Value {
+        self.0
+            .post_as(actor, scope, route, &payload)
             .unwrap_or_else(|e| panic!("{route}: {} {}", e.status, e.error))
     }
 }

@@ -264,7 +264,7 @@ fn a_kept_hit_is_answered_while_another_windows_read_is_held() {
             (kept.passes() == 2).then_some(())
         })
         .unwrap();
-        let (sent, received) = std::sync::mpsc::channel();
+        let (sent, received) = crate::test_channel::channel();
         {
             let (kept, folders, root) = (&kept, &folders, &root);
             scope.spawn(move || {

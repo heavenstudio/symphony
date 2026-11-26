@@ -1,5 +1,4 @@
 //! Volume-only PULL conditions use the ordinary durable acknowledgement and retry account.
-use crate::common::Backend;
 
 use super::callbacks::Listener;
 use super::common::{Fixture, NOW, Seed, session};
@@ -10,13 +9,13 @@ use symphony_board::NewTask;
 
 mod canonical;
 
-on_both! {
-fn a_health_driven_count_change_within_the_low_band_does_not_repeat_the_warning(backend: Backend) {
+#[test]
+fn a_health_driven_count_change_within_the_low_band_does_not_repeat_the_warning() {
     let mut orch = session("orchestrator");
     orch.kind = "orchestrator".into();
     let mut worker = session("worker");
     worker.busy_until = Some(NOW + 1200.0);
-    let f = Fixture::on(backend,
+    let f = Fixture::new(
         Seed::default()
             .session_row(orch)
             .session_row(worker)
@@ -61,7 +60,6 @@ fn a_health_driven_count_change_within_the_low_band_does_not_repeat_the_warning(
     f.other().dispatch_callbacks().unwrap();
     assert!(listener.drain(&f, "worker", "orchestrator").is_empty());
 }
-}
 
 fn start(f: &Fixture, orch: &str, worker: &str, slug: &str) {
     let store = f.elsewhere();
@@ -100,9 +98,9 @@ fn waiting(f: &Fixture, orch: &str) -> Vec<Waiting> {
     serde_json::from_value(rows.into_iter().filter(waits).collect()).unwrap()
 }
 
-on_both! {
-fn an_ancestry_count_change_invalidates_pull_without_status_staffing_or_ready_changes(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn an_ancestry_count_change_invalidates_pull_without_status_staffing_or_ready_changes() {
+    let f = Fixture::new(crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     for n in 0..3 {
@@ -150,11 +148,10 @@ fn an_ancestry_count_change_invalidates_pull_without_status_staffing_or_ready_ch
         }
     }
 }
-}
 
-on_both! {
-fn low_volume_crosses_clears_and_reenters_without_ready_gaps_or_periodic_repeats(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn low_volume_crosses_clears_and_reenters_without_ready_gaps_or_periodic_repeats() {
+    let f = Fixture::new(crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let sender = f.session("worker");
     for n in 0..4 {
@@ -198,11 +195,10 @@ fn low_volume_crosses_clears_and_reenters_without_ready_gaps_or_periodic_repeats
         assert!(warnings(&listener.drain(&f, &sender, &orch)).is_empty());
     }
 }
-}
 
-on_both! {
-fn a_waiting_volume_warning_keeps_its_key_and_attempts_as_the_count_changes(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_waiting_volume_warning_keeps_its_key_and_attempts_as_the_count_changes() {
+    let f = Fixture::new(crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let sender = f.session("worker");
     for n in 0..4 {
@@ -244,5 +240,4 @@ fn a_waiting_volume_warning_keeps_its_key_and_attempts_as_the_count_changes(back
     assert_eq!(warnings(&told).len(), 1, "{told:?}");
     assert!(warnings(&told)[0].contains("open=2 threshold=4 cap=none"));
     assert!(waiting(&f, &orch).is_empty());
-}
 }

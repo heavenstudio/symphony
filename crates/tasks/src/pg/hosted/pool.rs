@@ -357,8 +357,8 @@ mod tests {
         pool: &Arc<Pool<Arc<Numbers>>>,
         within: Duration,
     ) -> (Got, mpsc::Sender<bool>, std::thread::JoinHandle<()>) {
-        let (got, gotten) = mpsc::channel();
-        let (release, released) = mpsc::channel::<bool>();
+        let (got, gotten) = crate::test_channel::channel();
+        let (release, released) = crate::test_channel::channel::<bool>();
         let pool = Arc::clone(pool);
         let thread = std::thread::spawn(move || match pool.acquire(within, LONG) {
             Ok(mut lease) => {
@@ -536,7 +536,7 @@ mod tests {
             thread.join().unwrap();
         }
         let mut closed = numbers.closed.lock().unwrap().clone();
-        closed.sort_unstable();
+        crate::order::sort_by(&mut closed, &Ord::cmp);
         assert_eq!(
             closed,
             [0, 1],

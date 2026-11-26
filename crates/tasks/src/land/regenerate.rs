@@ -27,12 +27,13 @@
 //!
 //! Where the project delivers by pull request (`[land] delivery`, [`super::delivery`]) a round
 //! commits nothing to the default branch and pushes nothing. What it made is kept as [`Pending`],
-//! then pointed at by a branch and filed as a task in review ([`Regenerator::propose`]), which an
-//! assessor reads and a land delivers as any task, checked first as the regenerator's own
-//! ([`Landing::generated`]). While that record's inputs are the tip's, a round makes nothing
-//! ([`Regenerator::waiting`]); once they are not, its task is cancelled, a pull request it was
-//! bound to is told ([`Regenerator::retract`]), and the newest tip is made. Nothing else is kept
-//! of what is to make: a start that never happened is made up for by any later one.
+//! then pointed at by a branch and filed as a task in review ([`Regenerator::propose`]), dispatched
+//! as a task moved to review is once the run lets go of its lock ([`dispatched`]), which an
+//! assessor reads and the host merges once its stamps stand, as any task, checked first as the
+//! regenerator's own ([`Landing::generated`]). While that record's inputs are the tip's, a round
+//! makes nothing ([`Regenerator::waiting`]); once they are not, its task is cancelled, a pull
+//! request it was bound to is told ([`Regenerator::retract`]), and the newest tip is made. Nothing
+//! else is kept of what is to make: a start that never happened is made up for by any later one.
 //!
 //! A red round (a generator failed, or wrote outside its outputs) files the task [`RED`] on the
 //! board, marked red (`tests/main-red-regenerate-2` and on once one was closed), or adds a line
@@ -52,6 +53,7 @@
 //! outputs' alone.
 
 use super::delivery::{self, Journal, Receipt, Stage, Transport};
+use super::dispatch;
 use super::{
     FOLDER, GIT_VARS, Generator, Landing, Move, RECIPE, Ran, Refusal, Settings, TRIES, and, at,
     changed, clear, hold, on_paths, owns, run_git, same, short, signal_name, started, worktree,
@@ -656,11 +658,30 @@ pub fn run_with_clock(
             Round::Stopped { line, .. } => return Err(line.clone()),
         };
         if last && now.as_deref() == Some(left.as_str()) {
+            if matches!(round, Round::Pending { .. })
+                && let Some(started) = dispatched(store, env, &main, &folder)
+            {
+                let _ = writeln!(out, "{NAME}: {started}");
+            }
             return Ok(line.clone());
         }
         said = Some(line.clone());
         let _ = writeln!(out, "regenerate: the default branch moved; going round");
     }
+}
+
+/// The task a round left awaiting delivery ([`Pending`]), dispatched as a task moved to review is
+/// ([`dispatch::on_filed`]) where nothing dispatched it yet: the store's own move to review, which
+/// filed it, starts nothing, and with no dispatch no pull request is opened, so nothing merges it
+/// however its stamps stand. Started only once the run let go of its lock, which a dispatch of it
+/// takes to judge what it was made of ([`Landing::generated`]) and is refused while another holds;
+/// a later run starts one that a run cut short never started. The line saying what started, or
+/// none.
+fn dispatched(store: &Store, env: &Env, main: &Path, folder: &Path) -> Option<String> {
+    let pending = Pending::read(folder)?;
+    let task = store.get(&pending.slug).ok()?;
+    let started = dispatch::on_filed(env, store, main, &task)?;
+    Some(format!("{}: {started}", pending.slug))
 }
 
 /// A regenerator holding its lock: the land machinery it runs its generators and lands its commit
@@ -999,8 +1020,8 @@ impl Regenerator<'_, '_> {
             }
             self.file(pending)?;
             return waits(format!(
-                "{made}, awaiting delivery by pull request as {slug} (`just land {slug}`, once \
-                 its stamps stand): nothing is made again of the same inputs"
+                "{made}, awaiting delivery by pull request as {slug}, which the host merges once \
+                 its stamps stand: nothing is made again of the same inputs"
             ));
         };
         self.say(&format!(
@@ -1091,7 +1112,8 @@ impl Regenerator<'_, '_> {
 
     /// The branch and the task `pending` names, each made only where it is not there: the branch
     /// at the commit made, the task filed as the regenerator's reds are and moved to review, where
-    /// its assessor reads the head. It names no stamp and waives none.
+    /// its assessor reads the head, and dispatched once the run lets go of its lock ([`dispatched`]).
+    /// It names no stamp and waives none.
     fn file(&mut self, pending: &Pending) -> Result<(), String> {
         let slug = &pending.slug;
         let default = self.landing.settings.default_branch.clone();
@@ -1149,8 +1171,9 @@ impl Regenerator<'_, '_> {
                     by: filer.clone(),
                     body: format!(
                         "What the project's `[land] generators` make of {default} at {}: the \
-                         commit {}, their outputs alone. It lands by `just land {slug}` once \
-                         assessed, or the regenerator cancels it for a newer tip.",
+                         commit {}, their outputs alone. Filed in review, it is dispatched to \
+                         the host as a task moved there is, and merged there once its stamps \
+                         stand, or the regenerator cancels it for a newer tip.",
                         pending.tip, pending.head
                     ),
                     priority: 1,
@@ -1201,10 +1224,9 @@ impl Regenerator<'_, '_> {
         Ok(Round::Pending {
             tip: tip.into(),
             line: format!(
-                "{message}: made as {}, awaiting delivery by pull request as {} (`just land {}`, \
-                 once its stamps stand); nothing committed to {}",
+                "{message}: made as {}, awaiting delivery by pull request as {}, which the host \
+                 merges once its stamps stand; nothing committed to {}",
                 short(built),
-                pending.slug,
                 pending.slug,
                 self.landing.settings.default_branch
             ),

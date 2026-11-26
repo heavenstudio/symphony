@@ -23,9 +23,8 @@
 //! older pair that agree.
 
 use super::postgres::recovery as pg;
-use super::statement::both;
-use super::surreal::recovery as sql;
-use super::work::{OWNER, no_task};
+use super::statement::Statement;
+use super::work::no_task;
 use super::{Error, REFUSED, Store, refused};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -122,7 +121,7 @@ impl Store {
     /// The board's own recovery generation, whatever an authority names: what `tasks recovery
     /// status` says. None on a board that holds none.
     pub fn recovery_generation(&self) -> Result<Option<String>, Error> {
-        self.retrying(|| self.read(both(sql::GENERATION, pg::generation()), json!({})))
+        self.retrying(|| self.read(Statement::from(pg::generation()), json!({})))
     }
 
     /// The generation this store's authority binds the board to, or the refusal of a store with
@@ -141,11 +140,11 @@ impl Store {
         }
     }
 
-    /// The variables a bound write's fence reads (`surreal::recovery::FENCED` and its twin), for
-    /// the task `slug` at `expected`: refused before anything is sent when the token is of
-    /// another shape, the store has no authority, or the authority binds the board to none or to
-    /// another generation than the token's. The fence then holds the board to that generation in
-    /// the write's transaction.
+    /// The variables a bound write's fence reads (`postgres::recovery::FENCED`), for the task
+    /// `slug` at `expected`: refused before anything is sent when the token is of another shape,
+    /// the store has no authority, or the authority binds the board to none or to another
+    /// generation than the token's. The fence then holds the board to that generation in the
+    /// write's transaction.
     pub(crate) fn bound_vars(&self, slug: &str, expected: &Bound) -> Result<Value, Error> {
         if expected.compat != COMPAT {
             return Err(refused(format!(
@@ -194,7 +193,7 @@ impl Store {
     pub fn bound(&self, slug: &str) -> Result<BoundTask, Error> {
         let authorized = self.authorized()?;
         let row: Option<Read> =
-            self.retrying(|| self.read(both(sql::READ, pg::read()), json!({"slug": slug})))?;
+            self.retrying(|| self.read(Statement::from(pg::read()), json!({"slug": slug})))?;
         Store::bound_task(slug, row, &authorized)
     }
 
@@ -217,8 +216,8 @@ impl Store {
             return Err(refused("a task needs a title".into()));
         }
         let fence = self.bound_vars(slug, expected)?;
-        let acts = handle != OWNER;
-        let body = || both(sql::amend(acts), pg::amend(acts)).posting();
+        let acts = !self.is_person(handle);
+        let body = || Statement::from(pg::amend(acts)).posting();
         self.bound_write(
             slug,
             expected,
@@ -251,13 +250,13 @@ impl Store {
             ));
         }
         let fence = self.bound_vars(slug, expected)?;
-        let acts = handle != OWNER;
+        let acts = !self.is_person(handle);
         let more = json!({
             "retitle": title.is_some(), "title": title.unwrap_or_default(),
             "rewrite": edit.body.is_some(), "body": edit.body.as_deref().unwrap_or_default(),
             "links": edit.links,
         });
-        let body = || both(sql::edit(acts), pg::edit(acts)).posting();
+        let body = || Statement::from(pg::edit(acts)).posting();
         self.bound_write(slug, expected, handle, &fence, more, body)
     }
 
@@ -301,7 +300,7 @@ impl Store {
         // write on a board one schema ahead ([`crate::schema::COMPATIBLE`]).
         let generation: String = self.retrying(|| {
             self.run_transaction(
-                both(sql::REBIND, pg::rebind()),
+                Statement::from(pg::rebind()),
                 json!({}),
                 super::transaction::Run::Own,
             )

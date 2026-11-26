@@ -22,7 +22,7 @@ use symphony_api::gates::{OWNER, REVIEW};
 use symphony_api::{Gate, GateState, PendingItem, TaskOffer};
 use symphony_board::cli::machine_work::recorded::Record;
 use symphony_board::gates::{self, Decision};
-use symphony_board::stamps::posted::Posted;
+use symphony_board::stamps::posted::Approval;
 use symphony_board::stamps::read::{self, Reading};
 use symphony_board::stamps::{Catalogue, Needs, READERS, said, short};
 use symphony_board::{Message, Store, Task};
@@ -63,10 +63,13 @@ pub struct Evidence<'a> {
     pub tip: Option<&'a str>,
     /// The cards the task posted that wait on the owner ([`super::posted_cards`]).
     pub cards: &'a [&'a PendingItem],
+    /// The people who hold decide on the board, whose approve meets the `owner` stamp as the
+    /// owner's does ([`read::owner_with_by`]): none where the task does not need it.
+    pub deciders: &'a [String],
     /// What the cards the task's branch posted say of its `owner` stamp at a tip
-    /// (`symphony_board::stamps::posted::read`), asked only where the thread's approve does not
-    /// name it ([`read::owner_with`]).
-    pub posted: &'a dyn Fn(&str) -> Posted,
+    /// (`symphony_board::stamps::posted::read_by`), asked only where the thread's approve does not
+    /// name it ([`read::owner_with_by`]).
+    pub posted: &'a dyn Fn(&str) -> Approval,
 }
 
 /// Each stamp of `catalogue` as a gate of the task `record`, in the catalogue's order, from
@@ -105,7 +108,10 @@ pub fn stamps(record: &Task, catalogue: &Catalogue, evidence: &Evidence<'_>) -> 
                 OWNER => match owner(evidence.cards) {
                     Some(held) => held,
                     None if wanted => read_at(name, GateState::Held, &|tip| {
-                        read::owner_with(evidence.thread, tip, || (evidence.posted)(tip))
+                        let deciders = evidence.deciders;
+                        read::owner_with_by(evidence.thread, tip, deciders, || {
+                            (evidence.posted)(tip)
+                        })
                     }),
                     None => left_out(),
                 },
@@ -374,7 +380,8 @@ pub fn owner_offer(store: &Store, record: &Task, root: &Path, branch: &str) -> O
         return None;
     }
     let thread = store.thread(&record.slug).ok()?;
-    awaits_owner(&record.status, &thread, &tip, root).then(|| TaskOffer {
+    let deciders = store.task_deciders(record);
+    awaits_owner(&record.status, &thread, &tip, root, &deciders).then(|| TaskOffer {
         action: OWNER_APPROVE.into(),
         label: format!("Approve {}", short(&tip)),
         branch: branch.into(),
@@ -383,17 +390,24 @@ pub fn owner_offer(store: &Store, record: &Task, root: &Path, branch: &str) -> O
 }
 
 /// Whether a task of `status`, its `thread` this, waits on the owner's approve of `tip`: its
-/// `owner` stamp does not stand there (`read::owner_at`, the cards its branch posted read in the
-/// checkout `root`), and the task is open, or done by an approve no landing has closed
-/// (`symphony_board::approved`), where the land leaves a task that lacks only the owner's stamp.
-/// A task cancelled, or done by a landing or a covered close, waits on nothing.
-pub fn awaits_owner(status: &str, thread: &[Message], tip: &str, root: &Path) -> bool {
+/// `owner` stamp does not stand there (`read::owner_at_by`, the cards its branch posted read in the
+/// checkout `root`, `deciders` the people of the task's owner who hold decide), and the task is
+/// open, or done by an approve no landing has closed (`symphony_board::approved`), where the land
+/// leaves a task that lacks only the owner's stamp. A task cancelled, or done by a landing or a
+/// covered close, waits on nothing.
+pub fn awaits_owner(
+    status: &str,
+    thread: &[Message],
+    tip: &str,
+    root: &Path,
+    deciders: &[String],
+) -> bool {
     let standing = match status {
         "done" => symphony_board::approved(thread).is_some(),
         "cancelled" => false,
         _ => true,
     };
-    standing && !read::owner_at(thread, tip, root).met
+    standing && !read::owner_at_by(thread, tip, root, deciders).met
 }
 
 /// The owner's line [`OWNER_APPROVE`]'s action posts for `payload`, the commit the offer showed:

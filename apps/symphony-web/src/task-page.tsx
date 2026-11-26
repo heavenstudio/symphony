@@ -1,13 +1,26 @@
-// A task's page (`/task/SLUG`): its head (slug, title, state, who filed it, the owner's priority and
-// cancel, its facts, its roles and their sessions, its builds and tests), its gates, its subtasks,
-// its timeline, its brief, its changes, its execution attempts where it has some (attempts.tsx, a
-// chunk of their own), its thread and the composer under it. Each part is drawn from its own
-// read (task-live.ts's parts, in the page's store) as soon as that read is there, and is its own
-// mock-up until then: the head and the brief at the height this browser last drew them, the gates'
-// outline, the timeline's box, the thread's and the composer's ghosts, so a part that comes moves
-// none of the others. Live, it is task-live.ts's `LiveTask`, under the board's notices.
+// A task's page (`/task/SLUG`): its head (slug, title, state, who filed it, its priority and, for
+// whoever decides it (owner-read.ts's `decides`), the controls that set it and cancel the task, its
+// facts, whose it is where its board names an owner (owner.tsx's line, a chunk of its own), its
+// roles and their sessions (session.tsx's control, a chunk of its own, for a holder whose session
+// it names a way into), its builds and tests), its gates, its subtasks, its timeline, its brief,
+// its changes, its execution attempts where it has some (attempts.tsx, a chunk of their own), its
+// thread and the composer under it. Each part is drawn from its own read (task-live.ts's parts, in
+// the page's store) as soon as that read is there, and is its own mock-up until then: the head and
+// the brief at the height this browser last drew them, the gates' outline, the timeline's box, the
+// thread's and the composer's ghosts, so a part that comes moves none of the others. Live, it is
+// task-live.ts's `LiveTask`, under the board's notices.
 
-import { type CSSProperties, memo, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  type ComponentType,
+  type CSSProperties,
+  memo,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { AttachControls, useAttach } from "./attach";
 import type { AttemptsProps } from "./attempts";
 import { BlocksView } from "./blocks";
@@ -16,15 +29,19 @@ import { FRESH, type Freshness, shown } from "./cache";
 import { chunkFailed, useChunk } from "./chunk";
 import { useFrame } from "./frame";
 import { TaskGatesPanel } from "./gates";
+import { taskKind } from "./kind";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
 import type { NextActionsProps } from "./nextactions";
+import type { OwnerLineProps } from "./owner";
+import { decides } from "./owner-read";
 import { PartsContext, type Shown, usePart } from "./parts";
 import { href, scoped } from "./project";
 import { getJson, post, said } from "./request";
 import { currentRoute } from "./route";
 import { SelectField } from "./select";
-import { GoToSession } from "./session";
+import type { GoToSessionProps } from "./session";
+import { sessionControl, viaParent } from "./session-control";
 import { field, STALE, useStore } from "./shared";
 import { load, save } from "./storage";
 import { TaskDiffPanel } from "./task-diff";
@@ -36,6 +53,7 @@ import { failed as failedRead, ready, Trouble } from "./trouble";
 import { drawnHeight, drawnStyle, NearViewport, rememberDrawn, Settle, Skeleton } from "./viewport";
 import type {
   Block,
+  HeldWords,
   TaskPage as Page,
   Role,
   SessionGo,
@@ -43,7 +61,7 @@ import type {
   TaskEntry,
   TaskOffer,
 } from "./wire";
-import { TASK_ACTION_ROUTE } from "./wire";
+import { TASK_ACTION_ROUTE, TASK_HAND_ROUTE, TASK_PASS_ROUTE } from "./wire";
 import { CHECKING } from "./words";
 import { statusWords, WorkPhases } from "./work-phases";
 
@@ -63,10 +81,87 @@ function bone(width: string): CSSProperties {
 /** A task's priorities, as its field offers them. */
 const PRIORITIES: [string, string][] = [0, 1, 2, 3, 4].map((value) => [`${value}`, `p${value}`]);
 
-/** A message of a task's thread: its time, who sent it to whom, and its text or blocks. */
-export const TaskMessage = memo(function TaskMessage({ entry }: { entry: TaskEntry }) {
+/** Whose line a task's message is, as its thread draws it: a person's (the owner's, or a person's
+ * a board named), the board's own, or an agent's. */
+export function voice(message: TaskEntry["message"]): "owner" | "system" | "agent" {
+  if (message.sender === "owner" || message.person) return "owner";
+  return message.kind === "system" ? "system" : "agent";
+}
+
+/**
+ * A message held for people, at the board's line for it: its time, who wrote it to whom, its
+ * state and, while it is held, its words and Pass on for one who may press it (`passes`). Passed
+ * on, its words are the line they became, further down.
+ */
+export function HeldMessage({
+  entry,
+  held,
+  passes,
+}: {
+  entry: TaskEntry;
+  held: HeldWords;
+  passes: boolean;
+}) {
+  const mount = useMount();
+  const [busy, setBusy] = useState(false);
+  const working = useRef(false);
+  const [told, setTold] = useState("");
+  const stale = useStore(STALE);
+  const passed = held.passed_by ?? null;
+  const pass = async () => {
+    if (working.current || STALE.get()) return;
+    working.current = true;
+    setBusy(true);
+    try {
+      await post(url(TASK_PASS_ROUTE), { slug: entry.message.slug, id: held.id });
+      // The feed brings the line its words became, which marks this one passed: until then it
+      // stays pressed.
+      if (mount.aborted) return;
+      setTold("");
+    } catch (error) {
+      if (mount.aborted) return;
+      setTold(said(error));
+      working.current = false;
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="entry owner" data-held={passed === null ? "held" : "passed"}>
+      <time>{entry.stamp}</time>{" "}
+      <span className="from">
+        {held.author}
+        {held.to !== undefined && held.to !== null && ` → ${held.to}`}
+      </span>
+      <b className="entry-held">{passed === null ? "held" : `passed on by ${passed}`}</b>
+      {passed === null && <div className="entry-text literal">{held.text}</div>}
+      {passed === null && passes && (
+        <div className="row">
+          <Button size="xs" disabled={busy || stale} onClick={() => void pass()}>
+            {stale ? CHECKING : "Pass on"}
+          </Button>
+        </div>
+      )}
+      {told !== "" && <p role="status">{told}</p>}
+    </div>
+  );
+}
+
+/** A message of a task's thread: its time, who sent it to whom, and its text or blocks; the
+ * board's line for a message held for people is that message (`HeldMessage`), for one who may
+ * pass it on (`passes`) with its control. */
+export const TaskMessage = memo(function TaskMessage({
+  entry,
+  passes = false,
+}: {
+  entry: TaskEntry;
+  passes?: boolean;
+}) {
   const { message } = entry;
-  const who = message.sender === "owner" ? "owner" : message.kind === "system" ? "system" : "agent";
+  const held = entry.held ?? null;
+  if (held !== null && held.id === message.id) {
+    return <HeldMessage entry={entry} held={held} passes={passes} />;
+  }
+  const who = voice(message);
   return (
     <div className={`entry ${who}`}>
       <time>{entry.stamp}</time>{" "}
@@ -272,7 +367,7 @@ export function RoleChips({
           title={`${role.role} is ${role.health}`}
         >
           {`${role.role} ${role.handle}`}
-          <GoToSession
+          <SessionPart
             handle={role.handle}
             go={sessions[role.handle] ?? null}
             local={local}
@@ -490,7 +585,7 @@ export function Composer({ slug, roles, approval }: ComposerProps) {
       <Textarea
         id="task-message"
         value={draft}
-        placeholder="Message (⌘/Ctrl+Enter sends). Agents on this task hear it wherever they run."
+        placeholder="Message (⌘/Ctrl+Enter sends)"
         onChange={(event) => {
           const text = event.target.value;
           save(draftKey, text);
@@ -581,8 +676,7 @@ export function briefAdd(
   if (answer.revision !== revision) {
     return {
       ...held,
-      failed:
-        "The brief changed since this page was sent; the page shows the new one when it reloads.",
+      failed: "The brief changed since this page was sent: reload to read the new one.",
     };
   }
   return {
@@ -637,7 +731,7 @@ export function Brief({ slug, revision, blocks, omitted, next }: BriefProps) {
       {remaining > 0 && (
         <>
           <p className="brief-cut">
-            {`This brief is long; ${remaining} bytes of it are not shown yet. `}
+            {`${remaining} bytes of the brief are not shown yet. `}
             <Button id="brief-more" disabled={busy} onClick={() => void loadMore()}>
               Show more of the brief
             </Button>
@@ -647,6 +741,96 @@ export function Brief({ slug, revision, blocks, omitted, next }: BriefProps) {
       )}
     </div>
   );
+}
+
+/** Whose a task is, its line's chunk once it has come: a task drawn after draws it at once. */
+let ownerLine: ComponentType<OwnerLineProps> | null = null;
+
+/** Import whose a task is, its line's chunk, kept once it has come. */
+export const loadOwnerLine = () =>
+  import("./owner-part").then((chunk) => {
+    ownerLine = chunk.OwnerLine;
+    return ownerLine;
+  });
+
+/** A held Hand to select's box: as tall as the select, a line within its padding, and as wide. */
+const HAND_BOX: CSSProperties = {
+  width: "6.95rem",
+  height: "calc(1lh + 16px)",
+  boxSizing: "border-box",
+};
+
+/**
+ * Whose a task is and whom it may be handed to, a chunk of its own (owner.tsx's line, which a
+ * document's cards draw too), imported for a task whose board names its owner alone (chunk.tsx).
+ * Until it has come, its place is held as the line it stands for: a bar for its words in a line of
+ * their text and, for one who may hand it on, the select's box.
+ */
+export function OwnerPart(props: OwnerLineProps) {
+  const [Line, failed, retry] = useChunk(loadOwnerLine, () => ownerLine);
+  if (Line) return <Line {...props} />;
+  if (failed) return chunkFailed("The task's ownership", retry);
+  return (
+    <span className="owner">
+      <span>
+        <span className="bone" style={bone("24ch")} />
+      </span>
+      {(props.owner.hand_to ?? []).length > 0 && <span className="ghost-field" style={HAND_BOX} />}
+    </span>
+  );
+}
+
+/** A holder's Go to session control, its chunk once it has come: a chip drawn after draws it at once. */
+let goToSession: ComponentType<GoToSessionProps> | null = null;
+
+/** Import a holder's Go to session control, its chunk, kept once it has come. */
+export const loadGoToSession = () =>
+  import("./session-part").then((chunk) => {
+    goToSession = chunk.GoToSession;
+    return goToSession;
+  });
+
+/** A held Go to session button's box: as tall as the button, its border within, and about as wide. */
+const SESSION_BOX: CSSProperties = { width: "5.7rem", boxSizing: "border-box" };
+/** A held Go to session link's words: a bar about as wide, in the chip's line. */
+const SESSION_LINK = bone("11ch");
+
+/**
+ * A role's holder's Go to session control, a chunk of its own (session.tsx's control, which the
+ * agents page draws too), imported for a holder the page names a control for alone (chunk.tsx):
+ * none, and nothing imported, for one whose session it names none of or with no way in. Until it
+ * has come, its place is held as the control it will be (session-control.ts): a button's box, or a
+ * bar in the chip's line for a link, then whose session it is, for a subagent's, as it says it.
+ */
+export function SessionPart(props: GoToSessionProps) {
+  const { go, handle, local } = props;
+  const control = go === null ? null : sessionControl(go, local);
+  if (go === null || control === null) return null;
+  return (
+    <SessionChunk
+      {...props}
+      held={
+        <>
+          {control.kind === "link" ? (
+            <span className="bone" style={SESSION_LINK} />
+          ) : (
+            <span className="ghost-field" style={SESSION_BOX} />
+          )}
+          {viaParent(go, handle) && (
+            <span className="go-session-via">{`in ${go.handle}'s session`}</span>
+          )}
+        </>
+      }
+    />
+  );
+}
+
+/** The control of a holder the page names one for, `held` in its place until its chunk comes. */
+function SessionChunk({ held, ...props }: GoToSessionProps & { held: ReactNode }) {
+  const [Go, failed, retry] = useChunk(loadGoToSession, () => goToSession);
+  if (Go) return <Go {...props} />;
+  if (failed) return chunkFailed("The session's control", retry, true);
+  return held;
 }
 
 /** A workflow's next actions, imported for a task a custom workflow holds alone. */
@@ -700,12 +884,28 @@ export function TaskHead({ page, scope, connected }: TaskHeadProps) {
       <div className="task-state row">
         <span className={`state pill st-${task.status}`}>{statusWords(task.status)}</span>
         <span className="by">{`filed by ${task.created_by}`}</span>
-        <OwnerControls slug={slug} priority={task.priority} status={task.status} />
+        {decides(page.owner) ? (
+          <OwnerControls slug={slug} priority={task.priority} status={task.status} />
+        ) : (
+          <span className="priority">{`p${task.priority}`}</span>
+        )}
       </div>
       {task.workflow && (
         <WorkflowPart scope={scope} slug={slug} place={task.workflow} updated={task.updated} />
       )}
       <ul className="facts">
+        {taskKind(task.fields) !== null && (
+          <li className="kind">{`kind: ${taskKind(task.fields)}`}</li>
+        )}
+        {page.owner && (
+          <li>
+            <OwnerPart
+              owner={page.owner}
+              id="task-hand"
+              hand={(to) => post(url(TASK_HAND_ROUTE), { slug, to })}
+            />
+          </li>
+        )}
         {task.parent !== null && (
           <li>
             {"part of "}
@@ -765,7 +965,9 @@ export function TaskDetail({
   onChildren,
 }: TaskDetailProps) {
   const offer = usePart(offerPart(scope, slug)).value;
-  const approval = offer !== undefined && offer.payload !== null ? offer : null;
+  // The landing the task offers is its approve, deciding it: offered to whoever decides it alone.
+  const approval =
+    offer !== undefined && offer.payload !== null && decides(page?.owner) ? offer : null;
   // The heights this browser last drew the head and the brief at, for their mock-ups: the task's
   // own in a window as wide, else those of the last task it drew there.
   const [heights] = useState(() => ({
@@ -855,7 +1057,7 @@ export function TaskDetail({
           error: thread.error === null ? null : said(thread.error),
           earlier: async () => (await onHistory(true)) ?? null,
           latest: async () => (await onHistory(false)) ?? null,
-          render: (entry) => <TaskMessage entry={entry} />,
+          render: (entry) => <TaskMessage entry={entry} passes={page?.passes ?? false} />,
         }}
       />
       {page !== null ? (
@@ -907,7 +1109,7 @@ export function TaskDetail({
                   height={100}
                   ghost={<GhostEntry />}
                 >
-                  <TaskMessage entry={entry} />
+                  <TaskMessage entry={entry} passes={page?.passes ?? false} />
                 </NearViewport>
               ))}
             </ul>
@@ -947,7 +1149,7 @@ export function LiveTaskPage({ live, connected }: { live: LiveTask; connected: b
       {missing ? (
         <Trouble
           title={`No task ${slug}`}
-          text="The board has no task by this name: it may have been removed, or the link names it wrongly."
+          text="The board has no task by this name."
           back={["/tasks", "All tasks"]}
           retry={() => live.again()}
         />

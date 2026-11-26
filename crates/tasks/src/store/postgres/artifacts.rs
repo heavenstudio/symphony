@@ -1,4 +1,5 @@
-//! PostgreSQL twin of the scoped private artifact ledger's load and compare-and-set.
+//! The statements of `store/artifacts.rs` on PostgreSQL: the scoped private artifact ledger's load
+//! and compare-and-set.
 
 use super::Pg;
 

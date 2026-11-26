@@ -100,7 +100,7 @@ impl Fake {
         let dir = Dir::new();
         let listener =
             UnixListener::bind(dir.path().join(crate::server::postgres::SOCKET_FILE)).unwrap();
-        let (tell, sent) = mpsc::channel();
+        let (tell, sent) = crate::test_channel::channel();
         thread::spawn(move || {
             for script in scripts {
                 let (mut stream, _) = listener.accept().unwrap();
@@ -502,7 +502,7 @@ fn a_server_that_answers_at_length_before_it_has_read_the_request_is_read_while_
     answer.extend(len(4 + b"SELECT 16\0".len()));
     answer.extend(b"SELECT 16\0");
     answer.extend(bytes("5a0000000549"));
-    let (tell, heard) = mpsc::channel();
+    let (tell, heard) = crate::test_channel::channel();
     let dir = serving(move |mut stream| {
         stream.write_all(&answer).unwrap();
         let mut sent = Vec::new();
@@ -537,7 +537,7 @@ fn a_server_that_answers_at_length_before_it_has_read_the_request_is_read_while_
 
 #[test]
 fn a_server_that_takes_none_of_a_request_and_says_nothing_fails_it_at_the_clients_wait() {
-    let (done, finished) = mpsc::channel::<()>();
+    let (done, finished) = crate::test_channel::channel::<()>();
     // It holds the connection and reads nothing, until the client has given up.
     let dir = serving(move |stream| {
         let _ = finished.recv();
@@ -573,13 +573,9 @@ fn a_server_that_takes_none_of_a_request_and_says_nothing_fails_it_at_the_client
 /// loaded machine, meets first.
 fn started_then_waiting(dir: &Dir, wait: Duration) -> Client {
     let mut client = Client::new(dir.path(), "board");
-    let connection = client.connect().unwrap().unwrap();
-    connection.writer.set_write_timeout(Some(wait)).unwrap();
-    connection
-        .stream
-        .get_ref()
-        .set_read_timeout(Some(wait))
-        .unwrap();
+    let mut connection = client.connect().unwrap().unwrap();
+    connection.writer.wait = wait;
+    connection.stream.get_mut().wait = wait;
     *client.connection.get_mut().unwrap() = Some(connection);
     client.waiting(wait)
 }
@@ -594,7 +590,7 @@ fn eagain() -> String {
 
 #[test]
 fn a_request_the_server_takes_and_never_answers_says_it_is_slow_at_the_clients_wait() {
-    let (done, finished) = mpsc::channel::<()>();
+    let (done, finished) = crate::test_channel::channel::<()>();
     // It reads the whole request and answers nothing, until the client has given up.
     let dir = serving(move |mut stream| {
         while wire::read(&mut stream).unwrap().kind != b'S' {}
@@ -636,7 +632,7 @@ fn a_startup_the_server_never_answers_says_it_is_slow_and_that_no_request_was_se
     let dir = Dir::new();
     let listener =
         UnixListener::bind(dir.path().join(crate::server::postgres::SOCKET_FILE)).unwrap();
-    let (done, finished) = mpsc::channel::<()>();
+    let (done, finished) = crate::test_channel::channel::<()>();
     // It takes the connection and its startup, and says nothing, until the client has given up.
     thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
@@ -731,7 +727,7 @@ fn a_wait_run_out_is_a_socket_timeout_and_no_other_failure() {
 
 #[test]
 fn a_server_gone_after_an_answer_fails_the_next_request_and_drops_its_connection() {
-    let (tell, gone) = mpsc::channel();
+    let (tell, gone) = crate::test_channel::channel();
     let dir = serving(move |mut stream| {
         while wire::read(&mut stream).unwrap().kind != b'S' {}
         stream.write_all(&bytes(JSONB_AND_NULL)).unwrap();
@@ -774,11 +770,16 @@ fn a_connection_waits_the_clients_wait_on_each_write_as_on_each_read() {
     client.request(&[Step::bare("SELECT 1")]).unwrap();
     let held = client.connection.lock().unwrap();
     let connection = held.as_ref().expect("the connection is kept");
-    assert_eq!(connection.writer.write_timeout().unwrap(), Some(wait));
-    assert_eq!(
-        connection.stream.get_ref().read_timeout().unwrap(),
-        Some(wait)
-    );
+    assert_eq!(connection.writer.wait, wait);
+    assert_eq!(connection.stream.get_ref().wait, wait);
+    // Neither descriptor waits in the socket ([`socket`]): a drain could fail that wait.
+    for side in [
+        &connection.writer.socket,
+        &connection.stream.get_ref().socket,
+    ] {
+        assert_eq!(side.read_timeout().unwrap(), None);
+        assert_eq!(side.write_timeout().unwrap(), None);
+    }
 }
 
 #[test]
@@ -786,8 +787,8 @@ fn a_request_the_socket_takes_whole_is_taken_at_once_and_of_a_longer_one_what_it
     // A peer that reads nothing: what the socket takes is what its buffers hold.
     let (ours, _peer) = UnixStream::pair().unwrap();
     let connection = Connection {
-        stream: BufReader::new(ours.try_clone().unwrap()),
-        writer: ours,
+        stream: BufReader::new(Socket::waiting(ours.try_clone().unwrap(), TIMEOUT).unwrap()),
+        writer: Socket::waiting(ours, TIMEOUT).unwrap(),
     };
     let short = [b'S', 0, 0, 0, 4];
     assert_eq!(connection.taken(&short).unwrap(), short.len());
@@ -927,6 +928,30 @@ fn only_a_duplicate_database_or_its_name_index_means_another_maker_won() {
 }
 
 #[test]
+fn making_a_database_copies_template0_from_the_maintenance_database_and_other_refusals_fail() {
+    // The recorded syntax error stands for any refusal but the database being there.
+    let fake = Fake::new(vec![Script {
+        started: STARTED,
+        answers: vec![SYNTAX],
+    }]);
+    assert_eq!(
+        fake.client().make_database(),
+        Err(DbError::Failed(
+            "syntax error at end of input (SQLSTATE 42601)".into()
+        ))
+    );
+    let (startup, after) = fake.sent();
+    let text = String::from_utf8(startup[4..].to_vec()).unwrap();
+    let named: Vec<_> = text.split('\0').collect();
+    assert_eq!(named[2..4], ["database", MAINTENANCE]);
+    let mut sent = after.as_slice();
+    let query = wire::read(&mut sent).unwrap();
+    assert_eq!(query.kind, b'Q', "one simple query");
+    assert_eq!(query.body, b"CREATE DATABASE board TEMPLATE template0\0");
+    assert_eq!(kinds(sent), b"X", "and the maker's connection ended");
+}
+
+#[test]
 fn a_client_says_where_it_reaches() {
     let client = Client::new(Path::new("/tmp/symphony-pg-1"), "board_1");
     assert_eq!(client.addr(), "postgresql:/tmp/symphony-pg-1");
@@ -1029,8 +1054,8 @@ fn a_connections_socket_never_reaches_a_forked_child() {
     {
         let held = client.connection.lock().unwrap();
         let connection = held.as_ref().expect("a connection kept");
-        let reader = connection.stream.get_ref().as_raw_fd();
-        let writer = connection.writer.as_raw_fd();
+        let reader = connection.stream.get_ref().socket.as_raw_fd();
+        let writer = connection.writer.socket.as_raw_fd();
         assert_ne!(reader, writer, "two descriptors");
         for (side, fd) in [("reader", reader), ("writer", writer)] {
             assert!(

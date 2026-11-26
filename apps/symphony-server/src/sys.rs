@@ -762,7 +762,7 @@ mod tests {
         ]);
         // fd belongs to held, kept alive through spawn; the child gets it at that number.
         command.pass_fd(fd);
-        let (send, answer) = std::sync::mpsc::channel();
+        let (send, answer) = crate::test_channel::channel();
         std::thread::spawn(move || send.send(output_within(command, timeout)));
         // The command's own deadline: past it, only the test's end closing would let the call go.
         let out = answer
@@ -942,8 +942,8 @@ mod tests {
         std::sync::mpsc::Receiver<()>,
         std::sync::mpsc::Receiver<std::io::Result<End>>,
     ) {
-        let (set, is_set) = std::sync::mpsc::channel();
-        let (came, came_out) = std::sync::mpsc::channel();
+        let (set, is_set) = crate::test_channel::channel();
+        let (came, came_out) = crate::test_channel::channel();
         std::thread::spawn(move || {
             let end = until_ends(pid, &stop, || {
                 let _ = set.send(());

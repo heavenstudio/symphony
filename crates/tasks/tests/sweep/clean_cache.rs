@@ -51,7 +51,9 @@ pub(super) fn isolated_with(
         .cleared()
         .env("PATH", std::env::var_os("PATH").unwrap())
         .env("HOME", &scratch.0)
-        .env("SYMPHONY_SURREAL", crate::common::surreal())
+        // The child starts the tests' PostgreSQL, which on macOS refuses to start with no locale
+        // ("postmaster became multithreaded during startup").
+        .env("LC_ALL", "C")
         .env("SYMPHONY_CLEAN_PROOF_CHILD", "1")
         .env("GIT_TRACE2_EVENT", scratch.0.join("trace.jsonl"));
     if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {

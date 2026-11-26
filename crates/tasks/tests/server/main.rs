@@ -1,15 +1,19 @@
-//! The board's server: found where it says it is, started when it is not (on a reserved port, and on
-//! another when that one was taken), and the git common dir it keeps its data in; what its store
-//! takes on disk, and the reclaim that rebuilds it; in a repository of its own, a write's
-//! delivery by the detached dispatcher it starts; the board's PostgreSQL beside it, started
-//! and stopped on scratch boards; and the lock `tools/surreal.sh` fetches its SurrealDB under.
+//! The board's server: the board's PostgreSQL started and stopped on scratch boards, each holding
+//! one of the machine's slots for its life (a test's own here), read and
+//! exported as it runs, a snapshot put back over its board under the switch's journal, and its
+//! dead space reclaimed; a board still on SurrealDB refused by every command that would start
+//! it; the git common dir its board is kept in; in a repository of its own, a write's delivery by
+//! the detached dispatcher it starts; and a child started on a port of its own.
 
 // How a test starts its own children ([`children::Child`]).
 #[path = "../support/children.rs"]
 mod children;
 
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "../support/test_channel.rs"]
+mod test_channel;
+
 mod common;
-mod copy;
 mod dispatch;
 mod export;
 #[path = "../../../../tools/test-support/script_process_cwd.rs"]
@@ -20,10 +24,6 @@ mod export;
 mod fixture_script;
 mod git;
 mod helper;
-mod hold;
-mod home;
-mod home_fixture;
-mod left_replay;
 /// The recipients' Unix sockets, served by this process (the perf tests').
 #[path = "../perf/listeners.rs"]
 #[expect(
@@ -32,16 +32,10 @@ mod left_replay;
 )]
 mod listeners;
 mod moving;
-mod no_lsof;
+mod on_surrealdb;
 mod own_board;
 mod port;
 mod postgres;
 mod reclaim;
 mod sessionless;
-mod snapshot;
-/// The store's tests' helpers, for the one way the tests find the pinned `surreal`.
-#[path = "../store/common.rs"]
-#[allow(dead_code)]
-mod store;
-mod stores;
-mod surreal_lock;
+mod slots;

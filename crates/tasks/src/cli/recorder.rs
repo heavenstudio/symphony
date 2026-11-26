@@ -92,6 +92,7 @@
 
 use super::Env;
 use super::machine_work::recorded::{self, Phase, Record, Run, Step};
+use crate::channel::{self, RecvTimeoutError};
 use crate::lock::Recovered as _;
 use crate::sys::{self, FileLock};
 use std::ffi::OsString;
@@ -100,7 +101,6 @@ use std::io::{self, Write};
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
 /// The command's name.
@@ -679,7 +679,7 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     // Its end is seen by a thread of its own and stamped as it comes, while the board is asked,
     // and left unreaped: its pid stays its own while its signals are passed to it. It is reaped
     // here, once they no longer are.
-    let (end, ends) = mpsc::channel();
+    let (end, ends) = channel::channel();
     let mark = end_mark(env);
     let waiter = std::thread::spawn(move || {
         let seen = ended_unreaped(started.0);
@@ -1364,6 +1364,7 @@ mod supervised {
         Asked, BEAT, Cpu, Keeps, Prepared, Recording, SAMPLE, Waits, cpu_seconds, kept, role,
         unstarted,
     };
+    use crate::channel::{self, RecvTimeoutError};
     use crate::cli::Env;
     use crate::cli::machine_work::recorded;
     use crate::lock::Recovered as _;
@@ -1372,7 +1373,6 @@ mod supervised {
     use std::io::{self, Write};
     use std::os::fd::{AsRawFd, FromRawFd as _, OwnedFd};
     use std::os::unix::ffi::OsStrExt as _;
-    use std::sync::mpsc::{self, RecvTimeoutError};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
@@ -1656,7 +1656,7 @@ mod supervised {
             (true, Ok(watch), Some(prepared)) => {
                 // Read on a thread of its own, so what it sees is stamped as it comes while the
                 // board is asked which task this is for.
-                let (tell, heard) = mpsc::channel();
+                let (tell, heard) = channel::channel();
                 let latest = Latest::default();
                 let read = Arc::clone(&latest);
                 let mark = super::end_mark(env);
@@ -1695,7 +1695,7 @@ mod supervised {
     /// again as soon as it has the status. Then `mark` is made ([`super::END_MARK_VAR`]).
     fn watching(
         watch: &Watch,
-        tell: &mpsc::Sender<Heard>,
+        tell: &channel::Sender<Heard>,
         (target, caller): (libc::pid_t, libc::pid_t),
         (latest, ending): (&Latest, Option<Arc<crate::run_logs::Ending>>),
         mark: Option<&std::path::Path>,
@@ -1799,7 +1799,7 @@ mod supervised {
     /// status when its exit was seen, and with what its log holds once its `source` ended
     /// ([`Source::ended`], within the time given).
     fn follow(
-        heard: &mpsc::Receiver<Heard>,
+        heard: &channel::Receiver<Heard>,
         recording: Recording,
         start: super::Start,
         latest: &Latest,
@@ -3062,7 +3062,8 @@ mod tests {
     /// board, by the server a `TASKS_SERVER` names or by its folder, keeps its own waits, and so
     /// does one on the live database of a server named from where the board cannot tell whose it
     /// is (the server down, the run in another repository or in none), or one that reaches no
-    /// board; the same server's scratch database takes it.
+    /// board, a folder whose board is still on SurrealDB among them; the same server's scratch
+    /// database takes it.
     #[test]
     fn a_scale_is_never_taken_on_a_live_board_or_where_no_board_is_reached() {
         let scratch = Scratch::new("waits");
@@ -3096,9 +3097,10 @@ mod tests {
             assert_eq!(at(cwd, &[named, live_database]), Waits::OWN);
             assert_eq!(at(cwd, &[named, scratch_database]), Waits(20));
         }
-        // By its folder: the project's board, and a scratch database on its server.
+        // By its folder: a board still on SurrealDB is refused (`server::GONE`), so no board is
+        // reached, on its live database or a scratch one.
         assert_eq!(at(&live, &[]), Waits::OWN);
-        assert_eq!(at(&live, &[scratch_database]), Waits(20));
+        assert_eq!(at(&live, &[scratch_database]), Waits::OWN);
         // No board reached: no server recorded, or no repository at all.
         assert_eq!(at(&unserved, &[scratch_database]), Waits::OWN);
         assert_eq!(at(&scratch.0, &[scratch_database]), Waits::OWN);

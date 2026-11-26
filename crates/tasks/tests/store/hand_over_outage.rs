@@ -3,7 +3,6 @@
 //! work it is still told of, and what older dispatchers read still counts it as said. The pane
 //! watch's BLOCKED is in `blocked_panes`, whose cases run with an hc; a PULL waiting while the
 //! digest changes beneath it, in `pending_pull`.
-use crate::common::Backend;
 
 use super::callbacks::Listener;
 use super::common::{Fixture, HOST};
@@ -33,8 +32,8 @@ struct Missed {
 }
 
 impl Outage {
-    pub(super) fn on(backend: Backend) -> Outage {
-        let fixture = Fixture::on(backend, crate::common::Seed::default());
+    pub(super) fn on() -> Outage {
+        let fixture = Fixture::new(crate::common::Seed::default());
         let former = fixture.session("orchestrator");
         let successor = fixture.session("orchestrator");
         let sender = fixture.session("worker");
@@ -158,10 +157,10 @@ impl Outage {
     }
 }
 
-on_both! {
-fn what_waited_out_an_outage_says_nothing_of_the_work_a_hand_over_took_away(backend: Backend) {
+#[test]
+fn what_waited_out_an_outage_says_nothing_of_the_work_a_hand_over_took_away() {
     for keeps_work in [false, true] {
-        let outage = Outage::on(backend);
+        let outage = Outage::on();
         let Outage {
             fixture,
             former,
@@ -174,7 +173,7 @@ fn what_waited_out_an_outage_says_nothing_of_the_work_a_hand_over_took_away(back
         let mut kinds: Vec<&str> = (waiting.iter())
             .map(|text| text.split(' ').next().unwrap())
             .collect();
-        kinds.sort_unstable();
+        symphony_board::order::sort_by(&mut kinds, &Ord::cmp);
         let held = if keeps_work {
             "scratch/kept, scratch/one"
         } else {
@@ -225,7 +224,6 @@ fn what_waited_out_an_outage_says_nothing_of_the_work_a_hand_over_took_away(back
         );
     }
 }
-}
 
 /// One child going quiet on `scratch/one` while the former orchestrator cannot be reached.
 struct Quiet {
@@ -241,8 +239,8 @@ struct Quiet {
     said: bool,
 }
 
-on_both! {
-fn a_child_quiet_meanwhile_is_said_after_a_hand_over_only_to_an_orchestrator_told_of_it_now(backend: Backend) {
+#[test]
+fn a_child_quiet_meanwhile_is_said_after_a_hand_over_only_to_an_orchestrator_told_of_it_now() {
     let stale = LIVE_SECONDS + 1.0;
     let lost = LIVE_SECONDS + STALE_SECONDS + 5.0;
     let cases = [
@@ -285,7 +283,7 @@ fn a_child_quiet_meanwhile_is_said_after_a_hand_over_only_to_an_orchestrator_tol
         said,
     } in cases
     {
-        let outage = Outage::on(backend);
+        let outage = Outage::on();
         let Outage {
             fixture,
             elsewhere,
@@ -314,7 +312,6 @@ fn a_child_quiet_meanwhile_is_said_after_a_hand_over_only_to_an_orchestrator_tol
         let heard = (told.iter()).any(|line| line.starts_with(&notice));
         assert_eq!(heard, said, "{case}: {told:?}");
     }
-}
 }
 
 /// The head of a PULL of one ready task nobody staffs, come up since the last PULL the former
@@ -362,10 +359,10 @@ fn as_an_older_dispatcher_wrote_it(outage: &Outage) {
     }
 }
 
-on_both! {
-fn a_pull_waiting_out_an_outage_is_said_as_the_digest_is_at_delivery_whoever_wrote_it(backend: Backend) {
+#[test]
+fn a_pull_waiting_out_an_outage_is_said_as_the_digest_is_at_delivery_whoever_wrote_it() {
     for older in [false, true] {
-        let outage = Outage::on(backend);
+        let outage = Outage::on();
         let Outage {
             fixture,
             elsewhere,
@@ -400,11 +397,10 @@ fn a_pull_waiting_out_an_outage_is_said_as_the_digest_is_at_delivery_whoever_wro
         assert_eq!(older_fields(fixture, former), older_record(fixture, former));
     }
 }
-}
 
-on_both! {
-fn a_pull_waiting_out_an_outage_names_no_session_whose_work_a_hand_over_took_away(backend: Backend) {
-    let outage = Outage::on(backend);
+#[test]
+fn a_pull_waiting_out_an_outage_names_no_session_whose_work_a_hand_over_took_away() {
+    let outage = Outage::on();
     let Outage {
         fixture,
         elsewhere,
@@ -445,5 +441,4 @@ fn a_pull_waiting_out_an_outage_names_no_session_whose_work_a_hand_over_took_awa
     assert_eq!(fixture.health(&reviewer), Health::Live);
     let told = outage.back().drain(fixture, sender, former);
     assert_eq!(told, after_hand_over(FREE));
-}
 }

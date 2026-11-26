@@ -37,7 +37,7 @@ fn without_documents(tree: &Tree) -> PathBuf {
 fn a_project_without_documents_serves_its_board_tasks_agents_and_health_and_says_so_once() {
     if std::env::var_os(CHILD).is_none() {
         let fixture = Fixture::new(Seed::default().task("tools/without-docs", "ready"));
-        let board = fixture.store.client();
+        let board = fixture.store.database();
         let (_, err) = crate::testing::child_on(board, CHILD, TEST);
         let said = |line: &str| err.lines().filter(|l| l.contains(line)).count();
         assert_eq!(
@@ -163,7 +163,7 @@ fn documents_that_arrive_after_the_start_are_read_within_a_period() {
     )
     .unwrap();
     assert_eq!(
-        hub.folder("", "docs/").unwrap().docs,
+        hub.folder("", "docs/", None).unwrap().docs,
         1,
         "the docs page lists them"
     );

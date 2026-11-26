@@ -235,7 +235,7 @@ fn files(dir: &Path) -> Vec<PathBuf> {
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect();
-    entries.sort();
+    symphony_board::order::sort_by(&mut entries, &Ord::cmp);
     for path in entries {
         if path.is_dir() {
             found.extend(files(&path));
@@ -264,7 +264,7 @@ fn texts() -> Vec<(String, usize, String)> {
             .map(|entry| entry.unwrap().path().join("src"))
             .filter(|src| src.is_dir())
             .collect();
-        members.sort();
+        symphony_board::order::sort_by(&mut members, &Ord::cmp);
         for path in members.iter().flat_map(|src| files(src)) {
             let rel = relative(&path);
             let name = path.file_name().unwrap().to_string_lossy();
@@ -305,13 +305,15 @@ fn every_just_command_the_symphony_names_is_an_installed_recipe_or_the_consumers
 }
 
 #[test]
-fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers() {
+fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_those_that_ask_first() {
     let installed = installed();
     // An agent is asked before `just symphony`, which starts, replaces or stops the machine's
-    // shared server, and before `just symphony-cli`, which reaches `serve` and `init`: they stay
-    // installed, and no rule allows them. `just land` is allowed: what it lands its approval check
-    // decides.
-    let asked: BTreeSet<String> = ["symphony", "symphony-cli"].map(String::from).into();
+    // shared server, before `just symphony-cli`, which reaches `serve` and `init`, and before
+    // `just tasks-people`, which changes a board's people or a profile: they stay installed, and
+    // no rule allows them. `just land` is allowed: what it lands its approval check decides.
+    let asked: BTreeSet<String> = ["symphony", "symphony-cli", "tasks-people"]
+        .map(String::from)
+        .into();
     assert!(asked.is_subset(&installed), "{installed:?}");
     let allowed_here: BTreeSet<String> = installed.difference(&asked).cloned().collect();
     assert!(allowed_here.contains("land"), "{allowed_here:?}");

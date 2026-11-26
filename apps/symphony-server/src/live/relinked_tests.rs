@@ -5,6 +5,7 @@
 //! at the followed documents only once a task came, went or moved its slug, title, status or links,
 //! or the board could not be read before it. Renders are counted, never timed.
 
+use super::read_paths_tests::{Move, moved};
 use super::{Hub, relinks};
 use crate::front::{Shared, router};
 use crate::testing::{
@@ -153,9 +154,14 @@ fn tasks(listed: &[(&str, &str, &str)]) -> Value {
     )
 }
 
-/// The board's `query`, run on the fixture's board.
-fn moves(f: &Fixture, query: &str) {
-    f.store.client().query(query, json!({})).unwrap();
+/// `change` made on the fixture's board.
+fn moves(f: &Fixture, change: Move) {
+    moved(&f.store, change);
+}
+
+/// The task `slug` moved to `in_progress`, past the board's commands.
+fn started(slug: &'static str) -> Move {
+    Move::Set(slug, json!({ "status": "in_progress" }))
 }
 
 fn board() -> Fixture {
@@ -185,18 +191,17 @@ fn a_board_read_moving_a_task_that_links_an_open_document_renders_it_alone_and_f
     let cases = [
         (
             "its status",
-            "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/topic' RETURN NONE;",
+            started("tools/topic"),
             vec![("tools/topic", topic.as_str(), "in_progress")],
         ),
         (
             "its title",
-            "UPDATE task SET title = 'Retitled since' WHERE slug = 'tools/topic' RETURN NONE;",
+            Move::Set("tools/topic", json!({ "title": "Retitled since" })),
             vec![("tools/topic", "Retitled since", "in_progress")],
         ),
         (
             "another task linking it",
-            "CREATE link CONTENT { slug: 'tools/later', kind: 'doc', target: 'docs/TOPIC.md' } \
-             RETURN NONE;",
+            Move::Link("tools/later", TOPIC),
             vec![
                 ("tools/topic", "Retitled since", "in_progress"),
                 ("tools/later", later.as_str(), "ready"),
@@ -204,12 +209,12 @@ fn a_board_read_moving_a_task_that_links_an_open_document_renders_it_alone_and_f
         ),
         (
             "a task no longer linking it",
-            "DELETE link WHERE slug = 'tools/topic' RETURN NONE;",
+            Move::Unlink("tools/topic"),
             vec![("tools/later", later.as_str(), "ready")],
         ),
     ];
-    for (case, query, listed) in cases {
-        moves(&f, query);
+    for (case, change, listed) in cases {
+        moves(&f, change);
         let rendered = served.renders();
         served.hub.board_read(&f.store).unwrap();
         assert_eq!(
@@ -240,16 +245,16 @@ fn a_board_read_moving_a_task_that_links_an_open_document_renders_it_alone_and_f
     let quiet = [
         (
             "a task linking nothing moved its status",
-            "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/unlinked' RETURN NONE;",
+            started("tools/unlinked"),
         ),
         (
             "the task linking it moved its priority",
-            "UPDATE task SET priority = 1 WHERE slug = 'tools/later' RETURN NONE;",
+            Move::Set("tools/later", json!({ "priority": 1 })),
         ),
-        ("nothing", "RETURN NONE;"),
+        ("nothing", Move::Nothing),
     ];
-    for (case, query) in quiet {
-        moves(&f, query);
+    for (case, change) in quiet {
+        moves(&f, change);
         let rendered = served.renders();
         served.hub.board_read(&f.store).unwrap();
         assert_eq!(served.renders(), rendered, "{case}: rendered nothing");
@@ -282,10 +287,7 @@ fn a_branch_page_left_open_follows_its_linked_tasks_and_main_follows_only_its_ow
     let cursor = served.open(prefix, TOPIC);
     let main = served.hub.cursor("").unwrap();
 
-    moves(
-        &f,
-        "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/topic' RETURN NONE;",
-    );
+    moves(&f, started("tools/topic"));
     let rendered = served.renders();
     served.hub.board_read(&f.store).unwrap();
     assert_eq!(served.renders(), rendered + 1, "the branch's copy alone");
@@ -376,10 +378,7 @@ fn a_document_the_page_holds_as_missing_is_not_rendered_for_its_tasks() {
         .unwrap();
     assert!(served.hub.pages.read().unwrap()[""].missing.contains(TOPIC));
 
-    moves(
-        &f,
-        "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/topic' RETURN NONE;",
-    );
+    moves(&f, started("tools/topic"));
     let rendered = served.renders();
     served.hub.board_read(&f.store).unwrap();
     assert_eq!(
@@ -409,10 +408,7 @@ fn a_board_read_and_a_refresh_beside_it_only_move_the_first_reads_mark_forward()
         .unwrap()
         .renews_from = ahead;
 
-    moves(
-        &f,
-        "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/topic' RETURN NONE;",
-    );
+    moves(&f, started("tools/topic"));
     let rendered = served.renders();
     served.hub.board_read(&f.store).unwrap();
     assert_eq!(

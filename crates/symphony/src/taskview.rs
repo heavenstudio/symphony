@@ -133,10 +133,10 @@ pub fn asks(questions: BTreeMap<String, u32>, verdict: Option<&TaskVerdict>) -> 
         questions,
         verdicts: verdict
             .map(|verdict| {
-                PEOPLE
-                    .iter()
-                    .map(|person| ((*person).to_string(), verdict.clone()))
-                    .collect()
+                let mut verdicts = BTreeMap::new();
+                verdicts
+                    .extend((PEOPLE.iter()).map(|person| ((*person).to_string(), verdict.clone())));
+                verdicts
             })
             .unwrap_or_default(),
     }
@@ -337,6 +337,9 @@ pub fn page(
         attempts: store
             .attempt_count(&record.slug)
             .map_err(|e| e.to_string())?,
+        passes: false,
+        // Said to who asks ([`crate::owners::task`]), which the server puts here.
+        owner: None,
     })
 }
 
@@ -468,7 +471,8 @@ pub fn history(
     root: &Path,
 ) -> Result<symphony_api::TaskHistory, symphony_board::Error> {
     store.get(slug)?;
-    let all = store.thread(slug)?;
+    // As the board holds its lines, each with whether a person a board named wrote it.
+    let all = store.thread_rows(slug)?;
     let selected: Vec<_> = all
         .iter()
         .filter(|m| before.is_none_or(|id| m.id < id) && after.is_none_or(|id| m.id > id))
@@ -484,9 +488,13 @@ pub fn history(
         selected.len()
     };
     let render = Render::new(root);
-    let entries: Vec<_> = selected[start..end]
-        .iter()
-        .map(|record| entry(&message(record), &render))
+    let shown = &selected[start..end];
+    let held = held_words(store, shown)?;
+    let entries: Vec<_> = (shown.iter())
+        .map(|record| symphony_api::TaskEntry {
+            held: held.get(&record.id).cloned(),
+            ..entry(&message_row(record), &render)
+        })
         .collect();
     Ok(symphony_api::TaskHistory {
         before: if start > 0 {
@@ -503,12 +511,13 @@ pub fn history(
     })
 }
 
-/// A message's display data. The client owns its markup; owner/system words remain literal. An
-/// owner message that attached files has blocks: its literal lines and the files they name.
+/// A message's display data. The client owns its markup; a person's words (the owner's, or a
+/// person's a board named) and the system's remain literal. A person's message that attached files
+/// has blocks: its literal lines and the files they name.
 pub fn entry(message: &Message, render: &Render) -> symphony_api::TaskEntry {
     let blocks = if message.kind == "system" {
         Vec::new()
-    } else if message.sender == "owner" {
+    } else if message.sender == "owner" || message.person {
         if crate::uploads::has_reference(&message.text) {
             typed_blocks(render.typed_owner(&message.text, &task_doc(render)), render)
         } else {
@@ -521,7 +530,41 @@ pub fn entry(message: &Message, render: &Render) -> symphony_api::TaskEntry {
         message: message.clone(),
         stamp: stamp(message.ts),
         blocks,
+        held: None,
     }
+}
+
+/// The message held for people each of `rows` is of, by the line's id: the board's line that says
+/// a message is held, and the line its words became once passed on ([`symphony_board::held`]). A
+/// person's read of a thread alone carries them. Only the tasks of lines that can be such a line
+/// are read ([`symphony_board::held::may_be_of_one`]).
+pub fn held_words(
+    store: &symphony_board::Store,
+    rows: &[&symphony_board::rows::MessageRow],
+) -> Result<std::collections::BTreeMap<i64, symphony_api::HeldWords>, symphony_board::Error> {
+    let mut slugs: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    slugs.extend(
+        (rows.iter())
+            .filter(|row| symphony_board::held::may_be_of_one(row))
+            .map(|row| row.slug.as_str()),
+    );
+    let mut found = std::collections::BTreeMap::new();
+    for slug in slugs {
+        for held in store.held_on(slug)? {
+            let words = symphony_api::HeldWords {
+                id: held.id,
+                author: held.author,
+                text: held.text,
+                to: held.to,
+                passed_by: held.passed.as_ref().map(|passed| passed.by.clone()),
+            };
+            if let Some(passed) = &held.passed {
+                found.insert(passed.line, words.clone());
+            }
+            found.insert(held.id, words);
+        }
+    }
+    Ok(found)
 }
 
 /// Task text links and pictures resolve as on the board's guide (`[board] guide`).
@@ -570,6 +613,8 @@ fn session(s: &symphony_board::Session) -> Session {
     }
 }
 
+/// `m` on the wire, read with no mark of a person a board named: the owner's line says so by its
+/// sender, and a reader that may meet a named person's reads rows ([`message_row`]).
 pub fn message(m: &symphony_board::Message) -> Message {
     Message {
         id: m.id,
@@ -579,6 +624,23 @@ pub fn message(m: &symphony_board::Message) -> Message {
         kind: m.kind.clone(),
         text: m.text.clone(),
         ts: m.ts,
+        person: false,
+    }
+}
+
+/// `m`, a line as the board holds it, on the wire, with whether a person a board named wrote it:
+/// the board's mark of the row, never its sender's shape, as a session's handle may be a word a
+/// person's name could be.
+pub fn message_row(m: &symphony_board::rows::MessageRow) -> Message {
+    Message {
+        id: m.id,
+        slug: m.slug.clone(),
+        sender: m.sender.clone(),
+        recipient: m.recipient.clone(),
+        kind: m.kind.clone(),
+        text: m.text.clone(),
+        ts: m.ts,
+        person: m.person,
     }
 }
 
@@ -593,13 +655,10 @@ fn stamp(seconds: f64) -> String {
 
 pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symphony_board::Error> {
     let said = store.to_owner(40)?;
-    let slugs = said
-        .iter()
-        .map(|m| m.slug.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let threads = store.threads(&slugs)?;
+    let mut once = std::collections::BTreeSet::new();
+    once.extend(said.iter().map(|m| m.slug.clone()));
+    let slugs = once.into_iter().collect::<Vec<_>>();
+    let threads = store.threads_rows(&slugs)?;
     Ok(said
         .iter()
         .map(|m| ActivityItem {
@@ -612,14 +671,15 @@ pub fn activity(store: &symphony_board::Store) -> Result<Vec<ActivityItem>, symp
             href: format!("/task/{}", m.slug),
             answered: threads
                 .get(&m.slug)
-                .is_some_and(|thread| thread.iter().any(|o| o.sender == "owner" && o.id > m.id)),
+                .is_some_and(|thread| thread.iter().any(|o| o.by_person() && o.id > m.id)),
         })
         .collect())
 }
 
-/// A quick-task outcome read must identify the owner's intended task before confirming it.
-pub(crate) fn is_quick_task(task: &symphony_board::Task, receipt: &str) -> bool {
-    task.created_by == "owner"
+/// A quick-task outcome read must identify the intended task of `by`, who filed it (the owner, or
+/// a person a board named), before confirming it.
+pub(crate) fn is_quick_task(task: &symphony_board::Task, receipt: &str, by: &str) -> bool {
+    task.created_by == by
         && task
             .fields
             .get("_symphony")

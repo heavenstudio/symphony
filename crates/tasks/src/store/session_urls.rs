@@ -3,8 +3,7 @@
 //! setting one moves no board marker; the agents view reads every address each time it is built.
 
 use super::postgres::session_urls as pg;
-use super::statement::both;
-use super::surreal::session_urls as sql;
+use super::statement::Statement;
 use super::{Error, Store, refused};
 use crate::maps::Collect as _;
 use serde_json::{Value, json};
@@ -16,9 +15,8 @@ impl Store {
     /// for a session that is unknown or left.
     pub fn set_session_url(&self, handle: &str, url: &str) -> Result<Option<String>, Error> {
         let url = crate::session_url::checked(url).map_err(refused)?;
-        let body = sql::set();
         let vars = self.acting(handle, (self.clock)(), json!({"url": url}));
-        self.retrying(|| self.transact::<Value>(both(&body, pg::set()), vars.clone()))?;
+        self.retrying(|| self.transact::<Value>(Statement::from(pg::set()), vars.clone()))?;
         Ok(url)
     }
 
@@ -28,7 +26,7 @@ impl Store {
     /// `javascript:` one say, is left out, and no page is handed it to link.
     pub fn session_urls(&self) -> Result<BTreeMap<String, String>, Error> {
         let found: Vec<(String, Value)> =
-            self.retrying(|| self.read(both(sql::READ, pg::read()), json!({})))?;
+            self.retrying(|| self.read(Statement::from(pg::read()), json!({})))?;
         Ok(found
             .into_iter()
             .filter_map(|(handle, url)| {

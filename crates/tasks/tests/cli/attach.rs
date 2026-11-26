@@ -3,9 +3,8 @@
 //! waits, and that a poll asks hc and the test slots once, or not at all with nobody quiet. The
 //! loop itself runs through the command line in `monitor.rs`.
 
-use crate::common::{Fixture, NOW, RawWrite};
+use crate::common::{Fixture, NOW};
 use crate::{env, run};
-use serde_json::json;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::cli::Clock;
@@ -35,9 +34,9 @@ fn orchestrate(n: usize) -> (Fixture, String) {
 }
 
 fn requests(f: &Fixture, orch: &str) -> usize {
-    let before = f.store.client().requests();
+    let before = f.store.database().requests();
     observe(&f.store, orch, "orchestrator").unwrap();
-    f.store.client().requests() - before
+    f.store.database().requests() - before
 }
 
 #[test]
@@ -47,7 +46,7 @@ fn it_follows_every_task_below_the_ones_it_orchestrates() {
     let mut expected: Vec<String> = (0..3)
         .flat_map(|i| ["", "/a", "/a/b"].map(|tail| format!("sim/t{i}{tail}")))
         .collect();
-    expected.sort();
+    symphony_board::order::sort_by(&mut expected, &Ord::cmp);
     assert_eq!(seen.statuses.keys().cloned().collect::<Vec<_>>(), expected);
 }
 
@@ -115,11 +114,14 @@ fn watched(f: &Fixture, me: &str, polls: i64, mut meanwhile: impl FnMut(usize)) 
 fn a_look_that_fails_is_said_and_the_watch_goes_on() {
     let f = Fixture::empty();
     let me = f.session("worker");
-    let board = f.other_client();
+    let board = f.other_database().into_postgresql();
     let lines = watched(&f, &me, 2, |n| {
         if n == 0 {
-            let gone = format!("REMOVE DATABASE {};", board.database());
-            board.write(&gone, json!({})).unwrap();
+            // From the server's maintenance database, ending the connections the board has.
+            let gone = format!("DROP DATABASE {} WITH (FORCE)", board.database());
+            (board.of(symphony_board::pg::MAINTENANCE))
+                .simple(&gone)
+                .unwrap();
         }
     });
     let heads: Vec<&str> = lines.iter().map(|l| &l[..l.find(':').unwrap()]).collect();

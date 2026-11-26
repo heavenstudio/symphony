@@ -1,20 +1,20 @@
-//! The board's tables on PostgreSQL, their indexes, and the triggers that are SurrealDB's events:
-//! the board's marker and each sender's last word ([`define`]); and the terms SurrealDB's
-//! full-text indexes hold, which triggers keep too ([`WORDS`]).
+//! The board's tables on PostgreSQL, their indexes, and the triggers that keep what every write
+//! must: the board's marker and each sender's last word ([`define`]); and the terms the search
+//! reads, which triggers keep too ([`WORDS`]).
 //!
-//! Every table keys its rows by `id`, the SurrealDB record's id as JSON (a text, a number, or the
-//! parts of a compound id), so a row is named alike on either database ([`super::super::raw`]).
-//! A SCHEMAFULL table's fields are typed columns ([`TABLES`]): a required field `NOT NULL`, an
-//! `option<…>` one nullable, an object or an array `jsonb`, a field held to a few values checked
-//! against them. A SCHEMALESS table holds its fields whole in `doc`. A row is read as SurrealDB
-//! gives it, its unset SQL columns left out by [`super::row`], preserving nested JSON nulls.
+//! Every table keys its rows by `id`, the record's id as JSON (a text, a number, or the parts of a
+//! compound id), so a row is named alike in a dump, a copy and a raw read ([`super::super::raw`]).
+//! A typed table's fields are typed columns ([`TABLES`]): a required field `NOT NULL`, an optional
+//! one nullable, an object or an array `jsonb`, a field held to a few values checked against them.
+//! An open table holds its fields whole in `doc`. A row is read as one object, its unset SQL
+//! columns left out by [`super::row`], preserving nested JSON nulls.
 //!
 //! The marker is the sum of revision rows that no two writers share, so it moves with every commit
 //! a reader can see and is never where two writes meet: each connection's own row,
 //! `counter:['board', <its backend's pid>]`, moved once in each of its transactions that changes a
-//! board input, and each session's `session_revision`, moved with that session's row as on
-//! SurrealDB. A connection runs one transaction at a time, so its row is never written by two at
-//! once, and a pid is reused only after its process ended. A sequence, or the highest id of a log,
+//! board input, and each session's `session_revision`, moved with that session's row. A
+//! connection runs one transaction at a time, so its row is never written by two at once, and a
+//! pid is reused only after its process ended. A sequence, or the highest id of a log,
 //! would be no marker: a commit that ends later can hold a lower number than one a reader saw.
 //! An hourly writer-line refresh folds ended backends' rows into `counter:['board']` in one
 //! transaction without changing their sum ([`super::writers::WRITE_LINE`]).
@@ -58,16 +58,16 @@ impl Kind {
     }
 }
 
-/// One field of a SCHEMAFULL table.
+/// One field of a typed table: a column of its own.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::store) struct Column {
     pub name: &'static str,
     pub kind: Kind,
-    /// SurrealDB's `TYPE T` rather than `TYPE option<T>`.
+    /// Whether every row holds it (`NOT NULL`), rather than holding it optionally.
     pub required: bool,
     /// What a row made without it holds.
     pub default: Option<&'static str>,
-    /// The values it is held to (`ASSERT $value IN [...]`); none holds it to none.
+    /// The values it is held to (`CHECK (name IN (...))`); none holds it to none.
     pub one_of: &'static [&'static str],
 }
 
@@ -111,7 +111,7 @@ const fn defaulted(name: &'static str, kind: Kind, default: &'static str) -> Col
     }
 }
 
-/// A table: its fields, or none for a SCHEMALESS one, which holds them whole in `doc`.
+/// A table: its typed columns, or none for a schemaless one, which holds its fields whole in `doc`.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::store) struct Table {
     pub name: &'static str,
@@ -392,13 +392,13 @@ pub(in crate::store) const TABLES: [Table; 30] = [
     },
 ];
 
-/// The board's table named `name`, when it is one: a table a newer schema adds is SCHEMALESS here.
+/// The board's table named `name`, when it is one: a table a newer schema adds is schemaless here.
 pub(in crate::store) fn table(name: &str) -> Option<&'static Table> {
     TABLES.iter().find(|table| table.name == name)
 }
 
-/// The indexes SurrealDB's schema defines that a read here uses, the full-text ones as one index
-/// of the terms in `words`, and the marker's own.
+/// The indexes the board's reads use, the full-text ones as one index of the terms in `words`, and
+/// the marker's own.
 const INDEXES: &str = "
 CREATE INDEX IF NOT EXISTS words_terms ON words USING gin (terms);
 CREATE INDEX IF NOT EXISTS task_status ON task (status);
@@ -492,7 +492,7 @@ END
 $f$;
 
 -- A task's workflow position, and the status of a task that has one, change only beside the
--- transition recorded for them, whatever writes them: SurrealDB's `workflow_position` event.
+-- transition recorded for them, whatever writes them.
 CREATE OR REPLACE FUNCTION board_workflow_position() RETURNS trigger LANGUAGE plpgsql AS $f$
 DECLARE
     was jsonb := CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE OLD.fields -> '_board' -> 'workflow' END;
@@ -557,8 +557,7 @@ $f$;
 
 -- A recorded definition, activation, transition, receipt or admission is never changed, a
 -- generation accepted from an approval authority is never lowered within its epoch, and the active
--- generation moves forward only to an activation recorded for it: SurrealDB's
--- `workflow_history` and `workflow_active` events.
+-- generation moves forward only to an activation recorded for it.
 CREATE OR REPLACE FUNCTION board_workflow_history() RETURNS trigger LANGUAGE plpgsql AS $f$
 DECLARE
     activation jsonb;
@@ -663,19 +662,17 @@ END
 $f$;
 ";
 
-/// What SurrealDB's full-text indexes hold (`task_words`, [`crate::schema::ANALYZERS`]): each
-/// task's title, brief and slug and each thread line's text, a row of `words` each, its `terms`
-/// counted and their number its `length`, kept by the triggers `board_words` names in each
-/// table's fields it reads. The search's twins read it ([`super::search`]).
+/// What the board's full-text search reads ([`super::search`]): each task's title, brief and slug
+/// and each thread line's text, a row of `words` each, its `terms` counted and their number its
+/// `length`, kept by the triggers `board_words` names in each table's fields it reads.
 ///
-/// `board_terms(input)`: the analyzer, each term with where it is. SurrealDB's tokenizers split a
-/// text at each change of class (a letter, a number, ASCII punctuation one character a term),
-/// dropping the rest; its filters then lower each term and make it ASCII (`deunicode`). Here a
-/// letter is PostgreSQL's (`[[:alpha:]]`, Unicode's alphabetic, as Rust's `is_alphabetic`, a newer
-/// Unicode's letters aside), a number Rust's own ([`number_class`]), and a term outside
-/// ASCII is decomposed (NFKD) with its accents dropped and the Latin letters that have no
-/// decomposition spelt as `deunicode` spells them; another script is kept as it is, where
-/// `deunicode` spells it in Latin letters.
+/// `board_terms(input)`: the analyzer, each term with where it is. It splits a text at each change
+/// of class (a letter, a number, ASCII punctuation one character a term), dropping the rest, then
+/// lowers each term and makes it ASCII. A letter is PostgreSQL's (`[[:alpha:]]`, Unicode's
+/// alphabetic, as Rust's `is_alphabetic`, a newer Unicode's letters aside), a number Rust's own
+/// ([`number_class`]), and a term outside ASCII is decomposed (NFKD) with its accents dropped and
+/// the Latin letters that have no decomposition spelt as `deunicode` spells them; another script
+/// is kept as it is.
 const WORDS: &str = r"
 CREATE OR REPLACE FUNCTION board_terms(input text) RETURNS TABLE (term text, at bigint)
 LANGUAGE sql IMMUTABLE STRICT AS $f$
@@ -708,8 +705,9 @@ $f$;
 const WORDED: [(&str, &[&str]); 2] = [("task", &["title", "body", "slug"]), ("message", &["text"])];
 
 /// Latin exceptions to NFKD with accents removed, grouped by their ASCII spelling. The data
-/// is from deunicode 1.6.2 (BSD-3-Clause, https://github.com/kornelski/deunicode), the analyzer SurrealDB
-/// 3.3 uses: each named Latin letter whose spelling differs from NFKD, plus the unit sign µ.
+/// is from deunicode 1.6.2 (BSD-3-Clause, https://github.com/kornelski/deunicode), whose ASCII
+/// spellings the board's terms take: each named Latin letter whose spelling differs from NFKD,
+/// plus the unit sign µ.
 /// Apply these to the original letters, before decomposition: e.g. ǿ is o, ŉ is 'n (not ʼn).
 /// Its license is kept in `latin.LICENSE`. No database extension or full transliteration
 /// library is linked into the board.
@@ -804,8 +802,8 @@ fn numbers() -> String {
     class
 }
 
-/// The tables whose every change moves the marker, as SurrealDB's `board_changed` events do;
-/// `session` and `callback_state` move it by triggers of their own.
+/// The tables whose every change moves the marker; `session` and `callback_state` move it by
+/// triggers of their own.
 const MARKED: [&str; 8] = [
     "task",
     "role",
@@ -959,7 +957,7 @@ END
 $added$;
 ";
 
-/// The uniques SurrealDB's `UNIQUE` indexes keep.
+/// The uniques the board keeps: no two rows share these.
 const UNIQUES: &str = "
 CREATE UNIQUE INDEX IF NOT EXISTS task_sid ON task (sid);
 CREATE UNIQUE INDEX IF NOT EXISTS task_slug ON task (slug);
@@ -1101,7 +1099,7 @@ mod tests {
     #[test]
     fn the_boards_tables_words_and_copied_fields_are_each_named_once() {
         let mut names: Vec<&str> = TABLES.iter().map(|table| table.name).collect();
-        names.sort_unstable();
+        crate::order::sort_by(&mut names, &Ord::cmp);
         names.dedup();
         assert_eq!(names.len(), 30);
         let defined = define();

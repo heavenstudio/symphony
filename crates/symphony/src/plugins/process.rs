@@ -50,7 +50,6 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
 use std::sync::{Arc, Condvar, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -69,6 +68,7 @@ use symphony_plugin::{
 };
 
 use super::measure::{self, Line, Record};
+use crate::channel;
 use crate::project::{PluginProcess, Project, Stamp};
 use seams::{
     RemoteAction, RemoteAuthority, RemoteCheck, RemoteCommand, RemoteDescriber, RemoteGates,
@@ -432,14 +432,14 @@ struct Connection {
     agreed: OnceLock<Version>,
     /// Where the host's lines go, the thread writing its stdin taking them; none once it is ending,
     /// which closes its stdin.
-    queue: Mutex<Option<mpsc::SyncSender<Vec<u8>>>>,
+    queue: Mutex<Option<channel::SyncSender<Vec<u8>>>>,
     /// The lines queued, numbered from 1, and the lines written whole: a call whose request is not
     /// written in its wait finds the process reads no more.
     queued: AtomicU64,
     written: AtomicU64,
     process: Mutex<Box<dyn Handle>>,
     /// Told when its stderr has ended, so its end is logged after all it said.
-    errors: Mutex<Option<mpsc::Receiver<()>>>,
+    errors: Mutex<Option<channel::Receiver<()>>>,
     waiting: Mutex<Waiting>,
     /// Told when it has ended, so a call that found it ending says how.
     ended: Condvar,
@@ -450,7 +450,7 @@ struct Connection {
 /// and how.
 #[derive(Default)]
 struct Waiting {
-    calls: BTreeMap<u64, mpsc::Sender<Result<Reply, String>>>,
+    calls: BTreeMap<u64, channel::Sender<Result<Reply, String>>>,
     given_up: BTreeMap<u64, Option<GatesTurn>>,
     ending: bool,
     ended: Option<(Instant, String)>,
@@ -518,10 +518,10 @@ type ReadAnswer<'a> = &'a mut dyn FnMut(&RawValue) -> Result<(), String>;
 /// ([`answer_in`]), so each call's own reading is only its answer's type.
 fn answer_of<T: serde::de::DeserializeOwned>(tag: &str, raw: &RawValue) -> Result<T, String> {
     let answer = answer_in(tag, raw)?;
-    serde_json::from_str(answer.get())
+    serde_json::from_slice(answer.get().as_bytes())
         .or_else(|why| {
             content::compatible(tag, answer)
-                .map_or(Err(why), |answer| serde_json::from_str(&answer))
+                .map_or(Err(why), |answer| serde_json::from_slice(answer.as_bytes()))
         })
         .map_err(|why| cannot_read(tag, &why))
 }
@@ -532,7 +532,7 @@ mod content;
 /// The answer `raw` holds as it came, or why it does not read or that the plugin refused the call.
 #[inline(never)]
 fn answer_in<'a>(tag: &str, raw: &'a RawValue) -> Result<&'a RawValue, String> {
-    serde_json::from_str::<Answered<&RawValue>>(raw.get())
+    serde_json::from_slice::<Answered<&RawValue>>(raw.get().as_bytes())
         .map_err(|why| cannot_read(tag, &why))?
         .shown()
         .map_err(|why| format!("it refused {tag}: {why}"))
@@ -749,8 +749,8 @@ impl Remote {
             .map_or("its command", String::as_str);
         let spawned = (self.start)()
             .map_err(|why| Unstarted::Failed(format!("{program} cannot start: {why}")))?;
-        let (queue, lines) = mpsc::sync_channel(QUEUED);
-        let (errors_ended, errors_end) = mpsc::channel();
+        let (queue, lines) = channel::sync_channel(QUEUED);
+        let (errors_ended, errors_end) = channel::channel();
         let connection = Arc::new(Connection {
             pid: spawned.pid,
             agreed: OnceLock::new(),
@@ -838,9 +838,9 @@ impl Remote {
     fn threads(
         &self,
         connection: &Arc<Connection>,
-        (input, lines): (Box<dyn Write + Send>, mpsc::Receiver<Vec<u8>>),
+        (input, lines): (Box<dyn Write + Send>, channel::Receiver<Vec<u8>>),
         output: Box<dyn io::Read + Send>,
-        errors: Option<(Box<dyn io::Read + Send>, mpsc::Sender<()>)>,
+        errors: Option<(Box<dyn io::Read + Send>, channel::Sender<()>)>,
     ) -> io::Result<()> {
         let this = self.this();
         let named =
@@ -864,7 +864,7 @@ impl Remote {
         &self,
         connection: &Connection,
         mut input: Box<dyn Write + Send>,
-        lines: &mpsc::Receiver<Vec<u8>>,
+        lines: &channel::Receiver<Vec<u8>>,
     ) {
         for line in lines {
             if let Err(why) = input.write_all(&line).and_then(|()| input.flush()) {
@@ -1164,7 +1164,7 @@ impl Remote {
         }
         line.push(b'\n');
         let bytes = line.len();
-        let (answer, answered) = mpsc::channel();
+        let (answer, answered) = channel::channel();
         {
             let mut waiting = connection.waiting.lock().recover();
             if waiting.ending {
@@ -1178,7 +1178,7 @@ impl Remote {
         })?;
         let reply = match answered.recv_timeout(wait) {
             Ok(reply) => reply?,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
+            Err(channel::RecvTimeoutError::Timeout) => {
                 match self.given_up(connection, id, sent, wait, turn) {
                     // Answered, or failed, as it was given up.
                     None => answered
@@ -1187,7 +1187,7 @@ impl Remote {
                     Some(why) => return Err(why),
                 }
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(channel::RecvTimeoutError::Disconnected) => {
                 return Err("its answers stopped".into());
             }
         };
@@ -1206,10 +1206,10 @@ impl Remote {
             };
             match queue.try_send(line) {
                 Ok(()) => return Ok(connection.queued.fetch_add(1, Ordering::SeqCst) + 1),
-                Err(mpsc::TrySendError::Disconnected(_)) => {
+                Err(channel::TrySendError::Disconnected(_)) => {
                     return Err("its stdin is closed".into());
                 }
-                Err(mpsc::TrySendError::Full(_)) => {}
+                Err(channel::TrySendError::Full(_)) => {}
             }
         }
         self.end(

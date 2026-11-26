@@ -179,10 +179,10 @@ fn leaving_the_server_scope_joins_its_owned_workers() {
         )
     };
     std::thread::scope(|scope| {
-        let (entered, stopping) = std::sync::mpsc::channel();
-        let (release, finish) = std::sync::mpsc::channel();
-        let (finished, completed) = std::sync::mpsc::channel();
-        let (returned, stopped) = std::sync::mpsc::channel();
+        let (entered, stopping) = crate::test_channel::channel();
+        let (release, finish) = crate::test_channel::channel();
+        let (finished, completed) = crate::test_channel::channel();
+        let (returned, stopped) = crate::test_channel::channel();
         let working = shared.clone();
         let worker = std::thread::spawn(move || {
             // Only the stop wakes it.
@@ -224,14 +224,20 @@ fn leaving_the_server_scope_joins_its_owned_workers() {
 }
 
 /// The status this server's routes give a GET of `path` from `client` with `host`, behind a gate
-/// whose `tailscale whois` knows [`PEER`] alone.
+/// whose `tailscale whois` knows [`PEER`] alone, a node under the login this machine is under.
 async fn status_from(client: &str, path: &str, host: Option<&str>) -> StatusCode {
     let gate = Gate::new(
         Arc::new(|ip: &str| {
-            Ok::<_, String>((ip == PEER).then(|| r#"{"Node": {"Name": "phone"}}"#.to_string()))
+            Ok::<_, String>((ip == PEER).then(|| {
+                r#"{"Node": {"Name": "phone"}, "UserProfile": {"ID": 11, "LoginName": "owner@example.com"}}"#
+                    .to_string()
+            }))
         }),
         Arc::new(Instant::now),
-    );
+    )
+    .with_status(Arc::new(|| {
+        Ok(r#"{"Self": {"DNSName": "studio.ts.net.", "UserID": 11}}"#.to_string())
+    }));
     let shared = Shared::new(1, 1, Path::new("/nowhere"), None, gate);
     let app = router(shared).layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()));
     let mut request = Request::builder().uri(path);

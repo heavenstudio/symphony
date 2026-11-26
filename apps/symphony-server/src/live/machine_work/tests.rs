@@ -664,7 +664,7 @@ fn native_guidance_map_keeps_optional_zero_and_maximum_values_and_lexical_keys()
     .unwrap();
     let f = Fixture::new(Seed::default());
     let mut hub = Hub::new(&root, &root.join("build/client"));
-    let board = f.other_client();
+    let board = f.other_database();
     hub.connect_reader = Box::new(move |_| Ok(crate::testing::store_on(&board)));
     hub.refresh_page("", &root).unwrap();
     hub.board_read(&f.store).unwrap();
@@ -714,7 +714,7 @@ fn guidance_and_signoff_map_payloads_keep_last_values_and_report_cost() {
         for count in [0, 1, 32, 512] {
             for reversed in [false, true] {
                 let mut input = pairs[..count].to_vec();
-                input.sort_by(|a, b| a.0.cmp(&b.0));
+                symphony_board::order::sort_by(&mut input, &|a, b| a.0.cmp(&b.0));
                 if reversed {
                     input.reverse();
                 }

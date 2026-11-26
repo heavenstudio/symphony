@@ -337,10 +337,11 @@ fn the_calls_a_projects_programs_make_answer_the_fields_they_read() {
 #[test]
 fn version_answers_this_builds_api_and_schema_without_the_board() {
     let mut env = crate::env();
-    env.vars.insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+    env.vars
+        .insert("TASKS_SERVER".into(), crate::UNREACHED_SERVER.into());
     assert_eq!(
         answer(&env, json!({"method": "version"})),
-        json!({"ok": {"api": {"major": 2, "minor": 6},
+        json!({"ok": {"api": {"major": 2, "minor": 8},
             "schema": symphony_board::schema::VERSION}})
     );
     let said = answer(&env, json!({"method": "version", "args": {"major": 2}}));
@@ -366,7 +367,7 @@ fn a_field_gone_or_retyped_is_named() {
     let bad = json!({"parent": 3, "roles": [{"handle": "h"}, {}], "links": {}});
     misfits(&bad, &shape, "get", &mut out);
     // A map's order is serde_json's, which a workspace build may change.
-    out.sort();
+    symphony_board::order::sort_by(&mut out, &Ord::cmp);
     assert_eq!(
         out,
         [

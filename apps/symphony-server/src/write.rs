@@ -1,4 +1,10 @@
 //! Native owner writes. Validate the browser's origin before reading or dispatching its body.
+//!
+//! Each save is asked by the actor the local host's gate admitted its request as
+//! ([`crate::front::Admitted`]: the person at the machine, or a visitor a board added), the actor
+//! its save takes ([`symphony::save::Saves::post_as`]), never one its payload names. A
+//! request hosted admission let in is refused here: a hosted visitor's saves are its host's
+//! dispatch ([`crate::hosted::Host::dispatch`]) until hosted saves go through these.
 
 use crate::api::error;
 use crate::front::Shared;
@@ -16,6 +22,10 @@ const JSON_BYTES: usize = 2 * 1024 * 1024;
 const HOST_REFUSED: &str = "its Host is not this machine's";
 const ORIGIN_REFUSED: &str = "its Origin is not http:// and its Host";
 const CHECK_FAILED: &str = "its Host check did not finish";
+
+/// Why a save hosted admission let in is refused here.
+const HOSTED_SAVE: &str =
+    "a hosted visitor's saves are its host's to dispatch, never the local owner's";
 
 /// The server log's line for a refused write: its path, why, and its Host and Origin as sent, or
 /// `absent`. A refused write's body is never read.
@@ -47,6 +57,8 @@ pub(crate) fn methods(path: &str) -> Option<&'static str> {
         || route == symphony_api::AGENT_FOCUS_PATH
         || route == symphony_api::ATTEMPT_CONTROL_ROUTE
         || route == symphony_api::ATTEMPT_VIEW_ROUTE
+        || route == symphony_api::PEOPLE_CHANGE_PATH
+        || route == symphony_api::PROFILE_PATH
     {
         Some("POST")
     } else {
@@ -58,12 +70,19 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
     let (scope, route) = crate::api::scope_path(request.uri().path());
     let scope = scope.to_string();
     let route = route.to_string();
+    let actor = crate::front::Admitted::actor(shared, request.extensions());
+    let machine = crate::front::Admitted::machine(request.extensions());
     if let Err(why) = allowed(shared, &request).await {
         eprintln!("{}", refusal(request.uri().path(), why, request.headers()));
         return error(
             StatusCode::FORBIDDEN,
             "Forbidden: the Host or Origin header does not name this app",
         );
+    }
+    if !machine
+        && let Some(refused) = unpermitted(shared, request.uri().path(), &route, &actor).await
+    {
+        return refused;
     }
     if route == symphony_api::UPLOAD_PATH {
         return upload(shared, request).await;
@@ -72,20 +91,31 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
         return crate::session_go::answer_focus(shared, request).await;
     }
     if route == symphony_api::ATTEMPT_CONTROL_ROUTE || route == symphony_api::ATTEMPT_VIEW_ROUTE {
-        return attempt(shared, &route, request).await;
+        return attempt(shared, &route, request, &actor).await;
+    }
+    if crate::hosted::admission(&request).is_some() {
+        return error(StatusCode::FORBIDDEN, HOSTED_SAVE);
     }
     let payload = match json_body(request.into_body()).await {
         Ok(payload) => payload,
         Err((status, why)) => return error(status, why),
     };
     if route == symphony_api::workflow::WORKFLOW_APPLY_ROUTE {
-        return workflow_apply(shared, payload).await;
+        return workflow_apply(shared, payload, actor).await;
+    }
+    if route == symphony_api::PEOPLE_CHANGE_PATH || route == symphony_api::PROFILE_PATH {
+        let asker = crate::people::Asker {
+            name: actor.name().to_string(),
+            machine,
+        };
+        return crate::people::write(shared, &scope, &route, payload, asker).await;
     }
     let shared = shared.clone();
     match crate::spawn::blocking(move || {
         let saves = shared
             .saves
             .get_or_init(|| symphony::save::Saves::start(&shared.root));
+        let actor = &actor;
         let result = if route == "/api/postpone" {
             match shared
                 .api
@@ -93,11 +123,11 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
                 .ok_or_else(|| "Symphony data is not ready".to_string())
                 .and_then(|hub| hub.queue_order())
             {
-                Ok(order) => saves.post_with_order(&scope, &route, &payload, &order),
+                Ok(order) => saves.post_with_order_as(actor, &scope, &route, &payload, &order),
                 Err(error) => Err(symphony::save::Failure { status: 503, error }),
             }
         } else {
-            saves.post(&scope, &route, &payload)
+            saves.post_as(actor, &scope, &route, &payload)
         };
         if result.as_ref().is_ok_and(|value| value["changed"] == true)
             && route == "/api/postpone"
@@ -115,6 +145,18 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
             && let Err(error) = hub.refresh_page("", &shared.root)
         {
             eprintln!("· the pages were not read again after a pending save: {error}");
+        }
+        // A comment held, or one passed on: open document pages read theirs again, and those
+        // who may pass a held one on are told.
+        let held = matches!(route.as_str(), "/api/comment" | "/api/message")
+            && result
+                .as_ref()
+                .is_ok_and(|value| value.get("held").is_some());
+        if (held || (result.is_ok() && route == symphony_api::DOCUMENT_PASS_ROUTE))
+            && let Some(hub) = shared.api.get()
+        {
+            hub.held_moved();
+            hub.wake_notices();
         }
         if result.is_ok() && route == "/api/task-cancel" && shared.one_server() {
             let root = shared.root.clone();
@@ -141,16 +183,60 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
     }
 }
 
+/// The refusal of `actor`'s write to `route` (at `path`), a visitor a board named and not the
+/// person at the machine, where they lack what it needs ([`crate::powers`]): none where they hold
+/// it. Their powers are read from the board's rows now, before the write's body is read, so a
+/// power revoked since a page was opened holds at once, and a board that cannot be read refuses.
+/// The server's log line names them by their short name alone.
+async fn unpermitted(
+    shared: &Arc<Shared>,
+    path: &str,
+    route: &str,
+    actor: &symphony_plugin::Actor,
+) -> Option<Response> {
+    let needs = crate::powers::needs(route);
+    let (root, name) = (shared.root.clone(), actor.name().to_string());
+    let asked = name.clone();
+    let held = crate::spawn::blocking(move || {
+        let people = symphony::taskview::connect(&root)?.people();
+        people
+            .map(|people| people.powers_of(&asked))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|held| held);
+    let held = match held {
+        Ok(held) => held,
+        Err(why) => {
+            eprintln!(
+                "· refused a write to {path} by {name}: the board's people were not read: {why}"
+            );
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("the task board cannot be reached to read who may write: {why}"),
+            ));
+        }
+    };
+    let refused = crate::powers::refused(&name, &held, needs)?;
+    eprintln!("· refused a write to {path} by {name}: {refused}");
+    Some(error(StatusCode::FORBIDDEN, refused))
+}
+
 /// The owner's workflow operation (`symphony::save::WORKFLOW_APPLY`): its result, or its refusal
 /// as every save's is answered, with the guard that refused it beside the words as `guard` where
 /// one did ([`symphony_api::workflow::GuardRefusal`]), which a task's page draws by its word.
-async fn workflow_apply(shared: &Arc<Shared>, payload: serde_json::Value) -> Response {
+async fn workflow_apply(
+    shared: &Arc<Shared>,
+    payload: serde_json::Value,
+    actor: symphony_plugin::Actor,
+) -> Response {
     let shared = shared.clone();
     let applied = crate::spawn::blocking(move || {
         let saves = shared
             .saves
             .get_or_init(|| symphony::save::Saves::start(&shared.root));
-        saves.apply_workflow(&payload)
+        saves.apply_workflow_as(&actor, &payload)
     })
     .await;
     match applied {
@@ -172,10 +258,15 @@ async fn workflow_apply(shared: &Arc<Shared>, payload: serde_json::Value) -> Res
     }
 }
 
-/// A control or a view of an execution attempt (`crate::attempts`), the local owner's: never a
-/// hosted visitor's, whose posts are its host's dispatch. A view's address is answered `no-store`
-/// and said nowhere else, this server's log included.
-async fn attempt(shared: &Arc<Shared>, route: &str, request: Request) -> Response {
+/// A control or a view of an execution attempt (`crate::attempts`), `actor`'s, whom the gate
+/// admitted: never a hosted visitor's, whose posts are its host's dispatch. A view's address is
+/// answered `no-store` and said nowhere else, this server's log included.
+async fn attempt(
+    shared: &Arc<Shared>,
+    route: &str,
+    request: Request,
+    actor: &symphony_plugin::Actor,
+) -> Response {
     if crate::hosted::admission(&request).is_some() {
         return error(
             StatusCode::FORBIDDEN,
@@ -191,11 +282,12 @@ async fn attempt(shared: &Arc<Shared>, route: &str, request: Request) -> Respons
         Err(starting) => return *starting,
     };
     let view = route == symphony_api::ATTEMPT_VIEW_ROUTE;
+    let asker = crate::attempts::Asker::Local(actor.principal.clone());
     let answered = crate::spawn::blocking(move || {
         if view {
-            crate::attempts::view(&hub, payload).map(|link| json!(link))
+            crate::attempts::view(&hub, payload, &asker).map(|link| json!(link))
         } else {
-            crate::attempts::control(&hub, payload).map(|attempts| json!(attempts))
+            crate::attempts::control(&hub, payload, &asker).map(|attempts| json!(attempts))
         }
     })
     .await;
@@ -411,6 +503,21 @@ mod body_tests;
 
 #[cfg(test)]
 mod pending_tests;
+
+#[cfg(test)]
+mod actor_tests;
+
+#[cfg(test)]
+mod hand_tests;
+
+#[cfg(test)]
+mod decide_tests;
+
+#[cfg(test)]
+mod held_tests;
+
+#[cfg(test)]
+mod queue_tests;
 
 #[cfg(test)]
 mod tests {

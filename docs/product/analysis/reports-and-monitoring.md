@@ -702,7 +702,14 @@ the word of its line (`answered`, `auto_approved`, `withdrawn`), what git was re
 left out, the board's `usage` sums at the read (above), and each top-level task landed in the day
 (`landed`), once at its last landing in it, with the tokens it and its subtasks took by role,
 review round, model and speed, which Reports prices for the cost per landed task and the review
-rounds against the first.
+rounds against the first. Each also names its `kind` where the task was given one
+([TASKS](../../workflow/TASKS.md#tasks-and-roles)), read from the task as the board's lines are
+replayed, and its `lines`, `{"added", "removed"}`, which the git read takes from the commit on
+the branch's line of first parents that landed it, the generated and lock files it leaves out of
+the hour's lines left out of these too: the squash its land's receipt names, or the merge whose
+subject names its slug, the newest of them where it landed twice. A task whose landing commit
+that read did not see has no `lines`, nor does any task of a file written before they were kept,
+which still reads: Reports draws such a task under **No kind** and with no dot.
 
 Three choices hold for every figure: a close as covered by another task is a move to `done` like a
 landing's and counts in the lead time; a review's instruction subtasks count among the subtasks

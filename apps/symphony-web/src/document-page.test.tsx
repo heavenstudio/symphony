@@ -17,6 +17,7 @@ import {
   SANDBOX,
   Versions,
 } from "./document-page";
+import { CardOwnersContext } from "./owner";
 import { memoryStorage } from "./testing";
 import type { Block, Document, DocumentCard, Folder, Section } from "./wire";
 
@@ -138,9 +139,7 @@ describe("a document no file has at its route", () => {
         <Missing path="docs/GONE.md" scope="" moved={moved} hash="" retry={() => {}} />,
       );
       expect(html).toContain("<h1>Document not found</h1>");
-      expect(html).toContain(
-        "<p>There is no document at docs/GONE.md: it may have been moved, renamed or removed.</p>",
-      );
+      expect(html).toContain("<p>There is no document at docs/GONE.md.</p>");
       expect(html).toContain('<a class="trouble-back" href="/docs/">');
       expect(html).toContain(">Retry</button>");
       expect(html).not.toContain("trouble-choices");
@@ -182,11 +181,9 @@ describe("a folder with no document", () => {
     intro: null,
     entries: [],
   };
-  it("says in one line what makes the first one and a card, with the guide's link", () => {
+  it("says in one line that none is here, with the guide's link", () => {
     const html = renderToStaticMarkup(<FirstDocument folder={folder} />);
-    expect(html).toContain(
-      '<p class="first-steps">No document is here yet. A Markdown file in this folder is a page of its own, and a card in its register waits for your verdict in the queue: <a href="',
-    );
+    expect(html).toContain('<p class="first-steps">No document here yet. <a href="');
     expect(html).toContain('/docs/operations/GETTING_STARTED.md" target="_blank"');
   });
   it("says nothing once it lists a document or a folder, or draws an intro", () => {
@@ -306,6 +303,77 @@ describe("a section", () => {
     expect(html).toContain(">Verdict / message</button>");
     expect(html).toContain(">Undo Later</button>");
     expect(html).toContain('<form class="verdict" hidden=""');
+  });
+
+  it("of a card says whose it is where the page read its owners, and nothing before", () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    const props = {
+      section: section("card:lamp", 4, [paragraph("Which lamp?")]),
+      card: card("lamp", "decide"),
+    };
+    expect(drawn(props)).not.toContain('class="owner"');
+    const owner = {
+      name: "design",
+      kind: "group",
+      by: "named",
+      said: "named on it",
+      hand_to: ["engineering"],
+      decides: true,
+    };
+    const owned = renderToStaticMarkup(
+      <CardOwnersContext.Provider value={{ owners: { lamp: owner }, hand: async () => ({}) }}>
+        <HydratedSection
+          {...props}
+          path="docs/LAMPS.md"
+          scope=""
+          thread={null}
+          gone={false}
+          ids={["colour"]}
+          postponed={false}
+        />
+      </CardOwnersContext.Provider>,
+    );
+    expect(owned).toContain(
+      '<div class="doc-actions"><span class="owner" data-by="named"><span class="owner-name">group: design</span><small class="owner-by">named on it</small>',
+    );
+    expect(owned).toContain('id="hand-docs%2FLAMPS.md%3Alamp"');
+    expect(owned).toContain(">Verdict / message</button>");
+    expect(owned).toContain(">✓ Approve</button>");
+    expect(owned).toContain(">Later</button>");
+  });
+
+  it("of a card its reader does not decide offers its message alone: no verdict and no Later", () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    const owner = {
+      name: "design",
+      kind: "group",
+      by: "map",
+      said: "from the folder docs",
+      hand_to: [],
+      decides: false,
+    };
+    const theirs = renderToStaticMarkup(
+      <CardOwnersContext.Provider value={{ owners: { lamp: owner }, hand: async () => ({}) }}>
+        <HydratedSection
+          section={section("card:lamp", 4, [paragraph("Which lamp?")])}
+          card={card("lamp", "decide")}
+          path="docs/LAMPS.md"
+          scope=""
+          thread={null}
+          gone={false}
+          ids={["colour"]}
+          postponed={false}
+        />
+      </CardOwnersContext.Provider>,
+    );
+    expect(theirs).toContain("group: design");
+    expect(theirs).toContain(">Message</button>");
+    expect(theirs).not.toContain("Verdict / message");
+    expect(theirs).toContain('aria-label="Message"');
+    expect(theirs).toContain(">Send message</button>");
+    for (const control of ["Approve", "Dismiss", "Reset to pending", "verdict-choices", "Later"]) {
+      expect(theirs).not.toContain(control);
+    }
   });
 
   it("of a settled card is folded under its summary until opened", () => {

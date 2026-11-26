@@ -3,6 +3,7 @@ import {
   heardEntry,
   readBrief,
   readEntry,
+  readHeld,
   readHistory,
   readMessage,
   readOffer,
@@ -20,9 +21,12 @@ const MESSAGE = {
   kind: "message",
   text: "Said",
   ts: 1.5,
+  person: false,
 };
 const PARAGRAPH = { type: "paragraph", spans: [{ type: "text", text: "Said" }] };
 const ENTRY = { message: MESSAGE, stamp: "Nov 11 10:00", blocks: [PARAGRAPH] };
+/** A message held for people, as a person's read sends it on the board's line for it. */
+const HELD = { id: 7, author: "ana", text: "Cut", to: "@executor" };
 /** A page as an older server sends it: none of the fields serde defaults. */
 const BARE_PAGE = { task: aTask("w/a"), blocks: [], children: [], children_count: 0 };
 
@@ -32,6 +36,13 @@ describe("a task's message", () => {
     expect(readMessage({ ...MESSAGE, recipient: "amber" })?.recipient).toBe("amber");
     const { recipient: _, ...unaddressed } = MESSAGE;
     expect(readMessage(unaddressed)?.recipient).toBeNull();
+  });
+
+  it("is a person's only when it says so: an older server's names nobody", () => {
+    expect(readMessage({ ...MESSAGE, sender: "ana", person: true })?.person).toBe(true);
+    const { person: _, ...older } = MESSAGE;
+    expect(readMessage(older)?.person).toBe(false);
+    expect(readMessage({ ...MESSAGE, person: "yes" })?.person).toBe(false);
   });
 
   it("is none without a whole id, its words or its time", () => {
@@ -61,11 +72,46 @@ describe("a thread's entry", () => {
     expect(readEntry(later)).toEqual(later);
   });
 
+  it("carries the message held for people it is of, none absent or null", () => {
+    expect(readEntry({ ...ENTRY, held: HELD })).toEqual({
+      ...ENTRY,
+      held: { ...HELD, passed_by: null },
+    });
+    expect(readEntry({ ...ENTRY, held: null })).toEqual(ENTRY);
+    expect(readEntry({ ...ENTRY, held: { ...HELD, text: 1 } })).toBeNull();
+  });
+
   it("is none when one of them is not", () => {
     expect(readEntry({ ...ENTRY, stamp: 1 })).toBeNull();
     expect(readEntry({ ...ENTRY, blocks: [{ type: 0 }] })).toBeNull();
     expect(readEntry({ ...ENTRY, blocks: [{ type: "code" }] })).toBeNull();
     expect(readEntry({ ...ENTRY, message: {} })).toBeNull();
+  });
+});
+
+describe("a message held for people", () => {
+  it("is its line's number, author, words, recipient and who passed it on, none absent or null", () => {
+    expect(readHeld(HELD)).toEqual({ ...HELD, passed_by: null });
+    expect(readHeld({ ...HELD, to: null, passed_by: "bo" })).toEqual({
+      ...HELD,
+      to: null,
+      passed_by: "bo",
+    });
+    const { to: _, ...unaddressed } = HELD;
+    expect(readHeld(unaddressed)?.to).toBeNull();
+  });
+
+  it("is none without a whole number, its author or its words, or with a name that is no text", () => {
+    for (const broken of [
+      { ...HELD, id: 1.5 },
+      { ...HELD, author: undefined },
+      { ...HELD, text: null },
+      { ...HELD, to: 3 },
+      { ...HELD, passed_by: true },
+      null,
+    ]) {
+      expect(readHeld(broken)).toBeNull();
+    }
   });
 });
 
@@ -99,6 +145,14 @@ describe("a message the feed brings", () => {
   it("has no blocks and an empty stamp when the feed sends none", () => {
     expect(heardEntry(MESSAGE)).toEqual({ message: MESSAGE, stamp: "", blocks: [] });
     expect(heardEntry({ ...MESSAGE, stamp: 5 })?.stamp).toBe("");
+  });
+
+  it("carries the message held for people it is of", () => {
+    expect(heardEntry({ ...MESSAGE, held: { ...HELD, passed_by: "owner" } })?.held).toEqual({
+      ...HELD,
+      passed_by: "owner",
+    });
+    expect(heardEntry({ ...MESSAGE, held: { id: 7 } })).toBeNull();
   });
 
   it("is none when it is no message or its blocks are not blocks", () => {
@@ -138,6 +192,7 @@ describe("a task's page", () => {
       brief_revision: "",
       sessions: {},
       local: false,
+      passes: false,
       gates: null,
     });
   });
@@ -153,6 +208,7 @@ describe("a task's page", () => {
       brief_revision: "r1",
       sessions: { amber: { handle: "amber", url: null, pane: "t1" } },
       local: true,
+      passes: true,
       gates: { count: 2, waiting: 1, unsigned: 1 },
     });
     expect(page?.children.map((child) => child.slug)).toEqual(["w/a/b"]);
@@ -160,8 +216,19 @@ describe("a task's page", () => {
     expect([page?.children_count, page?.brief_omitted, page?.brief_next]).toEqual([3, 9, 24]);
     expect(page?.brief_revision).toBe("r1");
     expect(page?.sessions).toEqual({ amber: { handle: "amber", url: null, pane: "t1" } });
-    expect(page?.local).toBe(true);
+    expect([page?.local, page?.passes]).toEqual([true, true]);
     expect(page?.gates).toEqual({ count: 2, waiting: 1, unsigned: 1 });
+  });
+
+  it("keeps whose the task is where the server says it, and none where it is null", () => {
+    const owner = { name: "design", kind: "group", by: "named", said: "named on it" };
+    expect(readTaskPage({ ...BARE_PAGE, owner })?.owner).toEqual({
+      ...owner,
+      hand_to: [],
+      decides: false,
+    });
+    expect(readTaskPage({ ...BARE_PAGE, owner: null })).not.toHaveProperty("owner");
+    expect(readTaskPage({ ...BARE_PAGE, owner: { name: "design" } })).toBeNull();
   });
 
   it("reads gates sent as null as none", () => {
@@ -184,6 +251,7 @@ describe("a task's page", () => {
       { ...BARE_PAGE, brief_next: -2 },
       { ...BARE_PAGE, brief_revision: 1 },
       { ...BARE_PAGE, local: "yes" },
+      { ...BARE_PAGE, passes: 1 },
       null,
     ]) {
       expect(readTaskPage(broken)).toBeNull();

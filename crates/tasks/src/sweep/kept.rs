@@ -173,6 +173,10 @@ pub fn measure(
         })
         .unwrap_or_default();
     let bytes = largest.iter().map(|l| l.bytes).sum();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a busy board path keeps std's in-place sort (crate::order): the sweep"
+    )]
     largest.sort_unstable_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.name.cmp(&b.name)));
     largest.truncate(LARGEST);
     Measured {

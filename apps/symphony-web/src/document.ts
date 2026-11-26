@@ -3,6 +3,7 @@
 // sent during an update still names its block. Each change gives new values and keeps the old ones
 // it did not touch, so a section drawn from an unchanged value draws nothing again.
 
+import { byline } from "./byline";
 import type {
   Document,
   DocumentCard,
@@ -202,7 +203,8 @@ function threadOf(document: Document, key: string): Fragment | undefined {
     : undefined;
 }
 
-/** How many lines of the owner's the card `key` (`card:SLUG`) shows in `document`'s thread. */
+/** How many lines of a person's (the owner's, or a person's a board named) the card `key`
+ * (`card:SLUG`) shows in `document`'s thread. */
 export function ownerLines(document: Document, key: string): number {
   return entries(threadOf(document, key)).filter((entry) => entry.who === "owner").length;
 }
@@ -326,7 +328,8 @@ function newestOwnerLine(
   const entry = entries(threadOf(document, key)).findLast((one) => one.who === "owner");
   if (entry === undefined) return null;
   let text = "";
-  for (const block of entry.blocks) {
+  // A person's name, first of a named person's blocks, is no word of the line's.
+  for (const block of byline(entry)[1]) {
     if (block.type !== "paragraph") return null;
     const words = plain(block.spans);
     if (words === null) return null;
@@ -375,9 +378,9 @@ export function collapse(text: string): string {
 }
 
 /** What the editor says once the server has `action` (a verdict, `message` or `comment`). */
-export function savedText(action: string): string {
-  if (action === "message") return "Message sent";
-  if (action === "comment") return "Comment saved";
+export function savedText(action: string, kept = false): string {
+  if (action === "message") return kept ? "Message held" : "Message sent";
+  if (action === "comment") return kept ? "Comment held" : "Comment saved";
   return `Verdict saved: ${action}`;
 }
 
@@ -396,9 +399,10 @@ export interface Ending {
  * (null when the page cannot tell), against `last`, the words last sent under it, and `boxed`,
  * what the box holds now. Only words the server holds are cleared or said to be saved. Words sent
  * and not held stay as the card's draft with the form closed, the save being answered; words the
- * owner has written since sending stay as they are, the form open.
+ * owner has written since sending stay as they are, the form open. A comment or a message the
+ * board `kept` for people says so.
  */
-export function ending(heldWords: Words | null, last: Words, boxed: string): Ending {
+export function ending(heldWords: Words | null, last: Words, boxed: string, kept = false): Ending {
   const unchanged = boxed === last.note;
   if (heldWords === null) {
     return {
@@ -407,7 +411,7 @@ export function ending(heldWords: Words | null, last: Words, boxed: string): End
       close: unchanged,
     };
   }
-  const saved = savedText(heldWords.action);
+  const saved = savedText(heldWords.action, kept);
   if (unchanged && sameWords(heldWords, last)) return { status: saved, clear: true, close: true };
   return {
     status: unchanged ? `${saved}; your change was not sent: send it again to add it` : saved,

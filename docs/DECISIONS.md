@@ -54,6 +54,7 @@ A document's first card adds its line here.
 - [Durable project artifacts](engineering/analysis/remote-artifact-store.md)
 - [Execution providers and durable attempts](engineering/analysis/remote-execution-attempts.md)
 - [Reports and monitoring](product/analysis/reports-and-monitoring.md)
+- [What a landed task cost, drawn](product/analysis/reports-landed-cost.md)
 - [Artifact approvals at workflow transitions](workflow/analysis/revision-bound-transition-guards.md)
 - [The read-only window after a schema move](operations/analysis/schema-move-read-only-window.md)
 - [A Settings page](product/analysis/settings-page.md)

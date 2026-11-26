@@ -1,12 +1,12 @@
-//! Each project's hub on its own board: two fixture projects, each its own SurrealDB server in its
-//! repository's common dir in a temporary folder, started by its first caller. A hub reconnects
+//! Each project's hub on its own board: two fixture projects, each its own PostgreSQL on its board
+//! in its repository's common dir in a temporary folder, started by its first caller. A hub reconnects
 //! when its board's server restarts, and reads on when a newer build migrates its board, while
 //! every write the Symphony would send there is refused naming the project. A board behind the
 //! hub's build it never moves forward: it says why it reads nothing until the board's command has.
 
 use super::Hub;
 use crate::front::{Shared, router};
-use crate::testing::{Tree, board::surreal, git, repository_at};
+use crate::testing::{Tree, git, repository_at};
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
 use axum::http::Request;
@@ -17,8 +17,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::lock::Recovered as _;
-use symphony_board::rpc::Client;
-use symphony_board::server::Home;
+use symphony_board::server::{Home, Postgres, Serving};
 use symphony_board::{NewTask, Opening, Program, Schema, Store};
 use tower::ServiceExt;
 
@@ -69,10 +68,8 @@ impl Project {
         make(&root)
             .create(&NewTask::new(&format!("{id}/one"), "Made first", "owner"))
             .unwrap();
-        let home = Home::in_common(&root.join(".git"), Some(&surreal()));
-        if home.backend().unwrap() == symphony_board::server::Engine::PostgreSql {
-            home.project_postgresql(&root).unwrap().stop().unwrap();
-        }
+        // Its board's server stopped once the board is made: the hub's first read starts it.
+        Home::in_common(&root.join(".git")).stop_board().unwrap();
         let reach = env(&root);
         let reaches = Arc::new(Mutex::new(true));
         let gate = Arc::clone(&reaches);
@@ -112,8 +109,8 @@ impl Project {
     /// Hold the hub's next reach of its board where it waits, once its check has passed: what
     /// returns says when it is there, and lets it go on.
     fn paused(&self) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
-        let (there, arrived) = mpsc::channel();
-        let (go, on) = mpsc::channel();
+        let (there, arrived) = crate::test_channel::channel();
+        let (go, on) = crate::test_channel::channel();
         *self.pause.lock().unwrap() = Some(Pause { there, on });
         (arrived, go)
     }
@@ -131,13 +128,23 @@ impl Project {
     }
 
     fn home(&self) -> Home {
-        Home::in_common(&self.root.join(".git"), Some(&surreal()))
+        Home::in_common(&self.root.join(".git"))
     }
 
-    /// The schema version the project's board records.
+    /// The project's board's PostgreSQL, its programs the project's.
+    fn postgresql(&self) -> Postgres {
+        self.home().project_postgresql(&self.root).unwrap()
+    }
+
+    /// The project's board's server, if it runs.
+    fn serving(&self) -> Option<Serving> {
+        self.postgresql().current().unwrap()
+    }
+
+    /// The schema version the project's board records, read on its running server.
     fn version(&self) -> Option<i64> {
-        let client = Client::new(&self.home().recorded().unwrap().addr, "sf", "tasks");
-        symphony_board::Raw::on(&client)
+        let reached = symphony_board::cli::running_board(&env(&self.root)).unwrap();
+        symphony_board::Raw::of(&reached.database().unwrap())
             .row("meta", "schema")
             .field("version")
             .unwrap()
@@ -193,13 +200,8 @@ impl Project {
 impl Drop for Project {
     fn drop(&mut self) {
         self.hub.stop();
-        let home = self.home();
-        if home.backend().ok() == Some(symphony_board::server::Engine::PostgreSql) {
-            if let Ok(pg) = home.project_postgresql(&self.root) {
-                let _ = pg.stop();
-            }
-        } else {
-            let _ = home.stop();
+        if let Ok(pg) = self.home().project_postgresql(&self.root) {
+            let _ = pg.stop();
         }
     }
 }
@@ -207,11 +209,7 @@ impl Drop for Project {
 /// What a caller in `root` reads: the project's own board, its server started if it is down.
 pub(super) fn env(root: &Path) -> Env {
     Env {
-        vars: [(
-            "SYMPHONY_SURREAL".to_string(),
-            surreal().display().to_string(),
-        )]
-        .into(),
+        vars: Default::default(),
         cwd: root.to_path_buf(),
     }
 }
@@ -223,25 +221,36 @@ fn pinned(root: &Path, now: &str) -> Env {
     env
 }
 
-/// The board of `root`'s project, opened to write as its command line opens it.
+/// The board of `root`'s project, opened to write as its command line opens it: made, on
+/// PostgreSQL, by the first.
 pub(super) fn writer(root: &Path) -> Store {
-    on_surreal(root);
     symphony_board::cli::connect(&env(root)).unwrap()
 }
 
-/// The board of `root`'s project, when it is not made yet, named SurrealDB's: these cases start,
-/// stop and read the record of its SurrealDB server, and its first command would otherwise make
-/// it on PostgreSQL. A board that is made, or named another engine, is left as it is.
-pub(super) fn on_surreal(root: &Path) {
-    let home = Home::in_common(&root.join(".git"), Some(&surreal()));
-    if home.unmade().unwrap() {
-        home.initialize_backend(symphony_board::server::Engine::SurrealDb)
-            .unwrap();
-    }
+/// Whether a PostgreSQL runs on the data of `home`'s board, by the process table: one whose folder
+/// was removed under it has no record left to say so.
+fn serves_on(home: &Home) -> bool {
+    let data = home
+        .dir()
+        .join(symphony_board::server::Engine::PostgreSql.data_folder());
+    let listed = symphony_board::sys::output(
+        symphony_board::sys::command("ps").args(["-axww", "-o", "command="]),
+    )
+    .unwrap();
+    assert!(listed.status.success(), "{listed:?}");
+    String::from_utf8_lossy(&listed.stdout).lines().any(|line| {
+        line.trim()
+            .rsplit_once(" -D ")
+            .is_some_and(|(program, on)| {
+                Path::new(program).file_name() == Some("postgres".as_ref()) && Path::new(on) == data
+            })
+    })
 }
 
+/// A hub starts its board's PostgreSQL, the programs its project file names, and its reader
+/// neither migrates a newer board nor writes through it.
 #[test]
-fn a_machine_hub_starts_its_selected_postgresql_board_and_keeps_its_reader_read_only() {
+fn a_machine_hub_starts_its_postgresql_board_and_keeps_its_reader_read_only() {
     let tree = Tree::new();
     let project = Project::made_by(&tree, "pg", |root| {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -254,17 +263,11 @@ fn a_machine_hub_starts_its_selected_postgresql_board_and_keeps_its_reader_read_
             ),
         )
         .unwrap();
-        let home = Home::in_common(&root.join(".git"), None);
-        home.initialize_backend(symphony_board::server::Engine::PostgreSql)
-            .unwrap();
         writer(root)
     });
     // The constructor stops the seeded cluster before starting its hub. Its read starts it.
     project.reads(&["pg/one"]);
-    let home = project.home();
-    let pg = home.project_postgresql(&project.root).unwrap();
-    assert!(pg.current().unwrap().is_some());
-    assert!(!home.dir().join("data").exists());
+    assert!(project.serving().is_some());
     let shared = Shared::new(1, 1234, &project.root, None, crate::testing::open_gate());
     assert!(shared.api.set(project.hub.clone()).is_ok());
     let (status, body) = answer(&shared, asked("GET", "/api/tasks", None));
@@ -275,11 +278,11 @@ fn a_machine_hub_starts_its_selected_postgresql_board_and_keeps_its_reader_read_
     assert_eq!(reader.get("pg/one").unwrap().title, "Made first");
     // A web reader cannot migrate a newer board or write through it.
     drop(reader);
-    let schema = Schema::this_build().then_each("", "CREATE TABLE fixture_next (id int);");
+    let schema = Schema::this_build().then_each("CREATE TABLE fixture_next (id int);");
     let reached = symphony_board::cli::board(&env(&project.root)).unwrap();
     let how = reached.opening(Opening::write().at(schema).migrating().leave_behind());
     Store::opening_on(
-        reached.database(),
+        reached.database().unwrap(),
         Box::new(|| 1_000_000.0),
         Box::new(|_| false),
         "test",
@@ -300,10 +303,9 @@ fn a_machine_hub_starts_its_selected_postgresql_board_and_keeps_its_reader_read_
 /// line it writes (a build at schema 18 or later keeps one) is that of the migrate run here after,
 /// which leaves it out.
 fn older_writer(root: &Path) -> Store {
-    on_surreal(root);
     let reached = symphony_board::cli::writable_board(&env(root)).unwrap();
-    Store::opening(
-        reached.client,
+    Store::opening_on(
+        reached.database().unwrap(),
         Box::new(|| 1_000_000.0),
         Box::new(|_| false),
         &symphony_board::sys::hostname(),
@@ -320,8 +322,8 @@ fn older_writer(root: &Path) -> Store {
 /// leaving this build's writers behind.
 fn newer_migrate(root: &Path, schema: Schema) -> Store {
     let reached = symphony_board::cli::board(&env(root)).unwrap();
-    Store::opening(
-        reached.client,
+    Store::opening_on(
+        reached.database().unwrap(),
         Box::new(|| 1_000_000.0),
         Box::new(|_| false),
         "this-host",
@@ -342,14 +344,11 @@ fn each_projects_hub_reads_its_own_board_and_reconnects_when_its_server_restarts
     let beta = Project::new(&tree, "beta");
     alpha.reads(&["alpha/one"]);
     beta.reads(&["beta/one"]);
-    let (first, beside) = (
-        alpha.home().recorded().unwrap(),
-        beta.home().recorded().unwrap(),
-    );
-    assert_ne!(first.addr, beside.addr);
+    let (first, beside) = (alpha.serving().unwrap(), beta.serving().unwrap());
+    assert_ne!(first.socket, beside.socket);
 
     assert_eq!(
-        alpha.home().stop().unwrap().map(|ran| ran.pid),
+        alpha.postgresql().stop().unwrap().map(|ran| ran.pid),
         Some(first.pid)
     );
     // The next caller starts it again, the hub or this write, whichever comes first.
@@ -361,9 +360,9 @@ fn each_projects_hub_reads_its_own_board_and_reconnects_when_its_server_restarts
         ))
         .unwrap();
     alpha.reads(&["alpha/one", "alpha/two"]);
-    assert_ne!(alpha.home().recorded().unwrap().pid, first.pid);
+    assert_ne!(alpha.serving().unwrap().pid, first.pid);
     beta.reads(&["beta/one"]);
-    assert_eq!(beta.home().recorded().unwrap().pid, beside.pid);
+    assert_eq!(beta.serving().unwrap().pid, beside.pid);
 }
 
 #[test]
@@ -372,7 +371,8 @@ fn a_hub_reads_on_when_a_newer_build_migrates_its_board_and_its_writes_there_are
     let alpha = Project::new(&tree, "alpha");
     let beta = Project::new(&tree, "beta");
     beta.reads(&["beta/one"]);
-    let newer = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
+    let newer = Schema::this_build()
+        .then_each("CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY);");
     let migrated = newer_migrate(&beta.root, newer.clone());
     assert_eq!(beta.version(), Some(newer.version()));
     migrated
@@ -486,13 +486,42 @@ fn a_hub_never_moves_a_board_behind_its_build_forward_and_reads_it_once_its_comm
     assert_eq!(gamma.version(), Some(this));
 }
 
-/// A board's server, stopped when the case ends: one a hub that should start none started all the
-/// same.
-struct Stopped(Home);
+/// The board of the checkout at `root`, its server stopped when the case ends: one a hub that
+/// should start none started all the same.
+struct Stopped {
+    home: Home,
+    root: PathBuf,
+}
+
+impl Stopped {
+    fn of(root: &Path) -> Stopped {
+        Stopped {
+            home: Home::in_common(&root.join(".git")),
+            root: root.to_path_buf(),
+        }
+    }
+
+    /// Its server stopped: the one that ran, if one did.
+    fn stop(&self) -> Option<Serving> {
+        self.home
+            .project_postgresql(&self.root)
+            .unwrap()
+            .stop()
+            .unwrap()
+    }
+
+    /// Whether its server runs.
+    fn up(&self) -> bool {
+        (self.home.project_postgresql(&self.root).unwrap())
+            .current()
+            .unwrap()
+            .is_some()
+    }
+}
 
 impl Drop for Stopped {
     fn drop(&mut self) {
-        let _ = self.0.stop_board();
+        let _ = self.home.stop_board();
     }
 }
 
@@ -521,13 +550,13 @@ fn a_project_removed_under_its_hub_starts_and_reads_no_board_of_the_checkout_abo
         writer(&outer)
             .create(&NewTask::new("outer/one", "The outer checkout's", "owner"))
             .unwrap();
-        let outer_board = Stopped(Home::in_common(&outer.join(".git"), Some(&surreal())));
-        assert!(outer_board.0.stop().unwrap().is_some(), "{case}");
+        let outer_board = Stopped::of(&outer);
+        assert!(outer_board.stop().is_some(), "{case}");
         let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
         inner.reads(&["inner/one"]);
         assert!(inner.hub.holds_its_project(), "{case}");
         let stopped = inner.unreached(|| {
-            let stopped = inner.home().stop().unwrap();
+            let stopped = inner.postgresql().stop().unwrap();
             remove(&inner.root).unwrap();
             stopped
         });
@@ -545,16 +574,11 @@ fn a_project_removed_under_its_hub_starts_and_reads_no_board_of_the_checkout_abo
             Some(&why),
             "{case}: a page's read reaches no board either"
         );
-        assert_eq!(
-            outer_board.0.recorded(),
-            None,
-            "{case}: the outer board started"
-        );
+        assert!(!outer_board.up(), "{case}: the outer board started");
         // A server on its data that its removal left running has no record left to say so: the
         // process table is read.
-        assert_eq!(
-            inner.home().serving(),
-            None,
+        assert!(
+            !serves_on(&inner.home()),
             "{case}: its own board's server runs, started again before the removal or after it"
         );
     }
@@ -573,14 +597,14 @@ fn a_reach_whose_projects_git_goes_after_its_hubs_check_starts_no_board_above_it
     writer(&outer)
         .create(&NewTask::new("outer/one", "The outer checkout's", "owner"))
         .unwrap();
-    let outer_board = Stopped(Home::in_common(&outer.join(".git"), Some(&surreal())));
-    assert!(outer_board.0.stop().unwrap().is_some());
+    let outer_board = Stopped::of(&outer);
+    assert!(outer_board.stop().is_some());
     let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
     inner.reads(&["inner/one"]);
 
     // Its board's server stopped, the hub's next tick reaches the board again.
     let (there, go) = inner.paused();
-    assert!(inner.home().stop().unwrap().is_some());
+    assert!(inner.postgresql().stop().unwrap().is_some());
     test_time::until_true("the hub to reach its board again", BACKSTOP, || {
         there.try_recv().is_ok()
     })
@@ -590,8 +614,8 @@ fn a_reach_whose_projects_git_goes_after_its_hubs_check_starts_no_board_above_it
 
     let why = inner.refused(&inner.hub.gone());
     assert_eq!(why, inner.hub.gone());
-    assert_eq!(outer_board.0.recorded(), None, "the outer board started");
-    assert_eq!(inner.home().serving(), None, "its own board's server runs");
+    assert!(!outer_board.up(), "the outer board started");
+    assert!(!serves_on(&inner.home()), "its own board's server runs");
 }
 
 /// A served project left without its `.git` after its hub's check found that its folder holds it:
@@ -599,8 +623,7 @@ fn a_reach_whose_projects_git_goes_after_its_hubs_check_starts_no_board_above_it
 /// `.git` removed once `before` has run on it and its board's server has stopped, its hub kept from
 /// the board meanwhile and waited on until it says its folder is gone. So what a case calls next is
 /// a reach made after that check, as a tick's, a refresh's or a route's is. The outer checkout's
-/// board is made and down, served by the `surreal` pinned in its common dir as a live board's is,
-/// which a reach in this process, with no `SYMPHONY_SURREAL`, would start it on.
+/// board is made and down, which a reach in this process that walked up to it would start.
 struct Gitless {
     inner: Project,
     outer_board: Stopped,
@@ -617,16 +640,13 @@ impl Gitless {
         writer(&outer)
             .create(&NewTask::new("outer/one", "The outer checkout's", "owner"))
             .unwrap();
-        let outer_board = Stopped(Home::in_common(&outer.join(".git"), None));
-        let pinned = outer_board.0.surreal();
-        std::fs::create_dir_all(pinned.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(surreal(), pinned).unwrap();
-        assert!(outer_board.0.stop().unwrap().is_some());
+        let outer_board = Stopped::of(&outer);
+        assert!(outer_board.stop().is_some());
         let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
         inner.reads(&["inner/one"]);
         let made = before(&tree, &inner);
         inner.unreached(|| {
-            inner.home().stop().unwrap();
+            inner.postgresql().stop().unwrap();
             std::fs::remove_dir_all(inner.root.join(".git")).unwrap();
         });
         inner.refused(&inner.hub.gone());
@@ -641,7 +661,7 @@ impl Gitless {
 
     /// Whether the outer checkout's board stayed down: no reach started it.
     fn outer_down(&self) -> bool {
-        self.outer_board.0.recorded().is_none()
+        !self.outer_board.up()
     }
 
     /// The words a reach of the inner project's board is refused in: its folder no longer holds
@@ -812,8 +832,8 @@ pub(super) fn answer(shared: &Arc<Shared>, request: Request<Body>) -> (u16, Valu
 /// left without its `.git`, once its board's server has stopped: a page's save on it and its read
 /// of the task board's search, each of which reaches a board for itself, are refused before any
 /// route runs, saying its folder no longer holds it. Neither starts the outer checkout's board,
-/// whose pinned `surreal` is in its common dir as a live board's is, nor writes there: a lookup
-/// from the folder that walks up to the outer checkout would do both.
+/// which is made and down, nor writes there: a lookup from the folder that walks up to the outer
+/// checkout would do both.
 #[test]
 fn a_pages_save_or_read_on_a_project_emptied_under_its_server_reaches_no_board_above_it() {
     type Empty = fn(&Path) -> std::io::Result<()>;
@@ -838,13 +858,9 @@ fn a_pages_save_or_read_on_a_project_emptied_under_its_server_reaches_no_board_a
             .create(&NewTask::new("outer/one", "The outer checkout's", "owner"))
             .unwrap();
         let before = priority();
-        // Its board served by the `surreal` pinned in its common dir, which a reach with no
-        // `SYMPHONY_SURREAL` (a route's, in this process) starts it on.
-        let outer_board = Stopped(Home::in_common(&outer.join(".git"), None));
-        let pinned = outer_board.0.surreal();
-        std::fs::create_dir_all(pinned.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(surreal(), pinned).unwrap();
-        assert!(outer_board.0.stop().unwrap().is_some(), "{case}");
+        // Its board made and down, which a reach of it (a route's, in this process) starts.
+        let outer_board = Stopped::of(&outer);
+        assert!(outer_board.stop().is_some(), "{case}");
 
         let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
         inner.reads(&["inner/one"]);
@@ -866,7 +882,7 @@ fn a_pages_save_or_read_on_a_project_emptied_under_its_server_reaches_no_board_a
         // Its hub kept from the board meanwhile: its next tick would start the stopped server
         // again, which writes into the folder as it is emptied.
         inner.unreached(|| {
-            inner.home().stop().unwrap();
+            inner.postgresql().stop().unwrap();
             empty(&inner.root).unwrap();
         });
         assert_eq!(
@@ -898,13 +914,9 @@ fn a_pages_save_or_read_on_a_project_emptied_under_its_server_reaches_no_board_a
                 && said.contains(&symphony::markup::escape(&inner.hub.gone())),
             "{case}: {said}"
         );
-        assert_eq!(
-            outer_board.0.recorded(),
-            None,
-            "{case}: the outer board started"
-        );
+        assert!(!outer_board.up(), "{case}: the outer board started");
         assert_eq!(priority(), before, "{case}: the save wrote the outer board");
-        assert!(outer_board.0.stop().unwrap().is_some(), "{case}");
+        assert!(outer_board.stop().is_some(), "{case}");
     }
 }
 

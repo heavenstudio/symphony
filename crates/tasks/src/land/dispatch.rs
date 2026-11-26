@@ -4,7 +4,9 @@
 //!
 //! A task's move to review, and every board write after it that can change its evidence (an
 //! assessment, a verdict, a gate decision, a move), starts `tasks land SLUG --dispatch` detached
-//! from the main checkout ([`start`], [`on_move`], [`poke`]), and the write returns at once. A
+//! from the main checkout ([`start`], [`on_move`], [`poke`]), and the write returns at once; a
+//! task the regenerator files in review is dispatched as one moved there once it lets go of its
+//! lock ([`on_filed`]). A
 //! dispatch ([`Landing::dispatched`]) does what a land does up to the publication
 //! ([`Landing::publish_head`]): the refusals at the head, the protection the program reads, the
 //! head pushed, never forced, its pull request opened ready and the checks written from the
@@ -156,6 +158,28 @@ fn detached(env: &Env, main: &Path, args: &[&str], log: &str) -> Result<PathBuf,
     Ok(path)
 }
 
+/// The dispatch of `slug` as `actor`, started detached from the main checkout `main`: the log its
+/// lines go to, or why it did not start.
+fn dispatching(env: &Env, main: &Path, slug: &str, actor: &str) -> Result<PathBuf, String> {
+    detached(
+        env,
+        main,
+        &[slug, "--dispatch", "--as", actor],
+        DISPATCH_LOG,
+    )
+}
+
+/// The line saying a dispatch started, by `start`, or why it did not.
+fn started(start: &Result<PathBuf, String>) -> String {
+    match start {
+        Ok(log) => format!(
+            "its dispatch to the host started detached (its lines go to {})",
+            log.display()
+        ),
+        Err(why) => format!("its dispatch to the host did not start: {why}"),
+    }
+}
+
 /// The dispatch of `slug` as `actor`, started detached from the main checkout of the repository
 /// `cwd` is in: none where its settings deliver nothing or `env` starts none ([`enabled`]); else the
 /// line saying it started, or why it did not.
@@ -164,20 +188,29 @@ pub fn start(env: &Env, cwd: &Path, slug: &str, actor: &str) -> Option<String> {
         return None;
     }
     let main = delivering(cwd)?;
-    Some(
-        match detached(
-            env,
-            &main,
-            &[slug, "--dispatch", "--as", actor],
-            DISPATCH_LOG,
-        ) {
-            Ok(log) => format!(
-                "its dispatch to the host started detached (its lines go to {})",
-                log.display()
-            ),
-            Err(why) => format!("its dispatch to the host did not start: {why}"),
-        },
-    )
+    Some(started(&dispatching(env, &main, slug, actor)))
+}
+
+/// What a move of `slug` to review by `mover` starts, where the project `cwd` is in delivers by
+/// pull request and `env` starts one ([`enabled`]): its mark left, naming `mover` ([`mark`]), then
+/// its dispatch as `actor` ([`dispatching`]). None where nothing starts.
+fn to_review(
+    env: &Env,
+    cwd: &Path,
+    slug: &str,
+    mover: &str,
+    actor: &str,
+) -> Option<Result<PathBuf, String>> {
+    if !enabled(env) {
+        return None;
+    }
+    let main = delivering(cwd)?;
+    if let Ok(folder) = lands(&main)
+        && fs::create_dir_all(&folder).is_ok()
+    {
+        let _ = fs::write(mark(&folder, slug), mover);
+    }
+    Some(dispatching(env, &main, slug, actor))
 }
 
 /// What a move of `task` by `actor` starts: its dispatch, where it moved to review (its mark left
@@ -188,17 +221,50 @@ pub fn on_move(env: &Env, cwd: &Path, task: &Task, actor: &str) -> Option<String
         return None;
     }
     if task.status == "review" {
-        if enabled(env)
-            && let Some(main) = delivering(cwd)
-            && let Ok(folder) = lands(&main)
-            && fs::create_dir_all(&folder).is_ok()
-        {
-            let _ = fs::write(mark(&folder, &task.slug), actor);
-        }
-        return start(env, cwd, &task.slug, actor);
+        return to_review(env, cwd, &task.slug, actor, actor).map(|start| started(&start));
     }
     poke(env, cwd, &task.slug, actor)
 }
+
+/// What `task`, which one of the board's own makers (the regenerator) filed in review, starts once
+/// the maker let go of the lock its dispatch would be refused under: what a move to review starts
+/// on the command line ([`on_move`]), which the store's own move does not, where nothing
+/// dispatched it yet (no [`mark`], no pull request bound) and it stands where a merge closes it
+/// ([`CLOSES`]). Its mark names the session that filed it, which left at once; its dispatch acts
+/// as its orchestrator, who stays, where one holds the role ([`acting`]), as a session that left
+/// posts nothing. A dispatch that does not start is said on the thread to `@orchestrator`, once,
+/// as the board's own line: nobody reads the maker's log, and the next write to the task
+/// dispatches it by its mark. The line saying what started; none where nothing starts.
+pub fn on_filed(env: &Env, store: &Store, cwd: &Path, task: &Task) -> Option<String> {
+    let slug = task.slug.as_str();
+    if !CLOSES.contains(&task.status.as_str()) {
+        return None;
+    }
+    let main = delivering(cwd)?;
+    let folder = lands(&main).ok()?;
+    let bound = Journal::read(&folder, slug).is_some_and(|journal| journal.binding.is_some());
+    if bound || mark(&folder, slug).exists() {
+        return None;
+    }
+    let actor = acting(Some(task), &task.created_by);
+    let start = to_review(env, &main, slug, &task.created_by, &actor)?;
+    let line = started(&start);
+    if start.is_err() {
+        let _ = store.tell_orchestrator_once(
+            slug,
+            &format!(
+                "land {slug}: {line}; `just land {slug} --dispatch` dispatches it, as a later \
+                 write to it does"
+            ),
+            NOT_STARTED,
+        );
+    }
+    Some(line)
+}
+
+/// The key a filed task's dispatch that did not start is said under, once on its thread
+/// ([`on_filed`]).
+const NOT_STARTED: &str = "dispatch-not-started";
 
 /// The dispatch of `slug`, started as [`start`] does, only where it was dispatched before: a
 /// write that can change its evidence (an assessment, a verdict, a gate decision) after its pull
@@ -346,10 +412,10 @@ pub fn armed(folder: &Path) -> Vec<Journal> {
         .filter_map(Result::ok)
         .filter(|entry| entry.file_name().to_string_lossy().ends_with(".delivery"))
         .filter_map(|entry| fs::read_to_string(entry.path()).ok())
-        .filter_map(|text| serde_json::from_str::<Journal>(&text).ok())
+        .filter_map(|text| serde_json::from_slice::<Journal>(text.as_bytes()).ok())
         .filter(Journal::watched)
         .collect();
-    armed.sort_by(|a, b| a.slug.cmp(&b.slug));
+    crate::order::sort_by(&mut armed, &|a, b| a.slug.cmp(&b.slug));
     armed
 }
 

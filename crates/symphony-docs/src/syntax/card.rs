@@ -47,6 +47,53 @@ pub fn card_line(line: &str) -> Option<(char, &str, &str)> {
     Some((mark, slug, text))
 }
 
+/// How a card's text names the group or the person it is for, as `*Replaces:*` names the card it
+/// replaces: `*For:* design` (docs/product/analysis/users-and-identity.md, "Which group a thing
+/// belongs to"). The name overrides the board's map of places to groups where the board holds it.
+pub const FOR: &str = "*For:*";
+
+/// The name a card's `text` is written for ([`FOR`]): the first `*For:* NAME` in it, NAME a short
+/// name's letters, digits and hyphens ([`is_short_name`] judges it on a board, or `owner`). None
+/// where it names none.
+pub fn card_for(text: &str) -> Option<&str> {
+    let (_, rest) = text.split_once(FOR)?;
+    let name = rest.trim_start_matches(is_space);
+    if name.len() == rest.len() {
+        return None;
+    }
+    let length = name
+        .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+        .unwrap_or(name.len());
+    let name = name.get(..length)?.trim_end_matches('-');
+    (!name.is_empty()).then_some(name)
+}
+
+/// The card line `line` written for `name` ([`FOR`]): its `*For:* NAME` given the new name where
+/// it has one, else `*For:* NAME.` put first in its text, after the slug and its dash. None where
+/// `line` is no card's line or `name` no short name's form, nor `owner`.
+pub fn card_line_for(line: &str, name: &str) -> Option<String> {
+    if !(is_short_name(name) || name == "owner") {
+        return None;
+    }
+    let (_, _, text) = card_line(line)?;
+    // The card's text is the end of its line.
+    let head = line.strip_suffix(text)?;
+    if let Some(held) = card_for(text) {
+        let (before, rest) = text.split_once(FOR)?;
+        let name_at = rest.len() - rest.trim_start_matches(is_space).len();
+        let (gap, written) = rest.split_at_checked(name_at)?;
+        let after = written.strip_prefix(held)?;
+        return Some(format!("{head}{before}{FOR}{gap}{name}{after}"));
+    }
+    let gap = if head.ends_with(is_space) { "" } else { " " };
+    let rest = if text.is_empty() {
+        String::new()
+    } else {
+        format!(" {text}")
+    };
+    Some(format!("{head}{gap}{FOR} {name}.{rest}"))
+}
+
 /// The state a card's mark stands for.
 pub fn card_state(mark: char) -> &'static str {
     match mark {
@@ -190,7 +237,10 @@ pub fn unseen_owner_line(owner: &str, reply: &str) -> String {
     format!("{UNSEEN_OWNER}{owner} {reply} -->\n")
 }
 
-/// One event under a card: an owner's or an agent's line.
+/// One event under a card: a person's or an agent's line. `who` is `agent` for an agent's line and
+/// `owner` for any person's (docs/product/analysis/users-and-identity.md, "How a person's name is
+/// written": a person's line is any line that is not an agent's), whichever short name it carries:
+/// [`said`] and [`said_line`] read the name as well.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub ts: Option<String>,
@@ -199,8 +249,52 @@ pub struct Entry {
     pub text: String,
 }
 
-/// A dated line, `^\s+\[(date( time)?)\]\s+(owner|agent)(?:\s+·\s+(verdict))?(?:\s+—\s*(text))?\s*$`.
+/// An entry with the name its line carries ([`said`], [`said_line`]): `agent` for an agent's line,
+/// `owner` for the person at the machine's and for an undated owner's note, a person's short name
+/// ([`is_short_name`]) for theirs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Said {
+    pub entry: Entry,
+    pub name: String,
+}
+
+/// The words never given to a person as a short name: an agent's line, the person at the machine's
+/// while a board names nobody, the board's own lines on a thread, and the thread vocabulary's
+/// author it cannot read.
+pub const RESERVED_NAMES: [&str; 4] = ["agent", "owner", "board", "unknown"];
+
+/// The longest short name.
+pub const SHORT_NAME_MAX: usize = 32;
+
+/// Whether `word` has a short name's form: lowercase ASCII letters and digits in parts joined by
+/// single hyphens, starting with a letter, at most [`SHORT_NAME_MAX`] long, its last part no number
+/// alone (the board numbers a session's handle, `amber-heron-12`, once its plain pairs are taken),
+/// and none of [`RESERVED_NAMES`]. It is the form a person's name takes on a line and the form a
+/// board gives one in. The form alone never tells a person from a session: a handle may be
+/// `amber-heron`, so a thread line is a person's by its row's mark, never by its sender's shape.
+pub fn is_short_name(word: &str) -> bool {
+    let well_formed = word.len() <= SHORT_NAME_MAX
+        && word.starts_with(|c: char| c.is_ascii_lowercase())
+        && word.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        });
+    let last = word.rsplit('-').next().unwrap_or(word);
+    let numbered = word.contains('-') && last.bytes().all(|b| b.is_ascii_digit());
+    well_formed && !numbered && !RESERVED_NAMES.contains(&word)
+}
+
+/// A dated line, `^\s+\[(date( time)?)\]\s+(name)(?:\s+·\s+(verdict))?(?:\s+—\s*(text))?\s*$`,
+/// its name `agent`, `owner` or a person's short name ([`is_short_name`]), as an [`Entry`]
+/// ([`said_line`] keeps the name).
 pub fn entry_line(line: &str) -> Option<Entry> {
+    said_line(line).map(|said| said.entry)
+}
+
+/// [`entry_line`], with the name the line carries.
+pub fn said_line(line: &str) -> Option<Said> {
     let rest = line.trim_start_matches(is_space);
     if rest.len() == line.len() {
         return None;
@@ -215,21 +309,29 @@ pub fn entry_line(line: &str) -> Option<Entry> {
     if after.len() == rest.len() {
         return None;
     }
-    let (who, rest) = if let Some(r) = after.strip_prefix("owner") {
-        ("owner", r)
-    } else {
-        ("agent", after.strip_prefix("agent")?)
+    let length = after
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .unwrap_or(after.len());
+    let (name, rest) = after.split_at(length);
+    let who = match name {
+        "agent" => "agent",
+        "owner" => "owner",
+        person if is_short_name(person) => "owner",
+        _ => return None,
     };
     let (verdict, rest) = match verdict_part(rest) {
         Some((verdict, tail)) if tail_ends(tail).is_some() => (Some(verdict), tail),
         _ => (None, rest),
     };
     let text = tail_ends(rest)?;
-    Some(Entry {
-        ts: Some(ts.to_string()),
-        who,
-        verdict: verdict.map(str::to_string),
-        text: text.trim_matches(is_space).to_string(),
+    Some(Said {
+        entry: Entry {
+            ts: Some(ts.to_string()),
+            who,
+            verdict: verdict.map(str::to_string),
+            text: text.trim_matches(is_space).to_string(),
+        },
+        name: name.to_string(),
     })
 }
 
@@ -293,9 +395,14 @@ pub fn is_continuation(line: &str) -> bool {
 /// A card's lines as entries: a dated line starts one, a deeper-indented line continues it (a blank
 /// line between making a new paragraph; [`is_continuation`]), a `↳` line is an agent's undated
 /// answer, a hidden `review:unseen-owner` line ([`unseen_owner`]) is skipped, and anything else is an
-/// owner's undated note.
+/// owner's undated note. [`said`] keeps each one's name.
 pub fn entries<L: AsRef<str>>(raw: &[L]) -> Vec<Entry> {
-    let mut found: Vec<Entry> = Vec::new();
+    said(raw).into_iter().map(|said| said.entry).collect()
+}
+
+/// [`entries`], each with the name its line carries ([`Said`]).
+pub fn said<L: AsRef<str>>(raw: &[L]) -> Vec<Said> {
+    let mut found: Vec<Said> = Vec::new();
     let mut paragraph = false;
     for line in raw {
         let line = line.as_ref();
@@ -303,14 +410,15 @@ pub fn entries<L: AsRef<str>>(raw: &[L]) -> Vec<Entry> {
             continue;
         }
         let text = line.trim_matches(is_space);
-        let continues = found.last().is_some_and(|e| e.ts.is_some()) && is_continuation(line);
+        let dated = |said: &Said| said.entry.ts.is_some();
+        let continues = found.last().is_some_and(dated) && is_continuation(line);
         if text.is_empty() {
-            paragraph = found.last().is_some_and(|e| e.ts.is_some());
-        } else if !continues && let Some(dated) = entry_line(line) {
+            paragraph = found.last().is_some_and(dated);
+        } else if !continues && let Some(line) = said_line(line) {
             paragraph = false;
-            found.push(dated);
+            found.push(line);
         } else if continues {
-            let last = found.last_mut().expect("a dated entry");
+            let last = &mut found.last_mut().expect("a dated entry").entry;
             let joined = format!(
                 "{}{}{}",
                 last.text,
@@ -320,20 +428,23 @@ pub fn entries<L: AsRef<str>>(raw: &[L]) -> Vec<Entry> {
             last.text = joined.trim_matches(is_space).to_string();
             paragraph = false;
         } else if let Some(answer) = text.strip_prefix('↳') {
-            found.push(Entry {
-                ts: None,
-                who: "agent",
-                verdict: None,
-                text: answer.trim_matches(is_space).to_string(),
-            });
+            found.push(undated("agent", answer.trim_matches(is_space)));
         } else {
-            found.push(Entry {
-                ts: None,
-                who: "owner",
-                verdict: None,
-                text: text.to_string(),
-            });
+            found.push(undated("owner", text));
         }
     }
     found
+}
+
+/// An undated line of `who`'s, `agent` or `owner`, saying `text`.
+fn undated(who: &'static str, text: &str) -> Said {
+    Said {
+        entry: Entry {
+            ts: None,
+            who,
+            verdict: None,
+            text: text.to_string(),
+        },
+        name: who.to_string(),
+    }
 }

@@ -1,12 +1,11 @@
-//! The board's PostgreSQL, beside its SurrealDB ([`Postgres`]): the machine's own, installed by its
-//! package manager, from the folder of programs the project file names (`[board] postgresql`)
-//! or found on `PATH` ([`discover_programs`];
+//! The board's PostgreSQL ([`Postgres`]): the machine's own, installed by its package manager,
+//! from the folder of programs the project file names (`[board] postgresql`) or found on `PATH`
+//! ([`discover_programs`];
 //! [its card](../../../../docs/operations/analysis/postgresql-binary-source.md#postgresql-binary-source)).
-//! It serves the board whose
-//! home's durable engine identity names it ([`Home::board_server`]), and a board not made yet,
-//! whose first start writes that identity before it makes the data ([`Postgres::serve`]), as a
-//! start does for a cluster it finds with none, running or not; a board on SurrealDB becomes
-//! PostgreSQL's by the move alone ([`super::moving`]).
+//! It serves the board whose home's durable engine identity names it ([`Home::board_server`]), and
+//! a board not made yet, whose first start writes that identity before it makes the data
+//! ([`Postgres::serve`]), as a start does for a cluster it finds with none, running or not; a board
+//! still on SurrealDB is refused, naming how it moves ([`super::GONE`]).
 //!
 //! Its data is `postgresql/` in the board's folder, made by `initdb` at the first start in a folder
 //! beside it and renamed into place, so an `initdb` cut short never leaves a half-made one where a
@@ -20,29 +19,37 @@
 //! ([`socket_folder`]), private to this user: macOS refuses a socket path over 103 bytes, which a
 //! board's folder under a checkout passes. Its server runs under a supervisor of its own session
 //! ([`SUPERVISED`]), which writes the server's log and says when the server is ready to accept
-//! connections. A board's in a scratch place ends once the starter's [`Lifeline`] reads its end,
-//! a scratch SurrealDB's rule; any other board's outlives its starter, as its SurrealDB does, and
-//! ends at a stop or a hold. A start waits for the supervisor's word, never polls; a stop is
-//! PostgreSQL's fast shutdown, waited for by `pg_ctl`, and a stop that meets a server ending on
-//! its own, gone by the time `pg_ctl` reads its record, waits for its end
-//! ([`Postgres::stop_failed`]). Both take the board's starters' lock, as
-//! SurrealDB's do. A start that finds a server of the data on its way out, as a scratch board's
-//! is in the moment after the command that started it ended, waits for that server's end
-//! ([`Postgres::outgoing_ended`]) and then starts its own: one whose record says it is stopping,
-//! and one whose record still says it is ready though its starter has ended ([`STARTER`]), as it
-//! does until its watchdog's signal reaches it.
+//! connections. A board's in a scratch place ends once the starter's [`Lifeline`] reads its end;
+//! any other board's outlives its starter and ends at a stop or a hold. A start waits for the
+//! supervisor's word, never polls; a stop is PostgreSQL's fast shutdown, waited for by `pg_ctl`,
+//! and a stop that meets a server ending on its own, gone by the time `pg_ctl` reads its record,
+//! waits for its end ([`Postgres::stop_failed`]). Both take the board's starters' lock. A start
+//! that finds a server of the data on its way out, as a scratch board's is in the moment after the
+//! command that started it ended, waits for that server's end ([`Postgres::outgoing_ended`]) and
+//! then starts its own: one whose record says it is stopping, and one whose record still says it
+//! is ready though its starter has ended ([`STARTER`]), as it does until its watchdog's signal
+//! reaches it.
+//!
+//! Every server holds one of the machine's few System V shared memory segments for its life. A
+//! server that ends with its starter takes one of the machine's slots for scratch boards' servers
+//! before its data is made and holds it until its last process has ended ([`Slots`]), so the
+//! scratch boards together never take the segments the projects' own boards need; a start with
+//! none free waits for one. Its supervisor removes the segment it leaves if it was killed
+//! ([`SUPERVISED`]). A server that outlives its starter takes no slot.
 
 use super::scratch::{Lifeline, scratch};
 use super::starters::Doing;
 use super::{Home, ServerError, io, last_argument_is};
+use crate::channel::channel;
 use crate::sys::{Command, Stdio, command, gone, load_said, output, pid_alive, wait_output};
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 
 mod lifecycle;
 pub use lifecycle::Holding;
+mod slots;
+pub use slots::{Slot, Slots};
 
 /// The project file's `[board]` key naming the folder of the machine's PostgreSQL programs.
 pub const KEY: &str = "postgresql";
@@ -84,6 +91,16 @@ const LOCALE: &str = "C";
 /// PostgreSQL sets its own handlers, where SIGTERM still ends it, and a fast shutdown under way
 /// takes no smart one. Nothing but those two writers holds the starter's pipe, each until its line
 /// is said, so the starter reads to its end: no wait by a number.
+///
+/// An owned server's supervisor is also handed its slot ([`Slots`]), at a descriptor above its own
+/// 3 and 4 that it leaves as it is, so it, the server and every backend hold the slot until the
+/// last of them ends. Once the server has ended, such a supervisor removes the segment a server
+/// that did not end cleanly left (one killed, or that crashed), as nothing else would: its
+/// `postmaster.pid` is still there and names it on its first line, its seventh names the segment's
+/// key and id, and `ipcs -m -p` says the segment's creator (macOS's seventh column, Linux's third)
+/// is that same server. A record another server has written since names another pid and is left,
+/// and so is a segment of another creator. A server that ended cleanly took its record and its
+/// segment with it.
 const SUPERVISED: &str = r#"exec 3<&0 </dev/null 4>&1 >/dev/null 2>&1
 {
     "$0" -D "$1" 2>&1 3<&- 4>&- &
@@ -98,6 +115,12 @@ const SUPERVISED: &str = r#"exec 3<&0 </dev/null 4>&1 >/dev/null 2>&1
     exec 3<&-
     wait "$server"
     [ -z "$watchdog" ] || kill "$watchdog"
+    if [ "$3" = owned ]; then
+        id=$(awk -v server="$server" 'NR == 1 && $1 != server { exit } NR == 7 { print $2; exit }' "$1/postmaster.pid")
+        [ -z "$id" ] ||
+            [ "$(ipcs -m -p | awk -v id="$id" '$1 == "m" && $2 == id { print $7 } $1 == id { print $3 }')" != "$server" ] ||
+            ipcrm -m "$id"
+    fi
 } | {
     exec 3<&-
     ready=
@@ -138,7 +161,7 @@ pub struct Postgres {
 
 impl Home {
     /// This board's PostgreSQL, served by the programs in the folder `programs` (`[board]
-    /// postgresql`, [`programs`]): beside its SurrealDB in its folder, under its starters' lock.
+    /// postgresql`, [`programs`]): in its folder, under its starters' lock.
     pub fn postgresql(&self, programs: &Path) -> Postgres {
         Postgres {
             home: self.clone(),
@@ -217,6 +240,7 @@ impl Postgres {
         if let Some(serving) = self.serving(record, &version)? {
             return Ok(serving);
         }
+        let slot = self.slot()?;
         self.make()?;
         let data = self.data();
         let conf = data.join("postgresql.conf");
@@ -226,7 +250,19 @@ impl Postgres {
             "· the board's PostgreSQL is not running: it starts now, on its data at {}",
             data.display()
         ));
-        self.start(version)
+        self.start(version, slot)
+    }
+
+    /// The slot a server that ends with this process holds for its life, taken before its data is
+    /// made ([`Slots::take`]): the home's slots, else the machine's. None for a server that
+    /// outlives it, a project's own board's, which takes none.
+    fn slot(&self) -> Result<Option<Slot>, ServerError> {
+        if !self.owned() {
+            return Ok(None);
+        }
+        let slots = self.home.slots.clone().unwrap_or_else(Slots::machine);
+        let tell = &self.home.tell;
+        slots.take(|line| tell(line)).map(Some)
     }
 
     /// Whether its server ends with the process that starts it: a board in a scratch place
@@ -449,8 +485,11 @@ impl Postgres {
     /// The server started under its supervisor ([`SUPERVISED`]), on this process's lifeline when
     /// it is this process's own ([`Postgres::owned`]), and waited for until it says it is ready or
     /// ended, the board's patience at most. One of this process's own, once ready, is recorded with
-    /// this process as its starter ([`STARTER`]); the record of any earlier one goes first.
-    fn start(&self, version: String) -> Result<Serving, ServerError> {
+    /// this process as its starter ([`STARTER`]); the record of any earlier one goes first. Its
+    /// `slot`, which one of this process's own holds, is handed to the supervisor, and so to the
+    /// server and its backends, which hold it from the spawn on: this process lets it go only when
+    /// the supervisor could not be started, and its file names the server once it is ready.
+    fn start(&self, version: String, slot: Option<Slot>) -> Result<Serving, ServerError> {
         let log = self.log();
         let from = fs::metadata(&log).map_or(0, |meta| meta.len());
         let owned = self.owned();
@@ -473,8 +512,14 @@ impl Postgres {
             Stdio::null()
         };
         let postgres = self.program("postgres");
+        let passed = slot
+            .as_ref()
+            .map(Slot::descriptor)
+            .transpose()
+            .map_err(io("could not hand its slot to", &postgres))?;
         // The supervisor's locale is the server's, which it starts.
-        let child = server_command("/bin/sh")
+        let mut supervisor = server_command("/bin/sh");
+        supervisor
             .new_session()
             .default_signals()
             .arg("-c")
@@ -485,10 +530,16 @@ impl Postgres {
             .arg(if owned { OWNED } else { APART })
             .stdin(input)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+        if let Some(passed) = &passed {
+            supervisor.pass_fd(std::os::fd::AsRawFd::as_raw_fd(passed));
+        }
+        let child = supervisor
             .spawn()
             .map_err(io("could not start", &postgres))?;
-        let (said, heard) = mpsc::channel();
+        let slot = slot.map(Slot::handed);
+        drop(passed);
+        let (said, heard) = channel();
         std::thread::spawn(move || {
             let _ = said.send(wait_output(child));
         });
@@ -512,6 +563,9 @@ impl Postgres {
         let said = Said::of(&String::from_utf8_lossy(&out.stdout));
         match (said.pid, said.ready) {
             (Some(pid), Some(true)) => {
+                if let Some(slot) = &slot {
+                    slot.serving(pid);
+                }
                 if owned {
                     fs::write(&starter, format!("{pid} {}\n", std::process::id()))
                         .map_err(io("could not write", &starter))?;

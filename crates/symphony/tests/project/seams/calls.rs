@@ -12,7 +12,7 @@ use symphony::project::{PluginCalls, Project};
 use symphony_plugin::authority::{Operation, Snapshot};
 use symphony_plugin::execution::{Principal, PrincipalKind};
 use symphony_plugin::vocabulary::FieldValue;
-use symphony_plugin::{Card, Docs, File, Page, Plugin, Submission, TaskRef, ThreadLine};
+use symphony_plugin::{Card, Docs, File, Page, Plugin, Sender, Submission, TaskRef, ThreadLine};
 
 use super::Tree;
 use super::compiled::naming;
@@ -197,7 +197,7 @@ fn every_seam_answers_the_same_linked_and_timed_and_its_line_holds_its_time_alon
             .keys()
             .map(String::as_str)
             .collect();
-        keys.sort_unstable();
+        symphony_board::order::sort_by(&mut keys, &Ord::cmp);
         assert_eq!(
             keys,
             [
@@ -288,6 +288,11 @@ fn every_seam_answers_the_same(both: &Both, tree: &Tree) {
             };
             both.same("submit", |p| {
                 p.board_actions()[0].submit(root, &task, &submission)
+            });
+            // Who sent it, timed as the same call and answered alike.
+            let sender = Sender::new("ana", "Ana Lima", vec!["ana-l".into()]);
+            both.same("submit from", |p| {
+                p.board_actions()[0].submit_from(root, &task, &submission, &sender)
             });
         }
         for tip in [Some("c0ffee"), None] {
@@ -777,6 +782,10 @@ const DECLARED_BY: [(&str, &str); 10] = [
     ("transports", "name"),
 ];
 
+/// A seam's method that goes on the wire as another method's call, with a field of that call's a
+/// later minor added: a submission with who sent it is `board_actions.submit` with its `sender`.
+const CALLED_AS: [(&str, &str); 1] = [("board_actions.submit_from", "board_actions.submit")];
+
 #[test]
 fn every_method_of_every_seam_is_a_call_or_declared_and_the_wrapper_measures_each() {
     let mut seams_traits = traits(include_str!("../../../../symphony-plugin/src/lib.rs"));
@@ -825,7 +834,10 @@ fn every_method_of_every_seam_is_a_call_or_declared_and_the_wrapper_measures_eac
         };
         let mut asked = false;
         for method in methods {
-            let call = calls.contains(format!("{seam}.{method}").as_str());
+            let tag = format!("{seam}.{method}");
+            let call = calls.contains(tag.as_str())
+                || (CALLED_AS.iter())
+                    .any(|(named, as_call)| *named == tag && calls.contains(as_call));
             asked |= call;
             assert!(
                 call || declares(method),
@@ -975,7 +987,7 @@ fn every_call(plugins: &Plugins, root: &Path, docs: &Docs) {
 
 /// The median of `values`.
 pub(super) fn median(values: &mut [f64]) -> f64 {
-    values.sort_by(f64::total_cmp);
+    symphony_board::order::sort_by(values, &f64::total_cmp);
     values.get(values.len() / 2).copied().unwrap_or(f64::NAN)
 }
 

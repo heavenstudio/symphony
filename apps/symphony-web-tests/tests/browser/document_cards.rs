@@ -51,7 +51,7 @@ const COMMENT_TITLE: &str = "141 lamps: the count includes the two prototype lam
 /// The document `docs/PROBE.md`: a heading, a paragraph, a pending card waiting on the owner with
 /// its history and a link to its own section, and an approved card waiting for the owner to
 /// confirm it.
-fn probe_site() -> Site {
+pub(super) fn probe_site() -> Site {
     let site = crate::site();
     let link = json!({"type":"link","href":"/docs/PROBE.md#lamps","target":{"path":DOC,"anchor":"lamps"},"title":"","spans":[text("Lamps")]});
     let (alpha, pending) = card(
@@ -112,7 +112,7 @@ fn probe_site() -> Site {
 }
 
 /// Opens the card `slug`'s editor with its own button and waits for its form.
-fn open_editor(page: &mut Chrome, slug: &str) {
+pub(super) fn open_editor(page: &mut Chrome, slug: &str) {
     let toggle = format!("[data-doc-key=\"card:{slug}\"] .doc-actions button");
     // As a reader would, once the card shows: under the document's ghost its editor takes no focus.
     assert!(
@@ -1044,5 +1044,82 @@ fn document_card_folded_and_opened_by_a_click_draws_its_picture() {
             && seen["width"].as_u64() > Some(0)
             && seen["height"].as_u64() > Some(0),
         "and draws it: {seen}"
+    );
+}
+
+/// A card's owner, as `/api/card-owners` answers it: drawn beside its actions with what gave it, a
+/// card the read names no owner of drawn as before, and for a reader who may hand it on, a choice
+/// in its select posted as one hand-over naming the document, the card and the name, said beside
+/// it once done.
+#[test]
+fn a_cards_owner_is_drawn_beside_its_actions_and_a_choice_hands_it_on() {
+    let site = probe_site();
+    site.set_json(
+        symphony_api::CARD_OWNERS_PATH,
+        &json!({"cards":{"alpha":{"name":"design","kind":"group","by":"map",
+            "said":"from the folder docs","hand_to":["engineering","ana"]}}}),
+    );
+    site.set_json(
+        symphony_api::CARD_HAND_ROUTE,
+        &json!({"ok":true,"repeat":false}),
+    );
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url(&format!("/{DOC}")));
+    let owner = "[data-doc-key=\"card:alpha\"] .doc-actions .owner";
+    assert!(
+        page.wait_for(&crate::visible(owner), SHOWN),
+        "the card alpha says whose it is: {}",
+        page.eval("document.body.innerText.slice(0, 1500)")
+    );
+    let text = |page: &mut Chrome, css: &str| {
+        page.eval(&format!(
+            "document.querySelector({}).textContent",
+            json!(css)
+        ))
+    };
+    assert_eq!(
+        text(&mut page, &format!("{owner} .owner-name")),
+        "group: design"
+    );
+    assert_eq!(
+        text(&mut page, &format!("{owner} .owner-by")),
+        "from the folder docs"
+    );
+    assert_eq!(
+        page.eval("document.querySelector('[data-doc-key=\"card:beta\"] .owner') === null"),
+        json!(true),
+        "a card the read names no owner of draws none"
+    );
+    let trigger = format!("{owner} [id=\"hand-docs%2FPROBE.md%3Aalpha\"]");
+    page.eval(&format!(
+        "document.querySelector({}).click()",
+        json!(trigger)
+    ));
+    super::components::popup_ready(&mut page);
+    let point = page.eval("(() => {const option=[...document.querySelectorAll('[role=listbox] [role=option]')].find(option=>option.textContent.trim()==='engineering');const box=option.getBoundingClientRect();return {x:box.x+box.width/2,y:box.y+box.height/2}})()");
+    for kind in ["mousePressed", "mouseReleased"] {
+        page.call(
+            "Input.dispatchMouseEvent",
+            json!({"type":kind,"x":point["x"],"y":point["y"],"button":"left","clickCount":1}),
+        );
+    }
+    assert!(
+        page.wait_for(
+            &format!(
+                "document.querySelector({})?.textContent === 'Handed to engineering'",
+                json!(format!("{owner} [role=status]"))
+            ),
+            SHOWN
+        ),
+        "{}",
+        text(&mut page, owner)
+    );
+    let handed: Vec<Value> = (site.posts().into_iter())
+        .filter(|(path, _)| path == symphony_api::CARD_HAND_ROUTE)
+        .map(|(_, body)| body)
+        .collect();
+    assert_eq!(
+        handed,
+        [json!({"path": DOC, "slug": "alpha", "to": "engineering"})]
     );
 }

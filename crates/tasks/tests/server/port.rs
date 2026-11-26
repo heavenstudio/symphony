@@ -1,22 +1,18 @@
 //! `symphony_board::port`: a child started on a reserved loopback port, and again on another port only when
 //! it ends saying its port was taken, a bounded number of times within one deadline; and whether a
 //! process itself listens on an address. The fake children are shells that say what the case needs
-//! and end, or say they listen and run until their input closes; two cases give the pinned SurrealDB
-//! a port the test holds, one of them answering there as a healthy server.
+//! and end, or say they listen and run until their input closes.
 
 use crate::children::Child as _;
-use crate::common::{exists, healthy_occupier, surreal};
 use std::convert::Infallible;
-use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use symphony_board::port::{
     ATTEMPTS, LSOF_AT, NotStarted, Start, in_use, listens, start_on_free_port,
 };
 use symphony_board::sys;
-use symphony_board::sys::{Child, Command, Stdio};
+use symphony_board::sys::{Child, Command};
 
 /// The deadline of a case whose starts are all quick: one it never comes near, however loaded the
 /// machine, the backstop of the 20 s it once had.
@@ -128,7 +124,7 @@ fn a_child_whose_port_is_taken_on_every_start_is_given_up_on_with_what_the_last_
         format!("start {last}: Address already in use (os error 48)\n")
     );
     let mut ports: Vec<u16> = given.iter().map(SocketAddr::port).collect();
-    ports.sort_unstable();
+    symphony_board::order::sort_by(&mut ports, &Ord::cmp);
     ports.dedup();
     assert_eq!(ports.len(), ATTEMPTS, "a port was tried twice: {given:?}");
     assert_eq!(
@@ -371,7 +367,7 @@ fn another_process_does_not_listen_on_this_ones_address() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let mut other =
-        crate::store::spawn_with_input(Command::of("/bin/sh").args(["-c", "read -r line || :"]))
+        crate::helper::spawn_with_input(Command::of("/bin/sh").args(["-c", "read -r line || :"]))
             .unwrap();
     assert!(!listens(other.id(), addr, sys::output).unwrap());
     drop(other.stdin.take());
@@ -380,121 +376,4 @@ fn another_process_does_not_listen_on_this_ones_address() {
         !listens(other.id(), addr, sys::output).unwrap(),
         "an ended process"
     );
-}
-
-/// A server this case started, ended with it.
-struct Owned(Child);
-
-impl Drop for Owned {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// What holds the first port the pinned SurrealDB is given.
-#[derive(Clone, Copy, PartialEq)]
-enum Occupier {
-    /// A listener that closes each connection at once, so a health check of it fails at once.
-    Closes,
-    /// A listener that answers as a healthy server does; SurrealDB goes on to bind only once it has,
-    /// as a server held up before its bind would.
-    Answers,
-}
-
-/// The pinned SurrealDB told to bind a port `occupier` holds ends saying so; it is started again on
-/// another port, where it answers and listens itself, all within one deadline.
-fn surreal_on_a_port_taken_by(occupier: Occupier, name: &str) {
-    let dir =
-        PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let probed = dir.join("probed");
-    let until = Instant::now() + test_time::backstop(Duration::from_secs(20));
-    let mut endings = Vec::new();
-    let taken = match occupier {
-        Occupier::Closes => {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let addr = listener.local_addr().unwrap();
-            std::thread::spawn(move || listener.incoming().for_each(drop));
-            addr
-        }
-        Occupier::Answers => healthy_occupier("127.0.0.1:0".parse().unwrap(), &probed),
-    };
-    let (server, addr) = start_on_free_port(ATTEMPTS, until, |addr| {
-        // The first child is deliberately given the occupier's already-held address.
-        let addr = if endings.is_empty() { taken } else { addr };
-        let mut command = match occupier {
-            Occupier::Closes => Command::of(surreal()),
-            Occupier::Answers => {
-                let mut held = Command::of("/bin/sh");
-                held.args([
-                    "-c",
-                    r#"while [ ! -f "$1" ]; do sleep 0.01; done; shift; exec "$@""#,
-                    "held",
-                ])
-                .arg(&probed)
-                .arg(surreal());
-                held
-            }
-        };
-        let log = dir.join(format!("surreal-{}.log", endings.len()));
-        let out = File::create(&log).unwrap();
-        let mut server = Owned(
-            command
-                .args(["start", "--unauthenticated", "--log", "error", "--bind"])
-                .arg(addr.to_string())
-                .arg("memory")
-                .stdin(Stdio::null())
-                .stdout(out.try_clone().unwrap())
-                .stderr(out)
-                .spawn()
-                .unwrap(),
-        );
-        // Up once it answers on its port; ended once it exits first.
-        let up = test_time::until(
-            format!("SurrealDB on {addr} answers or ends"),
-            until.saturating_duration_since(Instant::now()),
-            || {
-                if server.0.try_wait().unwrap().is_some() {
-                    return Some(false);
-                }
-                (symphony_board::rpc::healthy(&addr.to_string())
-                    && listens(server.0.id(), addr, sys::output).unwrap())
-                .then_some(true)
-            },
-        )
-        .unwrap();
-        if up {
-            return Ok::<_, Infallible>(Start::Up(server));
-        }
-        let said = std::fs::read_to_string(&log).unwrap();
-        endings.push(said.clone());
-        Ok(Start::Ended(said))
-    })
-    .unwrap_or_else(|why| panic!("SurrealDB did not come up: {why}"));
-    assert_ne!(addr, taken);
-    assert!(!endings.is_empty());
-    assert!(in_use(&endings[0]), "{}", endings[0]);
-    assert_eq!(
-        exists(&probed),
-        occupier == Occupier::Answers,
-        "the occupier was asked whether it was up"
-    );
-    assert!(symphony_board::rpc::healthy(&addr.to_string()));
-    assert!(listens(server.0.id(), addr, sys::output).unwrap());
-    drop(server);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn surreal_on_a_port_taken_before_it_binds_is_started_again_on_another() {
-    surreal_on_a_port_taken_by(Occupier::Closes, "port-taken");
-}
-
-/// What took the port answers health checks before SurrealDB finds the port taken: that answer is
-/// not SurrealDB's, so it is started again all the same.
-#[test]
-fn surreal_on_a_port_whose_occupier_answers_is_started_again_on_another() {
-    surreal_on_a_port_taken_by(Occupier::Answers, "port-taken-answers");
 }

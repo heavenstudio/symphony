@@ -25,11 +25,18 @@ reads with their JSON types, so a change that would break one fails its own task
 api promises is its calls, not the board's rules behind them, such as who may move or judge a
 task. Major 2 began at 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
 review name their stamps through an assessment. The fields and calls held by the consumer contract
-keep their shapes. The current API is 2.6: minor 5 added `attempts`, `{"slug": S}`, a task's
+keep their shapes. The current API is 2.8: minor 5 added `attempts`, `{"slug": S}`, a task's
 execution attempts as `symphony_api::TaskAttempts`, read as the board's own service under the
 project the call runs in, refused from outside a project's checkout
 ([EXECUTION_ATTEMPTS](EXECUTION_ATTEMPTS.md#on-a-tasks-page)); minor 6 added what a guarded edge is
-taken with ([below](#a-task-a-custom-workflow-holds)).
+taken with ([below](#a-task-a-custom-workflow-holds)); minor 7 added `create`'s `kind`, what the
+task's work is, one of `feature`, `fix`, `red`, `tests` or `docs`, refused naming the list for any
+other word. Left out, the task has none, or `red` where `create` names a `red`
+([TASKS](../workflow/TASKS.md#tasks-and-roles)); `get` and `tasks` answer it among the task's
+`fields`, as `_board.kind`. Minor 8 added `create`'s `group`, the group or the person the task is
+filed for, a short name or `owner`, refused for any other word; left out, its area's group decides
+([TASKS](../workflow/TASKS.md#which-group-a-thing-belongs-to)). It is kept among the task's fields
+as `_board.group`.
 
 ### What a program outside the board keeps
 

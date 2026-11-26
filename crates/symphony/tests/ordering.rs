@@ -45,7 +45,7 @@ fn equal_time_versions_keep_descending_full_commit_ids_and_limits() {
             },
         ));
     }
-    expected.sort_by(|a, b| b.0.cmp(&a.0));
+    symphony_board::order::sort_by(&mut expected, &|a, b| b.0.cmp(&a.0));
     let expected: Vec<_> = expected.into_iter().map(|(_, version)| version).collect();
     let actual = symphony::versions::versions(&tree.root, "docs/A.md", 0);
     assert_eq!(
@@ -214,6 +214,10 @@ fn shared_report_sorts_match_full_payloads_and_disclose_their_cost() {
         compare: impl Fn(&T, &T) -> std::cmp::Ordering,
     ) {
         let mut expected = rows.clone();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the standard sort this test holds the shared sorter to"
+        )]
         let (_, old_cpu) = test_time::cpu::spent(|| expected.sort_by(&compare));
         let calls = std::cell::Cell::new(0);
         let (_, new_cpu) = test_time::cpu::spent(|| {
@@ -298,6 +302,10 @@ fn cold_presentation_sorts_preserve_full_ties_and_report_cost() {
         for count in [0, 1, rows.len()] {
             let mut old = rows[..count].to_vec();
             let mut shared = old.clone();
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the standard sort this test holds the shared sorter to"
+            )]
             let (_, old_time) = test_time::cpu::spent(|| old.sort_by(&order));
             let (_, shared_time) =
                 test_time::cpu::spent(|| symphony_board::order::sort_by(&mut shared, &order));
@@ -376,7 +384,7 @@ fn native_document_and_register_orders_keep_full_owner_content_and_configured_pr
             decisions: parse_decisions(&lines),
         });
     }
-    expected.sort_by(|a, b| a.path.cmp(&b.path));
+    symphony_board::order::sort_by(&mut expected, &|a, b| a.path.cmp(&b.path));
     assert_eq!(symphony::board::documents(&tree.root).unwrap(), expected);
     // A cache hit must preserve every field and the same final route order.
     assert_eq!(symphony::board::documents(&tree.root).unwrap(), expected);
@@ -419,6 +427,10 @@ fn document_and_lossy_path_ties_match_standard_order_and_report_cost() {
         let mut old = paths.clone();
         let key =
             |path: &std::path::PathBuf| (*path != register, path.to_string_lossy().to_string());
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the standard sort this test holds the shared sorter to"
+        )]
         let (_, old_cpu) = test_time::cpu::spent(|| old.sort_by_key(&key));
         let (_, new_cpu) =
             test_time::cpu::spent(|| symphony_board::order::sort_by_key(&mut paths, &key));
@@ -431,6 +443,10 @@ fn document_and_lossy_path_ties_match_standard_order_and_report_cost() {
             })
             .collect();
         let mut expected = docs.clone();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the standard sort this test holds the shared sorter to"
+        )]
         let (_, doc_old_cpu) =
             test_time::cpu::spent(|| expected.sort_by(|a, b| a.path.cmp(&b.path)));
         let (_, doc_new_cpu) = test_time::cpu::spent(|| {

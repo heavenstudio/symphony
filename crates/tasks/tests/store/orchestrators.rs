@@ -2,7 +2,7 @@
 //! board two of them share.
 
 use super::callbacks::Listener;
-use super::common::{Backend, Fixture, Seed, refused, session};
+use super::common::{Fixture, Seed, refused, session};
 use super::quiet_callbacks::{listen, with_volume};
 use std::collections::BTreeSet;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
@@ -12,8 +12,8 @@ const EMPTY_PULL: &str = "PULL executing=0 ready_unstaffed=0 in_progress_orphane
 const BUSY_PULL: &str = "PULL executing=1 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 
 /// Two orchestrators, `scratch/one` orchestrated by the first.
-fn two_orchestrators(backend: Backend) -> (Fixture, String, String) {
-    let f = Fixture::on(backend, Seed::default());
+fn two_orchestrators() -> (Fixture, String, String) {
+    let f = Fixture::new(Seed::default());
     let (a, b) = (f.session("orchestrator"), f.session("orchestrator"));
     f.task("scratch/one");
     f.store
@@ -30,56 +30,55 @@ pub(super) fn go_quiet_but(f: &Fixture, keep: &[&str]) {
     }
 }
 
-on_both! {
-    fn retaking_a_role_drops_a_left_double_and_keeps_a_live_one(backend: Backend) {
-        let mut orch = session("solar");
-        orch.kind = "orchestrator".into();
-        let mut gone = session("teal");
-        gone.kind = "orchestrator".into();
-        gone.last_seen -= LIVE_SECONDS + STALE_SECONDS + 5.0;
-        let mut other = session("cobalt");
-        other.kind = "orchestrator".into();
-        let f = Fixture::on(backend,
-            Seed::default()
-                .session_row(orch)
-                .session_row(gone)
-                .session_row(other)
-                .task("scratch/gate", "ready")
-                .role("scratch/gate", "solar", "orchestrator")
-                .role("scratch/gate", "teal", "orchestrator")
-                .task("scratch/both", "ready")
-                .role("scratch/both", "solar", "orchestrator")
-                .role("scratch/both", "cobalt", "orchestrator"),
-        );
-        let task = f
-            .store
-            .take_role("scratch/gate", "solar", "orchestrator")
-            .unwrap();
-        assert_eq!(task.holders("orchestrator"), ["solar"]);
-        assert_eq!(
-            f.said("scratch/gate").last().unwrap(),
-            "solar took orchestrator over from teal (left)"
-        );
-        // Both still there: nothing to settle by taking it, only by a hand-over or a release.
-        let task = f
-            .store
-            .take_role("scratch/both", "solar", "orchestrator")
-            .unwrap();
-        let mut held = task.holders("orchestrator");
-        held.sort_unstable();
-        assert_eq!(held, ["cobalt", "solar"]);
-        assert_eq!(f.said("scratch/both"), Vec::<String>::new());
-        let task = f
-            .store
-            .hand_over("scratch/both", "cobalt", "solar")
-            .unwrap();
-        assert_eq!(task.holders("orchestrator"), ["solar"]);
-    }
+#[test]
+fn retaking_a_role_drops_a_left_double_and_keeps_a_live_one() {
+    let mut orch = session("solar");
+    orch.kind = "orchestrator".into();
+    let mut gone = session("teal");
+    gone.kind = "orchestrator".into();
+    gone.last_seen -= LIVE_SECONDS + STALE_SECONDS + 5.0;
+    let mut other = session("cobalt");
+    other.kind = "orchestrator".into();
+    let f = Fixture::new(
+        Seed::default()
+            .session_row(orch)
+            .session_row(gone)
+            .session_row(other)
+            .task("scratch/gate", "ready")
+            .role("scratch/gate", "solar", "orchestrator")
+            .role("scratch/gate", "teal", "orchestrator")
+            .task("scratch/both", "ready")
+            .role("scratch/both", "solar", "orchestrator")
+            .role("scratch/both", "cobalt", "orchestrator"),
+    );
+    let task = f
+        .store
+        .take_role("scratch/gate", "solar", "orchestrator")
+        .unwrap();
+    assert_eq!(task.holders("orchestrator"), ["solar"]);
+    assert_eq!(
+        f.said("scratch/gate").last().unwrap(),
+        "solar took orchestrator over from teal (left)"
+    );
+    // Both still there: nothing to settle by taking it, only by a hand-over or a release.
+    let task = f
+        .store
+        .take_role("scratch/both", "solar", "orchestrator")
+        .unwrap();
+    let mut held = task.holders("orchestrator");
+    symphony_board::order::sort_by(&mut held, &Ord::cmp);
+    assert_eq!(held, ["cobalt", "solar"]);
+    assert_eq!(f.said("scratch/both"), Vec::<String>::new());
+    let task = f
+        .store
+        .hand_over("scratch/both", "cobalt", "solar")
+        .unwrap();
+    assert_eq!(task.holders("orchestrator"), ["solar"]);
 }
 
-on_both! {
-fn a_second_orchestrator_is_refused_naming_the_holder_and_the_hand_over(backend: Backend) {
-    let (f, a, b) = two_orchestrators(backend);
+#[test]
+fn a_second_orchestrator_is_refused_naming_the_holder_and_the_hand_over() {
+    let (f, a, b) = two_orchestrators();
     // The command names this board: a test's is a database of its own.
     let board = f.store.board_command();
     assert!(board.starts_with("just tasks --database "), "{board}");
@@ -121,11 +120,10 @@ fn a_second_orchestrator_is_refused_naming_the_holder_and_the_hand_over(backend:
         2
     );
 }
-}
 
-on_both! {
-fn taking_the_role_over_a_lost_or_left_holder_moves_it_and_says_so(backend: Backend) {
-    let (f, a, b) = two_orchestrators(backend);
+#[test]
+fn taking_the_role_over_a_lost_or_left_holder_moves_it_and_says_so() {
+    let (f, a, b) = two_orchestrators();
     go_quiet_but(&f, &[&b]);
     assert_eq!(
         f.health(&a),
@@ -160,11 +158,10 @@ fn taking_the_role_over_a_lost_or_left_holder_moves_it_and_says_so(backend: Back
         [a, b, c].into_iter().collect()
     );
 }
-}
 
-on_both! {
-fn a_hand_over_moves_the_role_in_one_write_naming_the_new_orchestrator(backend: Backend) {
-    let (f, a, b) = two_orchestrators(backend);
+#[test]
+fn a_hand_over_moves_the_role_in_one_write_naming_the_new_orchestrator() {
+    let (f, a, b) = two_orchestrators();
     let task = f.store.hand_over("scratch/one", &a, &b).unwrap();
     assert_eq!(task.holders("orchestrator"), [b.as_str()]);
     assert_eq!(
@@ -194,11 +191,10 @@ fn a_hand_over_moves_the_role_in_one_write_naming_the_new_orchestrator(backend: 
         "scratch/one is cancelled"
     );
 }
-}
 
-on_both! {
-fn a_hand_over_to_a_session_gone_quiet_or_leaving_meanwhile_is_refused(backend: Backend) {
-    let (f, a, b) = two_orchestrators(backend);
+#[test]
+fn a_hand_over_to_a_session_gone_quiet_or_leaving_meanwhile_is_refused() {
+    let (f, a, b) = two_orchestrators();
     let gone = format!("{b} is left; hand scratch/one to a session still here");
     go_quiet_but(&f, &[&a]);
     assert_eq!(refused(f.store.hand_over("scratch/one", &a, &b)), gone);
@@ -212,11 +208,10 @@ fn a_hand_over_to_a_session_gone_quiet_or_leaving_meanwhile_is_refused(backend: 
         [a.as_str()]
     );
 }
-}
 
-on_both! {
-fn a_hand_over_by_a_session_not_orchestrating_names_who_does_or_how_to_take_the_role(backend: Backend) {
-    let (f, a, b) = two_orchestrators(backend);
+#[test]
+fn a_hand_over_by_a_session_not_orchestrating_names_who_does_or_how_to_take_the_role() {
+    let (f, a, b) = two_orchestrators();
     let c = f.session("worker");
     let board = f.store.board_command();
     assert_eq!(
@@ -244,7 +239,6 @@ fn a_hand_over_by_a_session_not_orchestrating_names_who_does_or_how_to_take_the_
         )
     );
 }
-}
 
 /// What reached each listener since the last look, through a barrier `sender` sends.
 pub(super) fn heard(f: &Fixture, sender: &str, who: &[(&Listener, &str)]) -> Vec<Vec<String>> {
@@ -254,10 +248,10 @@ pub(super) fn heard(f: &Fixture, sender: &str, who: &[(&Listener, &str)]) -> Vec
         .collect()
 }
 
-on_both! {
 /// A hand-over is the giver's own write: only the session it reached hears it, once.
-fn a_hand_over_sends_one_role_event_to_the_session_it_reached(backend: Backend) {
-    let (f, a, b) = two_orchestrators(backend);
+#[test]
+fn a_hand_over_sends_one_role_event_to_the_session_it_reached() {
+    let (f, a, b) = two_orchestrators();
     let w = f.session("worker");
     f.store.claim("scratch/one", &w).unwrap();
     let (la, lb) = (listen(&f, &a), listen(&f, &b));
@@ -276,11 +270,10 @@ fn a_hand_over_sends_one_role_event_to_the_session_it_reached(backend: Backend) 
         [Vec::<String>::new(), vec![]]
     );
 }
-}
 
-on_both! {
-fn a_hand_over_to_a_reviewer_of_the_task_is_still_one_role_event(backend: Backend) {
-    let (f, a, b) = two_orchestrators(backend);
+#[test]
+fn a_hand_over_to_a_reviewer_of_the_task_is_still_one_role_event() {
+    let (f, a, b) = two_orchestrators();
     let w = f.session("worker");
     f.store.claim("scratch/one", &w).unwrap();
     f.store.take_role("scratch/one", &b, "reviewer").unwrap();
@@ -291,11 +284,10 @@ fn a_hand_over_to_a_reviewer_of_the_task_is_still_one_role_event(backend: Backen
     let role = format!("ROLE scratch/one {b} orchestrator, in_progress (from {a})");
     assert_eq!(heard(&f, &w, &ears), [vec![], vec![role]]);
 }
-}
 
-on_both! {
-fn each_orchestrator_hears_its_own_tasks_and_the_unclaimed_ones_only(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn each_orchestrator_hears_its_own_tasks_and_the_unclaimed_ones_only() {
+    let f = Fixture::new(Seed::default());
     let (a, b) = (f.session("orchestrator"), f.session("orchestrator"));
     // b launched a's worker: the work is a's all the same.
     let wa = f.session_with(NewSession {
@@ -381,7 +373,6 @@ fn each_orchestrator_hears_its_own_tasks_and_the_unclaimed_ones_only(backend: Ba
         ])
     );
 }
-}
 
 /// Orchestrators `a` on `scratch/a` and `b` on `scratch/b`, both listening, and one worker on
 /// each of those and on unclaimed `scratch/free`.
@@ -394,8 +385,8 @@ struct SharedWorker {
 }
 
 impl SharedWorker {
-    fn new(backend: Backend) -> SharedWorker {
-        let f = Fixture::on(backend, Seed::default());
+    fn new() -> SharedWorker {
+        let f = Fixture::new(Seed::default());
         let (a, b) = (f.session("orchestrator"), f.session("orchestrator"));
         let worker = f.session("worker");
         let tasks = [
@@ -433,9 +424,9 @@ impl SharedWorker {
     }
 }
 
-on_both! {
-fn a_lost_session_s_work_is_told_to_each_orchestrator_as_far_as_it_is_its_own(backend: Backend) {
-    let shared = SharedWorker::new(backend);
+#[test]
+fn a_lost_session_s_work_is_told_to_each_orchestrator_as_far_as_it_is_its_own() {
+    let shared = SharedWorker::new();
     let (f, w) = (&shared.f, &shared.worker);
     let bystander = f.session("worker");
     go_quiet_but(f, &[&shared.a, &shared.b, &bystander]);
@@ -456,11 +447,10 @@ fn a_lost_session_s_work_is_told_to_each_orchestrator_as_far_as_it_is_its_own(ba
         ]
     );
 }
-}
 
-on_both! {
-fn a_status_move_on_unclaimed_work_reaches_every_orchestrator(backend: Backend) {
-    let shared = SharedWorker::new(backend);
+#[test]
+fn a_status_move_on_unclaimed_work_reaches_every_orchestrator() {
+    let shared = SharedWorker::new();
     let w = &shared.worker;
     shared
         .f
@@ -470,11 +460,10 @@ fn a_status_move_on_unclaimed_work_reaches_every_orchestrator(backend: Backend) 
     let status = "STATUS scratch/free in_progress → blocked".to_string();
     assert_eq!(shared.heard(w), [vec![status.clone()], vec![status]]);
 }
-}
 
-on_both! {
-fn a_post_to_at_orchestrator_passes_a_holder_gone_quiet_for_the_one_above(backend: Backend) {
-    let (f, a, b) = two_orchestrators(backend);
+#[test]
+fn a_post_to_at_orchestrator_passes_a_holder_gone_quiet_for_the_one_above() {
+    let (f, a, b) = two_orchestrators();
     f.task_with(NewTask {
         parent: Some("scratch/one".into()),
         ..NewTask::new("scratch/one/b", "B's part", "owner")
@@ -492,11 +481,10 @@ fn a_post_to_at_orchestrator_passes_a_holder_gone_quiet_for_the_one_above(backen
     let ids: Vec<i64> = (f.store.inbox(&a).unwrap().iter()).map(|m| m.id).collect();
     assert_eq!(ids, [post.id], "the task is a's while b is gone");
 }
-}
 
-on_both! {
-fn a_post_to_at_orchestrator_reaches_the_nearest_orchestrator_only(backend: Backend) {
-    let (f, a, b) = two_orchestrators(backend);
+#[test]
+fn a_post_to_at_orchestrator_reaches_the_nearest_orchestrator_only() {
+    let (f, a, b) = two_orchestrators();
     f.task_with(NewTask {
         parent: Some("scratch/one".into()),
         ..NewTask::new("scratch/one/b", "B's part", "owner")
@@ -533,11 +521,10 @@ fn a_post_to_at_orchestrator_reaches_the_nearest_orchestrator_only(backend: Back
         .unwrap();
     assert_eq!(ids(&a), [to_a.id, named.id]);
 }
-}
 
-on_both! {
-fn each_digest_lists_its_own_and_the_unclaimed_tasks(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn each_digest_lists_its_own_and_the_unclaimed_tasks() {
+    let f = Fixture::new(Seed::default());
     let (a, b) = (f.session("orchestrator"), f.session("orchestrator"));
     let gone = f.session("orchestrator");
     let child_of = |parent: &str| {
@@ -588,5 +575,4 @@ fn each_digest_lists_its_own_and_the_unclaimed_tasks(backend: Backend) {
         ])
     );
     assert_eq!(digest.entries().len(), 8, "the whole board, unscoped");
-}
 }

@@ -74,7 +74,7 @@ fn take(common: &Path) -> Result<Option<Pass>, String> {
     let mut tasks = std::collections::BTreeSet::new();
     for line in text.lines() {
         tasks.extend(
-            serde_json::from_str::<Vec<String>>(line)
+            serde_json::from_slice::<Vec<String>>(line.as_bytes())
                 .map_err(|e| format!("{}: {e}", dir.join(REQUESTS).display()))?,
         );
     }
@@ -132,7 +132,7 @@ mod tests {
             std::env::temp_dir().join(format!("symphony-sweep-coalesce-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let first = request(&dir, &[]).unwrap().unwrap();
-        let (tell, told) = std::sync::mpsc::channel();
+        let (tell, told) = crate::test_channel::channel();
         let threads: Vec<_> = (0..10)
             .map(|n| {
                 let common = dir.clone();

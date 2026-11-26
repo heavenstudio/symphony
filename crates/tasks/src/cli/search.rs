@@ -1,4 +1,4 @@
-//! Ranked task rows with an excerpt from the field SurrealDB actually matched.
+//! Ranked task rows with an excerpt from the field the board's search actually matched.
 
 use super::commands::{Context, Stop};
 use super::shape;
@@ -15,7 +15,8 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         .ok_or_else(|| Stop::Refused("--limit must be a positive integer".into()))?;
     let query = p.or("query", "");
     let hits = store.search(query)?;
-    let eligible: BTreeSet<_> = store.task_slugs(p.get("status"))?.into_iter().collect();
+    let mut eligible: BTreeSet<_> = BTreeSet::new();
+    eligible.extend(store.task_slugs(p.get("status"))?);
     // Filtering comes before the limit; never reorder the store's relevance ranking by priority.
     let selected: Vec<_> = hits
         .iter()
@@ -23,11 +24,8 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         .take(limit)
         .collect();
     let named: Vec<_> = selected.iter().map(|hit| hit.slug.clone()).collect();
-    let tasks: BTreeMap<_, _> = store
-        .tasks_by_slug(&named)?
-        .into_iter()
-        .map(|task| (task.slug.clone(), task))
-        .collect();
+    let mut tasks = BTreeMap::new();
+    tasks.extend((store.tasks_by_slug(&named)?.into_iter()).map(|task| (task.slug.clone(), task)));
     let hits: Vec<_> = selected
         .into_iter()
         .filter_map(|hit| tasks.get(&hit.slug).map(|task| (hit, task)))

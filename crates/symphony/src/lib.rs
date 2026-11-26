@@ -27,6 +27,7 @@ pub mod branches;
 pub mod builds;
 pub mod callbacks;
 pub mod callouts;
+mod channel;
 pub mod children;
 pub mod cli;
 pub mod clock;
@@ -46,7 +47,9 @@ pub mod lint;
 pub mod machine;
 pub mod markup;
 pub mod merging;
+pub mod notices;
 pub mod owner_asks;
+pub mod owners;
 pub mod page;
 pub mod plugins;
 pub mod postpone;
@@ -86,6 +89,12 @@ mod test_tree;
 #[cfg(test)]
 #[path = "../tests/common/layouts.rs"]
 mod test_layouts;
+
+/// How the unit tests make a channel, std's; the library itself through `channel` alone
+/// (clippy.toml).
+#[cfg(test)]
+#[path = "../tests/common/test_channel.rs"]
+mod test_channel;
 
 #[cfg(test)]
 #[path = "../../../tools/test-support/script_board.rs"]

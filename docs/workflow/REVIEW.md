@@ -25,7 +25,9 @@ The product references describe [reading a document](../product/DOCUMENT.md) and
 [using a card's verdict editor](../product/CARDS.md). The app serves any file under the project, so a concept
 page's images, SVGs and galleries under `artifacts/` show inline. It writes verdicts under `docs/` (and the owner's approval to land an owner-tier branch, in the landing store),
 and keeps queue-view preferences under `artifacts/review-order/`. It listens on every interface but answers
-only this machine and tailnet peers `tailscale whois` confirms (403 otherwise). The markdown holds the
+only this machine and tailnet peers `tailscale whois` confirms (403 otherwise), and a peer under
+another Tailscale login than this machine's sees no board that has not added it
+([who a request is from](../../apps/symphony-server/README.md#who-a-request-is-from)). The markdown holds the
 owner's answers; view preferences never become verdicts.
 
 ### Queue categories
@@ -147,10 +149,10 @@ and the document counts once. The header board link, decision counts
 and previous/next navigation keep the same global view while a branch document is open.
 
 **A worktree with an owner line no commit has is never removed.** The worktree sweep (`just tasks sweep`) and
-`land`'s cleanup keep it and say so: the board reads the owner's dated lines under a card, in the documents of the
-project's entrypoint folders, that the worktree's HEAD does not hold, and keeps a worktree it cannot read as well;
-commit the verdict first. A consuming project's own gate asks the Symphony with
-`symphony::landing::owner_lines_left`, which names the documents holding such a line.
+`land`'s cleanup keep it and say so: the board reads the owner's dated lines under a card, and any person's (every
+dated line not an agent's), in the documents of the project's entrypoint folders, that the worktree's HEAD does
+not hold, and keeps a worktree it cannot read as well; commit the verdict first. A consuming project's own gate
+asks the Symphony with `symphony::landing::owner_lines_left`, which names the documents holding such a line.
 
 ## Start with the decision register
 
@@ -254,6 +256,11 @@ Keep the hidden `review:unseen-owner` comment under a card: it records that an a
 `[YYYY-MM-DD HH:MM] agent — <reply>` when an agent does. Deeper-indented lines
 continue the entry above. The web app writes the owner's lines; the history
 is how anyone can tell when something was decided and whether it changed.
+A person a board names writes their short name in the owner's place,
+`[YYYY-MM-DD HH:MM] ana · approved — A`: a person's line is any line that is
+not an agent's, and `agent`, `owner`, `board` and `unknown` are no one's name
+([users and identity](../product/analysis/users-and-identity.md#how-a-persons-name-is-written)).
+On a board with nobody named every person's line reads `owner ·`.
 
 **A note is drawn as a document's body is**, the owner's and an agent's alike:
 a single line break is a line break and a blank line a paragraph gap; bold,
@@ -408,13 +415,14 @@ ending "Approve and say A or B in the note, or comment."
 already decides, its consequences included, is never put to them again
 (`RULES.md` `review/decided-is-not-asked`).
 
-- Before a card is put to the owner, its agent checks the owner's earlier
-  verdicts. A card the owner approved decides a later card only when the choice
-  it approved already answers what the later card asks, and each of the later
-  card's other options would change that choice. A recommendation that leaves
-  alone something the approved card never addressed decides nothing, and that
-  card is asked. An auto-approved card, or a line an agent recorded as answered,
-  is not the owner's approval and decides no further card.
+- Before a card is put to the owner, its agent checks the earlier verdicts of
+  every person, the owner's and any a board named (a person's line is any line
+  not an agent's). A card a person approved decides a later card only when the
+  choice it approved already answers what the later card asks, and each of the
+  later card's other options would change that choice. A recommendation that
+  leaves alone something the approved card never addressed decides nothing, and
+  that card is asked. An auto-approved card, or a line an agent recorded as
+  answered, is no person's approval and decides no further card.
 - A decided card is not asked. The agent records it as answered: a plain agent
   line on the card the owner approved, quoting the owner's words and naming the
   card they are on, and answering any owner note still open there, since any
@@ -464,6 +472,11 @@ information its judgement call needs, and nothing more (`RULES.md`
 - A results or comparison card says how each option looks and how well it
   performs, one plain line each, such as "all three cost the same on the GPU,
   under 0.02 ms apart".
+- On a board that names people, a card that is a group's or a person's other
+  than its folder's says so first in its text: `- [ ] **new-palette** — *For:*
+  design. Which palette?`. The name is read where the board holds a group or a
+  person by it, and otherwise the folder's group decides; a hand-over from the
+  app rewrites it ([TASKS](TASKS.md#which-group-a-thing-belongs-to)).
 
 (`RULES.md` `docs/cards-clear-and-concise`.)
 
@@ -517,7 +530,9 @@ which it would cut from the card: after the card's last line it is a comment
 on the document like any other.
 
 The first line is the tag and a short title; the `>` lines under it are the
-body. `comment`, `question` and `decision` are open work until an agent nests
+body. A comment a person a board names left carries their short name before
+the title, `> [!comment] ana · 141 lamps`; the owner's names nobody.
+`comment`, `question` and `decision` are open work until an agent nests
 a resolution under them. Older documents also hold `like` (what to keep, no
 answer needed) and `dislike` (open, like `comment`); the app no longer offers
 them. A resolution looks like this:
@@ -529,6 +544,12 @@ them. A resolution looks like this:
 ```
 
 The owner's words are never edited or deleted. The resolution goes under them.
+
+A comment or a card's message from a person who may speak and may not direct agents is held
+for people instead: nothing is written to the file, and the page draws it where it was left,
+marked `held`, until someone who may passes it on, which writes it here under both names,
+`> [!question] ana · [passed on by bo] …`
+([TASKS](TASKS.md#words-held-for-people)).
 
 ## Asking
 

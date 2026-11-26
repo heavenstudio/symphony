@@ -38,9 +38,7 @@ pub(super) fn compatible(tag: &str, raw: &RawValue) -> Option<String> {
     let mut answer = raw.get().to_owned();
     // Each borrowed RawValue is a slice of this answer. Apply edits from the end so every
     // untouched field retains its original bytes, including duplicate fields a decoder refuses.
-    reader
-        .edits
-        .sort_unstable_by_key(|(part, _)| part.get().as_ptr());
+    symphony_board::order::sort_by_key(&mut reader.edits, &|(part, _)| part.get().as_ptr());
     for (part, replacement) in reader.edits.into_iter().rev() {
         let start = part.get().as_ptr() as usize - raw.get().as_ptr() as usize;
         answer.replace_range(start..start + part.get().len(), &replacement);
@@ -59,7 +57,7 @@ impl<'a> Reader<'a> {
             return;
         }
         if let Shape::List(item) = shape {
-            if let Ok(items) = serde_json::from_str::<Vec<&RawValue>>(raw.get()) {
+            if let Ok(items) = serde_json::from_slice::<Vec<&RawValue>>(raw.get().as_bytes()) {
                 for raw in items {
                     self.walk(raw, *item, depth + 1);
                 }
@@ -131,7 +129,7 @@ impl<'a> Reader<'a> {
 
 /// A tag is text, never a missing or wrongly typed field repaired by the compatibility reader.
 fn word(object: &BTreeMap<String, &RawValue>, key: &str) -> Option<String> {
-    serde_json::from_str(object.get(key)?.get()).ok()
+    serde_json::from_slice(object.get(key)?.get().as_bytes()).ok()
 }
 
 /// Read only this object's fields, rejecting duplicates before a replacement could hide them.
@@ -152,7 +150,7 @@ fn object_of(raw: &RawValue) -> Option<BTreeMap<String, &RawValue>> {
             Ok(fields)
         }
     }
-    serde_json::Deserializer::from_str(raw.get())
+    serde_json::Deserializer::from_slice(raw.get().as_bytes())
         .deserialize_map(Object)
         .ok()
 }

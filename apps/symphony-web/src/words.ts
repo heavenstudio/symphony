@@ -3,14 +3,19 @@
 /** What an action's button says while the page may show what is out of date, and it waits. */
 export const CHECKING = "Checking…";
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** The months' short names, as a page writes a date (`3 Nov`): January's at 0, as `Date` counts. */
+export const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+
+/** The weekdays' short names (`Sun 15 Nov`): Sunday's at 0, as `Date` counts. */
+export const WEEKDAYS = "Sun Mon Tue Wed Thu Fri Sat".split(" ");
 
 /** The days from 1970-01-01 to `date`'s day where the owner is. */
 function day(date: Date): number {
   return Math.round(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 864e5);
 }
 
-const twoDigits = (n: number) => String(n).padStart(2, "0");
+/** `n` in two digits at least, as a clock or a date writes it: `09`, `14`, `123`. */
+export const twoDigits = (n: number) => String(n).padStart(2, "0");
 
 /**
  * When a copy kept on this device was saved, as a page says it at `now`, both on the wall clock

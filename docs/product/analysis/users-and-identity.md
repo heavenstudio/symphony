@@ -5,8 +5,9 @@ that signs them in; what each may do is the Symphony's own, kept with the board:
 own what waits to be decided, and the powers to speak, decide and direct agents. This is
 a concept: it questions the idea against what the Symphony has, says the shape that fits, and
 puts its choices to the owner a few at a time; those not asked yet are [listed at its
-end](#later-rounds). Nothing here is built,
-and nothing is built from it but by a task filed from an approved card.
+end](#later-rounds). What is built of it is said at each step of [the way from one
+owner](#the-way-from-one-owner), and nothing is built from it but by a task filed from an approved
+card.
 
 Read at `59538b83e`, and the settings concept as it landed on main at `b31695d8d`. The links name
 the modules and documents read.
@@ -449,7 +450,12 @@ Kept once, with the server, and written by the person
 ([its card](#person-profile-where), B).
 
 - **The server keeps one profile for each person**: in the machine folder on a machine, in the
-  platform's own store on a hosted board. The person writes their own, and an admin can.
+  platform's own store on a hosted board. The person at the machine writes any profile. A person
+  writes their own display name and git handles. A board's admin makes a profile only for
+  someone who has none, with no sign-in: every sign-in is the person at the machine's alone to
+  give, as a sign-in says who a visitor is on every board of the machine holding the name, now or
+  later, so one an admin gave could take a name another board holds or will
+  ([TASKS](../../workflow/TASKS.md#the-people-page)).
 - **A board keeps only that person's groups and powers**, and refers to the profile. Who someone
   is, is kept apart from what they may do, as signing in is.
 - **A line carries the short name and nothing else.** A name once used is never given to
@@ -628,7 +634,10 @@ alone: it concerns people the board already knows, however they signed in.
 What follows for the rules that say "the owner":
 
 - **The `owner` stamp** on a task is the approve of any one member of the group the task belongs
-  to, naming the tip, under that member's name.
+  to who holds decide, naming the tip, under that member's name, or of the owner, on a card and
+  on a thread at once ([TASKS](../../workflow/TASKS.md#people)): a named person's
+  `ana · approved` meets it while she holds decide and the task is her group's, and her later
+  word that is no approve, or anyone's, keeps an approve from standing.
 - **An approved card decides a later one** whoever of its group approved it. An agent checking
   earlier verdicts reads the verdict, not who gave it.
 - **A line no commit has yet** keeps its worktree from being removed, whoever's line it is.
@@ -837,6 +846,33 @@ and may not direct agents. A person who may direct agents writes as the owner do
   as that person's own are: written into the file or shown on the thread, and an ask an agent
   answers. The line carries both names, whose words they are and who passed them on.
 
+- [x] **held-callout-block-changed** — A held comment is written after the block it was left on when it is passed on. Once that block's words change, or the block is gone, every Pass on is refused and nobody can withdraw the comment, so it stays on the page for good. What should happen to it? A: its author may withdraw it. B: whoever passes it on places it at the end of its section. C: it lapses and leaves the page. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+  [2026-11-25 01:19] agent — Posted for the board task `app/held-on-documents-follow-ups`, a question the pass leaves open once a document moves. Nothing that depends on it is built.
+
+    **Base (today).** A pass finds the block again by its words: under its own heading, else anywhere it stands once. Where they changed or are gone, the pass is refused with "the block this comment was left after has changed or is gone: nothing was written". The comment stays held, drawn where its block was, with a Pass on that is refused every time.
+
+    **A, its author withdraws it.**
+    - Its author sees Withdraw on it, and the board marks it withdrawn. It leaves the page and is told of no more.
+    - She may write it again where it belongs now.
+    - Until she does, it waits, and so does whoever was told of it.
+
+    **B, placed at its section's end.**
+    - Whoever may pass it on sees Pass on at the end of its section. That puts it after the last block under the heading it was left under, or at the document's end where that heading is gone, under both names as any pass is.
+    - The person deciding whether an agent reads it also decides that it still applies.
+
+    **C, it lapses.**
+    - Once its block is not found, it leaves the page and is told of no more. The board keeps the row.
+    - Nobody is asked, and its author is not told.
+
+    **Why B.** The words still say what she meant, and someone who may pass them on is the one told of them. B keeps them and needs nobody to come back. A waits on its author, who may never return, and C loses words without telling anyone.
+
+    **Earlier verdicts checked.**
+    - **words-without-agent-reach** (A) says a pass writes the words into the file. It does not say where once their block is gone.
+    - **held-on-document-waits-where** (open) asks where a held comment waits. It does not ask what happens once its block is gone.
+
+    Neither decides this.
+  [2026-11-26 08:08] owner · approved — B
+
 What follows:
 
 - **The board holds two kinds of words** where it held one: those in the record, which every
@@ -885,6 +921,51 @@ What follows:
   [2026-11-21 17:22] owner · approved — A
   [2026-11-21 17:28] agent — Recorded, A. The words of someone who may speak and may not direct agents are kept by the board and shown to people; no agent is handed them until someone who may direct agents passes them on. What follows is written out in [[analysis/users-and-identity#Words without agent reach]]. One consequence the card did not state: a verdict is written on its card in the file, where agents read it, so a person who decides still moves agents by what they decide. Whether the note beside such a verdict is held is listed for a later round.
   [2026-11-21 17:29] agent · resolved
+
+- [x] **held-on-document-agent-told** — A comment held on a document is in no file and on no thread, so an agent working there cannot tell it exists. Should it be told? A: no; an agent sees nothing of it until it is passed on. B: when an agent is handed that card's or that document's ask, it is told how many comments are held there, never what they say. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+  [2026-11-24 21:40] agent — Posted for the board task `app/held-words-on-documents`, a question your A on **words-without-agent-reach** leaves open for documents. Nothing that depends on it is built.
+
+    **Base (today).** A held message on a task's thread leaves a line agents read, `a message is held for people: #4`, so an agent never answers as though the thread were complete. A document has no thread, and a held comment is not written into its file.
+
+    **A, nothing.**
+    - The file is what agents read, and it holds only words that were passed on.
+    - An agent answering a card may answer it without the held message on it, until someone passes that message on.
+
+    **B, a count.**
+    - When an agent is handed a card's ask or a document's comment, the callback adds `2 held here`.
+    - It still cannot read them. It can say it answered without them.
+    - Nothing is written into the file, so an agent reading the file alone is told nothing.
+
+    **Why A.** B tells only an agent handed a callback, and a count it cannot read gives it nothing to act on. Whoever may pass a comment on sees it beside the card and decides whether an agent should read it.
+
+    **Earlier verdicts checked.**
+    - **words-without-agent-reach** (A) holds the words, and its text says a thread's reader is shown that messages are held. It says nothing of a document, which has no thread.
+    - **verdict-note-reach** (B) is about the note beside a verdict, which is written with it.
+
+    Neither decides this.
+  [2026-11-26 08:05] owner · approved — A
+
+- [x] **held-on-document-waits-where** — When someone who may not direct agents comments on a document, their words wait for someone to pass them on. Where do you see them waiting? A: on the document's page alone, and those who may pass them on are sent a notice. B: also in the review queue, beside the cards waiting for you. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+  [2026-11-24 21:40] agent — Posted for the board task `app/held-words-on-documents`, a question your A on **words-without-agent-reach** leaves open for documents. Nothing that depends on it is built.
+
+    **Base (today).** A held message on a task's thread waits on you as an agent's question does, where your questions show, until someone passes it on. A document has no thread, so a held comment has no such line.
+
+    **A, on its page.**
+    - The comment shows on the document's page, marked held, with Pass on.
+    - The members of its group who may pass it on are sent a notice by the way each chose.
+    - You see it when you open that document.
+
+    **B, in the queue too.**
+    - As A, and the review queue lists each held comment beside the cards waiting, linking to it, until it is passed on.
+
+    **Why B.** On a board where nobody else may pass a comment on, you are the only one who can, and no notice reaches you by mail or chat. Under A such a comment waits until you happen to open its document. B costs the queue one more kind of row.
+
+    **Earlier verdicts checked.**
+    - **words-without-agent-reach** (A) says the people concerned are told. It does not say where you see held words waiting.
+    - **notice-sender** (B) says the page and the Mac app show every notice. It does not say where on the page a held comment waits.
+
+    Neither decides this.
+  [2026-11-26 08:14] owner · approved — B
 
 ### The note beside a verdict
 
@@ -1037,9 +1118,12 @@ What follows:
   can be an email: no project plugin is handed an email or a chat address.
 - **Mail and chat are no project plugin's to send**, since only the server knows where a person
   is reached. The server's [notice plugins](#who-sends-a-notice) send them.
-- **The kit's `Submission` gains who sent it**, shipped beside what it holds today under the
-  kit's version rules, so a plugin built against an older kit keeps working. The line the board
-  says on the task for a submission names the person.
+- **Who sent a submission is handed beside it**, not added to the kit's `Submission`: the host
+  calls `BoardAction::submit_from` with the submission and its `Sender`, the protocol's
+  `Submit.sender`, and `submit_from` answers by `submit` unless an action implements it, so a
+  plugin built against an older kit keeps working
+  ([PLUGIN_PROTOCOL](../../engineering/PLUGIN_PROTOCOL.md)). The line the board says on the task
+  for a submission names the person.
 - **A plugin's commands** are run in a terminal, as the machine's account, as today.
 
 - [r] **plugin-told-who** — A project's plugin is told nothing of who asked today: a board action's answer is taken as yours. With several people the core admits every call before a plugin is asked, so who may do what is settled before the plugin runs. What is left is what the plugin is told. A: nothing; the board's own line names the person, and the plugin's own commit is authored as the machine. B: on every call made for a person, their public part (short name, display name, git handles) and their groups and powers there. C: the public part on a write alone, a board action's answer; reads carry nobody, and no call carries powers. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What a plugin is told of who asked]]
@@ -1102,6 +1186,37 @@ What follows:
 - **The record's format changes for every project**, so the build that brings names says so to
   consuming projects, as any change to what a project's tools read does. A project with nobody
   named writes as it does today.
+
+What is not settled is the person at the machine once others are named: they keep writing as
+`owner` on every board, holding every power there, until the card below decides otherwise.
+
+- [x] **machine-person-name** — Once a board names other people, your own lines there still read `owner ·`, beside `ana ·` and the others'. What is left is whether you take a short name of your own, and when. A: never; you are `owner` on every board, the one line that names no profile. B: on a board that names anyone else, your new lines carry your own short name, from a profile you give yourself, and on a board with nobody named they read `owner ·` as today. C: once you give yourself a short name, every new line of yours carries it, on every board, named or not. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
+  [2026-11-23 19:40] agent — Posted for the board task `app/names-on-lines`. A concept: nothing is built by this card.
+
+    **Base (today, with names on lines built).** A person a board names writes `ana · approved — A`, a thread's sender `ana` and a comment `ana · title`. You, the person at the machine, write `owner` on every board, and hold every power there. A line already written is never rewritten: the lines written as `owner` read as yours.
+
+    **A, `owner` always.**
+    - Your lines read `owner ·` on every board, beside the named people's.
+    - Nothing more to build. A reader who meets `owner` must know it is the machine's person.
+
+    **B, your name where others have theirs.**
+    - On a board that names anyone else, your new lines read with your own short name (`stefano ·`), taken from a profile you give yourself; you still hold every power there.
+    - On a board with nobody named, your lines read `owner ·` as today.
+    - Your older `owner` lines stay as written, and still read as yours.
+
+    **C, your name everywhere once you set it.**
+    - Once you give yourself a short name, every new line of yours carries it, on every board.
+    - A consuming project with nobody named starts writing your name, where it writes `owner ·` today.
+
+    **Why B.** Once several people decide on a board, `owner` names nobody a reader can find in its people, which is why names on lines took the owner's place. B gives that board your name and leaves every board with nobody named as it is. A costs a reader the knowledge that `owner` is the machine's. C changes the record of projects where nobody but you writes.
+
+    **Earlier verdicts checked.**
+    - **person-name-on-lines** (A) reads the lines written as `owner` as the machine's person's, and keeps `owner ·` on a board with nobody named. It does not say what your new lines read once others are named.
+    - **person-profile-where** (B) gives a person a profile with their short name. It does not say whether the person at the machine has one.
+    - **people-kept-where** (B) gives the person at the machine every power on a board with nobody named. It does not say how their lines read once others are.
+
+    None of them decides this.
+  [2026-11-26 08:03] owner · approved — C
 
 - [r] **person-name-on-lines** — Once several people are on a board, each line a person writes on a card carries their short name where it says `owner` today. The choice is how it is written. A: the name takes the owner's place, `ana · approved — A`; a person's line is any line that is not an agent's, and `agent` and `owner` are never anyone's name. B: the word stays and the name follows, `owner ana · approved — A`. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
   [2026-11-23 00:52] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
@@ -1211,8 +1326,8 @@ What follows:
   way, it stays on the page and in the Mac app, where every notice is shown anyway.
 - **A person's profile gains a WhatsApp number**, beside their emails and Slack user
   ([above](#a-persons-profile)).
-- **The format comes first**, then the three plugins, each built and released on its own, in any
-  order. What each needs:
+- **The format comes first** ([NOTICES](../../engineering/NOTICES.md)), then the three plugins,
+  each built and released on its own, in any order. What each needs:
   - **Slack**: a Slack app installed in the workspace and its bot token; a direct message to the
     person's Slack user. It follows Slack's interface as Slack changes it.
   - **WhatsApp**: a WhatsApp business account with a number to send from, and its token. A
@@ -1280,6 +1395,32 @@ people on a board there are two kinds:
 
 On one machine with one person every agent is both at once: started by them, on their machine,
 directed by them. Nothing changes there.
+
+- [x] **machine-agents-whose** — On a board that names other people, every agent on it still runs on your machine, on your credits: each is yours, and those holding a task's role are the board's shared agents too. What is left is whose words reach your agents there. A: every session on your machine is both, so anyone the board lets direct agents reaches any of them, as today. B: only a session holding a role on a task (its orchestrator, executor or reviewer) is shared; any other session is yours alone, and someone else's words to it come to you, not to the agent. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Agents beside people]]
+  [2026-11-24 21:45] agent — Posted for the board task `app/personal-agents`, step 5's last part. A concept: nothing is built by this card.
+
+    **Base (today).** Every agent that reaches a board runs on that board's machine: the board's commands write its database there, and no command reaches a hosted board yet. So every session is yours. Someone the board named who may speak and direct agents (`bo`) reaches every session as you do: on a task's thread, by an ask or a comment, and through the quick chat, which goes to whoever holds the chat.
+
+    **A, every session is both.**
+    - Your agents work for anyone the board lets direct agents, as they do today.
+    - "Their words reach its person, not the agent" first matters for an agent from another machine, once one can show a board whose it is (a later round).
+    - Nothing to build.
+
+    **B, only a session holding a task's role is shared.**
+    - Its orchestrator, executor or reviewer is the board's. Any other session is yours alone.
+    - bo's message to such a session, and bo's quick chat while the chat's session holds no task's role, come to you, and no agent is handed them until you pass them on.
+
+    **Under both** a session never decides a card or gives the `owner` stamp, and its own words are never held: it stands where you stand.
+
+    **Why A.** Giving bo the power to direct agents already lets bo set your machine's agents to work on your credits. B keeps the sessions you run for yourself to yourself, at the cost of a second rule for whose words reach a session, and of bo's quick chat coming to you instead of an agent.
+
+    **Earlier verdicts checked.**
+    - **review-not-own-agent** (A) has a personal agent stand where its person stands, and any fresh session review. It does not say which of your machine's sessions are personal and which shared.
+    - **task-acts-who** (A) says starting an agent on a task needs the power to direct agents. It does not say whose words reach an agent already running.
+    - **words-without-agent-reach** (A) holds the words of someone who may not direct agents. It is about whose words are held, not which agents the words of someone who may reach.
+
+    None of them decides this.
+  [2026-11-26 08:06] owner · approved — A
 
 Left for a later round: who hosts a board's shared agents and what a host may limit, beside the
 proposed execution providers, where a project's provider owns its runtime identity and
@@ -1354,15 +1495,106 @@ Each step can ship alone, and a machine with one person sees none of them.
    login is its person. A peer under another login is that login's person, and until a board
    adds them the server shows them nothing.
 3. **People, groups and powers on a board.** The rows, the People page, names on lines.
+   Built: names on lines; a board's people, groups and powers as rows, the command that changes them
+   (`just tasks-people`, which an agent is asked before) and the log it keeps; the profiles in the
+   machine folder; a visitor under another login on the boards that give them a power; each write
+   checked against the powers it needs; the `owner` stamp opened by decide
+   ([TASKS](../../workflow/TASKS.md#people)); and the People page, read by everyone on the board,
+   its changes guarded by administer ([TASKS](../../workflow/TASKS.md#the-people-page)).
 4. **Ownership.** A card and a task have their group, from the board's map of places or a name
    written on them; queues and notices follow it, and any member's answer settles what the
    group owns. Its members move, prioritize and cancel its tasks. The Settings page is one of
    the places, and its group's members change its settings. The core makes notice messages, and
    the server's plugins for Slack, WhatsApp and email send them, each shipping on its own.
+   Built: the notice message's format and its hand-off, which a plugin builds on
+   ([NOTICES](../../engineering/NOTICES.md)); the Slack plugin
+   ([NOTICE_SLACK](../../operations/NOTICE_SLACK.md)), the WhatsApp plugin
+   ([NOTICE_WHATSAPP](../../operations/NOTICE_WHATSAPP.md)) and the email plugin
+   ([NOTICE_EMAIL](../../operations/NOTICE_EMAIL.md)); a person's addresses (an email, a Slack
+   member id, a WhatsApp number, each held to its plugin's rule) and the way each kind of notice
+   goes by, on their profile, written by them on the People page or by the person at the machine,
+   and the server's read of where a notice of theirs goes ([TASKS](../../workflow/TASKS.md#people));
+   the board's map of places to groups, kept by its admins, a card's `*For:*` and a task's
+   `--group`, the read of whose a thing is and what gave it, drawn on a task's page and a card, and
+   its hand-over by a member of its group
+   ([TASKS](../../workflow/TASKS.md#which-group-a-thing-belongs-to)); a card's verdict and Later, a
+   task's moves, priority, fields, cancel and approve and the settings decided by the members of
+   its group who hold decide, the `owner` stamp read from them, and the controls drawn for them
+   alone ([TASKS](../../workflow/TASKS.md#people)); each person's queue, Home's first cards and
+   counts, the postponed and pending lists, a folder's count, a project's row and the feed holding
+   the cards they decide alone ([TASKS](../../workflow/TASKS.md#people)); and the machine's one
+   server telling each member of a
+   thing's group of a card waiting, an agent's question and a reviewer's verdict, by the way each
+   chose, through the programs the machine folder names
+   ([NOTICES](../../engineering/NOTICES.md#the-servers-part)).
 5. **Speaking apart from directing agents.** A person's words reach people always. The board
    holds the words of someone who may not direct agents, and passing them on makes them an ask.
    The note beside a verdict is written with it. A personal agent, tied to its person on the
    board, reaches a task's agents as its person does, a review among it.
+   Built: on a task's thread, the message of a person who may speak and may not direct agents held
+   for people, shown to them on the task page and waiting on the person at the machine, its line
+   told to the members of the task's group as step 4 tells a question, an agent's read saying only
+   how many are held; passed on with one press or `just tasks pass`, under both names, as an ask;
+   and direct agents given and taken as any power
+   ([TASKS](../../workflow/TASKS.md#words-held-for-people)). On a document, such a person's
+   callout or card message held the same way, reaching no clone, no ask and no agent, drawn where
+   it was left on the document's page and told to those who may pass it on, and passed on with one
+   press under both names, as an ask, after its block found again or refused with nothing written;
+   and the note beside a verdict written with it, by one who may decide and not direct agents.
+   Not yet: a held ask, which [its card](#held-ask) asks of the owner, while the document's page
+   draws its questions' Ask and Follow up for those who may ask alone; and the two cards above on
+   what an agent is told of a document's held comments and where they wait.
+   Personal agents, as far as any agent reaches a board: every session that reaches one runs on
+   its machine, under its account and on its credits, since the board's commands write its
+   database there and none reaches a hosted board yet
+   ([POSTGRESQL](../../operations/POSTGRESQL.md#a-hosted-board)). So each is the person at the
+   machine's personal agent, and a shared agent too where it holds a task's role, and it stands
+   where they stand, each part held by a test:
+   - its words are never held, and a pass of held words by it is theirs
+     (`crates/tasks/tests/store/held_words.rs`:
+     `who_may_direct_agents_writes_as_the_owner_does_and_only_a_persons_words_are_held`,
+     `passed_on_the_words_reach_the_tasks_agents_once_under_both_names_and_ask`);
+   - it never writes as a person, so its approve is no `owner` stamp: the command line refuses
+     `owner` as its actor (`crates/tasks/tests/cli/commands.rs`:
+     `owner_actors_are_refused_by_flag_and_environment_without_changing_the_board`), no session
+     is given a person's name (`crates/tasks/tests/store/board_people.rs`:
+     `no_person_is_named_as_a_handle_and_no_session_is_given_a_persons_or_a_groups_name`), and a
+     session's approve meets no stamp (`crates/tasks/src/stamps/read/tests.rs`:
+     `the_owners_stamp_is_the_owners_approve_naming_the_tip_and_stale_at_a_later_commit`);
+   - it reviews by today's fresh-session rule (`crates/tasks/tests/store/verdict.rs`:
+     `whoever_orchestrates_orchestrated_or_filed_the_task_is_refused_its_review_at_once`,
+     `a_session_that_executed_the_task_gives_it_no_verdict_whatever_role_it_holds_now`).
+
+   Two things wait. On a board that names others, which of the machine's sessions are its
+   person's alone, whose words no one else's reach, is [an open card](#machine-agents-whose).
+   Another person's personal agent needs an agent on another machine to reach a board and prove
+   its handle and whose it is, a [later round's](#later-rounds), after step 7's agent
+   credentials: until then no record ties a session to a person, as one claimed by hand would say
+   what no session on the machine is.
+
+- [x] **held-ask** — A person who may speak and may not direct agents is refused an ask about a document, its follow-up and the `+` sheet's chat, since asking is directing an agent. They can already leave a held question after any block, which an agent answers once someone passes it on. Should their ask also be held and passed on like a comment? A: no, it stays refused. B: held, drawn in the asks panel, and passed on as an ask under both names. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#The way from one owner]]
+  [2026-11-25 08:39] agent — Posted for the board task `app/held-asks-on-documents`, a question your A on **words-without-agent-reach** leaves open for asks. Nothing that depends on it is built. Under either answer the document's page draws Ask and Follow up only for someone who may ask.
+
+    **Base (today).** An ask is a question to the agent that answers chat. It reaches that agent at once and changes no file. Someone who may speak and may not direct agents is refused it, its follow-up and the `+` sheet's chat. Their question after a block is held: everyone reading the page sees it, those who may pass it on are told, and once passed it becomes an ask an agent answers, under both names.
+
+    **A, it stays refused.**
+    - They ask about a place in a document by leaving a held question there.
+    - The page draws them the asks' threads and no Ask or Follow up.
+
+    **B, held and passed on.**
+    - Their ask is kept by the board and drawn in the asks panel, marked held, with Pass on for those who may.
+    - Passed on, it becomes the passer's ask under both names, and an agent answers it.
+    - Their follow-up on a thread waits the same way, and so does each line of their chat in the `+` sheet.
+
+    **Why A.** The held question already does it: it hangs on the place it asks about and becomes an ask once passed on. Only an agent answers an ask, so a held one is a question nobody answers until it is passed, and whoever passes it could ask it themselves. B costs a second held kind in the asks panel and the chat, and a chat whose every line waits for someone is no chat.
+
+    **Earlier verdicts checked.**
+    - **words-without-agent-reach** (A) says no agent sees their words until someone passes them on. It rules out letting them ask outright, and does not say whether they may ask at all.
+    - **held-on-document-agent-told** and **held-on-document-waits-where** (open) are about held comments, not asks.
+
+    Neither decides this.
+  [2026-11-26 08:04] owner · approved — A
+
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
    saves through the same writes as local ones. Then the Symphony's own sign-in service, a
    separate program in front.

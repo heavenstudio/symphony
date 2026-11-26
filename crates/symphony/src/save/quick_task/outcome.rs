@@ -30,7 +30,7 @@ fn found(
     receipt: &str,
 ) -> Result<bool, Failure> {
     match store.get(&new.slug) {
-        Ok(task) if crate::taskview::is_quick_task(&task, receipt) => Ok(true),
+        Ok(task) if crate::taskview::is_quick_task(&task, receipt, &new.by) => Ok(true),
         Ok(_) => Err(format!(
             "task {} already belongs to another save; your text is kept",
             new.slug

@@ -8,7 +8,8 @@
 //!   and the paths it changed, no diff;
 //!
 //! and, for each red that names the commits it came between, the merges on the line of first
-//! parents in that range, the landings it may trace back to ([`trace`]).
+//! parents in that range, the landings it may trace back to ([`trace`]); and for each task the
+//! day landed, the lines of the commit on that line that landed it ([`landings`]).
 //!
 //! Each commit counts in the hour it reached the branch ([`reached`]): the hour of the commit on
 //! the line of first parents that brought it there, itself or the merge that landed it, so a
@@ -101,7 +102,7 @@ pub fn excluded(project: &Project) -> Vec<String> {
         .map(|generator| generator.outputs.clone())
         .filter(|outputs| !outputs.is_empty())
         .collect();
-    outputs.sort();
+    symphony_board::order::sort_by(&mut outputs, &Ord::cmp);
     outputs.dedup();
     outputs.extend(LOCKS.iter().map(|name| (*name).to_string()));
     outputs
@@ -414,6 +415,40 @@ pub fn trace(day: &mut ReportDay, root: &Path, branch: &str, problems: &mut Vec<
                 }
             }
         }
+    }
+}
+
+/// The folder of the lands of the repository at `root`, in its git common dir, where a land a
+/// pull request delivered keeps its receipt (`symphony_board::land::delivery::Receipt`); none
+/// where `root` is in no repository.
+pub fn lands(root: &Path) -> Option<std::path::PathBuf> {
+    let common = symphony_board::git::common_dir(root).ok()?;
+    Some(symphony_board::sweep::trigger::folder(&common).join(symphony_board::land::FOLDER))
+}
+
+/// Each task `day` names landed ([`symphony_api::reports::Landed`]) gets the lines its landing
+/// brought `branch`: those of the newest commit on `read`'s line of first parents that landed it,
+/// the squash its land's receipt in `lands` names ([`lands`]), else a merge whose subject says it
+/// ([`landing_slug`]). Its lines are the commit's own on the line, a merge's against its first
+/// parent, what [`excluded`] names left out, as the hours count them; a landing that changed none
+/// of the rest has lines of none. A task whose commit the read does not hold (one landed before
+/// the window the read starts at) keeps none. A receipt is the one thing that says a squash is a
+/// landing, and of which task: a commit's subject never does. Each task's receipt is one small
+/// file, read only for the tasks the day landed.
+pub fn landings(day: &mut ReportDay, read: &Read, branch: &str, lands: Option<&Path>) {
+    for task in &mut day.landed {
+        let squash = lands
+            .and_then(|folder| symphony_board::land::delivery::Receipt::read(folder, &task.slug))
+            .map(|receipt| receipt.squash);
+        let landed = read.line.iter().find(|commit| {
+            squash.as_deref() == Some(commit.hash.as_str())
+                || (commit.parents.len() > 1
+                    && landing_slug(&commit.subject, branch) == Some(task.slug.as_str()))
+        });
+        task.lines = landed.map(|commit| symphony_api::reports::Lines {
+            added: commit.added,
+            removed: commit.removed,
+        });
     }
 }
 

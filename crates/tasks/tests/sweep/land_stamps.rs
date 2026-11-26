@@ -413,6 +413,57 @@ fn a_task_needing_the_owner_waits_on_the_owners_approve_of_its_tip() {
     assert_landed(&r, slug, &tip, result);
 }
 
+/// A person the board gives decide approves for the owner where the task is her group's: her
+/// approve of the tip stands for the `owner` stamp once the board gives her decide and maps her
+/// group the task's, read at the land, and not before.
+#[test]
+fn a_task_needing_the_owner_lands_on_the_approve_of_one_the_board_gives_decide() {
+    use symphony_board::people::ownership::Place;
+    use symphony_board::people::{Holder, Power};
+    let r = Repo::new();
+    manifest(&r, "");
+    let slug = "ui/her-page";
+    let (staff, tip) = in_review(&r, slug, &[("ui/page.gd", "extends Node\n")]);
+    assess(&r, slug, &staff.assessor, &["tests", "owner"], &tip);
+    green(&r, slug, &tip);
+    let store = &r.board.store;
+    store
+        .add_person("ana", &[], &[Power::Speak], &staff.orch)
+        .unwrap();
+    // Her approve as her page posts it: the server's store writes for her.
+    (r.board.other().for_person("ana"))
+        .say(slug, "ana", &format!("approve {tip}"), None)
+        .unwrap();
+    let before = head(&r.root, "main");
+    let (_, result) = landed_by(&r, slug, &staff.orch);
+    let refused = result.unwrap_err();
+    assert!(
+        refused.contains(&format!(
+            "owner (Waits on the owner's approve of {})",
+            &tip[..7]
+        )),
+        "her approve counts for nothing while she holds no decide: {refused}"
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    store
+        .grant(Holder::Person("ana"), &[Power::Decide], &staff.orch)
+        .unwrap();
+    let (_, result) = landed_by(&r, slug, &staff.orch);
+    assert!(
+        result.is_err(),
+        "the task is the person at the machine's while the board maps no group it keeps"
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    store.add_group("ui", &[], &staff.orch).unwrap();
+    store.join_group("ana", "ui", &staff.orch).unwrap();
+    store
+        .map_place(&Place::Area("ui".into()), "ui", &staff.orch)
+        .unwrap();
+    let (said, result) = landed_by(&r, slug, &staff.orch);
+    assert!(said.contains("owner: Approved by ana at "), "{said}");
+    assert_landed(&r, slug, &tip, result);
+}
+
 /// A task needing no review whose one missing stamp is the owner's is held blocked, keeping its
 /// slot, and lands from blocked once the owner approves its tip.
 #[test]

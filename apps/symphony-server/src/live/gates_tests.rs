@@ -33,6 +33,7 @@ fn said(mut seed: Seed, (id, kind): (i64, &str), slug: &str, by: &str, text: &st
         kind: kind.into(),
         text: text.into(),
         ts: NOW + f64::from(i32::try_from(id).unwrap()),
+        person: false,
     });
     seed
 }
@@ -45,7 +46,7 @@ const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
 /// asked again only past a backstop, so no test's steps, however slow, reach a retry.
 fn hub(root: &Path, f: &Fixture, wait: Duration) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
-    let board = f.other_client();
+    let board = f.other_database();
     hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
     hub.gates = symphony::gates::Kept::new(symphony::gates::Limits {
         wait,
@@ -1093,6 +1094,76 @@ fn state(answer: &Value, name: &str) -> GateState {
         .find(|(gate, _, _)| gate == name)
         .unwrap_or_else(|| panic!("no gate {name} in {answer}"))
         .1
+}
+
+/// A decider's approve of the tip on the task's thread meets its `owner` gate, named as theirs,
+/// only while the board gives them decide and maps their group the task's: who decides comes with
+/// the task's stamp, so a grant, a revoke or an unmap is read at the next read, and a read with
+/// nothing new still asks the board once.
+#[test]
+fn a_deciders_approve_meets_the_owner_gate_while_the_board_gives_them_decide() {
+    use symphony_board::people::ownership::Place;
+    use symphony_board::people::{Holder, Power};
+    use symphony_board::stamps::{Catalogue, Needs};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    git(&root, &["branch", "tools/kept"]);
+    let tip = commit_on(&root, "tools/kept");
+    let f = Fixture::new(Seed::default().task("tools/kept", "review"));
+    let needs = Needs {
+        stamps: vec!["owner".into()],
+        tip: Some(tip.clone()),
+        by: f.session("worker"),
+        why: "the owner asked to see it".into(),
+        import: None,
+    };
+    f.store
+        .set_needs("tools/kept", &Catalogue::symphony(), &needs)
+        .unwrap();
+    let (_shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+    let owner_gate = || {
+        let (status, answer) = ask("/api/task-gates?slug=tools/kept");
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        (gates(&answer).into_iter())
+            .find(|(name, _, _)| name == "owner")
+            .map(|(_, state, detail)| (state, detail))
+            .unwrap()
+    };
+    let by = f.session("orchestrator");
+    f.store
+        .add_person("ana", &[], &[Power::Speak], &by)
+        .unwrap();
+    f.store.add_group("tools", &[], &by).unwrap();
+    f.store.join_group("ana", "tools", &by).unwrap();
+    let area = Place::Area("tools".into());
+    f.store.map_place(&area, "tools", &by).unwrap();
+    let said = symphony::gates::stamps::approve_line(&tip).unwrap();
+    (f.other().for_person("ana"))
+        .say("tools/kept", "ana", &said, None)
+        .unwrap();
+    assert_eq!(owner_gate().0, GateState::Held, "no decide, no approve");
+    f.store
+        .grant(Holder::Person("ana"), &[Power::Decide], &by)
+        .unwrap();
+    let met = (GateState::Met, format!("Approved by ana at {}", &tip[..7]));
+    assert_eq!(owner_gate(), met, "a grant after her approve counts it");
+    let sent = requests(&f.store);
+    assert_eq!(owner_gate(), met);
+    assert_eq!(requests(&f.store) - sent, 1, "one request to the board");
+    f.store
+        .revoke(Holder::Person("ana"), &[Power::Decide], &by)
+        .unwrap();
+    assert_eq!(owner_gate().0, GateState::Held, "a revoke withdraws it");
+    f.store
+        .grant(Holder::Person("ana"), &[Power::Decide], &by)
+        .unwrap();
+    assert_eq!(owner_gate(), met);
+    f.store.unmap_place(&area, &by).unwrap();
+    assert_eq!(
+        owner_gate().0,
+        GateState::Held,
+        "the task is the person at the machine's once its area is unmapped"
+    );
 }
 
 /// What a gates read costs is counted, never timed: the requests the board is sent, and each part

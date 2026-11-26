@@ -566,7 +566,7 @@ async fn a_tasks_subtasks_page_by_priority_across_the_cursor() {
     )
     .await;
     let mut expected: Vec<(usize, usize)> = (1..=40).map(|n| (n % 3, n)).collect();
-    expected.sort_unstable();
+    symphony_board::order::sort_by(&mut expected, &Ord::cmp);
     let expected: Vec<String> = expected
         .into_iter()
         .map(|(_, n)| format!("app/parent/part-{n}"))

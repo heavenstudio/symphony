@@ -114,6 +114,30 @@ pub struct Landed {
     /// round, model and speed; empty where it recorded none.
     #[serde(default)]
     pub spent: Vec<TokenSum>,
+    /// The kind it was given (`symphony_board::kind`: feature, fix, red, tests, docs); left out
+    /// for one given none, and in a file written before kinds were kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// The lines its landing brought the default branch, read by the git roll-up from the commit
+    /// on the branch's line of first parents that landed it ([`GitRead::excluded`] left out, as
+    /// [`GitCounts`] leaves them): the squash its land's receipt names, or the merge its subject
+    /// says. Left out where that commit was not read, and in a file written before they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<Lines>,
+}
+
+/// Lines added and removed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Lines {
+    pub added: u64,
+    pub removed: u64,
+}
+
+impl Lines {
+    /// Added and removed together: the lines changed.
+    pub fn changed(&self) -> u64 {
+        self.added + self.removed
+    }
 }
 
 /// One hour of a day: what adds up, so the hours of any span sum to that span's figure.

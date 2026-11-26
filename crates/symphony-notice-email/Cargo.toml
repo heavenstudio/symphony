@@ -1,0 +1,33 @@
+# `symphony-notice-email`: the notice plugin that sends a person's notice by mail
+# (docs/operations/NOTICE_EMAIL.md). A program of its own, which the server hands one notice at a
+# time on its stdin (docs/engineering/NOTICES.md), reaching the mail server through `curl` over
+# SMTP. It links `symphony-notice` alone of the workspace's members and none links it, so the core
+# carries none of it; it keeps its settings and its password in the machine folder's `notices/`,
+# never in a project's `symphony.toml`. Never published and in no release: whoever runs the server
+# builds it.
+[package]
+name = "symphony-notice-email"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+symphony-notice = { path = "../symphony-notice" }
+# Its settings file, notices/email.toml.
+serde = { version = "1", features = ["derive"] }
+toml.workspace = true
+# O_NOFOLLOW, so a file in notices/ is read without following a link.
+libc.workspace = true
+
+[dev-dependencies]
+# The boundary test reads `cargo metadata`.
+serde_json.workspace = true
+# The backstop on a wait for the fake mail server's transcript.
+test-time = { path = "../test-time" }
+
+[lints]
+workspace = true

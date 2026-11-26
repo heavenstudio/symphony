@@ -492,7 +492,7 @@ pub fn serve_main(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
             Err(_) => return 2,
         }
         let _in_hand = IN_HAND.lock().recover();
-        let answer = match serde_json::from_str::<Value>(&line) {
+        let answer = match serde_json::from_slice::<Value>(line.as_bytes()) {
             Ok(request) => match request.get("cwd").and_then(Value::as_str) {
                 Some(dir) if std::env::set_current_dir(dir).is_err() => {
                     json!({"error": "value", "message": format!("no directory {dir:?} to work from")})
@@ -598,7 +598,14 @@ fn card_data<'a>(d: &'a Decision, plugins: &Plugins) -> CardData<'a> {
         entries: thread
             .entries
             .into_iter()
-            .map(|e| json!({"ts": e.ts, "who": e.who.as_str(), "verdict": e.verdict, "text": e.text}))
+            .map(|e| {
+                let mut entry = json!({"ts": e.ts, "who": e.who.as_str(), "verdict": e.verdict, "text": e.text});
+                // A person a board named is named; the owner's and an agent's line read as before.
+                if e.name != e.who.as_str() {
+                    entry["name"] = e.name.clone().into();
+                }
+                entry
+            })
             .collect(),
         reply: thread.reply,
         posted_at: thread.posted_at,
@@ -748,13 +755,15 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
                 .ok_or_else(|| bad("board_words needs a card".into()))?;
             json!({"title":crate::dashboard::card_title(&plugins, card), "summary":crate::dashboard::card_summary(&plugins, card), "rest":crate::dashboard::card_rest(&plugins, card)})
         }
-        "set_decision" => json!(edit::set_decision(
+        // A person's line carries who said it, `by`: `owner` when none is given, as always.
+        "set_decision" => json!(edit::set_decision_by(
             text()?,
             text_arg(request, "slug")?,
             text_arg(request, "state")?,
             text_arg(request, "note")?,
             now()?,
             &plugins,
+            optional_text(request, "by")?.unwrap_or(Who::Owner.as_str()),
         )?),
         "is_repeat_decision" => {
             let (slug, state, note) = (
@@ -762,19 +771,17 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
                 text_arg(request, "state")?,
                 text_arg(request, "note")?,
             );
+            let by = optional_text(request, "by")?.unwrap_or(Who::Owner.as_str());
             json!(
-                edit::is_repeat_decision(text()?, slug, state, note, now()?)
+                edit::is_repeat_decision_by(text()?, slug, state, note, now()?, by)
                     .map_err(|e| bad(e.0))?
             )
         }
         "add_message" => {
-            let who = match optional_text(request, "who")?.unwrap_or("owner") {
-                "owner" => Who::Owner,
-                "agent" => Who::Agent,
-                other => return Err(bad(format!("who must be owner or agent, not {other:?}"))),
-            };
+            // `who`, `agent` or `owner`, else a person's short name the line carries.
+            let who = optional_text(request, "who")?.unwrap_or(Who::Owner.as_str());
             let (slug, message) = (text_arg(request, "slug")?, text_arg(request, "message")?);
-            json!(edit::add_message(
+            json!(edit::add_message_by(
                 text()?,
                 slug,
                 message,
@@ -783,12 +790,13 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
                 optional_text(request, "verdict")?
             )?)
         }
-        "insert_comment" => json!(edit::insert_comment(
+        "insert_comment" => json!(edit::insert_comment_by(
             text()?,
             int_arg(request, "after_line")?,
             text_arg(request, "kind")?,
             text_arg(request, "title")?,
-            text_arg(request, "body")?
+            text_arg(request, "body")?,
+            optional_text(request, "by")?.unwrap_or(Who::Owner.as_str()),
         )?),
         "split_message" => json!(edit::split_message(text_arg(request, "message")?)?),
         "section_text" => json!(edit::section_text(text()?, text_arg(request, "anchor")?)),
@@ -819,14 +827,17 @@ fn asks_call(name: &str, request: &Value) -> Result<Value, Failure> {
     let store = || AskStore::open(Path::new(text_arg(request, "db")?)).map_err(Failure::from);
     let or_empty = |name: &str| optional_text(request, name).map(Option::unwrap_or_default);
     Ok(match name {
-        "asks_ask" => json!(store()?.ask(
+        // Asked by `by`, the person's short name, `owner` when none is given.
+        "asks_ask" => json!(store()?.ask_by(
             text_arg(request, "path")?,
             text_arg(request, "question")?,
             or_empty("anchor")?,
-            or_empty("quote")?
+            or_empty("quote")?,
+            optional_text(request, "by")?.unwrap_or("owner"),
         )?),
         "asks_reply" => {
-            store()?.reply(int_arg(request, "id")?, text_arg(request, "text")?)?;
+            let by = optional_text(request, "by")?.unwrap_or("owner");
+            store()?.reply_by(int_arg(request, "id")?, text_arg(request, "text")?, by)?;
             Value::Null
         }
         "asks_answer" => {

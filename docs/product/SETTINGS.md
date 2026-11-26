@@ -29,16 +29,16 @@ a reviewed task.
 
 ## What it shows
 
-From the top: the title and a line saying what the page writes, any settings file that does not
-load, the tags and what each means, the two files read with their paths (*(not written)* where one
-is not there), then five sections, always in this order.
+From the top: the title, any settings file that does not load, the two files read with their paths
+(*(not written)* where one is not there), then five sections, always in this order, each its
+heading over its entries.
 
 | Section | Holds |
 | --- | --- |
 | **Integrations and tools** | Claude Code and Codex, Herdr panes, GitHub and the plugins, then any entry a plugin of the project describes |
 | **Models and limits** | what a launch starts, the model each role runs on, the work-in-progress limits and the pipeline alarm |
 | **The project** | its name and folders, the documents it serves, its theme |
-| **Shown here, changed by a reviewed task** | the landing, the board's commands, the stamps, the releases and the workflow |
+| **Reviewed settings** | the landing, the board's commands, the stamps, the releases and the workflow |
 | **This device** | the appearance this browser keeps |
 
 ### An entry
@@ -46,7 +46,7 @@ is not there), then five sections, always in this order.
 | Part | What it says |
 | --- | --- |
 | Name and state | the thing's name and, where it can be on or off, its state in a word: **On**, **Off**, **Unknown**, *2 selected* |
-| What it is for | a sentence, then why it is in that state: *The launch default: a launch starts it unless its caller names the other.* |
+| Why | why it is in its state, where its word does not say it all: *The launch default: pick another default first to turn it off.* |
 | What it needs | each program it needs, **✓** *Found on this machine:* and where, or **!** *Not found on this machine:* and what that means |
 | Its settings | a row for each |
 
@@ -112,8 +112,9 @@ in it; **Keep** takes a press once something is typed.
   board**, and *The board's store holds 3, in force.* The page says what it did on the row.
 - **A value refused** (of the wrong kind, out of range, an agent a launch does not start) is said
   on the row with why, and nothing is kept.
-- **Make it the project's**, beside a value kept on the board, commits it to the project file on
-  the default branch: that value's line alone changes, every comment and the rest of the file
+- **Make it the project's**, beside a value kept on the board (its title: *Commits it to
+  symphony.toml, delivered by a pull request*), commits it to the project file on the default
+  branch: that value's line alone changes, every comment and the rest of the file
   kept, in one commit that names the key and its two values (*settings: [limits] low_volume from
   4 to 3*). The board's value is then removed and the file's, the same, is in force. A file the
   [settings check](../operations/PROJECT_FILE.md#the-settings-check) would refuse with it is

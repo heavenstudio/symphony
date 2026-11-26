@@ -7,8 +7,16 @@ mod fixture;
 #[path = "common/bash_env.rs"]
 mod bash_env;
 
-#[path = "common/leashed_surreal.rs"]
-mod leashed_surreal;
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "common/test_channel.rs"]
+mod test_channel;
+
+#[expect(
+    dead_code,
+    reason = "Only the private database is needed by this HTTP fixture"
+)]
+#[path = "../../../crates/tasks/tests/store/common.rs"]
+mod board;
 
 #[path = "../../../tools/test-support/script_board.rs"]
 mod fixture_script;

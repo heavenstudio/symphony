@@ -21,12 +21,13 @@ use std::process::{Command, Output, Stdio};
 /// `src/styles/boardwait.css`; the agents page has none. Their common styles
 /// (`src/styles/board.css`) are in the shared file. The menus (`overlay`) and the chat (`panel`)
 /// are no page's but the shell's persistent kinds.
-const KINDS: [(&str, &[&str]); 11] = [
+const KINDS: [(&str, &[&str]); 12] = [
     ("agents", &[]),
     ("board", &["board"]),
     ("docs", &["media-layer", "docs"]),
     ("overlay", &["overlay"]),
     ("panel", &["media-layer", "panel"]),
+    ("people", &["people"]),
     ("queue", &["queue"]),
     ("reports", &["reports"]),
     ("review", &["media-layer"]),

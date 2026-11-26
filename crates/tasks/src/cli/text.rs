@@ -102,7 +102,8 @@ pub fn event(m: &Message) -> String {
 /// `tasks` as (depth, task) with each child right under its parent, at any depth. A task whose parent
 /// is not in `tasks` (a filtered list) stands at the top; the order within a level is kept.
 pub fn tree_order(tasks: &[Task]) -> Vec<(usize, &Task)> {
-    let present: BTreeSet<&str> = tasks.iter().map(|t| t.slug.as_str()).collect();
+    let mut present: BTreeSet<&str> = BTreeSet::new();
+    present.extend(tasks.iter().map(|t| t.slug.as_str()));
     let mut below: BTreeMap<&str, Vec<&Task>> = BTreeMap::new();
     for t in tasks {
         if let Some(parent) = t.parent.as_deref().filter(|p| present.contains(p)) {

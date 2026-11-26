@@ -7,9 +7,9 @@ use serde_json::Value;
 /// character that reads the same to every guard.
 pub fn parse(raw: &[u8]) -> Option<Value> {
     let text = std::str::from_utf8(raw).ok()?;
-    match serde_json::from_str(text) {
+    match serde_json::from_slice(text.as_bytes()) {
         Ok(value) => Some(value),
-        Err(_) => serde_json::from_str(&replace_lone_surrogates(text)?).ok(),
+        Err(_) => serde_json::from_slice(replace_lone_surrogates(text)?.as_bytes()).ok(),
     }
 }
 

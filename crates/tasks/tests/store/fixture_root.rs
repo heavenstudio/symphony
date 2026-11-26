@@ -2,21 +2,24 @@
 
 use std::path::{Path, PathBuf};
 
+/// The script the fixture's servers are started by, which the workspace owns.
+const SCRIPT: &str = "tools/fixture_process.sh";
+
 pub(super) fn workspace(manifest: &Path) -> PathBuf {
     let root = manifest
         .join("../..")
         .canonicalize()
         .expect("the fixture workspace root");
     assert!(
-        root.join("tools/surreal.sh").is_file() && root.join("tools/fixture_process.sh").is_file(),
-        "the fixture workspace supplies its owned server scripts"
+        root.join(SCRIPT).is_file(),
+        "the fixture workspace supplies its owned server script"
     );
     root
 }
 
 #[cfg(test)]
 mod tests {
-    use super::workspace;
+    use super::{SCRIPT, workspace};
     use std::fs;
     use std::io::ErrorKind;
     use std::os::unix::fs::{PermissionsExt, symlink};
@@ -50,13 +53,7 @@ mod tests {
             fs::create_dir_all(&package).unwrap();
             for root in [&outer, &own] {
                 fs::create_dir(root.join("tools")).unwrap();
-                for script in ["surreal.sh", "fixture_process.sh"] {
-                    fs::write(
-                        root.join("tools").join(script),
-                        root.as_os_str().as_encoded_bytes(),
-                    )
-                    .unwrap();
-                }
+                fs::write(root.join(SCRIPT), root.as_os_str().as_encoded_bytes()).unwrap();
             }
             Self {
                 outer,
@@ -65,14 +62,13 @@ mod tests {
             }
         }
 
-        fn script(&self, name: &str) -> PathBuf {
-            self.own.join("tools").join(name)
+        fn script(&self) -> PathBuf {
+            self.own.join(SCRIPT)
         }
 
         fn refuses(&self, package: &Path) {
             assert!(catch_unwind(|| workspace(package)).is_err());
-            assert!(self.outer.join("tools/surreal.sh").is_file());
-            assert!(self.outer.join("tools/fixture_process.sh").is_file());
+            assert!(self.outer.join(SCRIPT).is_file());
         }
     }
 
@@ -92,26 +88,22 @@ mod tests {
     }
 
     #[test]
-    fn either_missing_own_script_refuses_even_with_a_complete_parent() {
-        for name in ["surreal.sh", "fixture_process.sh"] {
-            let layout = Layout::new();
-            fs::remove_file(layout.script(name)).unwrap();
-            layout.refuses(&layout.package);
-        }
+    fn a_missing_own_script_refuses_even_with_a_complete_parent() {
+        let layout = Layout::new();
+        fs::remove_file(layout.script()).unwrap();
+        layout.refuses(&layout.package);
     }
 
     #[test]
     fn dangling_links_and_directories_are_not_own_script_files() {
-        for name in ["surreal.sh", "fixture_process.sh"] {
-            let layout = Layout::new();
-            let path = layout.script(name);
-            fs::remove_file(&path).unwrap();
-            symlink("missing", &path).unwrap();
-            layout.refuses(&layout.package);
-            fs::remove_file(&path).unwrap();
-            fs::create_dir(&path).unwrap();
-            layout.refuses(&layout.package);
-        }
+        let layout = Layout::new();
+        let path = layout.script();
+        fs::remove_file(&path).unwrap();
+        symlink("missing", &path).unwrap();
+        layout.refuses(&layout.package);
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        layout.refuses(&layout.package);
     }
 
     #[test]
@@ -126,9 +118,9 @@ mod tests {
     #[test]
     fn file_presence_follows_links_and_does_not_seal_their_contents_or_readability() {
         let layout = Layout::new();
-        let script = layout.script("surreal.sh");
+        let script = layout.script();
         fs::remove_file(&script).unwrap();
-        symlink(layout.outer.join("tools/surreal.sh"), &script).unwrap();
+        symlink(layout.outer.join(SCRIPT), &script).unwrap();
         assert_eq!(workspace(&layout.package), layout.own);
         fs::remove_file(&script).unwrap();
         fs::write(&script, "unreadable to an ordinary uid").unwrap();
@@ -146,8 +138,7 @@ mod tests {
         let layout = Layout::new();
         let tools = layout.own.join("tools");
         fs::set_permissions(&tools, fs::Permissions::from_mode(0o0)).unwrap();
-        let visible =
-            layout.script("surreal.sh").is_file() && layout.script("fixture_process.sh").is_file();
+        let visible = layout.script().is_file();
         let result = catch_unwind(|| workspace(&layout.package));
         fs::set_permissions(&tools, fs::Permissions::from_mode(0o700)).unwrap();
         if visible {

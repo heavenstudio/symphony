@@ -36,6 +36,7 @@ mod chrome;
 mod common;
 mod components;
 mod desktop_stub;
+mod document_asks;
 mod document_cards;
 mod document_gallery;
 mod document_landing;
@@ -45,7 +46,11 @@ mod feed_deltas;
 #[path = "../../../../tools/test-support/script_std.rs"]
 mod fixture_script;
 mod floating_controls;
+mod group_decides;
+mod group_queues;
 mod header;
+mod held_on_documents;
+mod held_words;
 mod html_documents;
 mod kept_pages;
 mod landmarks;
@@ -57,6 +62,7 @@ mod owner_controls;
 mod owner_note;
 mod owner_save;
 mod panel_open;
+mod people;
 mod persistent;
 mod phone;
 mod phone_board;
@@ -65,6 +71,7 @@ mod polish;
 mod preload;
 mod projects;
 mod reports;
+mod reports_landed;
 mod restored;
 mod run_records;
 mod runs;
@@ -432,6 +439,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ("/reports", "reports", "[data-ready=reports]", None),
         ("/runs", "runs", "[data-ready=runs]", None),
         ("/settings", "settings", "[data-ready=settings]", None),
+        ("/people", "people", "[data-ready=people]", None),
         (
             "/task/visual/in-progress",
             "task",

@@ -108,7 +108,8 @@ impl Registry {
     pub fn read(dir: &Path) -> Result<Registry, String> {
         let path = dir.join(PROJECTS);
         match fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display())),
+            Ok(text) => serde_json::from_slice(text.as_bytes())
+                .map_err(|e| format!("{}: {e}", path.display())),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(Registry::default()),
             Err(e) => Err(crate::text::os_error(&e, &path)),
         }
@@ -233,12 +234,13 @@ impl Registry {
         {
             return Some("is a route the Symphony answers".into());
         }
-        let roots: BTreeSet<&Path> = self
-            .projects
-            .iter()
-            .map(|other| other.root.as_path())
-            .chain([entry.root.as_path()])
-            .collect();
+        let mut roots: BTreeSet<&Path> = BTreeSet::new();
+        roots.extend(
+            self.projects
+                .iter()
+                .map(|other| other.root.as_path())
+                .chain([entry.root.as_path()]),
+        );
         roots.into_iter().find_map(|root| {
             let project = Project::of(root);
             let mut routes: Vec<String> = project.reserved();

@@ -3,8 +3,7 @@
 
 use super::messages::BOARD;
 use super::postgres::{Pg, work as pg};
-use super::statement::both;
-use super::surreal::work as sql;
+use super::statement::Statement;
 use super::{
     Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, executors_or, lapsed,
     left_actor, refused, repr, unknown_actor,
@@ -27,6 +26,8 @@ pub use covered::{COVERED, CoveredLine, covered_by, covered_line, landing};
 mod given;
 pub(super) use given::Pass;
 pub use given::{Filed, Given};
+
+mod kind;
 
 mod moves;
 use moves::Moving;
@@ -110,6 +111,12 @@ pub struct NewTask {
     /// What is red, for a task filed to fix a red that stops every landing ([`crate::red`]): it
     /// and the work under it take no orchestrator slot.
     pub red: Option<String>,
+    /// What its work is, one of [`crate::kind::KINDS`]; none leaves it without one, or `red` for a
+    /// task filed with a red mark ([`crate::kind`]).
+    pub kind: Option<String>,
+    /// The group or the person it is filed for, written on it ([`crate::people::ownership`]): none
+    /// leaves it to the group its area maps to.
+    pub group: Option<String>,
 }
 
 impl Default for NewTask {
@@ -127,6 +134,8 @@ impl Default for NewTask {
             assignee: None,
             instruction: false,
             red: None,
+            kind: None,
+            group: None,
         }
     }
 }
@@ -352,8 +361,8 @@ impl Store {
         }
         // Read the old value and write its replacement and history in the same transaction. A
         // concurrent edit conflicts and retries, so history always names the value replaced.
-        let acts = handle != OWNER;
-        let body = || both(sql::set_priority(acts), Pg::script(pg::set_priority(acts))).posting();
+        let acts = !self.is_person(handle);
+        let body = || Statement::from(Pg::script(pg::set_priority(acts))).posting();
         self.retrying(|| {
             let vars = self.acting(
                 handle,
@@ -381,8 +390,8 @@ impl Store {
         if title.is_empty() {
             return Err(refused("a task needs a title".into()));
         }
-        let acts = handle != OWNER;
-        let body = || both(sql::amend(acts), pg::amend(acts)).posting();
+        let acts = !self.is_person(handle);
+        let body = || Statement::from(pg::amend(acts)).posting();
         self.retrying(|| {
             let vars = self.acting(
                 handle,
@@ -411,11 +420,11 @@ impl Store {
             me: Option<Value>,
             known: bool,
         }
-        let acts = by != OWNER;
+        let acts = !self.is_person(by);
         self.retrying(|| {
             let read: Read =
-                self.read_together(both(sql::TREE_READ, pg::tree_read()), json!({"actor": by}))?;
-            if by != OWNER {
+                self.read_together(Statement::from(pg::tree_read()), json!({"actor": by}))?;
+            if !self.is_person(by) {
                 if !read.known {
                     return Err(Failure::Stop(refused(unknown_actor(&self.board_command(), by))));
                 }
@@ -445,19 +454,13 @@ impl Store {
                 json!({"slug": slug, "parent": parent, "moves": read.moves, "said": said, "slots": slots}),
             );
             let Some(pass) = kept else {
-                let body = both(
-                    sql::set_parent(acts, guarded, false),
-                    pg::set_parent(acts, guarded, false),
-                )
+                let body = Statement::from(pg::set_parent(acts, guarded, false))
                 .posting();
                 return self.written(body, vars, slug);
             };
             // The give's fences go before the move moves the task's version.
-            let sender = if by == OWNER { BOARD } else { by };
-            let body = both(
-                sql::set_parent(acts, guarded, true),
-                pg::set_parent(acts, guarded, true),
-            )
+            let sender = if self.is_person(by) { BOARD } else { by };
+            let body = Statement::from(pg::set_parent(acts, guarded, true))
             .posting();
             self.written(body, pass.vars(sender, vars), slug)
         })
@@ -465,9 +468,8 @@ impl Store {
 
     /// The parent, its parent, … up to the root, nearest first.
     pub fn ancestors(&self, slug: &str) -> Result<Vec<String>, Error> {
-        let read = sql::tree();
         let tree: Vec<(String, Option<String>)> =
-            self.retrying(|| self.read_together(both(read.as_str(), pg::TREE_ONLY), json!({})))?;
+            self.retrying(|| self.read_together(Statement::from(pg::TREE_ONLY), json!({})))?;
         ancestors_in(&tree.into_iter().collect(), slug)
     }
 
@@ -506,10 +508,8 @@ impl Store {
         let vars = json!({"asked": place.handle, "checkout": place.checkout,
             "claude": place.claude, "branch": place.branch,
             "executing": crate::health::EXECUTING});
-        let read = sql::run_for_read();
-        let found: Found = self.retrying(|| {
-            self.read_together(both(read.as_str(), pg::run_for_read()), vars.clone())
-        })?;
+        let found: Found = self
+            .retrying(|| self.read_together(Statement::from(pg::run_for_read()), vars.clone()))?;
         let now = self.now();
         let live = |seen: &&Seen| {
             let row = crate::rows::SessionRow {
@@ -528,7 +528,7 @@ impl Store {
                 .filter(|held| held.handle == handle)
                 .map(|held| held.slug.clone())
                 .collect();
-            slugs.sort_unstable();
+            crate::order::sort_by(&mut slugs, &Ord::cmp);
             slugs.dedup();
             top_in(&tree, &slugs).cloned()
         };
@@ -585,6 +585,10 @@ impl Store {
             .into_iter()
             .filter(|t| found.contains(t.slug.as_str()))
             .collect();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a busy board path keeps std's in-place sort (crate::order): the sweep's Store::descendants"
+        )]
         tasks.sort_by_key(|t| t.id);
         Ok(tasks)
     }
@@ -652,8 +656,8 @@ impl Store {
                 reason_line(status, &format!("on {thing}{why}"))
             }),
         };
-        if handle == OWNER && matches!(status, "cancelled" | "review") {
-            return self.move_as_owner(slug, status, reason.as_deref());
+        if self.is_person(handle) && matches!(status, "cancelled" | "review") {
+            return self.move_as_owner(slug, status, reason.as_deref(), handle);
         }
         let (task, from) = self.moving_from(slug, status, handle, Moving::Any, reason, on)?;
         if from == "done" {
@@ -878,9 +882,16 @@ impl Store {
         Ok(stages::in_status(facts, &lines).from)
     }
 
-    /// The owner's two moves: any open task to `cancelled`, a blocked one (never an instruction
-    /// subtask) back to `review`; `reason`'s line, when given, posted after the move's own.
-    fn move_as_owner(&self, slug: &str, status: &str, reason: Option<&str>) -> Result<Task, Error> {
+    /// The owner's two moves, and a person's (`by`, [`Store::is_person`]): any open task to
+    /// `cancelled`, a blocked one (never an instruction subtask) back to `review`; `reason`'s line,
+    /// when given, posted after the move's own, which names `by` (`ana moved it …`).
+    fn move_as_owner(
+        &self,
+        slug: &str,
+        status: &str,
+        reason: Option<&str>,
+        by: &str,
+    ) -> Result<Task, Error> {
         let cancelling = status == "cancelled";
         let from: Vec<_> = if cancelling {
             TRANSITIONS
@@ -898,13 +909,10 @@ impl Store {
             // judged on the task as read: a red marked since is read and decided again.
             let closed = self.closing_slots(slug, status)?;
             let (reasoned, fenced, guarded) = (reason.is_some(), closed.fenced(), closed.guarded());
-            let body = both(
-                sql::move_as_owner(reasoned, cancelling, fenced, guarded),
-                pg::move_as_owner(reasoned, cancelling, fenced, guarded),
-            )
+            let body = Statement::from(pg::move_as_owner(reasoned, cancelling, fenced, guarded))
             .posting();
             let vars = self.acting(
-                OWNER,
+                by,
                 (self.clock)(),
                 json!({
                     "slug": slug, "status": status, "from": from, "slots": closed.slots, "version": closed.version,
@@ -1140,7 +1148,7 @@ impl Store {
                 continue;
             }
             let read: Read = self.retrying(|| {
-                self.read_together(both(sql::EVER_HELD, pg::EVER_HELD), json!({"slug": at}))
+                self.read_together(Statement::from(pg::EVER_HELD), json!({"slug": at}))
             })?;
             let root = at == slug;
             if root && !read.known {

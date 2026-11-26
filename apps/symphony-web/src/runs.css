@@ -20,7 +20,8 @@
   line-height: 1.2;
   overflow-wrap: anywhere;
 }
-.runs-sub {
+.runs-unit,
+.runs-label {
   margin: 4px 0 0;
   color: var(--muted-foreground);
   font-size: var(--fs-sm);
@@ -212,26 +213,14 @@
   .update-row .run-who {
     text-align: left;
   }
-  .update-row .run-note,
-  .update-row .update-sources {
+  .update-row .run-note {
     grid-column: 1 / -1;
   }
 }
 
 /* A schema update: its board and schema, its wait, when each time came (its record's words on
-   hover) and where the times come from, small, its failures and its task; one no longer open says
-   its past failures quietly. */
-.runs-updates-sub {
-  margin: 0 0 var(--sp-2);
-  font-size: var(--fs-sm);
-}
+   hover), its failures and its task; one no longer open says its past failures quietly. */
 .update-row .run-note {
-  overflow-wrap: anywhere;
-}
-.update-sources {
-  grid-column: 2 / -1;
-  font-size: var(--fs-xs);
-  color: var(--muted-foreground);
   overflow-wrap: anywhere;
 }
 .update-row[data-state="served"] .run-note,

@@ -48,7 +48,7 @@ import {
   type UpdateState,
   type UpdateTime,
 } from "./wire";
-import { plural } from "./words";
+import { MONTHS, plural, twoDigits, WEEKDAYS } from "./words";
 
 /** How often an open page reads what runs now, in ms. */
 export const NOW_MS = 5_000;
@@ -180,9 +180,7 @@ export function readRunLog(value: unknown): RunLog | null {
 const UPDATE_STATES: UpdateState[] = ["open", "served", "left"];
 
 function isUpdateTime(value: unknown): value is UpdateTime {
-  return (
-    isNumber(field(value, "at")) && isText(field(value, "source")) && isText(field(value, "words"))
-  );
+  return isNumber(field(value, "at")) && isText(field(value, "words"));
 }
 
 /** Whether `value` is a schema update with every field the page draws, each of its type. */
@@ -314,7 +312,7 @@ export function duration(seconds: number): string {
   const minutes = Math.floor(whole / 60);
   if (minutes < 10) return whole % 60 === 0 ? `${minutes} min` : `${minutes} min ${whole % 60} s`;
   if (minutes < 60) return `${minutes} min`;
-  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
+  return `${Math.floor(minutes / 60)} h ${twoDigits(minutes % 60)} min`;
 }
 
 /** How long `line`'s run took, or has run by `now`; none for one that never started. */
@@ -329,16 +327,12 @@ export function cpu(line: RunLine): string | null {
   return `${line.cpu_partial === true ? "at least " : ""}${duration(line.cpu_s)} of CPU`;
 }
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const two = (n: number) => String(n).padStart(2, "0");
-
 /** `at`, seconds since the epoch, in UTC: `Sun 15 Nov, 02:47 UTC`. */
 export function when(at: number): string {
   const date = new Date(at * 1000);
   return (
     `${WEEKDAYS[date.getUTCDay()]} ${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}, ` +
-    `${two(date.getUTCHours())}:${two(date.getUTCMinutes())} UTC`
+    `${twoDigits(date.getUTCHours())}:${twoDigits(date.getUTCMinutes())} UTC`
   );
 }
 
@@ -786,18 +780,16 @@ export function updateRows(updates: SchemaUpdate[]): SchemaUpdate[] {
   ];
 }
 
-/** One of an update's times as its row says it: its name, when, its source's name and words. */
+/** One of an update's times as its row says it: its name, when, and its record's words. */
 export interface ShownTime {
   name: string;
   said: string;
-  source: string;
   words: string;
 }
 
 /**
  * When an update's times came, each named and said in UTC, a time on the day of the one before it
- * by its hour alone, with its source's name (the server's, as `release --status` names it) and the
- * record's whole words, which its row shows on hover.
+ * by its hour alone, with the record's whole words, which its row shows on hover.
  */
 export function updateTimes(update: SchemaUpdate): ShownTime[] {
   const named: [string, UpdateTime | null][] = [
@@ -814,7 +806,7 @@ export function updateTimes(update: SchemaUpdate): ShownTime[] {
       before !== null && day(before) === day(time.at)
         ? `${new Date(time.at * 1000).toISOString().slice(11, 16)} UTC`
         : when(time.at);
-    times.push({ name, said: `${name} ${said}`, source: time.source, words: time.words });
+    times.push({ name, said: `${name} ${said}`, words: time.words });
     before = time.at;
   }
   return times;
@@ -822,12 +814,11 @@ export function updateTimes(update: SchemaUpdate): ShownTime[] {
 
 /**
  * One update: its board and schema, how long it took and since the release, when (each time's
- * record on hover) and where the times come from, and its failures and task.
+ * record on hover), and its failures and task.
  */
 function UpdateRow({ update }: { update: SchemaUpdate }) {
   const [mark, word] = UPDATE_WORDS[update.state];
   const times = updateTimes(update);
-  const sources = [...new Set(times.map((time) => time.source))];
   const generation = update.generation > 1 ? `, generation ${update.generation}` : "";
   const slug = update.task === null ? null : taskSlug(update.task);
   return (
@@ -858,9 +849,6 @@ function UpdateRow({ update }: { update: SchemaUpdate }) {
           ? ""
           : `${update.after_available_said} after its release`}
       </span>
-      {sources.length > 0 && (
-        <span className="update-sources">{`Times from ${sources.join("; ")}`}</span>
-      )}
       {(update.failures > 0 || slug !== null) && (
         <span className="run-note">
           {update.failures > 0 &&
@@ -894,9 +882,6 @@ export function UpdatesView({ updates, error }: UpdatesViewProps) {
   return (
     <section className="runs-updates" aria-labelledby="runs-updates-title">
       <h2 id="runs-updates-title">Schema updates</h2>
-      <p className="runs-quiet runs-updates-sub">
-        This machine's boards moving to a new schema, and how long until its server wrote each.
-      </p>
       {unread !== null && (
         <p className="runs-error" role="alert">
           {`The schema updates could not be read: ${unread}`}
@@ -1186,9 +1171,7 @@ function RunsHome({ now, nowError, at }: { now: Now | null; nowError: string | n
       <header className="runs-head">
         <div>
           <h1>Runs</h1>
-          <p className="runs-sub">
-            Every recorded run of this project, newest first · times in UTC
-          </p>
+          <p className="runs-unit">Times in UTC</p>
         </div>
         {now !== null && (
           <p className="runs-count">{`${runningCount} running · ${operations.length - runningCount} queued`}</p>
@@ -1262,11 +1245,7 @@ function LogView({
 >) {
   let body: ReactNode;
   if (page.run.log === undefined || page.run.log === null) {
-    body = (
-      <p className="runs-quiet">
-        No log was kept: its command wrote to a terminal, where its output stayed.
-      </p>
-    );
+    body = <p className="runs-quiet">No log was kept.</p>;
   } else if (log === null && logMissing) {
     body = (
       <p className="runs-quiet">
@@ -1339,7 +1318,7 @@ export function RunView({
             <Mark shown={shown} />
             {` ${run.step ?? run.pipeline}`}
           </h1>
-          <p className="runs-sub run-label">{run.label}</p>
+          <p className="runs-label run-label">{run.label}</p>
         </div>
       </header>
       <dl className="run-facts">

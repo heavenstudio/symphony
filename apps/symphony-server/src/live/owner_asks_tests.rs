@@ -308,13 +308,9 @@ fn a_verdict_and_a_chat_go_from_the_owners_save_to_their_answer() {
         let root = repository_holding(&tree, "main", DOC, &register(""));
         // Saved off main, so no verdict commit runs.
         git(&root, &["checkout", "-q", "-b", "review"]);
-        let db = board::client();
-        symphony_board::Store::open(symphony_board::rpc::Client::new(
-            db.addr(),
-            "sf",
-            db.database(),
-        ))
-        .unwrap();
+        let db = board::database();
+        // The board's command line makes the board; the Symphony, a reader, never does.
+        crate::testing::store_on(&db);
         let mut child = Command::new(std::env::current_exe().unwrap());
         child
             .args(["--exact", SAVE_TO_ANSWER, "--nocapture"])

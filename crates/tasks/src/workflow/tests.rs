@@ -537,7 +537,7 @@ fn a_pair_key_orders_as_the_pair_does() {
     let mut positions = pairs.to_vec();
     ordered(&mut positions, pair_key);
     let mut sorted = pairs.to_vec();
-    sorted.sort();
+    crate::order::sort_by(&mut sorted, &Ord::cmp);
     assert_eq!(positions, sorted);
 }
 
@@ -640,7 +640,7 @@ fn an_authority_key_orders_as_the_authority_does() {
     let mut keyed = all.to_vec();
     ordered(&mut keyed, authority_key);
     let mut sorted = all.to_vec();
-    sorted.sort();
+    crate::order::sort_by(&mut sorted, &Ord::cmp);
     assert_eq!(keyed, sorted);
 }
 
@@ -665,4 +665,17 @@ fn a_built_in_position_built_alone_is_the_one_built_in_v1_declares() {
     ] {
         assert_eq!(builtin::position_at(&undeclared), None, "{undeclared:?}");
     }
+}
+
+#[test]
+fn the_local_actor_is_the_local_owner_named_owner_with_no_git_handles() {
+    // The name the board knows its one person by, which every line of theirs carries.
+    let actor = local_actor();
+    assert_eq!(actor.name(), "owner");
+    assert_eq!(
+        actor.sender,
+        symphony_plugin::Sender::new("owner", "owner", Vec::new())
+    );
+    assert_eq!(actor.principal, local_owner());
+    assert_eq!(actor.principal.kind, PrincipalKind::Human);
 }

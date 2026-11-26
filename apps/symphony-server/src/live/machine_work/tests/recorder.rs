@@ -60,8 +60,8 @@ fn a_recorded_test_puts_the_task_its_session_holds_in_test_while_it_runs_and_bac
     assert_eq!(claimed.status, "in_progress");
     let release = tree.path("release");
     let vars: BTreeMap<String, String> = [
-        ("TASKS_SERVER", f.store.client().addr().to_string()),
-        ("TASKS_DATABASE", f.store.client().database().to_string()),
+        ("TASKS_SERVER", f.store.database().addr()),
+        ("TASKS_DATABASE", f.store.database().database().to_string()),
         ("TASKS_SESSION", worker.clone()),
         (
             work::FOLDER_VAR,
@@ -203,7 +203,7 @@ fn recorded_work_and_a_project_readers_work_are_one_machines_and_either_malforme
         .iter()
         .map(|operation| (operation.resource.as_str(), operation.task.as_deref()))
         .collect();
-    tasks.sort_unstable();
+    symphony_board::order::sort_by(&mut tasks, &Ord::cmp);
     // The recorder's binding is its own; the project reader's is the receiver's.
     assert_eq!(
         tasks,

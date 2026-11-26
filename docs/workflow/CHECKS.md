@@ -36,6 +36,8 @@ every stamp it needs stands on its tip, and refuses naming who gives a missing o
 landing](TASKS.md#the-default-landing)). A change to a test or a check (`[land] check_paths`)
 keeps `review`, since a loosened test or check is how a red turns green unfixed. A change of
 settings' values needs `tests` alone, the settings check ([by kind](#evidence-by-kind-of-change)).
+A commit of a generator's outputs alone (the client distribution rebuilt from main) needs no
+`pictures`: its pictures were its source tasks'.
 
 A gate that must give way for one task gives way by its orchestrator's recorded decision, never
 by a word in a terminal: a limit raised, or a waivable stamp waived at one tip
@@ -138,29 +140,28 @@ An additive step may define:
 Anything else is breaking: a field on any other table, a field a row must have, a field retyped or
 removed, an assertion changed, a unique index, an event or a trigger on a table there before, a
 database-wide definition changed, a step that writes rows. The catalogue test holds it (below):
-each step has its own files (`ENGINE-VERSION.STEPS.txt`), each the one before with only what the
+each step has its own file (`postgresql-VERSION.STEPS.txt`), each the one before with only what the
 list allows; the tables a step declares (`Addition::tables`) are the ones its definitions add; and
 a board with rows in it, moved by the step, keeps every row as it was. What no catalogue shows is
 the reviewer's, as for a declared step below: a rule held in code that a build without the step
 skips, a meaning changed, a table such a build must write. The step's `why` says how a build
 without it reads and writes around it.
 
-What each side does, on both engines:
+What each side does:
 
 - A build behind the board's steps reads and writes it as it is. Every read of an open table's row
   passes a field it does not know, as the store's reader hands the row only the fields its struct
   names (`rows::open_row`), and every write of one sets named fields, so the field stays: no
-  statement replaces such a row whole (`store/surreal/fence_tests.rs`). The whole-board dump reads
+  statement replaces such a row whole (`tests/store/contract.rs`). The whole-board dump reads
   each row exactly, handed every field, which its struct refuses by name, as a copy would drop it. The code of a step asks
   `Store::additions` before it reads or writes what the step defines.
 - A build ahead adds its steps where it may move the board ([BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#which-build-moves-a-live-board)),
   holding no writer, and uses the board as it is where it may not. The guard refuses, in the
   write's own transaction, a write naming a table of a step the board lacks, whatever its quoting
-  or nesting, in the statement as it is sent on either engine; and the database refuses a field or
-  a table it does not define, a SurrealDB board being STRICT. Nothing of a refused write is
-  written.
-- A whole-board copy, its staging, a recovery's rebind, and the dump that a copy, an export or a
-  move to another engine reads, are held to the build's own steps exactly; the dump also refuses a
+  or nesting, in the statement as it is sent; and the database refuses a field or a table it
+  does not define. Nothing of a refused write is written.
+- A whole-board copy, its staging, a recovery's rebind, and the dump that a copy or an export
+  reads, are held to the build's own steps exactly; the dump also refuses a
   field it does not know, naming it.
 
 A breaking step raises the version and empties `schema::ADDED`, its steps' definitions going into
@@ -177,10 +178,9 @@ Symphony one schema behind never meets; nothing is declared under it. A schema s
 tables of its own, with their fields, indexes and events, and definitions of the database's own
 changes nothing the Symphony one schema behind writes. Such a step may be declared to keep that Symphony writing: its version is listed in `schema::COMPATIBLE`
 (`crates/tasks/src/schema.rs`) with one line saying why, and nothing is listed by default. Its
-migration then writes, beside the version and in the same transaction on both engines, the oldest
+migration then writes, beside the version and in the same transaction, the oldest
 schema whose Symphony may write the board (`meta:schema`'s `writable_from`): the version before
-for a listed step, its own version otherwise. The schema guard reads that record in each write, on
-both engines. A store the Symphony's reader opened (`symphony::taskview::connect`: the server, its
+for a listed step, its own version otherwise. The schema guard reads that record in each write. A store the Symphony's reader opened (`symphony::taskview::connect`: the server, its
 page saves and the `symphony` commands that reach the board through it) writes a board one schema
 ahead only while the record names its schema or an older one. Every other case is refused, as for
 a step not listed ([BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#who-writes-a-board)):
@@ -191,13 +191,9 @@ a step not listed ([BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#who-writ
 - a whole-board copy's staging;
 - a recovery's rebind.
 
-The declaration is checked where the database shows it. Each schema's definitions are committed,
-one file per engine (`crates/tasks/tests/store/catalogue/ENGINE-VERSION.txt`):
-
-- on SurrealDB, every table, field, index and event, and the database's analyzers, functions and
-  parameters;
-- on PostgreSQL, every column, constraint, index and trigger, and the functions in the board's
-  schema.
+The declaration is checked where the database shows it. Each schema's definitions are committed
+(`crates/tasks/tests/store/catalogue/postgresql-VERSION.txt`): every column, constraint, index
+and trigger, and the functions in the board's schema.
 
 The store test (`just test-rs -p symphony-board --test store catalogue`) holds a fresh board of
 this build to its version's files, and holds a declared version to the files of the version
@@ -420,15 +416,15 @@ both kinds, to copy after `--`:
 | the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `a_revealed_column` `owner_` `machine_work` `run_records::` `cache_pages::` `kept_pages::` `landmarks::` `layout_shift::` `skeleton::` `feed_deltas::` `header::` `look_parity::` `restored::` `components::` `polish::` `shot::` `projects::` `budget` |
 | a task's page, its gates and its timeline | `task_page` `task_panel` `task_priority` `task_gates::` `timeline::` `owner_controls::` `owner_save::` `cache_tasks::` `cache_ahead` `feed_deltas::` `notice_layout::` `landmarks::` `layout_shift::` `skeleton::` `header::` `look_parity::` `restored::` `components::` `persistent::` `polish::` `projects::` `budget` `preload::` |
 | the agents page (`/agents`) | `machine_work` `the_agents_page` `header::` `look_parity::` `the_chat_opened_on` `polish::` `projects::` `budget` |
-| the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
+| the reports page (`/reports`) | `reports::` `reports_landed::` `header::` `polish::` `projects::` `budget` |
 | the runs page (`/runs`) | `runs::` `header::` `polish::` `projects::` `preload::` `budget` |
 | the settings page (`/settings`) | `settings::` `header::` `phone_labels::` `projects::` `preload::` `budget` |
 | document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |
-| the header, on every page | `header::` `floating_controls::` `panel_open::` `persistent::` `polish::` `projects::` |
+| the header, on every page | `header::` `floating_controls::` `panel_open::` `persistent::` `polish::` `projects::` `budget` |
 | the panel (the chat, add task, the activity list, Appearance, toasts, the pending bar) | `panel_open::` `persistent::` `header::` `floating_controls::` `components::` `look_parity::` `server_notices::` `notice_layout::` `polish::` `projects::` `budget` |
-| shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
-| the project switch and a project's look | `projects::` |
-| the feed and its stream | `feed` `stream` |
+| shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` `budget` |
+| the project switch and a project's look | `projects::` `budget` |
+| the feed and its stream | `feed` `stream` `budget` |
 | what an entry page loads (its bytes, its order) | `budget` `phone::` `preload::` |
 
 ## Worked examples
@@ -455,7 +451,7 @@ page's rows, in `apps/symphony-web/src/queue.tsx` and `apps/symphony-web/src/que
 just symphony-cli shot URL --out queue-before.png   (desktop and phone, light and dark, before the change)
 just symphony-cli shot URL --out queue-after.png    (the same four, after it)
 just client-lint
-just test-rs -p symphony-web-tests --test browser -- queue polish:: projects::
+just test-rs -p symphony-web-tests --test browser -- queue polish:: projects:: budget
 just client-update
 just lint-rs
 ```
@@ -464,10 +460,11 @@ A new unit test in `queue.test.tsx` pins the priority in the row's markup, and `
 runs it with the lint, the type check and the wire types' check; `queue` runs the browser tests of
 the queue's counts, order, spacing and filter colours, which a taller row or new markup could
 break, and the branch updates any that pinned the old row, naming it. `polish::` and `projects::`
-draw the page's panels and its one heading, and the link each row draws under the project's base.
-A change to home's rows would add `budget` and `phone::`, as home is an entry page. The thread
-gets the eight pictures, the commands and their result lines and the updated tests named; the
-commit holds the source alone, `just client-update`'s distribution put back as main has it.
+draw the page's panels and its one heading, and the link each row draws under the project's base;
+`budget` holds the entry pages' first visits, which any client change can grow. A change to
+home's rows would add `phone::`, as home is an entry page. The thread gets the eight pictures,
+the commands and their result lines and the updated tests named; the commit holds the source
+alone, `just client-update`'s distribution put back as main has it.
 
 ## The release run
 
@@ -743,7 +740,7 @@ binary this workspace delivers (`symphony-server`, `symphony`, `tasks` and
 `[profile.release]`, and runs `symphony-build size-budget`, which prints each size beside its
 budget (`symphony-build`, the commands only this repository's build and release run use, is no
 binary it delivers, and has no line; nor has `tasks-move`, which a release installs beside
-`tasks` for the one move of a board's store and no project links or runs by a recipe, its bytes
+`tasks` to put a snapshot back over a board and no project links or runs by a recipe, its bytes
 said in the release's manifest and the install's line).
 Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
 --crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
@@ -775,7 +772,7 @@ A binary links what it may run, and a test holds a library out of one that never
 (`tests/links.rs` of `symphony`): the JSON Schema validator, which would add a fifth to its size:
 a schema check is a library call a consumer's code makes (`symphony::schema::validate`), and
 `symphony serve` answers `validate` as a function it lacks. And it holds the board's migration out
-of it, with both databases' schema texts: `symphony` opens a board only to read, by the reader's
+of it, with the schema's text: `symphony` opens a board only to read, by the reader's
 entry (`Store::read_as`, `Store::reading`), which names no migration, where an opening by the rule
 (`Store::opening`) links it for the writer it may be handed.
 
@@ -951,6 +948,22 @@ runs only what the record does not cover and reading cannot settle:
 A run the evidence claims and no record at the tip shows is asked for in a `changes`, as is a
 red one.
 
+- [x] **reviewer-mutations** — Two of your rules disagree on whether a reviewer may break a task's code on purpose, on a scratch copy, to see that the task's new test then fails (a mutation). One reviewer did, and others have asked whether they may. A: no; a reviewer judges by reading whether a test can fail, and may still try a case it suspects the code gets wrong. B: yes, on a scratch copy that is never committed, its run not recorded against the task. Recommended: A. Approve and say A or B in the note, or comment. [[CHECKS#No second build in review]]
+  [2026-11-24 18:05] agent — Posted for the board task `docs/standing-guidance-budget-and-scratch-checks`.
+
+    **The two rules.** RULES.md `workflow/tests-after` (2026-11-11): "no planted fault or reverted change to watch a test fail, whatever a brief asks; a reviewer may still probe the code with a case it suspects the code gets wrong". RULES.md `workflow/no-second-build-in-review` (2026-11-15) names "a mutation" among what a reviewer runs, and so does the list above: "a mutation, to see that a test the task adds can fail".
+
+    **What A changes.** "a mutation" leaves `workflow/no-second-build-in-review` and the list above, and this repository's reviewer page (`.agents/skills/review-task/project.md`) says the shipped review skill's "a mutation" gives way to `workflow/tests-after`. The shipped skill keeps it, for projects that want mutations.
+
+    **What B changes.** `workflow/tests-after` ends "a reviewer may still probe the code with a case it suspects the code gets wrong, or with a mutation on a scratch copy". Nothing else.
+
+    **Why A.** `workflow/tests-after` says it outright, "whatever a brief asks", while "a mutation" came in with a rule about building nothing twice in review, and each mutation is one more build. Whether a test can fail is read from what it asserts.
+
+    **Meanwhile, under either:** a reviewer's run on a scratch copy, a mutation among them, runs unrecorded (`TASKS_RECORDER=off`), as the reviewer page now says, so it never takes a task's `tests` stamp.
+
+    No earlier verdict decides it: no card in `docs/` speaks of mutations, planted faults or the order of tests and code.
+  [2026-11-26 08:10] owner · approved — B
+
 **The `tests` stamp reads the same record.** It is met by the newest recorded run of each build
 and test command the task ran at the tip, every one green and one test run among them
 ([needed stamps](TASKS.md#needed-stamps)). So a reviewer's second run of a command proves
@@ -1003,10 +1016,13 @@ settles documents alone or given afresh for the merged tip
 ([TASKS](TASKS.md#the-default-landing)), leaves
 the candidate on the commit approved before the merge; a fix that needed no review has none, so
 its land then drops the candidate. One that merges main before any approve gives the candidate
-nothing it can take, and drops it. Where a pull request delivers it, a fix that changes what the
-client is built from merges main once before its land, from a second head after its first is
-approved, keeping main's side of the generated paths, and that head is assessed, tested and
-approved as any new head ([RELEASES](RELEASES.md#the-release-candidate)).
+nothing it can take, and drops it. Where a pull request delivers it, the fix never merges
+`release-candidate`, which an advance moves to a head main's history does not hold: one started
+before that advance is rebased onto it while not yet published or approved, a new head whose
+evidence and approve are its own, and left as it is after, its land dropping the candidate. And
+a fix that changes what the client is built from merges main once before its land, from a second
+head after its first is approved, keeping main's side of the generated paths, and that head is
+assessed, tested and approved as any new head ([RELEASES](RELEASES.md#the-release-candidate)).
 
 **At the land: nothing automatic, and nothing that blocks.** A land's only check on the merge is
 `[verdicts] check`, which this project turns off (`[land] check = false`, `symphony.toml`), for

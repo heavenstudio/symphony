@@ -6,7 +6,6 @@
 //! itself at the next read once its published evidence stands, as GitHub does seconds after.
 
 use super::*;
-use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 use symphony_board::land::dispatch::{self, CLOSES, FAILED, Watching};
 use symphony_board::land::{dispatch_by, file_stem};
@@ -705,6 +704,11 @@ fn a_pull_request_closed_by_someone_sends_the_task_back_to_work_and_is_bound_no_
     let (r, bare) = delivering();
     let (people, ..) = ready(&r, SLUG);
     let (host, green) = armed_green(&r, &bare, &people);
+    assert_eq!(
+        host.request("publish")["pull"],
+        Value::Null,
+        "bound to none yet"
+    );
     host.close_by_hand();
     let (said, ..) = watched(&r, &host, green, 1, &[]);
     assert!(
@@ -722,6 +726,50 @@ fn a_pull_request_closed_by_someone_sends_the_task_back_to_work_and_is_bound_no_
         !Journal::path(&lands(&r), SLUG).exists(),
         "the next dispatch opens another"
     );
+    // Its next move to review publishes naming no pull request, which is what lets the program
+    // forget the one closed and open another (its own tests). An exchange older than `pull`
+    // keeps the one closed whatever the request names and refuses it, as the host here does:
+    // the dispatch stops and says so, and the task waits in review bound to none, nothing merged.
+    let before = head(&bare, "main");
+    let asked = host.verbs().len();
+    (r.board.store)
+        .move_to(SLUG, "review", &people.exe)
+        .unwrap();
+    let (_, result) = dispatched(&r, SLUG, &people.exe, &host);
+    let why = result.unwrap_err();
+    assert!(
+        why.contains("was not published (refused): pull request #3 is merged or closed"),
+        "{why}"
+    );
+    assert_eq!(
+        host.verbs()[asked..],
+        ["publish"],
+        "no result of the one closed"
+    );
+    assert_eq!(host.request("publish")["pull"], Value::Null);
+    let (text, to) = last_post(&r, SLUG);
+    assert!(text.contains("its dispatch stopped"), "{text}");
+    assert!(
+        text.contains(&format!("`just land {SLUG} --dispatch`")),
+        "{text}"
+    );
+    assert_eq!(to.as_deref(), Some("@orchestrator"));
+    assert_eq!(status(&r, SLUG), "review");
+    assert!(journal(&r, SLUG).binding.is_none(), "bound to none");
+    assert_nothing_landed(&r, &bare, &before);
+    // Dispatched again once the exchange forgets it, still naming none: the host here opens
+    // another, and the task is bound to it.
+    *host.pull.borrow_mut() = Default::default();
+    let asked = host.verbs().len();
+    let (_, result) = dispatched(&r, SLUG, &people.exe, &host);
+    result.unwrap();
+    assert_eq!(
+        host.verbs()[asked],
+        "publish",
+        "no result of the one closed first"
+    );
+    assert_eq!(host.request("publish")["pull"], Value::Null);
+    assert!(journal(&r, SLUG).binding.is_some(), "bound again");
 }
 
 #[test]
@@ -1122,6 +1170,12 @@ fn a_round_that_cannot_finish_a_land_tries_again_and_says_so_once_past_the_bound
         "{text}"
     );
     assert_eq!(to.as_deref(), Some("@orchestrator"));
+    // The round acts as the task's orchestrator: its line is the board's own, which reaches the
+    // orchestrator's inbox, as a line of the orchestrator's own would not.
+    let post = r.board.store.thread(SLUG).unwrap().pop().unwrap();
+    assert_eq!(post.sender, "board");
+    let heard = r.board.store.inbox(&people.orch).unwrap();
+    assert!(heard.iter().any(|line| line.id == post.id), "{heard:?}");
     assert!(landings(&r, SLUG).is_empty());
     // Put right, the next round finishes it and the watcher ends.
     git(&r.root, &["checkout", "--", "symphony.toml"]);
@@ -1832,54 +1886,6 @@ fn an_arming_the_host_refuses_names_who_acts_and_arms_nothing() {
 }
 
 // -- what starts it --------------------------------------------------------------------------------
-
-/// A stand-in `tasks` in `r`'s folder that records each start, its arguments and the land's
-/// mark, one line a start: where the lines go.
-fn stand_in(r: &Repo) -> (PathBuf, PathBuf) {
-    let record = r.dir.join("started");
-    let program = r.dir.join("tasks-stand-in");
-    fs::write(
-        &program,
-        format!(
-            "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$*\" \"${{SYMPHONY_LAND-unset}}\" \
-             \"${{TASKS_SESSION-unset}}\" >> '{}'\n",
-            record.display()
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
-    (program, record)
-}
-
-/// The lines `record` holds once it holds `count`.
-fn started(record: &Path, count: usize) -> Vec<String> {
-    test_time::until(
-        format!("{count} start(s) recorded in {}", record.display()),
-        test_time::backstop(Duration::from_secs(60)),
-        || {
-            let text = fs::read_to_string(record).unwrap_or_default();
-            let lines: Vec<String> = text.lines().map(str::to_string).collect();
-            (lines.len() >= count && text.ends_with('\n')).then_some(lines)
-        },
-    )
-    .unwrap()
-}
-
-/// `tasks ARGS` as `handle` from the checkout, `vars` set: its exit, what it printed, what it
-/// said on stderr.
-fn tasks(r: &Repo, handle: &str, args: &[&str], vars: &[(&str, &str)]) -> (i32, String, String) {
-    let mut env = landing(r, vars);
-    env.vars.insert("TASKS_SESSION".into(), handle.into());
-    env.vars.insert("TASKS_SWEEP".into(), "off".into());
-    let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = symphony_board::cli::main(&args, &env, &mut "".as_bytes(), &mut out, &mut err);
-    (
-        code,
-        String::from_utf8(out).unwrap(),
-        String::from_utf8(err).unwrap(),
-    )
-}
 
 #[test]
 fn a_move_to_review_and_a_later_verdict_start_its_dispatch_detached_with_the_lands_mark() {

@@ -64,11 +64,9 @@ describe("a board with no task", () => {
     ["ready", 0],
     ["done", 0],
   ];
-  it("says in one line how the first is filed, with the guide's link", () => {
+  it("says in one line that none is open, with the guide's link", () => {
     const html = board({ counts: empty });
-    expect(html).toContain(
-      '<p class="first-steps">No task is open on this board, and none finished today. Add one with the + button, or have an agent file it with the create-task skill or <code>just tasks create</code>: <a href="',
-    );
+    expect(html).toContain('<p class="first-steps">No open task. <a href="');
     expect(html).toContain('/docs/operations/GETTING_STARTED.md" target="_blank"');
     expect(html.match(/first-steps/g)).toHaveLength(1);
   });

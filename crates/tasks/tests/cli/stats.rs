@@ -421,6 +421,7 @@ fn done_twice_and_undone() -> Case {
                 kind: kind.into(),
                 text: text.into(),
                 ts: d + hours * H,
+                person: false,
             });
         }
     }
@@ -453,7 +454,7 @@ fn stats_and_the_roll_up_count_the_same_tasks_done_on_each_day() {
         })
         .filter(|(_, done)| *done > 0)
         .collect();
-    stats.sort();
+    symphony_board::order::sort_by(&mut stats, &Ord::cmp);
     let read = c.store().report_records(d).unwrap();
     let days = [
         report_day("sim", d, d + DAY, now, &read),
@@ -486,7 +487,7 @@ fn stats_and_the_roll_up_count_the_same_tasks_done_on_each_day() {
             }
         }
     }
-    rolled.sort();
+    symphony_board::order::sort_by(&mut rolled, &Ord::cmp);
     assert_eq!(stats, rolled);
     assert_eq!(stats.iter().map(|(_, done)| done).sum::<u64>(), 3);
 }
@@ -523,6 +524,7 @@ fn seeded(tasks: usize) -> Case {
                 kind: kind.into(),
                 text: text.into(),
                 ts: NOW + step as f64 * 1800.0,
+                person: false,
             });
         }
     }
@@ -849,7 +851,7 @@ fn list_reads_when_tasks_took_their_status_in_one_request_however_many_it_lists(
     assert_eq!(since(&many), vec![json!(NOW + 3.5 * H); 300]);
     let reads = |requests: &[proxy::Request]| {
         (requests.iter())
-            .filter(|r| r.sql.contains("WHERE kind IN ['system', 'verdict']"))
+            .filter(|r| r.sql.contains("m.kind IN ('system', 'verdict')"))
             .count()
     };
     assert_eq!(reads(&few_requests), 1);
@@ -990,6 +992,8 @@ fn show_the_task_route_and_stats_say_the_same_tokens_and_cost() {
         (&round(1)["tokens"], &round(1)["cost"])
     );
     assert_eq!(landed["again"], 1);
+    // Reviewed once: back after none.
+    assert_eq!(landed["back_after_review"], 0);
     // The text says each figure is an estimate, with the day of the prices, and what had none.
     let text = with_files.ok("", &["stats", "--days", "1"]);
     let prices = tokens["cost"]["prices"].as_str().unwrap();
@@ -1000,7 +1004,7 @@ fn show_the_task_route_and_stats_say_the_same_tokens_and_cost() {
             .to_string(),
         "no price for gpt-x 2k tokens, in no figure".to_string(),
         "Cost per landed task: 1 landed with tokens recorded, median".to_string(),
-        "1 of 1 went past their first round".to_string(),
+        "back after review: 0 of 1 were reviewed twice or more".to_string(),
     ] {
         assert!(text.contains(&said), "{said:?} not in {text}");
     }

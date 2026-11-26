@@ -34,7 +34,7 @@ fn a_call_gives_the_stores_result_in_pythons_field_order() {
         .keys()
         .map(String::as_str)
         .collect();
-    keys.sort_unstable();
+    symphony_board::order::sort_by(&mut keys, &Ord::cmp);
     assert_eq!(
         keys,
         [
@@ -254,12 +254,13 @@ fn input_that_is_not_json_is_an_error_and_exit_two() {
 #[test]
 fn a_board_it_cannot_reach_is_an_error_in_one_line_naming_it() {
     let mut env = env();
-    env.vars.insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+    env.vars
+        .insert("TASKS_SERVER".into(), crate::UNREACHED_SERVER.into());
     let said = answer(&env, json!([{"method": "sessions"}, {"method": "tasks"}]));
     for each in said.as_array().unwrap() {
         let error = each["error"].as_str().unwrap();
         assert!(
-            error.contains("127.0.0.1:1") && !error.contains('\n'),
+            error.contains(crate::UNREACHED_FOLDER) && !error.contains('\n'),
             "{error}"
         );
     }
@@ -348,7 +349,8 @@ fn lines_answers_a_line_it_cannot_read_and_serves_the_rest() {
 #[test]
 fn lines_answers_each_call_with_the_board_it_cannot_reach() {
     let mut env = env();
-    env.vars.insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+    env.vars
+        .insert("TASKS_SERVER".into(), crate::UNREACHED_SERVER.into());
     let (code, answers) = served(
         &env,
         "{\"method\": \"sessions\"}\n{\"method\": \"tasks\"}\n",
@@ -356,7 +358,12 @@ fn lines_answers_each_call_with_the_board_it_cannot_reach() {
     assert_eq!(code, 0);
     assert_eq!(answers.len(), 2);
     for each in answers {
-        assert!(each["error"].as_str().unwrap().contains("127.0.0.1:1"));
+        assert!(
+            each["error"]
+                .as_str()
+                .unwrap()
+                .contains(crate::UNREACHED_FOLDER)
+        );
     }
 }
 

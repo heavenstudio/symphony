@@ -11,9 +11,9 @@ use symphony_api::{
 use symphony_board::sys;
 use symphony_plugin::{Describer, Plugin};
 
-use super::{judged, plugins, protected, run};
+use super::{ANSWERS_IN, GITHUB, judged, plugins, program, protected, run};
 use crate::plugins::Plugins;
-use crate::settings::{class, stored};
+use crate::settings::{Machine, class, stored};
 
 #[test]
 fn a_key_the_local_file_refuses_is_protected_however_it_is_spelt() {
@@ -239,7 +239,6 @@ fn a_setting_given_the_boards_scope_alone_is_left_with_none_and_drawn_with_no_co
     let page = [SettingsSection {
         id: "plugins".into(),
         title: "Plugins".into(),
-        about: String::new(),
         entries: vec![judged],
     }];
     assert!(stored::list(&page, &stored::Board::default(), None, "main").is_empty());
@@ -328,9 +327,15 @@ fn shell(script: &str, within: Duration) -> Result<Vec<u8>, String> {
     run(sys::command("sh").args(["-c", script]), "sh", within)
 }
 
+/// The time a test that reads an answer gives it: the page's own as the test's backstop, so a
+/// loaded machine's stall never stands for the answer.
+fn answering() -> Duration {
+    test_time::backstop(ANSWERS_IN)
+}
+
 #[test]
 fn a_command_that_exits_0_answers_what_it_printed() {
-    let answer = shell("echo '{}'; echo said >&2", Duration::from_secs(60));
+    let answer = shell("echo '{}'; echo said >&2", answering());
     assert_eq!(answer, Ok(b"{}\n".to_vec()));
 }
 
@@ -339,16 +344,13 @@ fn a_command_that_fails_says_its_code_and_its_first_line_on_stderr() {
     assert_eq!(
         shell(
             "echo out; printf '\\n  no file\\nmore\\n' >&2; exit 3",
-            Duration::from_secs(60)
+            answering()
         ),
         Err("sh exited 3: no file".into())
     );
+    assert_eq!(shell("exit 4", answering()), Err("sh exited 4".into()));
     assert_eq!(
-        shell("exit 4", Duration::from_secs(60)),
-        Err("sh exited 4".into())
-    );
-    assert_eq!(
-        shell("kill -9 $$", Duration::from_secs(60)),
+        shell("kill -9 $$", answering()),
         Err("sh was killed".into())
     );
 }
@@ -358,7 +360,7 @@ fn a_program_that_does_not_start_says_so() {
     let gone = run(
         &mut sys::command("/nonexistent/symphony-github"),
         "symphony-github describe",
-        Duration::from_secs(60),
+        answering(),
     )
     .unwrap_err();
     assert!(
@@ -375,5 +377,91 @@ fn a_command_that_gives_no_answer_in_its_time_is_killed_and_said() {
     assert_eq!(
         shell("exec sleep 600", Duration::from_secs(1)).unwrap_err(),
         "sh gave no answer in 1 s"
+    );
+}
+
+#[test]
+fn a_machine_gives_a_program_the_pages_time_to_answer_unless_it_is_given_another() {
+    for machine in [
+        Machine::of_process(),
+        Machine::path(None),
+        Machine::default(),
+    ] {
+        assert_eq!(machine.answers_in, ANSWERS_IN, "{machine:?}");
+    }
+    assert_eq!(ANSWERS_IN, Duration::from_secs(10));
+    let given = Machine::path(Some("/nowhere".into())).answering_in(Duration::from_millis(250));
+    assert_eq!(given.answers_in, Duration::from_millis(250));
+    // Only its time changes: where it looks is as it was.
+    assert_eq!(
+        given,
+        Machine {
+            answers_in: Duration::from_millis(250),
+            ..Machine::path(Some("/nowhere".into()))
+        }
+    );
+}
+
+/// A scratch folder of this test's own: a main checkout with nothing in it, and `bin`, holding a
+/// `symphony-github` that runs `script` for `describe`.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn with_github(name: &str, script: &str) -> Scratch {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root =
+            std::env::temp_dir().join(format!("symphony-described-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("main")).unwrap();
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        let program = root.join("bin/symphony-github");
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\n[ \"$*\" = describe ] || exit 2\n{script}\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Scratch(root)
+    }
+
+    fn machine(&self) -> Machine {
+        Machine::path(Some(self.0.join("bin").into_os_string()))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn a_program_is_given_its_machines_time_to_answer_and_past_it_is_said_on_its_entry() {
+    // It would sleep far past the bound; the machine's time is what ends the wait.
+    let scratch = Scratch::with_github("silent", "exec sleep 600");
+    let machine = scratch.machine().answering_in(Duration::from_millis(200));
+    let entry = program(&machine, &scratch.0.join("main"), &GITHUB);
+    assert_eq!(
+        entry.state.unwrap().why,
+        "Unknown: its program could not say: symphony-github describe gave no answer in 200 ms."
+    );
+    assert!(
+        entry.needs[0].met,
+        "the program was found: {:?}",
+        entry.needs
+    );
+}
+
+#[test]
+fn a_program_that_answers_within_its_machines_time_is_its_own_entry() {
+    let scratch = Scratch::with_github(
+        "answering",
+        r#"printf '{"id":"elsewhere","name":"GitHub","about":"Its words."}\n'"#,
+    );
+    let machine = scratch.machine().answering_in(answering());
+    let entry = program(&machine, &scratch.0.join("main"), &GITHUB);
+    assert_eq!(
+        (entry.id.as_str(), entry.about.as_str()),
+        ("github", "Its words.")
     );
 }

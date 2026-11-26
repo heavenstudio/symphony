@@ -381,6 +381,10 @@ impl<'a> Ledger<'a> {
                     |held| (held.clone(), false),
                 )
             };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a busy board path keeps std's in-place sort (crate::order): PULL's slot ledger"
+        )]
         owners.sort_unstable();
         owners.dedup();
         Place {
@@ -429,6 +433,10 @@ impl<'a> Ledger<'a> {
             .flat_map(HashMap::values_mut)
             .flat_map(BTreeMap::values_mut);
         for slot in slots {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "a busy board path keeps std's in-place sort (crate::order): PULL's slot ledger"
+            )]
             slot.sort_unstable();
         }
         tally

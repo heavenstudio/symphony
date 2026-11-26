@@ -667,6 +667,10 @@ impl Parser<'_> {
         {
             if child.class("entry-text") {
                 blocks.extend(self.blocks(&child.children));
+            } else if child.class(crate::render::BY_CLASS) {
+                // A person's name, first of the entry's blocks: the kit's thread entry has no
+                // field for it, and the client draws it before the verdict.
+                blocks.insert(0, by_block(&child.plain()));
             } else {
                 blocks.extend(self.block(child));
             }
@@ -1188,6 +1192,20 @@ fn count(
     }
 }
 
+/// The first block of a person's thread entry, which names them: a paragraph of one span classed
+/// [`crate::render::BY_CLASS`] holding the short name their line carries.
+pub(crate) fn by_block(name: &str) -> Block {
+    Block::Paragraph {
+        spans: vec![Span::Styled {
+            tag: InlineKind::Span,
+            presentation: Presentation::class(crate::render::BY_CLASS),
+            spans: vec![Span::Text {
+                text: name.to_string(),
+            }],
+        }],
+    }
+}
+
 #[cfg(test)]
 mod ordering_tests {
     use crate::test_tree::Tree;
@@ -1201,6 +1219,10 @@ mod ordering_tests {
             let compare = |a: &(String, usize), b: &(String, usize)| {
                 b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
             };
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the standard sort this test holds the shared sorter to"
+            )]
             let (_, old_cpu) = test_time::cpu::spent(|| old.sort_by(&compare));
             let (_, new_cpu) =
                 test_time::cpu::spent(|| symphony_board::order::sort_by(&mut pairs, &compare));

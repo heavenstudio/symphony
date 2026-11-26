@@ -8,7 +8,7 @@
 //! A line's time is the machine's, never the store's pinned clock, so these tests age a line by
 //! moving its `seen` back by hand.
 
-use crate::common::{Backend, HOST, NOW, client, refused};
+use crate::common::{HOST, NOW, database, refused};
 use serde_json::json;
 use symphony_board::Database;
 use symphony_board::sweep::trigger::now;
@@ -44,7 +44,9 @@ fn lines(client: &Database) -> Vec<Writer> {
     )
     .writers()
     .unwrap();
-    lines.sort_by(|a, b| (&a.program, &a.host).cmp(&(&b.program, &b.host)));
+    symphony_board::order::sort_by(&mut lines, &|a, b| {
+        (&a.program, &a.host).cmp(&(&b.program, &b.host))
+    });
     lines
 }
 
@@ -77,12 +79,25 @@ fn this() -> i64 {
 
 /// A newer build's schema: this one's, then a table of its own.
 fn newer() -> Schema {
-    Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;")
+    Schema::this_build()
+        .then_each("CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY, doc jsonb);")
 }
 
-on_both! {
-fn a_writer_is_recorded_as_it_opens_and_its_last_seen_moves_once_an_hour_has_gone(backend: Backend) {
-    let client = backend.database();
+/// The tables the board's database holds.
+fn tables(client: &Database) -> Vec<String> {
+    let raw = client.postgresql();
+    let listed = raw
+        .request(&[symphony_board::pg::Step::bare(
+            "SELECT coalesce(jsonb_agg(table_name::text ORDER BY table_name), '[]')::text \
+             FROM information_schema.tables WHERE table_schema = current_schema()",
+        )])
+        .unwrap();
+    serde_json::from_str(listed[0].value().unwrap()).unwrap()
+}
+
+#[test]
+fn a_writer_is_recorded_as_it_opens_and_its_last_seen_moves_once_an_hour_has_gone() {
+    let client = database();
     let start = now();
     opened(&client, &Opening::write().by(gate()), HOST).unwrap();
     let first = line(&client, "gate-review", HOST);
@@ -132,7 +147,6 @@ fn a_writer_is_recorded_as_it_opens_and_its_last_seen_moves_once_an_hour_has_gon
     opened(&client, &Opening::read().by(reader), HOST).unwrap();
     assert_eq!(lines(&client), [studio, moved]);
 }
-}
 
 /// A build from before the record, which arrived with schema 18 (`store/writers.rs`'s `SINCE`):
 /// this build's tables, the writers' among them, at the version below it.
@@ -144,9 +158,9 @@ fn before_the_record() -> Schema {
     older
 }
 
-on_both! {
-fn a_build_from_before_the_record_writes_no_line_and_the_build_that_moves_its_board_does(backend: Backend) {
-    let client = backend.database();
+#[test]
+fn a_build_from_before_the_record_writes_no_line_and_the_build_that_moves_its_board_does() {
+    let client = database();
     let older = Program::named("tasks", "/opt/old/tasks");
     opened(
         &client,
@@ -165,12 +179,11 @@ fn a_build_from_before_the_record_writes_no_line_and_the_build_that_moves_its_bo
         .collect();
     assert_eq!(recorded, [("gate-review".to_string(), this())]);
 }
-}
 
 /// A board at this build, its gate's line last seen `ago` before now, and the line of the test's own
 /// program, which the migrates below are, seen now.
 fn board_with_gate(ago: f64) -> Database {
-    let client: Database = client().into();
+    let client = database();
     opened(&client, &Opening::write().by(gate()), HOST).unwrap();
     age(&client, "gate-review", HOST, ago);
     opened(&client, &Opening::write(), HOST)
@@ -180,7 +193,6 @@ fn board_with_gate(ago: f64) -> Database {
     client
 }
 
-// SurrealDB alone: injects future or refusing SurrealDB definitions to test migration/record failures.
 #[test]
 fn a_migrate_names_a_writer_seen_in_the_last_week_behind_it_and_leaves_the_board_unmoved() {
     let client = board_with_gate(3.0 * HOUR);
@@ -201,15 +213,10 @@ fn a_migrate_names_a_writer_seen_in_the_last_week_behind_it_and_leaves_the_board
         )
     );
     assert_eq!(version(&client), Some(this()), "the board did not move");
-    let Database::SurrealDb(raw) = &client else {
-        unreachable!()
-    };
-    let tables = raw
-        .query("RETURN object::keys((INFO FOR DB).tables);", json!({}))
-        .unwrap();
+    let held = tables(&client);
     assert!(
-        !tables.last().unwrap().to_string().contains("fixture_next"),
-        "nothing of the newer schema was defined: {tables:?}"
+        !held.contains(&"fixture_next".to_string()),
+        "nothing of the newer schema was defined: {held:?}"
     );
 
     // Told to, it moves the board, and the gate left behind is refused, named as what to rebuild.
@@ -242,7 +249,6 @@ fn a_migrate_names_a_writer_seen_in_the_last_week_behind_it_and_leaves_the_board
     );
 }
 
-// SurrealDB alone: injects future or refusing SurrealDB definitions to test migration/record failures.
 #[test]
 fn a_migrate_counts_no_writer_unseen_for_a_week_at_its_schema_already_or_itself() {
     // Not seen in the last week.
@@ -252,7 +258,7 @@ fn a_migrate_counts_no_writer_unseen_for_a_week_at_its_schema_already_or_itself(
     assert_eq!(version(&unseen), Some(this() + 1));
 
     // The migrate's own line, written before it was rebuilt: the migrate is the gate itself.
-    let itself: Database = client().into();
+    let itself = database();
     opened(&itself, &Opening::write().by(gate()), HOST).unwrap();
     age(&itself, "gate-review", HOST, HOUR);
     let rebuilt = Opening::write().at(newer()).by(gate()).migrating();
@@ -268,7 +274,7 @@ fn a_migrate_counts_no_writer_unseen_for_a_week_at_its_schema_already_or_itself(
     assert!(moved.seen >= start, "seen as it moved the board");
 
     // A writer already at the schema the migrate moves to is not behind it.
-    let already: Database = client().into();
+    let already = database();
     opened(&already, &Opening::write().by(gate()), HOST).unwrap();
     Raw::of(&already)
         .table("writer")
@@ -300,19 +306,12 @@ fn a_migrate_counts_no_writer_unseen_for_a_week_at_its_schema_already_or_itself(
 }
 
 /// A line a store cannot write leaves its opening as it was: the board opens all the same.
-// SurrealDB alone: injects future or refusing SurrealDB definitions to test migration/record failures.
 #[test]
 fn an_opening_whose_line_is_refused_still_opens_its_board() {
     let client = board_with_gate(HOUR);
-    // A hand at the server makes the table refuse every line.
-    let Database::SurrealDb(raw) = &client else {
-        unreachable!()
-    };
-    raw
-        .query(
-            "DEFINE TABLE OVERWRITE writer SCHEMAFULL; DEFINE FIELD OVERWRITE never ON writer TYPE int;",
-            json!({}),
-        )
+    // A hand at the server makes the table refuse every line from now on.
+    let raw = client.postgresql();
+    raw.simple("ALTER TABLE writer ADD CONSTRAINT never CHECK (false) NOT VALID")
         .unwrap();
     let store = opened(&client, &Opening::write().by(gate()), HOST).unwrap();
     assert_eq!(

@@ -19,10 +19,11 @@ use crate::{Case, git, repository, scratch};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read as _;
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::Shutdown;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use symphony_api::{End, RunLine};
@@ -48,7 +49,7 @@ pub(crate) const SCALE: &str = "20";
 /// A board that cannot be reached, which refuses at once, on a database of its own: a scratch
 /// board, for a test that has none to give its runs [`SCALE`].
 pub(crate) const UNREACHED: [(&str, &str); 2] = [
-    ("TASKS_SERVER", "127.0.0.1:1"),
+    ("TASKS_SERVER", crate::UNREACHED_SERVER),
     ("TASKS_DATABASE", "unreached"),
 ];
 
@@ -133,11 +134,11 @@ pub(crate) fn day_lines(work: &Path, runs: &Path, ends: usize) -> Vec<RunLine> {
                     .collect()
             })
             .unwrap_or_default();
-        days.sort();
+        symphony_board::order::sort_by(&mut days, &Ord::cmp);
         let lines: Vec<RunLine> = days
             .iter()
             .flat_map(|day| {
-                let text = fs::read_to_string(day).unwrap();
+                let text = day_text(day);
                 assert!(text.is_empty() || text.ends_with('\n'), "{text}");
                 text.lines()
                     .map(|line| {
@@ -159,6 +160,38 @@ pub(crate) fn day_lines(work: &Path, runs: &Path, ends: usize) -> Vec<RunLine> {
     let ended = lines.iter().filter(|line| line.end.is_some()).count();
     assert_eq!(ended, ends, "{lines:#?}");
     lines
+}
+
+/// What the day file at `day` holds: nothing once it is gone, as one listed may be by the time it
+/// is read. A recorder apart from its command appends its lines, and prunes the old day files
+/// after each, while its caller already reads what it appended (on macOS, once its command
+/// ended), so a file of a day past [`symphony_board::runs::KEPT_DAYS`] goes between the listing
+/// and the read, a day with no file to every reader of the runs ([`symphony_board::runs::rollup`]).
+fn day_text(day: &Path) -> String {
+    match fs::read_to_string(day) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        read => read.unwrap_or_else(|error| panic!("{}: {error}", day.display())),
+    }
+}
+
+#[test]
+fn a_day_file_gone_since_it_was_listed_reads_as_a_day_with_no_lines() {
+    let dir = scratch("recorder-day-text");
+    let day = dir.join("2000-01-01.jsonl");
+    fs::write(&day, "{}\n").unwrap();
+    assert_eq!(day_text(&day), "{}\n");
+    fs::remove_file(&day).unwrap();
+    assert_eq!(day_text(&day), "");
+}
+
+/// Only a file gone reads as no lines: any other error reading one is the test's to fail, naming
+/// the path, here a folder where a day file is listed.
+#[test]
+#[should_panic(expected = "2000-01-01.jsonl: Is a directory")]
+fn a_day_file_that_cannot_be_read_for_another_reason_fails_naming_it() {
+    let day = scratch("recorder-day-unreadable").join("2000-01-01.jsonl");
+    fs::create_dir(&day).unwrap();
+    day_text(&day);
 }
 
 /// The backstop of the tests' own waits for what a run records: the 30 s they once gave it, as
@@ -396,20 +429,37 @@ fn a_recorded_command_keeps_its_arguments_streams_session_and_status() {
 /// A board server that takes one connection and never answers it: once it took it, it makes the
 /// file `accepted`. It tells when it took it, then when its asker was let go: by
 /// [`Silent::release`], or by the asker's own wait, which runs a minute in these tests
-/// ([`ASKED`]), so that a loaded machine never lets it go first.
+/// ([`ASKED`]), so that a loaded machine never lets it go first. Its socket is PostgreSQL's in a
+/// folder of its own under `/tmp`, short enough for a socket's path, removed with it.
 struct Silent {
     address: String,
+    folder: PathBuf,
     heard: mpsc::Receiver<(f64, f64)>,
-    held: Arc<Mutex<Option<TcpStream>>>,
+    held: Arc<Mutex<Option<UnixStream>>>,
     /// Set once its asker was let go, before it reads the time it tells for that.
     let_go: Arc<AtomicBool>,
 }
 
+impl Drop for Silent {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.folder);
+    }
+}
+
 impl Silent {
     fn new(accepted: &Path) -> Silent {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap().to_string();
-        let (tell, heard) = mpsc::channel();
+        static MADE: AtomicUsize = AtomicUsize::new(0);
+        let folder = PathBuf::from(format!(
+            "/tmp/symphony-silent-{}-{}",
+            std::process::id(),
+            MADE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        let socket = folder.join(symphony_board::server::postgres::SOCKET_FILE);
+        let listener = UnixListener::bind(&socket).unwrap();
+        let address = format!("postgresql:{}", folder.display());
+        let (tell, heard) = crate::test_channel::channel();
         let held = Arc::new(Mutex::new(None));
         let holder = Arc::clone(&held);
         let let_go = Arc::new(AtomicBool::new(false));
@@ -427,6 +477,7 @@ impl Silent {
         });
         Silent {
             address,
+            folder,
             heard,
             held,
             let_go,
@@ -590,7 +641,7 @@ fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_
         .to_vec();
     args.extend(until_asked(&accepted));
     let called = now();
-    let (tell, done) = mpsc::channel();
+    let (tell, done) = crate::test_channel::channel();
     std::thread::spawn(move || {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let _ = tell.send(crate::run(&env, &args, ""));
@@ -613,7 +664,7 @@ fn in_its_callers_process_the_command_keeps_its_callers_session_and_marks() {
     let heard = folders.dir.join("heard");
     let mut env = case.env.clone();
     for (name, value) in [
-        ("TASKS_SERVER", "127.0.0.1:1"),
+        ("TASKS_SERVER", crate::UNREACHED_SERVER),
         ("TASKS_SESSION", "worker"),
         ("TASKS_WORK", folders.work.to_str().unwrap()),
         ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
@@ -697,7 +748,7 @@ fn a_command_that_ends_while_the_board_is_asked_is_left_unreaped_until_its_recor
         pid.to_str().unwrap(),
     ]
     .map(String::from);
-    let (tell, done) = mpsc::channel();
+    let (tell, done) = crate::test_channel::channel();
     std::thread::spawn(move || {
         let args = args.each_ref().map(String::as_str);
         let _ = tell.send(crate::run(&env, &args, ""));
@@ -1206,6 +1257,9 @@ fn ago(case: &Case, seconds: f64) -> Case {
 
 /// The beat hook's events for a board command naming `handle`, run from `cwd` and ended (so it
 /// leaves no busy mark): by the subagent `agent`, else by the full Claude Code session `claude`.
+/// The hook says nothing of a beat it gave up on, so the board is read for what they left: the
+/// handle bound to that key, and a subagent placed in `cwd` (a full session's binding keeps no
+/// checkout).
 fn bind(case: &Case, handle: &str, agent: Option<&str>, claude: &str, cwd: &Path) {
     for hook in ["PreToolUse", "PostToolUse"] {
         let mut event = serde_json::json!({"hook_event_name": hook, "tool_name": "Bash",
@@ -1217,6 +1271,14 @@ fn bind(case: &Case, handle: &str, agent: Option<&str>, claude: &str, cwd: &Path
         let ran = crate::run(&case.env, &["beat"], &event.to_string());
         assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{event}");
     }
+    let bound = case.store().agent_bindings().unwrap().remove(handle);
+    let left = bound.map(|bound| (bound.agent, bound.worktree));
+    let worktree = agent.map_or("", |_| cwd.to_str().unwrap());
+    assert_eq!(
+        left,
+        Some((agent.unwrap_or(claude).to_owned(), worktree.to_owned())),
+        "{handle}'s binding"
+    );
 }
 
 /// What a run of `true` with `vars`, in `cwd`, records on `case`'s board, once it finished.
@@ -1582,7 +1644,7 @@ fn a_board_that_cannot_be_reached_or_a_test_board_with_no_work_folder_still_runs
     let mut case = Case::new();
     case.env
         .vars
-        .insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+        .insert("TASKS_SERVER".into(), crate::UNREACHED_SERVER.into());
     let folders = Folders::new("recorder-unreachable");
     let done = output(
         tasks(
@@ -2132,7 +2194,9 @@ fn runs_started_back_to_back_each_name_the_one_their_caller_ran_before() {
         .collect();
     assert_eq!(statuses, [Some(3), Some(0), Some(0), Some(0)]);
     let mut lines = symphony_api::fold(day_lines(&folders.work, &runs, 4));
-    lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
+    symphony_board::order::sort_by(&mut lines, &|one, other| {
+        one.queued.total_cmp(&other.queued)
+    });
     assert_eq!(lines[0].rerun_of, None);
     for pair in lines.windows(2) {
         assert_eq!(
@@ -2870,7 +2934,7 @@ fn a_steps_log_is_its_own_and_its_runs_log_holds_it_too() {
     // what the run writes once the step's command ended.
     let run = lines.iter().find(|line| line.step.is_none()).unwrap();
     let mut words: Vec<String> = read(run).lines().map(str::to_owned).collect();
-    words.sort_unstable();
+    symphony_board::order::sort_by(&mut words, &Ord::cmp);
     assert_eq!(words, ["after", "before", "inside"]);
     assert_ne!(run.log, step.log);
 }

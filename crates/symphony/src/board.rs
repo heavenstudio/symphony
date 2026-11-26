@@ -200,7 +200,7 @@ fn open_comment_lines(plugins: &Plugins, docs: &[Doc]) -> Vec<String> {
                 body,
             ));
         }
-        items.sort();
+        symphony_board::order::sort_by(&mut items, &Ord::cmp);
         for (line, kind, title, body) in items {
             let head = format!("{}:{line}  {kind:<8} {title}", doc.path);
             lines.push(crate::text::rstrip(&head).to_string());
@@ -265,7 +265,12 @@ pub fn render(plugins: &Plugins, docs: &[Doc], open_only: bool) -> String {
 #[derive(Serialize)]
 struct JsonEntry {
     ts: Option<String>,
+    /// `agent` for an agent's line, `owner` for any person's.
     who: &'static str,
+    /// The short name of the person a board named whose line it is; left out for the owner's and
+    /// an agent's, whose `who` says whose it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     verdict: Option<String>,
     text: String,
 }
@@ -303,6 +308,7 @@ impl<'a> JsonDecision<'a> {
                 .map(|e| JsonEntry {
                     ts: e.ts,
                     who: e.who.as_str(),
+                    name: (e.name != e.who.as_str()).then_some(e.name),
                     verdict: e.verdict,
                     text: e.text,
                 })

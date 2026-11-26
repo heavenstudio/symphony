@@ -18,12 +18,12 @@
 //!   read again: it still names this server's release, or nothing moves.
 //! - **The move.** As the refresh moves a board: a board below the writer record, or one a writer
 //!   behind holds, is its project's to finish; one whose database is down, whose writers or schema
-//!   cannot be read, or whose database runs an older SurrealDB than the release pins, is red.
-//!   Otherwise its store is snapshotted just before its move ([`super::moving`]), then the
-//!   release's own `tasks migrate` (`releases/RELEASE/bin/tasks`, named by the machine folder and
-//!   the release, never by a board's record) runs in its main checkout, `--leave-behind` where the
-//!   only writers behind are a release's own, gone or unused ([`super::writers`]), within its
-//!   bound, and its schema is read again.
+//!   cannot be read, or that is still on SurrealDB (refused, naming how it moves:
+//!   `symphony_board::server::GONE`), is red. Otherwise its store is snapshotted just before its
+//!   move ([`super::moving`]), then the release's own `tasks migrate` (`releases/RELEASE/bin/tasks`,
+//!   named by the machine folder and the release, never by a board's record) runs in its main
+//!   checkout, `--leave-behind` where the only writers behind are a release's own, gone or unused
+//!   ([`super::writers`]), within its bound, and its schema is read again.
 //! - **The ledger.** The same update, by its identity: its failure is recorded and posted on its
 //!   task only when what holds it changed since the last one said, the refresh's included
 //!   ([`super::writers::steady`]); the move stamps when its board reached the schema; and once a
@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::Duration;
 
-use symphony_board::server::{Engine, Home, ServerError};
+use symphony_board::server::{Home, ServerError};
 use symphony_board::sys::Command;
 
 use super::moving::{self, KEPT_SNAPSHOTS, UNSET};
@@ -187,7 +187,7 @@ fn running(registry: &Registry) -> Option<String> {
         let common = symphony_board::git::checkout_common_dir(&entry.root)?;
         let path = common.join(symphony_board::folders::RELEASE).join(RUNNING);
         let said: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+            serde_json::from_slice(std::fs::read_to_string(&path).ok()?.as_bytes()).ok()?;
         let pid = said["pid"].as_i64()?;
         symphony_board::sys::pid_alive(pid).then(|| {
             format!(
@@ -228,7 +228,7 @@ enum Judged {
 
 impl Board<'_> {
     fn home(&self) -> Home {
-        Home::in_common(self.common, Some(&moving::surreal_for(self.common, None)))
+        Home::in_common(self.common)
     }
 
     /// `update` of this board taken as far as it goes this round: what was done, said.
@@ -344,39 +344,11 @@ impl Board<'_> {
         if !lagging.behind.is_empty() {
             return Judged::Held(lagging.holding(live, self.release, self.target, now));
         }
-        let moves = Judged::Moves {
+        Judged::Moves {
             live,
             leave: lagging.leaves(),
             gone: lagging.not_counted(now),
-        };
-        // A release pins no PostgreSQL: the board's is the machine's own, which no move replaces.
-        match home.backend() {
-            Ok(Engine::PostgreSql) => return moves,
-            Ok(Engine::SurrealDb) => {}
-            Err(error) => return Judged::Held(format!("{error}: nothing was moved")),
         }
-        // This server is the release's own build: the SurrealDB it pins is its own.
-        let pinned = symphony_board::server::SURREAL_VERSION;
-        let running = match home.recorded() {
-            Some(running) if !running.version.trim().is_empty() => running.version,
-            _ => {
-                return Judged::Held(
-                    "the SurrealDB its board's database runs cannot be read (its record names no \
-                     version), so the move might replace that database and the machine's server \
-                     stops none: nothing was moved"
-                        .into(),
-                );
-            }
-        };
-        if moving::older(&running, pinned) {
-            return Judged::Held(format!(
-                "its board's database runs SurrealDB {running} and {} pins {pinned}: moving its \
-                 schema would replace that server, and the machine's server stops no board's \
-                 database, so nothing was moved",
-                self.release
-            ));
-        }
-        moves
     }
 
     /// The board, at schema `live`, snapshotted and moved by the release's own `tasks migrate`,
@@ -389,11 +361,8 @@ impl Board<'_> {
         host: &dyn Host,
     ) -> Result<String, String> {
         let (release, target) = (self.release, self.target);
-        let engine = home
-            .backend()
-            .map_err(|e| format!("the snapshot of its store failed, so it was not moved: {e}"))?;
         let folder = self.common.join(symphony_board::server::FOLDER);
-        let snapshot = moving::snapshot_file(&folder, target, release, engine);
+        let snapshot = moving::snapshot_file(&folder, target, release);
         home.export_within(symphony_board::DATABASE, &snapshot, self.bound)
             .map_err(|e| format!("the snapshot of its store failed, so it was not moved: {e}"))?;
         if let Some(kept) = snapshot.parent() {
@@ -549,7 +518,7 @@ impl Board<'_> {
         }
         let entry = self.registry.get(&task.project)?;
         let common = symphony_board::git::checkout_common_dir(&entry.root)?;
-        let home = Home::in_common(&common, Some(&moving::surreal_for(&common, None)));
+        let home = Home::in_common(&common);
         let live = home.schema(symphony_board::DATABASE).ok().flatten()?;
         let tasks: PathBuf = updates::writer_of(self.machine, live)?;
         Some(host.theirs(&entry.root, &tasks))

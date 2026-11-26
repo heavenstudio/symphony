@@ -314,7 +314,7 @@ impl Place<'_> {
                 (name, title)
             })
             .collect();
-        docs.sort_by_cached_key(|(_, title)| title.to_lowercase());
+        symphony_board::order::sort_by_key(&mut docs, &|(_, title)| title.to_lowercase());
         docs
     }
 
@@ -500,12 +500,12 @@ mod ordering_tests {
             folders.push(name.to_string())
         });
         folders.retain(|name| !place.sub(name).shown().is_empty());
-        folders.sort_by_key(|name| name.to_lowercase());
+        symphony_board::order::sort_by_key(&mut folders, &|name| name.to_lowercase());
         assert_eq!(place.subfolders(), folders);
         let mut media = place.files(|renderer| {
             renderer != crate::entrypoint::MARKDOWN && renderer != crate::entrypoint::HTML
         });
-        media.sort_by_key(|name| name.to_lowercase());
+        symphony_board::order::sort_by_key(&mut media, &|name| name.to_lowercase());
         assert_eq!(place.media(), media);
         assert_eq!(media.len(), 4);
         let empty = place.sub("empty");

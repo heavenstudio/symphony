@@ -61,7 +61,7 @@ fn releases(tree: &Tree) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
-    names.sort();
+    symphony_board::order::sort_by(&mut names, &Ord::cmp);
     names
 }
 

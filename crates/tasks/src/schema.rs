@@ -1,108 +1,49 @@
-//! The board's tables in SurrealDB, one per SQLite table of `tools/tasks_store.py`, typed so a row
-//! the rules would never write is refused rather than kept. A record's id is its SQLite primary key:
-//! `task:⟨slug⟩`, `session:⟨handle⟩`, `role:[slug, handle, role]`, `link:[slug, kind, target]`,
-//! `message:[slug, id]`, `delivery:[message, handle]`, `barred_key:⟨key⟩`, `task_session:[slug, handle]`,
-//! `delivery_key:[slug, key]` (the message a keyed post made once on a thread, `Store::say_keyed`),
-//! `ask:⟨sid⟩` (what the owner said that waits on an agent's answer, `Store::open_ask`, numbered by
-//! `counter:ask`; never a SQLite table), `usage:[handle, slug, role, model, speed, round]` (the
-//! tokens a session's beats added up, `crate::usage`, from schema 19; never a SQLite table either,
-//! and with no event, as a beat moves the marker by its session's revision already).
-//! A message is keyed by its task first so a thread is one range of keys: an index on `slug` would do
-//! the same, but makes a transaction inserting many messages (the copy's) cost more than linearly
-//! (15k messages: 22 CPU-s with it, 2 without, measured on 3.3.0).
-//! SQLite's row ids are kept as `sid`; `counter:message` and `counter:task` hold the last id given out,
-//! `counter:tree` counts the moves of a task under another, and `counter:['agent', key]` the binds of
-//! one agent (`Store::bind_agent`): each a record the writes that must not pass each other write.
-//! Mutation events advance `counter:board_structure` in the transaction that changes board inputs,
-//! callback registration/observations or owner chat. Session mutations advance per-handle revisions
-//! instead, so independent tool-call beats never write the structural counter. Readers compare the
-//! combined BOARD_MARKER; guard-only writes on a revision row do not invalidate cached inputs.
-//! An event UPDATEs the marker, or CREATEs it on a board's first write, and never UPSERTs it: an
-//! UPSERT of a record that exists tries a create and rolls it back to a savepoint, and SurrealKV's
-//! rollback walks every key the transaction has written, so the copy's one transaction, an event a
-//! row, took time quadratic in its rows (the board of 2026-11-04: 17 min for that transaction; the
-//! whole copy now takes 20 s).
-//! Per-recipient `callback_lease` rows retain their revision and periodic PULL checkpoint across
-//! callback retirement; an event key must never inherit an earlier holder's revision.
+//! The board's contract: its version ([`VERSION`]), its additive steps on it ([`ADDED`]), and the
+//! rule for writers of different contracts on one board ([`decide`]). Its tables, indexes and
+//! triggers are `store/postgres/schema.rs`'s, one database a board, each row's id its key as
+//! JSON and its fields one document.
 //!
-//! What a write, each recipient of its dispatch and each tick read is found through an index, never a
-//! scan of the table (the board crate's `perf` tests plan every one, and every query an event here
-//! runs): messages by `sid` (a cursor's next), by `ts` (an inbox since its session connected), by
-//! recipient then `sid` (the owner's newest), by sender, kind, `sid` and slug (a sender's newest
-//! post, and newest verdict); deliveries by handle then message; roles by role; registrations by
-//! address. `said:[sender]` names each sender's newest `msg` or verdict, the greatest `[sid, slug]`
-//! (a copy takes one `sid` on two threads), and `DEFINE` fills it once when it holds nothing. Its
-//! key is an array holding the sender, so every string a message's sender may be is one, the empty
-//! string too: a record id that is the string itself refuses the empty one, and a copy of a board of
-//! schema 12 holding a word with no sender failed on it. An
-//! event keeps it as messages are made, deleted or edited: a message made, or edited into a
-//! sender's word, is that sender's word if no greater one is; a word deleted, or edited to another
-//! sender or out of the words, gives way to the sender's word before it, the greater of the last
-//! key of the sender's posts and the last of its verdicts in `message_sender`: two keys read,
-//! however many messages the board holds. They name the sender as a variable of its own,
-//! `$sender`: the server plans `sender = $before.sender` as a scan of the whole table, with no
-//! index (3.3.0 `EXPLAIN`). The board makes messages and edits none; its copy deletes
-//! them all at once and empties `said` first, so no deletion looks back. What does look back: a
-//! copy by a store of schema 12, which deletes the messages with `said` still full (each sender's
-//! word deleted gives way to its next, until none is left: 19.5 s for a copy of the `perf` tests'
-//! 50k messages, against 17.6 s with `said` emptied first), and a hand at the server deleting or
-//! editing a word. Until `message_sender`, the look back walked `message_sid` from the newest
-//! message down, and in an event SurrealKV walks a range backward over the rows it holds in memory
-//! (every row written since it last wrote them to an sstable: up to 4 GiB, its default on the
-//! machine measured, 256 MiB on a server `server::Storage` sets up) out of all proportion: over 150 s
-//! for 50k messages, where the same walk took 4.6 s as a statement of its own and 1.8 s once a
-//! restart had written the rows to disk, so a delete of a rare sender's newest word on a board just
-//! copied did not answer in 600 s (3.3.0, 2026-11-07). These cost the copy's one transaction
-//! less than the machine's load moves it: the live board's 49k messages and 36k deliveries swapped
-//! in 123 s without the events and 97 s with them, one after the other at load 140; defining them
-//! on that board took 15 s; and the `perf` tests' board of 50k messages copied in 41 and 44 s with
-//! `message_sender`, 60 and 53 s without it, alternating on one server at load 65 to 85.
-//!
-//! `moved:sqlite` is the record the move from SQLite wrote, a one-time move older builds made and
-//! this one no longer does: the board it moved, when, and a hash of every row the move left. The
-//! table stays defined, so a board that holds the record keeps it and every board keeps its shape.
-//!
-//! `meta:schema` names the board's contract ([`VERSION`]), so opening a board already in this shape
+//! `meta`'s `schema` row names the board's contract, so opening a board already in this shape
 //! writes nothing, and from schema 25 `writable_from`, the oldest schema whose Symphony may write
 //! the board ([`Schema::writable_from`]), written in the migration's one transaction beside the
 //! version. A board moved by a build before schema 25 has none, which lets no older Symphony write
-//! it. `meta:additions` counts the additive steps on that contract the board has ([`ADDED`]), in
-//! the `version` field `meta` already defines: no record is none.
+//! it. Its `additions` row counts the additive steps on that contract the board has ([`ADDED`]),
+//! in the `version` field `meta` already defines: no row is none.
 //!
-//! `recovery:board` names the board's recovery generation, from schema 22: a text the database
-//! makes, replaced in the transaction of every copy of the whole board and by a rebind
-//! (`store/recovery.rs`), never by an ordinary write and never part of a dump. A build of an
-//! older schema copies a board without replacing it, which is why it came with a schema step:
-//! the [`guard`] refuses that build's copy.
+//! `recovery`'s `board` row names the board's recovery generation, from schema 22: a text the
+//! database makes, replaced in the transaction of every copy of the whole board and by a rebind
+//! (`store/recovery.rs`), never by an ordinary write and never part of a dump. A build of an older
+//! schema copies a board without replacing it, which is why it came with a schema step: the
+//! schema guard refuses that build's copy.
 //!
-//! `execution_attempt:⟨uuid⟩`, `execution_fact:[uuid, seq]`, `execution_fence:[kind, …]` and
-//! `execution_artifact:[uuid, name]` are execution attempts, from schema 23 (`crate::execution`):
-//! schemaless and with no event, as no reader caches them.
+//! `execution_attempt`, `execution_fact`, `execution_fence` and `execution_artifact` are execution
+//! attempts, from schema 23 (`crate::execution`), read by no cache.
 //!
-//! `workflow:[KIND, …]` is a custom delivery workflow's record, from schema 24 (`store/workflow.rs`,
-//! docs/workflow/WORKFLOW.md): the active generation (`['active']`), an immutable definition by its digest,
-//! an activation by its generation, a task's transition by its slug and workflow revision, a
-//! receipt by its principal and key, and an external intent; and, from schema 26, for its guards
-//! (`workflow/guard.rs`), the state the board accepted from each approval authority
-//! (`['authority', ADAPTER]`) and each guarded edge's admission (`['admission', SLUG, REVISION]`).
-//! A task the workflow holds keeps its position in `fields._board.workflow`. Two events are the
-//! fence every writer meets, whatever it is: a task's position, or the status of a task that has
-//! one, changes only beside the transition recorded for it (`workflow_position`), and from schema
-//! 27 a position goes only beside the transition made by an activation recorded as a return to the
-//! board's writers; and a recorded definition, activation, transition, receipt or admission is
-//! never changed, nor an authority's accepted generation lowered within its epoch
-//! (`workflow_history`). No event reads a record's deletion: the whole-board copy replaces the
-//! table. A board with no custom workflow holds no such record and meets neither.
+//! `workflow` holds a custom delivery workflow's records, from schema 24 (`store/workflow.rs`,
+//! docs/workflow/WORKFLOW.md): the active generation, an immutable definition by its digest, an
+//! activation by its generation, a task's transition by its slug and workflow revision, a receipt
+//! by its principal and key, and an external intent; and, from schema 26, for its guards
+//! (`workflow/guard.rs`), the state the board accepted from each approval authority and each
+//! guarded edge's admission. A task the workflow holds keeps its position in
+//! `fields._board.workflow`. Two triggers are the fence every writer meets, whatever it is: a
+//! task's position, or the status of a task that has one, changes only beside the transition
+//! recorded for it, and from schema 27 a position goes only beside the transition made by an
+//! activation recorded as a return to the board's writers; and a recorded definition, activation,
+//! transition, receipt or admission is never changed, nor an authority's accepted generation
+//! lowered within its epoch. A board with no custom workflow holds no such record and meets
+//! neither.
 //!
-//! `setting:⟨key⟩` is a stored preference, from the first additive step on schema 28
-//! ([`ADDED`], `crate::settings`): the setting's key, the value it holds, its revision and every
-//! change of it. Schemaless and with no event: its readers read it at each read of the settings.
-//! The second additive step on schema 28 is PostgreSQL's index of `session` by `handle`
-//! (`session_handle`), where a session is read by its handle rather than by its id.
+//! `setting` holds the stored preferences, from the first additive step on schema 28 ([`ADDED`],
+//! `crate::settings`): the setting's key, the value it holds, its revision and every change of it,
+//! read at each read of the settings. The second additive step on schema 28 is the index of
+//! `session` by `handle` (`session_handle`), where a session is read by its handle rather than by
+//! its id. The third marks a person's line ([`PERSON_LINES`]), the fourth keeps a board's people
+//! ([`PEOPLE`]), the fifth which group a thing belongs to ([`OWNERSHIP`]) and the sixth the words
+//! held for people ([`HELD`]).
 //!
-//! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and
-//! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
-//! builds of other schemas write it and a line written moves no marker.
+//! `writer` holds a program that opens the board to write, the schema it was built at and when it
+//! was last seen (`store/writers.rs`), from schema 18: builds of other schemas write it, and a line
+//! written moves no marker.
 //!
 //! The board is a contract between the builds that read and write it (docs/workflow/TASKS.md, where it
 //! lives). Its version, [`VERSION`], is raised by a breaking step alone; an additive step ([`ADDED`])
@@ -121,14 +62,15 @@
 //! mutation, naming the project, the program to rebuild and `just symphony`; a reader one version
 //! behind reads it. A reader never moves a board forward or makes one: a board behind it, or none,
 //! it refuses before it reads, naming `just tasks`. Every write transaction starts with the
-//! [`GUARD`], so a store opened before a newer build migrated stops at its next write.
+//! schema guard (`store::postgres::GUARD`), so a store opened before a newer build migrated stops at
+//! its next write.
 //!
 //! On a board of its own contract, a writer that has additive steps the board lacks adds them in
 //! the same way, but only where it may move the board, and holds no writer: every build of the
 //! contract keeps writing it. Where it may not (a project's live board it is not the build of), it
 //! and every reader use the board as it is: the guard refuses, before anything is written, a write
-//! that names a table of a step the board lacks; the database refuses a field it does not define;
-//! and a SurrealDB board is STRICT, so no write makes a table it does not define. A whole-board
+//! that names a table of a step the board lacks, and the database refuses a table or a column it
+//! does not define. A whole-board
 //! copy, its staging and a recovery's rebind are held to the build's own additive steps exactly,
 //! and so is the whole-board read a copy is made from ([`crate::Store::dump`]): a board with steps
 //! the build lacks would lose what they hold, one lacking its steps could not hold its rows.
@@ -140,11 +82,10 @@
 
 use crate::store::Program;
 
-/// The board's contract: raised by a breaking step alone, one whose `DEFINE` changes or removes
+/// The board's contract: raised by a breaking step alone, one whose definitions change or remove
 /// what a build of the contract before reads or writes, or whatever else [`ADDED`] may not hold. A
-/// board at an older version runs `DEFINE` once, and its `IF NOT EXISTS` adds what is new but leaves
-/// every definition already there as it was. Changing one (a field's type, an assertion, an index)
-/// also needs `DEFINE … OVERWRITE` for it. Protocol changes can require a wider version step and
+/// board at an older version runs the definitions once, and their `IF NOT EXISTS` adds what is new
+/// but leaves every definition already there as it was. Protocol changes can require a wider version step and
 /// retirement of old read tokens: an already-open store does not repeat its opening check. A
 /// version listed in [`COMPATIBLE`] says its step keeps a Symphony one schema behind writing.
 ///
@@ -153,14 +94,12 @@ use crate::store::Program;
 /// every build reads and writes past what it does not know ([`OPEN`]).
 pub const VERSION: i64 = 28;
 
-/// An additive step on the contract [`VERSION`]: its definitions, run after [`DEFINE`] and the
-/// steps before it, and the board's `meta:additions` counts it once a build that may move the board
-/// has run them.
+/// An additive step on the contract [`VERSION`]: its definitions, run after the board's tables and
+/// the steps before it, and the board's count of additive steps (`meta`'s `additions`) counts it
+/// once a build that may move the board has run them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Addition {
-    /// Its definitions on SurrealDB, each `IF NOT EXISTS`.
-    pub surreal: &'static str,
-    /// Its definitions on PostgreSQL, each `IF NOT EXISTS`.
+    /// Its definitions, each `IF NOT EXISTS`.
     pub postgres: &'static str,
     /// The tables its step defines: a write naming one is refused on a board without the step.
     pub tables: &'static [&'static str],
@@ -170,11 +109,9 @@ pub struct Addition {
 }
 
 /// This build's additive steps on [`VERSION`], in order: a breaking step empties it, its
-/// definitions going into [`DEFINE`] and the PostgreSQL tables, as what they added is then the
-/// contract's.
+/// definitions going into the board's tables, as what they added is then the contract's.
 pub const ADDED: &[Addition] = &[
     Addition {
-        surreal: "DEFINE TABLE IF NOT EXISTS setting SCHEMALESS;",
         postgres: "CREATE TABLE IF NOT EXISTS setting (id jsonb PRIMARY KEY, \
                    doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));",
         tables: &["setting"],
@@ -184,15 +121,103 @@ pub const ADDED: &[Addition] = &[
               table there before reads it",
     },
     Addition {
-        surreal: "",
         postgres: "CREATE INDEX IF NOT EXISTS session_handle ON session (handle);",
         tables: &[],
-        why: "an index of session by handle on PostgreSQL, where a write's actor, an inbox's \
-              reader and a channel's session are read by handle, not by the row's id: a build \
-              without it reads the same rows by scanning the table, and writes them as it did; \
-              SurrealDB reads a session by its record id and has nothing to add",
+        why: "an index of session by handle, where a write's actor, an inbox's reader and a \
+              channel's session are read by handle, not by the row's id: a build without it reads \
+              the same rows by scanning the table, and writes them as it did",
     },
+    PERSON_LINES,
+    PEOPLE,
+    OWNERSHIP,
+    HELD,
 ];
+
+/// The step that marks a person's line ([`crate::rows::MessageRow::person`]): the nullable column
+/// `person` on `message`, an open table, set on a line a person a board named wrote
+/// ([`crate::Store::for_person`]) and on no other. It names no table of its own, so no write is
+/// refused for naming one; a write for a person needs it ([`crate::Store::is_person`]).
+pub const PERSON_LINES: Addition = Addition {
+    postgres: "ALTER TABLE message ADD COLUMN IF NOT EXISTS person boolean;",
+    tables: &[],
+    why: "the nullable column person on message, true on a line a person a board named wrote: a \
+          build without it writes a line with none, as every line before it was written, and \
+          reads one with it past the column it does not know (OPEN), as the owner's word it does \
+          not hear; a build with it sets the column only for a person, which needs the step, and \
+          reads it through the row, so a board without it reads every line as no person's",
+};
+
+/// The step that keeps who is on a board ([`crate::people`]): the tables `people` (a row a person,
+/// the groups they are in and the powers given them), `people_group` (a row a group, its powers)
+/// and `people_log` (every change, numbered), each row whole in its `doc`, as `setting` keeps one.
+pub const PEOPLE: Addition = Addition {
+    postgres: "CREATE TABLE IF NOT EXISTS people (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));\n\
+               CREATE TABLE IF NOT EXISTS people_group (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));\n\
+               CREATE TABLE IF NOT EXISTS people_log (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));",
+    tables: &["people", "people_group", "people_log"],
+    why: "the tables people, people_group and people_log, who is on a board with their powers \
+          and the record of each change (crate::people): a build without them never reads or \
+          writes them, so it admits nobody but the person at the machine and checks no power, as \
+          every build before them did, and no rule on a table there before reads them",
+};
+
+/// The step that keeps which group a thing belongs to ([`crate::people::ownership`]): the table
+/// `ownership`, the board's map of places to groups and every hand-over, a row a line of its log,
+/// numbered, whole in its `doc`.
+pub const OWNERSHIP: Addition = Addition {
+    postgres: "CREATE TABLE IF NOT EXISTS ownership (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));",
+    tables: &["ownership"],
+    why: "the table ownership, the board's map of places to groups and its hand-overs \
+          (crate::people::ownership): a build without it never reads or writes the table, so it \
+          gives no card or task a group, as every build before it, and no rule on a table there \
+          before reads it",
+};
+
+/// The step that holds the words of a person who may not direct agents ([`crate::held`]): the table
+/// `held_message`, a row a message held for people, whole in its `doc`, with an index by its task.
+/// Its key is the number of the line the board puts on the task's thread for it, which says a
+/// message is held and nothing of it; no read of `message` reads the words.
+pub const HELD: Addition = Addition {
+    postgres: "CREATE TABLE IF NOT EXISTS held_message (id jsonb PRIMARY KEY, \
+               doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object'));\n\
+               CREATE INDEX IF NOT EXISTS held_message_slug ON held_message ((doc ->> 'slug'));",
+    tables: &["held_message"],
+    why: "the table held_message, the words of a person who may not direct agents, held for \
+          people until someone who may passes them on (crate::held): a build without it never \
+          reads or writes the table, so no agent it serves is handed them, the line the board put \
+          on the thread for each reads as any line, and it holds nobody's words, refusing a \
+          person without direct agents as every build before it did; no rule on a table there \
+          before reads it",
+};
+
+/// The number of [`PEOPLE`] among [`ADDED`], counted from 1: 0 once a breaking step made its tables
+/// the contract's own, which every board of it has.
+pub(crate) fn people_step() -> i64 {
+    step_of(PEOPLE)
+}
+
+/// The number of [`OWNERSHIP`] among [`ADDED`], counted from 1: 0 once a breaking step made its
+/// table the contract's own.
+pub(crate) fn ownership_step() -> i64 {
+    step_of(OWNERSHIP)
+}
+
+/// The number of `step` among [`ADDED`], counted from 1: 0 where it is not there.
+fn step_of(step: Addition) -> i64 {
+    let at = ADDED.iter().position(|added| *added == step);
+    at.map_or(0, |at| i64::try_from(at + 1).unwrap_or(i64::MAX))
+}
+
+/// The number of [`PERSON_LINES`] among [`ADDED`], counted from 1: 0 once a breaking step made the
+/// field the contract's own, which every board of it has.
+pub(crate) fn person_step() -> i64 {
+    let at = ADDED.iter().position(|step| *step == PERSON_LINES);
+    at.map_or(0, |at| i64::try_from(at + 1).unwrap_or(i64::MAX))
+}
 
 /// How many additive steps this build has on its contract: [`ADDED`]'s length.
 pub const ADDITIONS: i64 = {
@@ -201,8 +226,7 @@ pub const ADDITIONS: i64 = {
 };
 
 /// The tables an additive step may give an optional field: every read of their rows ignores a
-/// field it does not know, and every write of them keeps one, on both engines
-/// (`tests/store/contract.rs`). The rest are closed: a field on one is a breaking step.
+/// field it does not know, and every write of them keeps one (`tests/store/contract.rs`). The rest are closed: a field on one is a breaking step.
 pub const OPEN: [&str; 11] = [
     "task",
     "link",
@@ -223,17 +247,17 @@ pub const OPEN: [&str; 11] = [
 /// so a schema bump that writes nothing here keeps the older Symphony read-only on the board it
 /// moved, until a release at its schema serves it.
 ///
-/// A step is listed only when it changes no table that existed before it, on either engine: no
-/// field, column, index, event, trigger, function or assertion added to or changed on one. The
-/// store's catalogue test holds a listed version to that on the database (`tests/store/catalogue.rs`,
-/// over the committed definitions of each version); what it cannot see, a rule held in code that
-/// the older Symphony's writes would skip, is its reviewer's to read against the line
-/// ([CHECKS](../../../docs/workflow/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The schema
-/// that brought this list and the record it writes ([`WRITABLE_FROM_SINCE`]) changed `meta` and is
-/// not listed.
+/// A step is listed only when it changes no table that existed before it: no column, index,
+/// trigger, function or check added to or changed on one. The store's catalogue test holds a
+/// listed version to that on the database (`tests/store/catalogue.rs`, over the committed
+/// definitions of each version); what it cannot see, a rule held in code that the older
+/// Symphony's writes would skip, is its reviewer's to read against the line
+/// ([CHECKS](../../../docs/workflow/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The
+/// schema that brought this list and the record it writes ([`WRITABLE_FROM_SINCE`]) changed `meta`
+/// and is not listed.
 pub const COMPATIBLE: &[(i64, &str)] = &[];
 
-/// The schema whose step brought `meta:schema`'s `writable_from`: a Symphony below it never reads
+/// The schema whose step brought `meta`'s `writable_from`: a Symphony below it never reads
 /// the record, and refuses every write on a board ahead of it whatever the record says.
 pub const WRITABLE_FROM_SINCE: i64 = 25;
 const _: () = assert!(WRITABLE_FROM_SINCE <= VERSION);
@@ -243,10 +267,6 @@ pub fn keeps_writes(version: i64) -> bool {
     COMPATIBLE.iter().any(|(listed, _)| *listed == version)
 }
 
-/// Structural mutations plus all committed session changes, including deletions and re-creations.
-/// The separate structural record keeps the retired legacy scalar outside this identity.
-pub const BOARD_MARKER: &str = "((SELECT VALUE last FROM ONLY counter:board_structure) ?? 0) + ((SELECT VALUE math::sum(last) FROM session_revision GROUP ALL)[0] ?? 0)";
-
 /// A board schema: its contract, its additive steps on it, and the steps that bring a board of any
 /// older version to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -254,19 +274,15 @@ pub struct Schema {
     version: i64,
     /// The tables each of its additive steps on `version` defines, in order ([`ADDED`]).
     added: Vec<Vec<String>>,
-    /// What its steps run after [`DEFINE`]: nothing for this build's own schema. Held apart from
-    /// it, so a program that opens a board without ever migrating one (a reader) links and
-    /// copies none of `DEFINE`'s text.
-    after: String,
-    /// On PostgreSQL, what the steps add to this build's tables, which every migration there
-    /// makes first: nothing for this build's own schema.
+    /// What the steps add to this build's tables, which every migration makes first: nothing for
+    /// this build's own schema.
     postgres: String,
     /// Whether its own step keeps a Symphony one schema behind writing ([`COMPATIBLE`]).
     keeps: bool,
 }
 
 impl Schema {
-    /// This build's: [`VERSION`], by [`DEFINE`], and on PostgreSQL by its own tables.
+    /// This build's: [`VERSION`], by its own tables.
     pub fn this_build() -> Schema {
         Schema::of_this_contract(ADDITIONS)
     }
@@ -277,13 +293,12 @@ impl Schema {
         let contract = Schema {
             version: VERSION,
             added: Vec::new(),
-            after: String::new(),
             postgres: String::new(),
             keeps: keeps_writes(VERSION),
         };
         let taken = usize::try_from(steps.max(0)).unwrap_or(usize::MAX);
         (ADDED.iter().take(taken)).fold(contract, |schema, step| {
-            schema.then_additive(step.surreal, step.postgres, step.tables)
+            schema.then_additive(step.postgres, step.tables)
         })
     }
 
@@ -307,39 +322,30 @@ impl Schema {
 
     /// The oldest schema whose Symphony may write a board this schema's build moved: the version
     /// before when its step keeps that Symphony writing ([`COMPATIBLE`]), its own otherwise. A
-    /// migration writes it beside the version (`meta:schema`'s `writable_from`).
+    /// migration writes it beside the version (`meta`'s `writable_from`).
     pub fn writable_from(&self) -> i64 {
         self.version - i64::from(self.keeps)
     }
 
-    /// The schema one version on, `surreal` run after this one's steps on SurrealDB and
-    /// `postgres` after them on PostgreSQL: a newer build's, whose step says nothing of the
-    /// Symphony one behind, so keeps it read-only ([`Schema::keeping_writes`]).
-    pub fn then_each(&self, surreal: &str, postgres: &str) -> Schema {
+    /// The schema one version on, `postgres` run after this one's steps: a newer build's, whose
+    /// step says nothing of the Symphony one behind, so keeps it read-only
+    /// ([`Schema::keeping_writes`]).
+    pub fn then_each(&self, postgres: &str) -> Schema {
         Schema {
             version: self.version + 1,
             added: Vec::new(),
-            after: format!("{}\n{surreal}", self.after),
             postgres: format!("{}\n{postgres}", self.postgres),
             keeps: false,
         }
     }
 
-    /// The schema one version on, `step` run after this one's on SurrealDB, and nothing more on
-    /// PostgreSQL: a newer build's.
-    pub fn then(&self, step: &str) -> Schema {
-        self.then_each(step, "")
-    }
-
-    /// This contract with one additive step more, `surreal` run after this one's steps on SurrealDB
-    /// and `postgres` on PostgreSQL, defining `tables`: a build of the same contract with a step
-    /// this one lacks ([`ADDED`]).
-    pub fn then_additive(&self, surreal: &str, postgres: &str, tables: &[&str]) -> Schema {
+    /// This contract with one additive step more, `postgres` run after this one's steps, defining
+    /// `tables`: a build of the same contract with a step this one lacks ([`ADDED`]).
+    pub fn then_additive(&self, postgres: &str, tables: &[&str]) -> Schema {
         let mut added = self.added.clone();
         added.push(tables.iter().map(|table| (*table).into()).collect());
         Schema {
             added,
-            after: format!("{}\n{surreal}", self.after),
             postgres: format!("{}\n{postgres}", self.postgres),
             ..self.clone()
         }
@@ -365,12 +371,7 @@ impl Schema {
         }
     }
 
-    /// The steps: [`DEFINE`], then what this schema runs after it. Only a migration reads them.
-    pub(crate) fn steps(&self) -> String {
-        format!("{DEFINE}{}", self.after)
-    }
-
-    /// What the steps add on PostgreSQL to this build's tables.
+    /// What the steps add to this build's tables. Only a migration reads them.
     pub(crate) fn postgres_steps(&self) -> &str {
         &self.postgres
     }
@@ -383,7 +384,7 @@ pub enum Access {
     /// migrated forward to it.
     Write,
     /// Reads, of a board at the store's own version or one ahead, and never moves or makes one: a
-    /// board behind it, or not made yet, is refused. Its writes still meet the [`guard`], so one
+    /// board behind it, or not made yet, is refused. Its writes still meet the schema guard, so one
     /// version behind it writes only a board whose `writable_from` names its version or an older
     /// one ([`COMPATIBLE`]); a whole-board copy it never writes there. The Symphony's opening.
     Read,
@@ -468,7 +469,7 @@ impl Named {
     }
 }
 
-/// A write's refusal around the board's version, which only the [`guard`] reads at the write.
+/// A write's refusal around the board's version, which only the schema guard reads at the write.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Refusal {
     /// The board, as a refusal names it.
@@ -494,24 +495,9 @@ impl Refusal {
     }
 }
 
-/// The statements every write transaction starts with: it throws the refusal (`$board_schema_*`,
-/// [`guard_vars`]) unless the board is at this store's version, or, for a write that may
-/// (`$board_schema_ahead`), one version ahead with a `writable_from` that is a number no greater
-/// than this store's version ([`writes`]), before the write's own statements. `NONE` sorts below
-/// every number, so the record is held to be an integer before it is compared. On a board of its
-/// own contract it then throws (`$board_additions_*`) unless the board's additive steps are
-/// within what the write takes ([`Steps`]): no fewer than the step of a table it names, and for a
-/// whole-board copy or a rebind, exactly the store's own.
-pub(crate) const GUARD: &str = "LET $board_schema_meta = (SELECT version, writable_from FROM ONLY meta:schema);
-LET $board_schema_found = $board_schema_meta.version;
-LET $board_schema_from = $board_schema_meta.writable_from;
-IF $board_schema_found != $board_schema AND !($board_schema_ahead = true AND $board_schema_found = $board_schema + 1 AND type::is_int($board_schema_from) AND $board_schema_from <= $board_schema) { THROW string::concat($board_schema_before, <string> $board_schema_found, $board_schema_after) };
-LET $board_additions_found = (SELECT VALUE version FROM ONLY meta:additions) ?? 0;
-IF $board_schema_found = $board_schema AND ($board_additions_found < $board_additions_least OR $board_additions_found > $board_additions_most) { THROW string::concat($board_additions_before, <string> $board_additions_found, $board_additions_after) };";
-
-/// What a write takes of the board's additive steps on its contract, which the [`GUARD`] holds it
-/// to: no fewer than `least`, no more than `most`, refused in the words `before`, the board's
-/// count, then `after`.
+/// What a write takes of the board's additive steps on its contract, which the schema guard
+/// (`store::postgres::GUARD`) holds it to: no fewer than `least`, no more than `most`, refused in
+/// the words `before`, the board's count, then `after`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Steps {
     pub least: i64,
@@ -565,8 +551,8 @@ impl Steps {
 
 /// The highest of the additive steps `added` (each table with the step that defines it) whose table
 /// `sql` names, with that table: a whole word of it, however it is quoted (`table`, 'table',
-/// `` `table` ``, ⟨table⟩) and wherever it is, in a statement nested in another or in a
-/// subquery. Case is not looked at, so a word that only might be the table counts.
+/// "table") and wherever it is, in a statement nested in another, in a block or in a subquery.
+/// Case is not looked at, so a word that only might be the table counts.
 pub(crate) fn needs<'a>(sql: &str, added: &'a [(String, i64)]) -> Option<(&'a str, i64)> {
     if added.is_empty() {
         return None;
@@ -585,9 +571,9 @@ pub(crate) fn needs<'a>(sql: &str, added: &'a [(String, i64)]) -> Option<(&'a st
     needed
 }
 
-/// [`GUARD`]'s variables, for a store of version `own` refusing in `refusal`'s words, which takes a
-/// board one ahead whose record lets it when `ahead`, and the additive steps `steps` on its own:
-/// added to a write's own (`vars`, an object, or nothing).
+/// The schema guard's variables (`store::postgres::GUARD`), for a store of version `own` refusing
+/// in `refusal`'s words, which takes a board one ahead whose record lets it when `ahead`, and the
+/// additive steps `steps` on its own: added to a write's own (`vars`, an object, or nothing).
 pub(crate) fn guard_vars(
     vars: &mut serde_json::Value,
     own: i64,
@@ -609,7 +595,7 @@ pub(crate) fn guard_vars(
     vars["board_additions_after"] = steps.after.clone().into();
 }
 
-/// Whether a write of a store of version `own` passes the [`GUARD`] on a board at `found` (none:
+/// Whether a write of a store of version `own` passes the schema guard on a board at `found` (none:
 /// no record) whose `writable_from` is `from` as the database gave it, `ahead` saying whether the
 /// write may take a board one ahead: the guard's rule, for a reader that asks before it writes
 /// ([`crate::Store::board_standing`]). Anything but an integer in `from` lets nothing through.
@@ -621,10 +607,7 @@ pub fn writes(found: Option<i64>, from: &serde_json::Value, own: i64, ahead: boo
 }
 
 /// The statements that change a database: a transaction holding one is a write.
-const MUTATING: [&str; 10] = [
-    "ALTER", "CREATE", "DEFINE", "DELETE", "INSERT", "REBUILD", "RELATE", "REMOVE", "UPDATE",
-    "UPSERT",
-];
+const MUTATING: [&str; 5] = ["ALTER", "CREATE", "DELETE", "INSERT", "UPDATE"];
 
 /// Whether `sql` can change the database: it names one of the statements that do, as a whole word in
 /// any case. The board's statements are this crate's own text, every value a variable beside it.
@@ -638,373 +621,6 @@ pub(crate) fn mutates(sql: &str) -> bool {
                 .any(|statement| statement.eq_ignore_ascii_case(word))
         })
 }
-
-// Full-text index construction needs a committed analyzer, installed before the schema transaction.
-pub const ANALYZERS: &str = "DEFINE ANALYZER IF NOT EXISTS task_words TOKENIZERS blank, class, punct FILTERS lowercase, ascii;";
-
-/// The board's tables, indexes and events, run in one transaction by a store opening a board at
-/// another [`VERSION`]; public for the board crate's `perf` tests, which plan what its events run.
-pub const DEFINE: &str = "
-DEFINE TABLE IF NOT EXISTS task SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS sid ON task TYPE int;
-DEFINE FIELD IF NOT EXISTS slug ON task TYPE string;
-DEFINE FIELD IF NOT EXISTS title ON task TYPE string;
-DEFINE FIELD IF NOT EXISTS body ON task TYPE string;
-DEFINE FIELD IF NOT EXISTS status ON task TYPE string
-    ASSERT $value IN ['backlog', 'concept', 'design', 'ready', 'in_progress', 'review', 'done', 'blocked', 'cancelled'];
-DEFINE FIELD IF NOT EXISTS priority ON task TYPE int;
-DEFINE FIELD IF NOT EXISTS parent ON task TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS created_by ON task TYPE string;
-DEFINE FIELD IF NOT EXISTS created ON task TYPE float;
-DEFINE FIELD IF NOT EXISTS updated ON task TYPE float;
-DEFINE FIELD IF NOT EXISTS instruction ON task TYPE bool DEFAULT false;
-DEFINE FIELD IF NOT EXISTS version ON task TYPE int DEFAULT 0;
-DEFINE FIELD IF NOT EXISTS fields ON task TYPE option<object> FLEXIBLE;
-DEFINE INDEX IF NOT EXISTS task_sid ON task FIELDS sid UNIQUE;
-DEFINE INDEX IF NOT EXISTS task_status ON task FIELDS status;
-DEFINE INDEX IF NOT EXISTS task_parent ON task FIELDS parent;
-DEFINE INDEX IF NOT EXISTS task_slug ON task FIELDS slug UNIQUE;
-DEFINE INDEX IF NOT EXISTS task_title_search ON task FIELDS title FULLTEXT ANALYZER task_words BM25;
-DEFINE INDEX IF NOT EXISTS task_body_search ON task FIELDS body FULLTEXT ANALYZER task_words BM25;
-DEFINE INDEX IF NOT EXISTS task_slug_search ON task FIELDS slug FULLTEXT ANALYZER task_words BM25;
-
-DEFINE TABLE IF NOT EXISTS task_embedding_source SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS slug ON task_embedding_source TYPE string;
-DEFINE FIELD IF NOT EXISTS source ON task_embedding_source TYPE string;
-DEFINE FIELD IF NOT EXISTS source_hash ON task_embedding_source TYPE string;
-DEFINE FIELD IF NOT EXISTS model ON task_embedding_source TYPE string;
-DEFINE FIELD IF NOT EXISTS parts ON task_embedding_source TYPE int;
-DEFINE TABLE IF NOT EXISTS task_embedding_checkpoint SCHEMALESS;
-DEFINE TABLE IF NOT EXISTS task_chunk SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS slug ON task_chunk TYPE string;
-DEFINE FIELD IF NOT EXISTS source ON task_chunk TYPE string;
-DEFINE FIELD IF NOT EXISTS source_hash ON task_chunk TYPE string;
-DEFINE FIELD IF NOT EXISTS text_hash ON task_chunk TYPE string;
-DEFINE FIELD IF NOT EXISTS model ON task_chunk TYPE string;
-DEFINE FIELD IF NOT EXISTS text ON task_chunk TYPE string;
-DEFINE FIELD IF NOT EXISTS embedding ON task_chunk TYPE array<float, 384>;
-DEFINE INDEX IF NOT EXISTS task_chunk_source ON task_chunk FIELDS slug, source;
-DEFINE INDEX IF NOT EXISTS task_embedding ON task_chunk FIELDS embedding HNSW DIMENSION 384 DIST COSINE TYPE F32;
-
-DEFINE TABLE IF NOT EXISTS link SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS slug ON link TYPE string;
-DEFINE FIELD IF NOT EXISTS kind ON link TYPE string ASSERT $value IN ['doc', 'dep'];
-DEFINE FIELD IF NOT EXISTS target ON link TYPE string;
-DEFINE INDEX IF NOT EXISTS link_slug ON link FIELDS slug;
-
-DEFINE TABLE IF NOT EXISTS session SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS handle ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS kind ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS parent ON session TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS worktree ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS branch ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS model ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS pid ON session TYPE option<int>;
-DEFINE FIELD IF NOT EXISTS host ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS affinity ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS connected ON session TYPE float;
-DEFINE FIELD IF NOT EXISTS last_seen ON session TYPE float;
-DEFINE FIELD IF NOT EXISTS left_at ON session TYPE option<float>;
-DEFINE FIELD IF NOT EXISTS agent ON session TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS busy_until ON session TYPE option<float>;
-DEFINE FIELD IF NOT EXISTS busy_call ON session TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS last_tool ON session TYPE option<float>;
-DEFINE INDEX IF NOT EXISTS session_agent ON session FIELDS agent;
-
-DEFINE TABLE IF NOT EXISTS session_revision SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS last ON session_revision TYPE int;
-DEFINE FIELD IF NOT EXISTS writes ON session_revision TYPE option<int>;
-
-DEFINE TABLE IF NOT EXISTS role SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS slug ON role TYPE string;
-DEFINE FIELD IF NOT EXISTS handle ON role TYPE string;
-DEFINE FIELD IF NOT EXISTS role ON role TYPE string ASSERT $value IN ['orchestrator', 'executor', 'reviewer', 'reserved'];
-DEFINE FIELD IF NOT EXISTS since ON role TYPE float;
-DEFINE FIELD IF NOT EXISTS expires ON role TYPE option<float>;
-DEFINE INDEX IF NOT EXISTS role_slug ON role FIELDS slug;
-DEFINE INDEX IF NOT EXISTS role_handle ON role FIELDS handle;
-DEFINE INDEX IF NOT EXISTS role_role ON role FIELDS role;
-
-DEFINE TABLE IF NOT EXISTS message SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS sid ON message TYPE int;
-DEFINE FIELD IF NOT EXISTS slug ON message TYPE string;
-DEFINE FIELD IF NOT EXISTS sender ON message TYPE string;
-DEFINE FIELD IF NOT EXISTS recipient ON message TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS kind ON message TYPE string ASSERT $value IN ['system', 'msg', 'verdict'];
-DEFINE FIELD IF NOT EXISTS text ON message TYPE string;
-DEFINE FIELD IF NOT EXISTS ts ON message TYPE float;
-DEFINE INDEX IF NOT EXISTS message_text_search ON message FIELDS text FULLTEXT ANALYZER task_words BM25;
-DEFINE INDEX IF NOT EXISTS message_sid ON message FIELDS sid;
-DEFINE INDEX IF NOT EXISTS message_ts ON message FIELDS ts;
-DEFINE INDEX IF NOT EXISTS message_recipient ON message FIELDS recipient, sid;
-DEFINE INDEX IF NOT EXISTS message_sender ON message FIELDS sender, kind, sid, slug;
-
-DEFINE TABLE IF NOT EXISTS said SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS sid ON said TYPE int;
-DEFINE FIELD IF NOT EXISTS slug ON said TYPE string;
-
-DEFINE TABLE IF NOT EXISTS delivery SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS message ON delivery TYPE int;
-DEFINE FIELD IF NOT EXISTS handle ON delivery TYPE string;
-DEFINE FIELD IF NOT EXISTS acked ON delivery TYPE float;
-DEFINE INDEX IF NOT EXISTS delivery_handle ON delivery FIELDS handle, message;
-
-DEFINE TABLE IF NOT EXISTS delivery_key SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS slug ON delivery_key TYPE string;
-DEFINE FIELD IF NOT EXISTS key ON delivery_key TYPE string;
-DEFINE FIELD IF NOT EXISTS message ON delivery_key TYPE int;
-DEFINE FIELD IF NOT EXISTS ts ON delivery_key TYPE float;
-
-DEFINE TABLE IF NOT EXISTS barred_key SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS key ON barred_key TYPE string;
-
-DEFINE TABLE IF NOT EXISTS task_session SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS slug ON task_session TYPE string;
-DEFINE FIELD IF NOT EXISTS handle ON task_session TYPE string;
-DEFINE FIELD IF NOT EXISTS role ON task_session TYPE string;
-DEFINE FIELD IF NOT EXISTS claude_session ON task_session TYPE string;
-DEFINE FIELD IF NOT EXISTS worktree ON task_session TYPE string;
-DEFINE FIELD IF NOT EXISTS branch ON task_session TYPE string;
-DEFINE FIELD IF NOT EXISTS pane ON task_session TYPE string;
-DEFINE FIELD IF NOT EXISTS model ON task_session TYPE string;
-DEFINE FIELD IF NOT EXISTS started ON task_session TYPE float;
-DEFINE FIELD IF NOT EXISTS closed ON task_session TYPE option<float>;
-DEFINE FIELD IF NOT EXISTS closed_why ON task_session TYPE string;
-DEFINE FIELD IF NOT EXISTS restore ON task_session TYPE string;
-DEFINE INDEX IF NOT EXISTS task_session_slug ON task_session FIELDS slug;
-DEFINE INDEX IF NOT EXISTS task_session_branch ON task_session FIELDS branch;
-
-DEFINE TABLE IF NOT EXISTS counter SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS last ON counter TYPE int;
-DEFINE FIELD IF NOT EXISTS ts ON counter TYPE option<float>;
-
-DEFINE TABLE IF NOT EXISTS moved SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS board ON moved TYPE string;
-DEFINE FIELD IF NOT EXISTS at ON moved TYPE float;
-DEFINE FIELD IF NOT EXISTS rows ON moved TYPE string;
-
-DEFINE TABLE IF NOT EXISTS meta SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS version ON meta TYPE int;
--- Schema 25: the oldest schema whose Symphony may write the board, which a migration writes.
-DEFINE FIELD IF NOT EXISTS writable_from ON meta TYPE option<int>;
-
-DEFINE TABLE IF NOT EXISTS writer SCHEMALESS;
-
-DEFINE TABLE IF NOT EXISTS artifact_ledger SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS revision ON artifact_ledger TYPE int;
-DEFINE FIELD IF NOT EXISTS body ON artifact_ledger TYPE object FLEXIBLE;
-
--- Schema 22: the board's recovery generation, which a copy replaces and a guarded write reads.
-DEFINE TABLE IF NOT EXISTS recovery SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS generation ON recovery TYPE string;
-IF !record::exists(recovery:board) { CREATE recovery:board SET generation = <string> rand::uuid::v4() RETURN NONE; };
-
--- Schema 24: custom delivery workflows' records, and the fences on them (`store/workflow.rs`).
-DEFINE TABLE IF NOT EXISTS workflow SCHEMAFULL;
-DEFINE FIELD OVERWRITE kind ON workflow TYPE string
-    ASSERT $value IN ['active', 'definition', 'activation', 'event', 'receipt', 'intent', 'authority', 'admission'];
-DEFINE FIELD IF NOT EXISTS body ON workflow TYPE object FLEXIBLE;
-DEFINE FIELD IF NOT EXISTS at ON workflow TYPE float;
--- Schema 27: a position goes beside a return's transition (`Store::return_to_default`).
-DEFINE EVENT OVERWRITE workflow_position ON task
-    WHEN $event != 'DELETE' AND (($before.fields._board.workflow ?? NONE) != ($after.fields._board.workflow ?? NONE)
-        OR (($before.fields._board.workflow ?? NONE) != NONE AND $before.status != $after.status)
-        OR (($after.fields._board.workflow ?? NONE) = NONE AND $before.status IN ['done', 'cancelled']
-            AND $after.status NOT IN ['done', 'cancelled']))
-    THEN {
-    LET $w = $after.fields._board.workflow ?? NONE;
-    LET $was = $before.fields._board.workflow ?? NONE;
-    IF $was = NONE AND $w = NONE {
-        IF record::exists(workflow:['active']) {
-            THROW string::concat('refused: explicit_action_required: ', $after.slug, ' has no workflow position, and a custom workflow is active: it leaves ', $before.status, ' only by a write that places it at its mapped pair');
-        };
-    } ELSE {
-        IF $was != NONE AND $w = $was {
-            THROW string::concat('refused: explicit_action_required: the status of ', $after.slug, ' follows its workflow position, which only its workflow edges move (just tasks workflow actions ', $after.slug, ')');
-        };
-        IF $w = NONE {
-            LET $r = (SELECT VALUE body FROM ONLY type::record('workflow', ['event', $after.slug, $was.revision + 1]));
-            IF $r = NONE OR $r.status != $after.status OR ($r.activation ?? NONE) = NONE
-                OR (SELECT VALUE body.returned FROM ONLY type::record('workflow', ['activation', $r.activation])) != true {
-                THROW string::concat('refused: workflow: ', $after.slug, ' keeps its workflow position: only an activation that returns the board to its own writers retires it, beside the transition recorded for it');
-            };
-        } ELSE {
-            IF $was != NONE AND $w.revision != $was.revision + 1 {
-                THROW string::concat('refused: workflow: ', $after.slug, ' moves from workflow revision ', <string>$was.revision, ' only to the next');
-            };
-            IF $was = NONE AND (SELECT VALUE kind FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision + 1])) != NONE {
-                THROW string::concat('refused: workflow: ', $after.slug, ' moved on from workflow revision ', <string>$w.revision, '; it never returns to a position it left');
-            };
-            LET $e =(SELECT VALUE body FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision]));
-            IF $e = NONE OR $e.slug != $after.slug OR $e.revision != $w.revision
-                OR $e.to != { phase: $w.phase, state: $w.state } OR ($e.resume ?? NONE) != ($w.resume ?? NONE)
-                OR $e.generation != $w.generation OR $e.digest != $w.digest OR $e.status != $after.status {
-                THROW string::concat('refused: workflow: ', $after.slug, ' is at a workflow position only beside the transition recorded for it');
-            };
-        };
-    };
-};
-DEFINE EVENT OVERWRITE workflow_history ON workflow
-    WHEN $event = 'UPDATE' AND ($before.kind IN ['definition', 'activation', 'event', 'receipt', 'admission'] OR $before.kind != $after.kind
-        OR ($before.kind = 'authority' AND $before.body.epoch = $after.body.epoch
-            AND $after.body.generation < $before.body.generation))
-    THEN {
-    IF $before.kind = 'authority' AND $after.kind = 'authority' {
-        THROW 'refused: workflow: the generation the board accepted from an approval authority is never lowered within its epoch';
-    };
-    THROW string::concat('refused: workflow: a recorded ', $before.kind, ' is never changed');
-};
-DEFINE EVENT OVERWRITE workflow_active ON workflow
-    WHEN $event = 'UPDATE' AND $after.kind = 'active'
-    THEN {
-    LET $activation = (SELECT VALUE body FROM ONLY type::record('workflow', ['activation', $after.body.generation]));
-    IF $activation = NONE OR $activation.digest != $after.body.digest
-        OR $before.body.generation >= $after.body.generation {
-        THROW 'refused: workflow: the active generation moves forward only to an activation recorded for it';
-    };
-};
-
-DEFINE TABLE IF NOT EXISTS callback_state SCHEMALESS;
-DEFINE INDEX IF NOT EXISTS callback_state_address ON callback_state FIELDS address;
-DEFINE TABLE IF NOT EXISTS callback_lease SCHEMALESS;
-DEFINE TABLE IF NOT EXISTS callback_event SCHEMALESS;
-DEFINE INDEX IF NOT EXISTS callback_event_handle ON callback_event FIELDS handle, delivered;
-DEFINE TABLE IF NOT EXISTS chat_event SCHEMALESS;
-
--- Schema 20 names the recovery reservations older SurrealDB builds made implicitly.
-DEFINE TABLE IF NOT EXISTS unanswered_restore SCHEMALESS;
-
-DEFINE TABLE IF NOT EXISTS ask SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS sid ON ask TYPE int;
-DEFINE FIELD IF NOT EXISTS kind ON ask TYPE string ASSERT $value IN ['verdict', 'message', 'comment', 'chat', 'task'];
-DEFINE FIELD IF NOT EXISTS about ON ask TYPE string;
-DEFINE FIELD IF NOT EXISTS path ON ask TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS card ON ask TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS block ON ask TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS tree ON ask TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS task ON ask TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS thread ON ask TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS words ON ask TYPE string;
-DEFINE FIELD IF NOT EXISTS asked ON ask TYPE float;
-DEFINE FIELD IF NOT EXISTS lines ON ask TYPE int;
-DEFINE FIELD IF NOT EXISTS last ON ask TYPE float;
-DEFINE FIELD IF NOT EXISTS holder ON ask TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS held ON ask TYPE option<float>;
-DEFINE FIELD IF NOT EXISTS before ON ask TYPE array<object>;
-DEFINE FIELD IF NOT EXISTS before.*.handle ON ask TYPE string;
-DEFINE FIELD IF NOT EXISTS before.*.since ON ask TYPE float;
-DEFINE FIELD IF NOT EXISTS before.*.until ON ask TYPE float;
-DEFINE FIELD IF NOT EXISTS before.*.why ON ask TYPE string;
-DEFINE FIELD IF NOT EXISTS open ON ask TYPE bool;
-DEFINE FIELD IF NOT EXISTS answered ON ask TYPE option<float>;
-DEFINE FIELD IF NOT EXISTS answered_by ON ask TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS answer ON ask TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS closed ON ask TYPE bool;
-DEFINE FIELD IF NOT EXISTS gone ON ask TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS gone_since ON ask TYPE option<float>;
-DEFINE INDEX IF NOT EXISTS ask_sid ON ask FIELDS sid UNIQUE;
-DEFINE INDEX IF NOT EXISTS ask_open ON ask FIELDS open, asked, sid;
-DEFINE INDEX IF NOT EXISTS ask_about ON ask FIELDS about, open;
-DEFINE INDEX IF NOT EXISTS ask_answered ON ask FIELDS answered;
-
-DEFINE TABLE IF NOT EXISTS usage SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS handle ON usage TYPE string;
-DEFINE FIELD IF NOT EXISTS slug ON usage TYPE string;
-DEFINE FIELD IF NOT EXISTS role ON usage TYPE string;
-DEFINE FIELD IF NOT EXISTS model ON usage TYPE string;
-DEFINE FIELD IF NOT EXISTS speed ON usage TYPE string;
-DEFINE FIELD IF NOT EXISTS round ON usage TYPE int;
-DEFINE FIELD IF NOT EXISTS input ON usage TYPE int;
-DEFINE FIELD IF NOT EXISTS cache_write_5m ON usage TYPE int;
-DEFINE FIELD IF NOT EXISTS cache_write_1h ON usage TYPE int;
-DEFINE FIELD IF NOT EXISTS cache_read ON usage TYPE int;
-DEFINE FIELD IF NOT EXISTS output ON usage TYPE int;
-DEFINE FIELD IF NOT EXISTS calls ON usage TYPE int;
-DEFINE FIELD IF NOT EXISTS first ON usage TYPE float;
-DEFINE FIELD IF NOT EXISTS last ON usage TYPE float;
-DEFINE INDEX IF NOT EXISTS usage_slug ON usage FIELDS slug;
-DEFINE INDEX IF NOT EXISTS usage_handle ON usage FIELDS handle;
-
--- Schema 23: execution attempts (`crate::execution`): an attempt's immutable identity beside its
--- revisioned state, its append-only facts, the fences its admission writes and its collected
--- artifacts. Schemaless and with no event: no reader caches them, and a write moves no marker.
-DEFINE TABLE IF NOT EXISTS execution_attempt SCHEMALESS;
-DEFINE INDEX IF NOT EXISTS execution_attempt_task ON execution_attempt FIELDS task, created;
-DEFINE INDEX IF NOT EXISTS execution_attempt_due ON execution_attempt FIELDS open, due;
-DEFINE TABLE IF NOT EXISTS execution_fact SCHEMALESS;
-DEFINE INDEX IF NOT EXISTS execution_fact_attempt ON execution_fact FIELDS attempt, seq;
-DEFINE TABLE IF NOT EXISTS execution_fence SCHEMALESS;
-DEFINE TABLE IF NOT EXISTS execution_artifact SCHEMALESS;
-DEFINE INDEX IF NOT EXISTS execution_artifact_attempt ON execution_artifact FIELDS attempt, name;
-
-DEFINE EVENT OVERWRITE board_changed ON task WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN {
-    LET $revision = type::record('session_revision', record::id($after.id ?? $before.id));
-    IF record::exists($revision) { UPDATE $revision SET last += 1 RETURN NONE; }
-    ELSE { CREATE $revision SET last = 1 RETURN NONE; };
-};
-DEFINE EVENT OVERWRITE board_changed ON role WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON link WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON message WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON delivery WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON task_session WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON callback_state
-    WHEN [$before.address, $before.owner, $before.host, $before.chat, $before.chat_fallback, $before.chat_resume, $before.confirmed_until, $before.in_process, $before.seen, $before.pull, $before.registration_revision]
-      != [$after.address, $after.owner, $after.host, $after.chat, $after.chat_fallback, $after.chat_resume, $after.confirmed_until, $after.in_process, $after.seen, $after.pull, $after.registration_revision]
-    THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON chat_event WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
-DEFINE EVENT OVERWRITE board_changed ON ask WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
-
-DEFINE EVENT OVERWRITE said ON message
-    WHEN $event != 'UPDATE' OR [$before.sender, $before.sid, $before.slug, $before.kind IN ['msg', 'verdict']]
-        != [$after.sender, $after.sid, $after.slug, $after.kind IN ['msg', 'verdict']]
-    THEN {
-    IF $event != 'CREATE' {
-        LET $was = (SELECT sid, slug FROM ONLY type::record('said', [$before.sender]));
-        IF $was.sid = $before.sid AND $was.slug = $before.slug {
-            LET $sender = $before.sender;
-            LET $newest = array::max(array::concat(
-                (SELECT VALUE [sid, slug] FROM message WHERE sender = $sender AND kind = 'msg' ORDER BY sid DESC, slug DESC LIMIT 1),
-                (SELECT VALUE [sid, slug] FROM message WHERE sender = $sender AND kind = 'verdict' ORDER BY sid DESC, slug DESC LIMIT 1)
-            ));
-            IF $newest = NONE {
-                DELETE type::record('said', [$before.sender]) RETURN NONE;
-            } ELSE {
-                UPDATE type::record('said', [$before.sender]) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
-            };
-        };
-    };
-    IF $event != 'DELETE' AND $after.kind IN ['msg', 'verdict'] {
-        IF record::exists(type::record('said', [$after.sender])) {
-            UPDATE type::record('said', [$after.sender]) SET sid = $after.sid, slug = $after.slug
-                WHERE sid < $after.sid OR (sid = $after.sid AND slug < $after.slug) RETURN NONE;
-        } ELSE {
-            CREATE type::record('said', [$after.sender]) SET sid = $after.sid, slug = $after.slug RETURN NONE;
-        };
-    };
-};
-IF (SELECT VALUE id FROM said LIMIT 1) = [] {
-    FOR $spoke IN (SELECT sender, array::max(array::group([[sid, slug]])) AS last FROM message WHERE kind IN ['msg', 'verdict'] GROUP BY sender) {
-        LET $newest = $spoke.last[0];
-        CREATE type::record('said', [$spoke.sender]) SET sid = $newest[0], slug = $newest[1] RETURN NONE;
-    };
-};
-
-// Transfer the structural count once. Session revisions remain independent and are not reset.
-// A retired legacy token without its successor is corruption, never an empty board.
-IF !record::exists(counter:board_structure) {
-    LET $legacy_marker = (SELECT VALUE last FROM ONLY counter:board) ?? 0;
-    IF $legacy_marker < 0 { THROW 'refused: structural marker missing after legacy marker retirement'; };
-    CREATE counter:board_structure SET last = $legacy_marker RETURN NONE;
-};
-// Old cached readers decode this scalar as u64 before consulting their cache. A finite signed
-// retirement makes them fail closed; current events never write this record again.
-IF record::exists(counter:board) {
-    UPDATE counter:board SET last = -9223372036854775807 - 1 RETURN NONE;
-} ELSE {
-    CREATE counter:board SET last = -9223372036854775807 - 1 RETURN NONE;
-};
-";
 
 #[cfg(test)]
 #[path = "schema_tests.rs"]

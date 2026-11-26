@@ -34,7 +34,7 @@ libc = "0.2"
 symphony-api = { path = "../../crates/symphony-api", version = "=0.2.0" }
 symphony = { package = "symphony-app", path = "../../crates/symphony", version = "=0.2.0" }
 # The plugins a host binary installs before it serves (`binary::run`).
-symphony-plugin = { path = "../../crates/symphony-plugin", version = "1.2.0" }
+symphony-plugin = { path = "../../crates/symphony-plugin", version = "1.3.0" }
 symphony-board = { path = "../../crates/tasks", version = "=0.2.0" }
 # Its variables, each by its one SYMPHONY_ name.
 symphony-env = { path = "../../crates/symphony-env", version = "1.0.0" }
@@ -52,6 +52,9 @@ tower-http = { version = "0.6", default-features = false, features = ["compressi
 tower = { version = "0.5", default-features = false, features = ["util"] }
 
 [dev-dependencies]
+# The notice format the runner writes (`src/notices`), read back as a plugin reads it: that crate is
+# not published, so its tests alone link it.
+symphony-notice = { path = "../../crates/symphony-notice" }
 # The board store's test fixture (src/testing.rs, tests/after_http.rs) waits for its server through
 # the tests' wait (RULES.md `tests/no-test-fails-on-load`).
 test-time = { path = "../../crates/test-time" }

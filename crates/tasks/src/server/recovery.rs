@@ -79,7 +79,7 @@ impl FileAuthority {
                 self.path.display()
             ))
         };
-        let bound: Bound = serde_json::from_str(&text).map_err(|why| unknown(&why))?;
+        let bound: Bound = serde_json::from_slice(text.as_bytes()).map_err(|why| unknown(&why))?;
         if bound.format != 1 {
             return Err(unknown(&format_args!("format {}", bound.format)));
         }
@@ -143,7 +143,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("recovery-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        (dir.clone(), Home::new(&dir, Path::new("/no/surreal")))
+        (dir.clone(), Home::at(&dir))
     }
 
     #[test]

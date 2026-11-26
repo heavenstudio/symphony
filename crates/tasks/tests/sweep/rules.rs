@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::SystemTime;
 use symphony_board::health::LIVE_SECONDS;
+use symphony_board::held::{MESSAGE, Place};
+use symphony_board::people::Power;
 use symphony_board::rows::SessionRow;
+use symphony_board::schema::{ADDED, HELD};
 use symphony_board::sweep::process;
 use symphony_board::{NewLaunch, NewSession, sweep, sys};
 
@@ -770,6 +773,129 @@ fn a_merged_branch_worktree_goes_and_its_branch_with_it() {
     let said = r.sweep();
     r.assert_removed(&wt, &said);
     assert_eq!(r.branch("sim/done"), "", "{said}");
+}
+
+/// Ana's comment on a card of docs/a.md held and passed on into each checkout of `scopes`: their
+/// ids, in order.
+fn passed_into<const N: usize>(r: &Repo, scopes: [&str; N]) -> [i64; N] {
+    let store = &r.board.store;
+    (store.add_person("ana", &[], &[Power::Speak], "owner")).unwrap();
+    let ana = r.board.other().for_person("ana");
+    scopes.map(|scope| {
+        let place = Place {
+            path: "docs/a.md".into(),
+            scope: Some(scope.into()),
+            kind: MESSAGE.into(),
+            card: Some("one".into()),
+            block: None,
+        };
+        let held = ana.hold_on_document("ana", "Look again", &place).unwrap();
+        let passed = store.pass_on_document_into(held.id, "owner", Some(scope));
+        passed.unwrap().id
+    })
+}
+
+/// The checkout the comment `id` is kept under: none for main's.
+fn kept_under(r: &Repo, id: i64) -> Option<String> {
+    r.board
+        .store
+        .held_comment(id)
+        .unwrap()
+        .unwrap()
+        .document
+        .scope
+}
+
+/// The comments a pass wrote into a removed worktree's documents, all in main now, are kept under
+/// main's from then on (`Store::held_landed`); a dry run moves none, and a worktree that stays
+/// keeps its own.
+#[test]
+fn a_removed_worktrees_passed_comments_are_kept_under_mains() {
+    let r = Repo::new();
+    let [landed, open] = passed_into(&r, ["sim~done", "sim~open"]);
+    let wt = r.merged("named", "sim/done");
+    let stays = r.add("open", Some("sim/open"), "main");
+    r.commit(&stays, "extends RefCounted\n# open\n");
+    let scope = |id: i64| kept_under(&r, id);
+    let dry = text(&r.sweep_with(|o| o.dry_run = true));
+    assert_eq!(scope(landed).as_deref(), Some("sim~done"), "{dry}");
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    r.assert_kept(&stays, &said);
+    assert_eq!(scope(landed), None, "{said}");
+    assert_eq!(scope(open).as_deref(), Some("sim~open"), "{said}");
+}
+
+/// Two worktrees on one branch (`git worktree add --force`) share its id, so a pass may have
+/// written into the one that stays: removing the other moves none of the branch's passed comments,
+/// whose line main would then lack. The last of them to go moves them, in a later sweep, or in the
+/// same one where both go.
+#[test]
+fn a_removed_worktrees_passed_comments_stay_while_another_worktree_holds_its_branch() {
+    for later in [true, false] {
+        let r = Repo::new();
+        let [passed] = passed_into(&r, ["sim~done"]);
+        let wt = r.merged("named", "sim/done");
+        let other = r.dir.join("again");
+        let at = other.to_str().unwrap();
+        git(
+            &r.root,
+            &["worktree", "add", "-q", "--force", at, "sim/done"],
+        );
+        if later {
+            // The pass's line, not landed, in the one that stays.
+            write(&other, "docs/a.md", "Look again\n");
+            let said = r.sweep();
+            r.assert_removed(&wt, &said);
+            r.assert_kept(&other, &said);
+            assert_eq!(
+                kept_under(&r, passed).as_deref(),
+                Some("sim~done"),
+                "{said}"
+            );
+            std::fs::remove_file(other.join("docs/a.md")).unwrap();
+        }
+        let said = r.sweep();
+        r.assert_removed(&other, &said);
+        if !later {
+            r.assert_removed(&wt, &said);
+        }
+        assert_eq!(kept_under(&r, passed), None, "later={later}: {said}");
+    }
+}
+
+/// A move the board refuses (one whose record lacks the held step) is said, its refusal and not
+/// the comment's words, and the sweep goes on: the worktree is removed, the row where it was.
+#[test]
+fn a_move_the_board_refuses_is_said_and_the_sweep_goes_on() {
+    let r = Repo::new();
+    let store = &r.board.store;
+    (store.add_person("ana", &[], &[Power::Speak], "owner")).unwrap();
+    let place = Place {
+        path: "docs/a.md".into(),
+        scope: Some("sim~done".into()),
+        kind: MESSAGE.into(),
+        card: Some("one".into()),
+        block: None,
+    };
+    let ana = r.board.other().for_person("ana");
+    let held = ana.hold_on_document("ana", "Quartz lamps", &place).unwrap();
+    (store.pass_on_document_into(held.id, "owner", Some("sim~done"))).unwrap();
+    let step = ADDED.iter().position(|step| *step == HELD).unwrap();
+    (store.raw().row("meta", "additions"))
+        .set(serde_json::json!({"version": step}))
+        .unwrap();
+    let wt = r.merged("named", "sim/done");
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    let line = said
+        .lines()
+        .find(|line| line.starts_with("the comments passed on into sim/done stay"))
+        .unwrap_or_else(|| panic!("{said}"));
+    assert!(line.contains("this write names `held_message`"), "{line}");
+    assert!(!said.contains("Quartz"), "{said}");
+    let kept = store.held_comment(held.id).unwrap().unwrap();
+    assert_eq!(kept.document.scope.as_deref(), Some("sim~done"));
 }
 
 #[test]

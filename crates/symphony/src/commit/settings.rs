@@ -151,10 +151,24 @@ pub(super) fn task(
 ///
 /// The board could not be reached, or an entry could not be removed.
 pub fn cleared(store: &symphony_board::Store, changes: &[Changed]) -> Result<(), String> {
+    cleared_by(store, changes, crate::postpone::OWNER)
+}
+
+/// [`cleared`], each removal recorded as made by `by`, who asked for the edit: the owner, or a
+/// person a board names, by their short name.
+///
+/// # Errors
+///
+/// As [`cleared`].
+pub fn cleared_by(
+    store: &symphony_board::Store,
+    changes: &[Changed],
+    by: &str,
+) -> Result<(), String> {
     for change in changes {
         let value: Json = kept(&change.after);
         store
-            .remove_setting_holding(&change.key, &value, crate::postpone::OWNER)
+            .remove_setting_holding(&change.key, &value, by)
             .map_err(|e| e.to_string())?;
     }
     Ok(())

@@ -192,7 +192,7 @@ fn list_is_a_tree_of_aligned_rows() {
     c.ok(&orch, &["role", "sim/a", "orchestrator"]);
     // Roles taken at one moment come by handle.
     let mut held = [(&exe, "executor"), (&orch, "orchestrator")];
-    held.sort();
+    symphony_board::order::sort_by(&mut held, &Ord::cmp);
     let held: Vec<String> = held.iter().map(|(h, role)| format!("{role} {h}")).collect();
     // Every title starts one column after the longest slug, a child's indent counted.
     let long = "a-very-long-slug/that-overflows-the-column";
@@ -431,6 +431,7 @@ fn json_preserves_the_reference_record_values() {
         vec![
             ("task", py::task(&board.get("sim/a").unwrap(), 1)),
             ("thread", py::list(thread, 1)),
+            ("held", board.held_count("sim/a").unwrap().to_string()),
             ("children", py::list(children, 1)),
             ("stages", stages(&orch)),
             ("tokens", no_tokens()),
@@ -607,7 +608,7 @@ fn show_lists_the_sessions_launched_for_it() {
             ),
         ),
     ];
-    rows.sort(); // started together: by handle
+    symphony_board::order::sort_by(&mut rows, &Ord::cmp); // started together: by handle
     let rows: Vec<String> = rows.into_iter().map(|(_, row)| row).collect();
     assert_eq!(block, rows.join("\n"), "{shown}");
 }
@@ -1115,12 +1116,12 @@ fn the_board_unreachable_is_exit_2_in_one_line() {
     let mut c = Case::new();
     c.env
         .vars
-        .insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
+        .insert("TASKS_SERVER".into(), crate::UNREACHED_SERVER.into());
     let ran = c.run_as("", &["list"], "");
     assert_eq!((ran.code, ran.out.as_str()), (2, ""));
     assert!(
         ran.err.starts_with("✖ ")
-            && ran.err.contains("127.0.0.1:1")
+            && ran.err.contains(crate::UNREACHED_FOLDER)
             && ran.err.matches('\n').count() == 1,
         "{}",
         ran.err

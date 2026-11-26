@@ -25,7 +25,7 @@ impl Machine {
     }
 
     /// [`Machine::new`], its starter judging who may reach it by `gate`.
-    fn with_gate(gate: Gate) -> Machine {
+    pub(super) fn with_gate(gate: Gate) -> Machine {
         let tree = Tree::new();
         for (id, color) in [("alpha", "#a00"), ("beta", "#0b0")] {
             tree.write(&format!("{id}/docs/README.md"), "# Docs\n");
@@ -38,16 +38,29 @@ impl Machine {
             );
         }
         tree.write("install/client/public/index.html", SHELL);
-        let machine = tree.path("machine");
+        let projects = Machine::serving(&tree, "machine", gate, &["alpha", "beta"]);
+        Machine { tree, projects }
+    }
+
+    /// Another server over this machine's checkouts and install folder, its own machine folder
+    /// `folder` registering `ids` of `alpha` (its starter) and `beta`, judging who may reach it by
+    /// `gate`: what this machine's answers are compared with, the same checkouts on both.
+    pub(super) fn beside(&self, folder: &str, gate: Gate, ids: &[&str]) -> Arc<Projects> {
+        Machine::serving(&self.tree, folder, gate, ids)
+    }
+
+    /// A server over `tree`'s checkouts whose machine folder `folder` registers `ids`, its starter
+    /// `alpha` judging who may reach it by `gate`.
+    fn serving(tree: &Tree, folder: &str, gate: Gate, ids: &[&str]) -> Arc<Projects> {
+        let machine = tree.path(folder);
         let mut registry = Registry::default();
-        for id in ["alpha", "beta"] {
+        for id in ids {
             registry.add(Entry::of(&tree.path(id)).unwrap()).unwrap();
         }
         registry.write(&machine).unwrap();
         let root = tree.path("alpha").canonicalize().unwrap();
         let starter = Shared::project(1, 1, &root, Some(&tree.path("install")), gate, "/alpha");
-        let projects = Projects::made(&machine, &starter, Warming::OnRequest);
-        Machine { tree, projects }
+        Projects::made(&machine, &starter, Warming::OnRequest)
     }
 
     async fn get(&self, path: &str, headers: &[(&str, &str)]) -> Response {
@@ -59,7 +72,7 @@ impl Machine {
     }
 
     /// `path` asked by `client` of the Host `host`.
-    async fn named(
+    pub(super) async fn named(
         &self,
         client: &str,
         host: &str,
@@ -96,7 +109,7 @@ const BACKSTOP: std::time::Duration = test_time::backstop(std::time::Duration::f
 /// what a test waits on, with [`BACKSTOP`], while it holds what the answer must not wait on.
 fn asked_aside(machine: &Machine, path: &'static str) -> std::sync::mpsc::Receiver<String> {
     let projects = machine.projects.clone();
-    let (send, answered) = std::sync::mpsc::channel();
+    let (send, answered) = crate::test_channel::channel();
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -848,8 +861,9 @@ async fn the_list_says_calmly_that_a_project_with_no_board_has_none() {
         &starter.root.join("build/client"),
     ));
     assert!(starter.api.set(hub.clone()).is_ok());
-    let missing =
-        symphony_board::server::ServerError::NoSurreal(machine.tree.path("surreal")).to_string();
+    let missing = "the alpha board is not made yet, and a reader never makes a board: nothing was \
+                   made or started; `just tasks list` in alpha makes it, on PostgreSQL"
+        .to_string();
     assert!(
         hub.reconnect(&mut |_: &Path| Err(missing.clone()))
             .is_none()
@@ -938,9 +952,11 @@ fn the_blocked_part_counts_the_blocked_and_those_waiting_on_the_owners_decision(
     );
 }
 
+/// A board still on SurrealDB is refused, naming how it moves, and is a board all the same: the
+/// list warns under it.
 #[tokio::test]
-async fn the_list_warns_under_a_project_whose_store_cannot_be_served_and_never_calls_it_boardless()
-{
+async fn the_list_warns_under_a_project_whose_board_is_still_on_surrealdb_and_never_calls_it_boardless()
+ {
     let machine = Machine::new();
     let starter = &machine.projects.starter;
     let hub = Arc::new(crate::live::Hub::new(
@@ -948,13 +964,11 @@ async fn the_list_warns_under_a_project_whose_store_cannot_be_served_and_never_c
         &starter.root.join("build/client"),
     ));
     assert!(starter.api.set(hub.clone()).is_ok());
-    // The SurrealDB that served the board is gone, as after a version bump before the new one is
-    // fetched; its store is still there.
-    let unserved = symphony_board::server::ServerError::Unserved {
-        surreal: machine.tree.path("surreal"),
-        data: machine.tree.path("symphony/tasks/data"),
-    }
-    .to_string();
+    let unserved = format!(
+        "the board in {} is on SurrealDB, which this build serves no more: {}. Nothing was started",
+        starter.root.join(".git/symphony/tasks").display(),
+        symphony_board::server::GONE
+    );
     assert!(
         hub.reconnect(&mut |_: &Path| Err(unserved.clone()))
             .is_none()
@@ -1117,7 +1131,7 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
     use crate::testing::board::{Fixture, GONE, HOST, NOW, Seed, task};
     use std::panic::Location;
     use std::sync::atomic::AtomicUsize;
-    use symphony_board::board_health::{Query, QueryLog, queries_of};
+    use symphony_board::board_health::{Query, QueryLog};
     use symphony_board::rows::{SessionRow, TaskRow};
     use symphony_board::waits_on::{BLOCKED, Blocked as Block};
     let machine = Machine::new();
@@ -1157,7 +1171,12 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
         }
         row
     };
-    let board = Fixture::new(
+    // Its database made first, as the board's command line makes it, in a process of its own: a
+    // read of a database not made yet fails, and the hub's process never made its board.
+    let database = crate::testing::board::postgresql();
+    database.make_database().unwrap();
+    let board = Fixture::in_database(
+        database.into(),
         Seed::default()
             .session_row(SessionRow {
                 handle: "amber-heron".into(),
@@ -1185,21 +1204,23 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
                 Some("tools/card"),
             )),
     );
-    let client = board.store.client();
-    hub.health
-        .reading(queries_of(client.addr(), "sf", client.database()));
+    // The hub's health reads the test's own requests, none yet. The board's real ones, its seed's
+    // writes among them, take as long as the machine's load makes them, and no row here means that.
+    let log = Arc::new(QueryLog::default());
+    hub.health.reading(Arc::clone(&log));
     // The hub's reader, the way it reads the board for a page, opens this board, counted: a read
     // through it is a request this board's count holds.
     let connects = Arc::new(AtomicUsize::new(0));
     hub.connect_reader = {
-        let (counted, client) = (Arc::clone(&connects), board.other_client());
+        let (counted, db) = (Arc::clone(&connects), board.other_database());
         Box::new(move |_| {
             counted.fetch_add(1, Ordering::SeqCst);
-            symphony_board::Store::with(
-                symphony_board::rpc::Client::new(client.addr(), "sf", client.database()),
+            symphony_board::Store::opening_on(
+                db.another(),
                 Box::new(|| NOW),
                 Box::new(|_| false),
                 HOST,
+                &symphony_board::Opening::write(),
             )
             .map_err(|e| e.to_string())
         })
@@ -1210,8 +1231,10 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
     let list = || async { text(machine.get("/", &[]).await).await };
 
     // Drawn and listed from the hub's memory: the board's request count does not move, and no
-    // reader of it is opened.
-    let requests = || hub.health.report(clock.now()).queries.count;
+    // reader of it is opened. The count is the board's own log's, which every client of it in
+    // this process counts in.
+    let queries = board.store.database().queries();
+    let requests = || queries.report(clock.now()).0.count;
     let read = requests();
     assert!(read > 0, "the board's read is counted");
     let live = list().await;
@@ -1221,9 +1244,6 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
         (read, 0),
         "the list and the listing sent the board no request and opened no reader of it"
     );
-    // From here the hour's requests are the test's own.
-    let log = Arc::new(QueryLog::default());
-    hub.health.reading(Arc::clone(&log));
 
     let alpha = row(&live, "alpha");
     assert!(
@@ -1350,12 +1370,14 @@ async fn the_project_list_says_why_a_project_is_refused_and_nothing_else_of_it()
 /// route but `/api/front` does, and nobody else.
 #[tokio::test]
 async fn the_project_list_answers_this_machines_tailnet_name_and_front_does_not() {
+    // The phone is under the login this machine is under.
     let peer = |_: &str| {
         Ok(Some(
-            r#"{"Node":{"Name":"phone.tailnet-name.ts.net."}}"#.to_string(),
+            r#"{"Node":{"Name":"phone.tailnet-name.ts.net."},"UserProfile":{"ID":11,"LoginName":"owner@example.com"}}"#.to_string(),
         ))
     };
-    let names = || Ok(r#"{"Self":{"DNSName":"studio.tailnet-name.ts.net."}}"#.to_string());
+    let names =
+        || Ok(r#"{"Self":{"DNSName":"studio.tailnet-name.ts.net.","UserID":11}}"#.to_string());
     let machine = Machine::with_gate(
         Gate::new(Arc::new(peer), Arc::new(Instant::now)).with_status(Arc::new(names)),
     );

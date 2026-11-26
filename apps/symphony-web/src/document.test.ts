@@ -589,6 +589,15 @@ describe("an answered save", () => {
     const message = words("message", "Hi");
     expect(ending(message, message, "Hi").status).toBe("Message sent");
     expect(savedText("comment")).toBe("Comment saved");
+    expect(ending(message, message, "Hi", true)).toEqual({
+      status: "Message held",
+      clear: true,
+      close: true,
+    });
+    expect([savedText("comment", true), savedText("approved", true)]).toEqual([
+      "Comment held",
+      "Verdict saved: approved",
+    ]);
   });
 
   it("of two sendings keeps the words the feed's line does not show", () => {

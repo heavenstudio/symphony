@@ -53,6 +53,8 @@ pub mod health;
 mod links;
 pub mod listing;
 mod machine_work;
+mod ownership;
+mod people;
 mod project;
 pub mod report_page;
 pub mod reports;
@@ -74,7 +76,12 @@ pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates
 pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 pub use links::{app_path, linkable};
 pub use listing::{ListedCard, ListedProject, PROJECTS_PATH, ProjectList, TaskAsks, TaskVerdict};
-pub use report_page::{Grain, REPORTS_PATH, ReportBucket, ReportsPage};
+pub use ownership::{CARD_HAND_ROUTE, CARD_OWNERS_PATH, CardOwners, Owner, TASK_HAND_ROUTE};
+pub use people::{
+    Addresses, GroupRow, NoticeWay, PEOPLE_CHANGE_PATH, PEOPLE_PATH, PROFILE_PATH, PeopleAction,
+    PeopleChange, PeopleLogLine, PeoplePage, PersonRow, ProfileWrite,
+};
+pub use report_page::{Grain, REPORTS_LANDED_PATH, REPORTS_PATH, ReportBucket, ReportsPage};
 pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
 pub use runs::{
     End, FailedTest, PIPELINES, RUN_LOG_MOST, RUN_LOG_PATH, RUN_LOG_TAIL, RUN_PATH, RUN_SCHEMA,
@@ -661,6 +668,11 @@ pub struct Message {
     pub kind: String,
     pub text: String,
     pub ts: f64,
+    /// A person a board named wrote it, `sender` their short name: drawn as a person's line, as
+    /// the owner's is. False for the owner's, whose sender says so, and for a session's; an older
+    /// server sends none.
+    #[serde(default)]
+    pub person: bool,
 }
 
 /// Task metadata and its brief. Thread pages and the landing offer are fetched separately
@@ -701,6 +713,13 @@ pub struct TaskPage {
     /// at none: a page draws their history only for a task that has some.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub attempts: usize,
+    /// The one reading may pass a held message on ([`TASK_PASS_ROUTE`]): the person at the machine,
+    /// or a person holding speak and direct agents.
+    #[serde(default)]
+    pub passes: bool,
+    /// Whose the task is ([`Owner`]): none on a board that names nobody.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<Owner>,
 }
 
 /// A chunk of a long brief: its blocks, the byte it ends at, the bytes still left and the
@@ -725,6 +744,75 @@ pub struct TaskEntry {
     pub message: Message,
     pub stamp: String,
     pub blocks: Vec<Block>,
+    /// The message held for people this line is of: on the board's line that says it is held,
+    /// `id` its own, and on the line its words became once passed on, `id` the board's line. Only
+    /// a person's read of the thread carries it; none on every other line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<HeldWords>,
+}
+
+/// A message held for people: the words of someone who may speak and may not direct agents, which
+/// no agent is handed until someone who may passes them on ([`TASK_PASS_ROUTE`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct HeldWords {
+    /// The number of the board's line that says it is held, which a pass names.
+    pub id: i64,
+    /// Who wrote it, by their short name.
+    pub author: String,
+    pub text: String,
+    /// Whom it was written to: a role, a session's handle, or nobody.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    /// Who passed it on: none while it is held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passed_by: Option<String>,
+}
+
+/// The route a held message is passed on by: `slug` and `id`, the number of the board's line for
+/// it ([`HeldWords::id`]). It needs speak and direct agents.
+pub const TASK_PASS_ROUTE: &str = "/api/task-pass";
+
+/// A document's comments held for people ([`DocumentHeld`]), `?path=DOC`.
+pub const DOCUMENT_HELD_PATH: &str = "/api/document-held";
+
+/// The route a held comment on a document is passed on by: `id` ([`HeldComment::id`]). It needs
+/// what [`TASK_PASS_ROUTE`] needs.
+pub const DOCUMENT_PASS_ROUTE: &str = "/api/document-pass";
+
+/// The comments held for people on one document, not passed on yet, as its page reads them: none
+/// on a board that names nobody.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct DocumentHeld {
+    pub held: Vec<HeldComment>,
+    /// The one reading may pass them on ([`DOCUMENT_PASS_ROUTE`]): the person at the machine, or
+    /// a person holding speak and direct agents.
+    pub passes: bool,
+}
+
+/// A comment on a document held for people: the words of someone who may speak and may not direct
+/// agents, written into the document's file only once someone who may passes them on.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct HeldComment {
+    /// Its number, which a pass names.
+    pub id: i64,
+    /// Who wrote it, by their short name.
+    pub author: String,
+    /// A callout's kind (`comment`, `question`, `decision`), or `message` for a card's message.
+    pub kind: String,
+    /// Their words; a callout's title is the first line.
+    pub text: String,
+    /// The card, for a message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<String>,
+    /// The section a callout was left after, by its key ([`Section::key`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// That section's last line then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

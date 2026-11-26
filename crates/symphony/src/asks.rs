@@ -66,6 +66,10 @@ CREATE TABLE IF NOT EXISTS replies (
 /// The name of the check a post to a missing thread fails, so its refusal reads as one.
 const NO_SUCH_ASK: &str = "no_such_ask";
 
+/// Who asks on this machine: the person at it, the author of every question a page asks with no
+/// other actor named ([`AskStore::ask_by`]).
+const OWNER: &str = "owner";
+
 /// Why an ask was not stored or read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AskError {
@@ -372,14 +376,7 @@ impl AskStore {
         &self,
         script: &str,
     ) -> Result<Vec<T>, AskError> {
-        let printed = self.run(script)?;
-        let mut rows = Vec::new();
-        for array in serde_json::Deserializer::from_str(&printed).into_iter::<Vec<T>>() {
-            rows.extend(array.map_err(|problem| {
-                AskError::Store(format!("sqlite3 printed what does not read: {problem}"))
-            })?);
-        }
-        Ok(rows)
+        arrays(&self.run(script)?)
     }
 
     /// `body` as one write: it waits for the lock, prunes first, and is all or nothing.
@@ -422,21 +419,35 @@ impl AskStore {
         anchor: &str,
         quote: &str,
     ) -> Result<i64, AskError> {
+        self.ask_by(path, question, anchor, quote, OWNER)
+    }
+
+    /// [`Self::ask`] by `by`, the short name of the person who asked (`symphony_plugin::Actor`):
+    /// `owner` for the person at the machine.
+    pub fn ask_by(
+        &self,
+        path: &str,
+        question: &str,
+        anchor: &str,
+        quote: &str,
+        by: &str,
+    ) -> Result<i64, AskError> {
         let path = check_path(path)?;
         let question = said(question, "question")?;
         let quote = prefix_chars(strip(quote), MAX_TEXT);
         let now = real_sql((self.clock)());
         let body = format!(
             "INSERT INTO asks (path, anchor, quote, asked, updated) VALUES ({}, {}, {}, {now}, {now});\n\
-             INSERT INTO messages (ask, kind, by, text, at) VALUES (last_insert_rowid(), 'question', 'owner', {}, {now});\n\
+             INSERT INTO messages (ask, kind, by, text, at) VALUES (last_insert_rowid(), 'question', {}, {}, {now});\n\
              SELECT ask AS id FROM messages WHERE seq = last_insert_rowid();\n",
             text_sql(path),
             text_sql(strip(anchor)),
             text_sql(quote),
+            text_sql(by),
             text_sql(question),
         );
         let printed = self.write((self.clock)(), &body)?;
-        serde_json::from_str::<Vec<Id>>(&printed)
+        serde_json::from_slice::<Vec<Id>>(printed.as_bytes())
             .ok()
             .and_then(|ids| ids.first().map(|row| row.id))
             .ok_or_else(|| AskError::Store(format!("sqlite3 gave no id: {printed:?}")))
@@ -444,8 +455,13 @@ impl AskStore {
 
     /// The owner's follow-up: another question on the thread, which is open again.
     pub fn reply(&self, id: i64, text: &str) -> Result<(), AskError> {
+        self.reply_by(id, text, OWNER)
+    }
+
+    /// [`Self::reply`] by `by`, the short name of the person who asked ([`Self::ask_by`]).
+    pub fn reply_by(&self, id: i64, text: &str, by: &str) -> Result<(), AskError> {
         let text = said(text, "question")?;
-        self.post(id, "question", "owner", text)
+        self.post(id, "question", by, text)
     }
 
     /// An agent's markdown answer; the thread is answered until the owner follows up.
@@ -485,7 +501,7 @@ impl AskStore {
             "BEGIN IMMEDIATE;\n{}SELECT changes() AS gone;\nCOMMIT;\n",
             prune_sql(now - max_age)
         ))?;
-        Ok(serde_json::from_str::<Vec<Gone>>(&printed)
+        Ok(serde_json::from_slice::<Vec<Gone>>(printed.as_bytes())
             .ok()
             .and_then(|rows| rows.first().map(|row| row.gone))
             .unwrap_or(0))
@@ -624,6 +640,19 @@ impl AskStore {
             clock: Box::new(now_seconds),
         })
     }
+}
+
+/// Every JSON array `printed` holds, one after another, as `sqlite3 -json` prints each statement's
+/// rows. Read as bytes, through the one reader the crate reads JSON with: the same rows, and the same
+/// error in the same words and at the same line and column, as a read of the text.
+fn arrays<T: serde::de::DeserializeOwned>(printed: &str) -> Result<Vec<T>, AskError> {
+    let mut rows = Vec::new();
+    for array in serde_json::Deserializer::from_slice(printed.as_bytes()).into_iter::<Vec<T>>() {
+        rows.extend(array.map_err(|problem| {
+            AskError::Store(format!("sqlite3 printed what does not read: {problem}"))
+        })?);
+    }
+    Ok(rows)
 }
 
 /// `ASKS_DB` when set, else, for a folder this process serves, the journal found from it when it
@@ -911,3 +940,7 @@ pub fn main(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "asks_tests.rs"]
+mod tests;

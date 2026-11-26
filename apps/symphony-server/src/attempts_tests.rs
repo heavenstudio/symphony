@@ -75,7 +75,7 @@ impl Served {
         );
         let fake = Arc::new(Fake::default());
         let mut hub = Hub::new(&root, &root.join("build/client"));
-        let board = f.other_client();
+        let board = f.other_database();
         hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
         hub.providers = Providers::of(vec![Provider::new(
             CONFIGURATION,
@@ -686,7 +686,8 @@ fn a_hosted_askers_grant_is_its_verified_principal_on_the_one_task() {
             "visitor-1".into()
         )
     );
-    let local = Asker::Local.grant(&scope, TASK, &[Act::Cancel]);
+    let local =
+        Asker::Local(symphony_board::workflow::local_owner()).grant(&scope, TASK, &[Act::Cancel]);
     assert_eq!(local.principal(), &symphony_board::workflow::local_owner());
     assert_eq!(local.policy_revision(), POLICY);
 }

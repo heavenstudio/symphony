@@ -7,9 +7,7 @@
 use serde_json::{Value, json};
 
 use super::postgres::fields as pg;
-use super::statement::both;
-use super::surreal::fields as sql;
-use super::work::OWNER;
+use super::statement::Statement;
 use super::{Error, REFUSED, Store, Task, refused, repr};
 
 impl Store {
@@ -37,7 +35,7 @@ impl Store {
         }
         if plugin == crate::red::FIELDS {
             return Err(refused(format!(
-                "fields.{plugin} are the board's own: a red is marked by its filer (mark_red), a fast fix where an older board filed it, a landing's record by record_waits, a task's needs by its assessor (tasks needs), its gate decisions by its orchestrator (tasks gate)"
+                "fields.{plugin} are the board's own: a red is marked by its filer (mark_red), a fast fix where an older board filed it, a landing's record by record_waits, a task's needs by its assessor (tasks needs), its gate decisions by its orchestrator (tasks gate), its kind where it is filed or by tasks kind"
             )));
         }
         let shown = match value {
@@ -49,8 +47,8 @@ impl Store {
                 )));
             }
         };
-        let acts = handle != OWNER;
-        let body = || both(sql::set_field(acts), pg::set_field(acts)).posting();
+        let acts = !self.is_person(handle);
+        let body = || Statement::from(pg::set_field(acts)).posting();
         self.retrying(|| {
             let vars = self.acting(
                 handle,

@@ -43,6 +43,16 @@ fn history_renders_as_dated_entries_by_author() {
 }
 
 #[test]
+fn a_persons_line_carries_their_name_after_its_time_and_decides_as_the_owners() {
+    let html = page(
+        "- [x] **a** — one.\n  [2026-11-23 10:00] ana · approved — at least 21\n  [2026-11-23 11:00] agent — Recorded.\n",
+    );
+    assert!(html.contains("<li class=\"entry owner\"><time>2026-11-23 10:00</time> <span class=\"entry-by\">ana</span> <b>approved</b> <span class=\"entry-text\">at least 21</span></li>"), "{html}");
+    assert!(html.contains("data-group=\"resolved\""), "{html}");
+    assert!(html.contains("data-decided=\"2026-11-23 10:00\""), "{html}");
+}
+
+#[test]
 fn a_card_shows_when_it_was_posted() {
     let html = page("- [ ] **a** — new\n  [2026-09-25 10:00] agent — ![x](/x.png)\n");
     assert!(html.contains("<div class=\"decision-text\"><code>a</code> <time class=\"posted\">2026-09-25 10:00</time>"), "{html}");
@@ -104,7 +114,7 @@ fn an_html_candidate_in_the_row_is_a_mockup_item_not_a_broken_image() {
             other => panic!("{other:?}"),
         })
         .collect();
-    srcs.sort_unstable();
+    symphony_board::order::sort_by(&mut srcs, &Ord::cmp);
     // each of the line's three, once in the compare row and once in the thread
     assert_eq!(
         srcs,
@@ -481,8 +491,27 @@ fn an_owner_task_message_with_an_upload_has_picture_blocks_and_one_without_has_n
         kind: kind.into(),
         text,
         ts: 0.0,
+        person: false,
     };
     let attached = format!("look <here>\n{}", picture.markup());
+    // A person a board named writes as the owner does: literal words, and an upload's blocks.
+    let ana = |text: String| symphony_api::Message {
+        sender: "ana".into(),
+        person: true,
+        ..message("ana", "message", text)
+    };
+    let hers = symphony::taskview::entry(&ana(attached.clone()), &render);
+    assert!(
+        serde_json::to_string(&hers.blocks)
+            .unwrap()
+            .contains("\"type\":\"image\"")
+    );
+    let plain = symphony::taskview::entry(&ana("**not bold**".into()), &render);
+    assert!(plain.blocks.is_empty(), "{:?}", plain.blocks);
+    // The same words from a session are an agent's markdown.
+    let agent =
+        symphony::taskview::entry(&message("amber-heron", "msg", "**bold**".into()), &render);
+    assert!(!agent.blocks.is_empty());
     let entry = symphony::taskview::entry(&message("owner", "message", attached.clone()), &render);
     assert_eq!(
         entry.message.text, attached,

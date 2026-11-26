@@ -1,13 +1,15 @@
-/* The Reports page (reports.tsx, chart.tsx): its header, four figures and charts, two columns on
-   a wide screen. The series take --chart-1 to --chart-5 in their fixed order, a categorical palette
-   checked for colour-blind separation on the card in each scheme; a theme's own --chart-N win, as
-   these are set at no specificity. Text never wears a series' colour. */
+/* The Reports page (reports.tsx, reports-landed.tsx, chart.tsx): its header, its two tabs, four
+   figures and charts, two columns on a wide screen. The series take --chart-1 to --chart-5 in their
+   fixed order, a categorical palette checked for colour-blind separation on the card in each scheme,
+   and --chart-none is the grey of a task given no kind; a theme's own --chart-N win, as these are
+   set at no specificity. Text never wears a series' colour. */
 :where(:root) {
   --chart-1: #2a78d6;
   --chart-2: #eb6834;
   --chart-3: #1baf7a;
   --chart-4: #eda100;
   --chart-5: #e87ba4;
+  --chart-none: #8a8a8a;
 }
 @media (prefers-color-scheme: dark) {
   :where(:root) {
@@ -16,6 +18,7 @@
     --chart-3: #199e70;
     --chart-4: #c98500;
     --chart-5: #d55181;
+    --chart-none: #8f8f8f;
   }
 }
 
@@ -36,7 +39,8 @@
   font-size: var(--fs-2xl);
   line-height: 1.2;
 }
-.reports-sub {
+.reports-unit,
+.reports-spend {
   margin: 4px 0 0;
   color: var(--muted-foreground);
   font-size: var(--fs-sm);
@@ -58,6 +62,34 @@
   background: var(--primary);
   color: var(--primary-foreground);
   border-color: var(--primary);
+}
+/* The two tabs, links the address names: the one shown underlined in the primary colour. */
+.reports-tabs {
+  display: flex;
+  gap: var(--sp-5);
+  border-bottom: 1px solid var(--border);
+}
+.reports-tabs .tab {
+  margin-bottom: -1px;
+  padding: 6px 2px 10px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted-foreground);
+  font-weight: 600;
+  text-decoration: none;
+}
+.reports-tabs .tab[aria-current="page"] {
+  color: var(--foreground);
+  border-bottom-color: var(--primary);
+}
+@media (hover: hover) and (pointer: fine) {
+  .reports-tabs .tab:hover {
+    color: var(--foreground);
+  }
+}
+.reports-tabs .tab:focus-visible {
+  outline: 2px solid var(--ring, var(--primary));
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
 }
 .reports-error {
   margin: 0;
@@ -212,34 +244,6 @@
   }
 }
 
-/* Under the charts of tokens: the window's all told, the landed tasks' costs and what every
-   dollar is. A slug too long for its line wraps, never widening the page on a phone. */
-.reports-spend {
-  min-width: 0;
-  max-width: 72ch;
-  overflow-wrap: anywhere;
-}
-.reports-spend p {
-  margin: 0 0 var(--sp-2);
-}
-.reports-spend h3 {
-  margin: var(--sp-3) 0 var(--sp-2);
-  font-size: var(--fs-md, 1rem);
-}
-.reports-dearest {
-  margin: 0 0 var(--sp-2);
-  padding-left: 2.5ch;
-}
-.reports-landed-task {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 var(--sp-2);
-  justify-content: space-between;
-}
-.reports-landed-task > span {
-  color: var(--muted-foreground);
-  font-variant-numeric: tabular-nums;
-}
 .reports-note {
   font-size: var(--fs-sm);
   color: var(--muted-foreground);
@@ -272,11 +276,6 @@
 .chart figcaption h3 {
   margin: 0;
   font-size: var(--fs-md);
-}
-.chart-note {
-  margin: 2px 0 0;
-  font-size: var(--fs-xs);
-  color: var(--muted-foreground);
 }
 .chart-instead {
   margin: var(--sp-4) 0 0;
@@ -535,8 +534,208 @@
   background: none;
   font-weight: 600;
 }
+/* Columns over categories (By review rounds): wider bars, each one's total over it and its name
+   and count under it, in place of the time axis's labels. */
+.seg.cat {
+  width: min(48px, 50%);
+}
+.cat-total {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -4px);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cat-x {
+  display: grid;
+  grid-template-columns: repeat(var(--n), minmax(0, 1fr));
+  margin-left: 3.2em;
+  padding-top: 4px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+.cat-x > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cat-x b {
+  display: block;
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+/* Bars by row (Dearest tasks, By kind): a name, its bar along the one scale and its value; the
+   name's and the value's columns are lengths, so the grid, the rows and the ticks share one box.
+   A long name is cut with an ellipsis, never widening the page. */
+.hchart {
+  --label: 0px;
+  --value: 64px;
+}
+.hchart.side {
+  --label: min(96px, 30%);
+}
+.hplot {
+  position: relative;
+  margin-top: 4px;
+}
+.hgrid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--label);
+  right: var(--value);
+  pointer-events: none;
+}
+.hgrid > span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--border);
+}
+.hgrid > span:first-child {
+  border-left-color: var(--muted-foreground);
+  opacity: 0.5;
+}
+.hchart.side .hgrid > span:not(:first-child) {
+  display: none;
+}
+.hbars {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  border-radius: var(--r-sm);
+  outline-offset: 3px;
+}
+.hbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--value);
+  grid-template-areas: "label label" "track value" "meta meta";
+  align-items: center;
+  row-gap: 2px;
+  padding: 3px 0;
+  border-radius: 4px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.hchart.side .hbar {
+  grid-template-columns: var(--label) minmax(0, 1fr) var(--value);
+  grid-template-areas: "label track value" ". meta meta";
+  padding: 4px 0;
+}
+.hbar.on {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.hbar-label {
+  grid-area: label;
+  min-width: 0;
+  overflow: hidden;
+  padding-right: 8px;
+  color: var(--foreground);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+a.hbar-label {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.hbar-track {
+  grid-area: track;
+  display: flex;
+  align-items: stretch;
+  height: 14px;
+  min-width: 0;
+}
+.hseg {
+  box-sizing: border-box;
+  background: var(--c);
+}
+.hseg + .hseg {
+  border-left: 2px solid var(--card);
+}
+.hseg:last-child {
+  border-radius: 0 4px 4px 0;
+}
+.hbar-value {
+  grid-area: value;
+  padding-left: 8px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.hbar-meta {
+  grid-area: meta;
+  min-width: 0;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+.hchart .chart-x {
+  margin-left: var(--label);
+  margin-right: var(--value);
+}
+
+/* Every task as a dot on two log scales: a dot's tap target wider than it is drawn. */
+.chart-plot.dplot {
+  height: 220px;
+}
+.chart-grid.across {
+  top: 0;
+  bottom: 0;
+  right: auto;
+  width: 0;
+  height: auto;
+  border-top: 0;
+  border-left: 1px solid var(--border);
+}
+.dots {
+  position: absolute;
+  inset: 0;
+}
+.pt {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: 0 0 -4.5px -4.5px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 0 1px var(--card);
+  opacity: 0.85;
+  cursor: pointer;
+}
+.pt::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+}
+.pt.on {
+  z-index: 1;
+  opacity: 1;
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--foreground);
+}
+.swatch.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.chart-x-name {
+  margin: 0;
+  font-size: 11px;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+
 @media (forced-colors: active) {
-  .seg {
+  .seg,
+  .hseg,
+  .pt {
     background: CanvasText;
   }
   .chart-col.gap {

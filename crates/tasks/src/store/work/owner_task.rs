@@ -3,10 +3,9 @@
 use super::red::{filing, named};
 use super::{
     BEFORE_WORK, Error, NewTask, OWNER, REFUSED, Store, Task, no_task, plain_slug, refused, repr,
-    sql,
 };
 use crate::store::postgres::{Pg, work as pg};
-use crate::store::statement::both;
+use crate::store::statement::Statement;
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 
@@ -23,15 +22,19 @@ impl Store {
         self.create_with_receipt(new, None, Some(arm), true)
     }
 
-    /// The slugs of the owner's tasks saved under `receipt` ([`Store::create_owner_task`]), two
-    /// at most: none when the save never reached the board, one when it did, and two when the
-    /// receipt does not say which task it made.
+    /// The slugs of the owner's tasks saved under `receipt` ([`Store::create_owner_task`]), and of
+    /// the person's this store writes for ([`Store::for_person`]), two at most: none when the save
+    /// never reached the board, one when it did, and two when the receipt does not say which task
+    /// it made.
     pub fn owner_saved(&self, receipt: &str) -> Result<Vec<String>, Error> {
-        let read = || both(sql::OWNER_SAVED, pg::OWNER_SAVED);
-        self.retrying(|| self.read(read(), json!({"receipt": receipt})))
+        let read = || Statement::from(pg::OWNER_SAVED);
+        let person = self.person.as_deref().filter(|name| self.is_person(name));
+        let vars = json!({"receipt": receipt, "by_person": person});
+        self.retrying(|| self.read(read(), vars.clone()))
     }
 
-    /// Create an owner's task with an opaque save receipt in the task's private fields.
+    /// Create an owner's task with an opaque save receipt in the task's private fields: one the
+    /// owner files, or a person this store writes for ([`Store::is_person`]).
     /// The receipt, task and creation message commit together; edits retain the receipt. Then the
     /// board gives it an orchestrator ([`Store::give_filed`]): a give that fails is said on stderr
     /// and fails nothing, the task saved, and the board's next read of the whole board gives it
@@ -56,7 +59,7 @@ impl Store {
     }
 
     fn owner_task(&self, new: &NewTask, receipt: &str, deliver: bool) -> Result<Task, Error> {
-        if new.by != OWNER || receipt.is_empty() {
+        if !self.is_person(&new.by) || receipt.is_empty() {
             return Err(refused(format!(
                 "owner task receipt {} requires actor owner and a nonempty receipt; actor is {}",
                 repr(receipt),
@@ -95,6 +98,26 @@ impl Store {
         }
         let red = (new.red.as_deref()).map(|what| named(&new.slug, what));
         let red = red.transpose()?;
+        // A red's filing names `red` unless it names a kind of its own, so a filer that names none,
+        // or runs a build that takes none, files its reds of that kind ([`crate::kind`]).
+        let kind = match new.kind.as_deref() {
+            Some(kind) => Some(crate::kind::named(kind).map_err(refused)?),
+            None => red.map(|_| crate::kind::RED),
+        };
+        let group = new
+            .group
+            .as_deref()
+            .map(str::trim)
+            .filter(|g| !g.is_empty());
+        if let Some(group) = group
+            && group != crate::people::ownership::MACHINE
+            && !symphony_docs::syntax::is_short_name(group)
+        {
+            return Err(refused(format!(
+                "a task is filed for a group's or a person's short name, or owner, not {}",
+                repr(group)
+            )));
+        }
         let parent = new.parent.as_deref().filter(|p| !p.is_empty());
         if new.instruction && parent.is_none() {
             return Err(refused(
@@ -120,14 +143,16 @@ impl Store {
             let _ = write!(said, " for {assignee}");
         }
         let file_as = |placing: Option<crate::workflow::Transition>| {
-            let creating = sql::Creating {
-                acts: new.by != OWNER,
+            let creating = pg::Creating {
+                acts: !self.is_person(&new.by),
                 receipt: receipt.is_some(),
                 red: red.is_some(),
                 arm: arm.is_some(),
+                kind: kind.is_some(),
+                group: group.is_some(),
                 placed: placing.is_some(),
             };
-            let body = || both(sql::create(&creating), Pg::script(pg::create(&creating))).posting();
+            let body = || Statement::from(Pg::script(pg::create(&creating))).posting();
             let mut vars = self.acting(
                 &new.by,
                 (self.clock)(),
@@ -135,7 +160,8 @@ impl Store {
                     "slug": new.slug, "title": title, "body": new.body, "status": new.status,
                     "priority": new.priority, "parent": parent, "instruction": new.instruction,
                     "needed": needed, "links": links, "assignee": new.assignee, "said": said,
-                    "owner_save": receipt, "red": red, "arm": arm,
+                    "owner_save": receipt, "red": red, "arm": arm, "kind": kind,
+                    "group": group,
                     "taken": format!("{REFUSED}task {} already exists", new.slug),
                     "unassignable": new.assignee.as_ref()
                         .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),
@@ -161,5 +187,5 @@ impl Store {
 }
 
 /// The refusal of a filing written as the board's own while a custom workflow is active, which
-/// files it again at the workflow's initial pair (`sql::UNPLACED`).
+/// files it again at the workflow's initial pair (`postgres::work::create`).
 const UNPLACED: &str = "a custom workflow is active, which starts the task at its initial pair";

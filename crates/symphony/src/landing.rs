@@ -29,7 +29,8 @@ pub fn is_doc(project: &crate::project::Project, path: &str) -> bool {
     project.is_page(path)
 }
 
-/// Documents holding an owner answer no commit has, read by the board's landing/sweep reader.
+/// Documents holding an owner answer no commit has, the owner's or any person's a board names (a
+/// dated line not an agent's), read by the board's landing/sweep reader.
 /// A read failure returns a diagnostic entry, preserving the gate's nonempty-means-keep contract;
 /// disappearing checkouts are skipped.
 pub fn owner_lines_left(root: &Path) -> Vec<String> {
@@ -41,12 +42,11 @@ pub fn owner_lines_left(root: &Path) -> Vec<String> {
         &symphony_board::project::documents_at(root),
         None,
     ) {
-        Ok(answers) => answers
-            .into_iter()
-            .map(|answer| answer.file)
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect(),
+        Ok(answers) => {
+            let mut files = std::collections::BTreeSet::new();
+            files.extend(answers.into_iter().map(|answer| answer.file));
+            files.into_iter().collect()
+        }
         Err(why) => vec![format!("owner answers could not be read: {why}")],
     }
 }
@@ -292,8 +292,8 @@ fn regenerates_inner(
         .into_iter()
         .filter(|n| !docs.contains(n))
         .collect();
-    made.sort();
-    outputs.sort();
+    symphony_board::order::sort_by(&mut made, &Ord::cmp);
+    symphony_board::order::sort_by(&mut outputs, &Ord::cmp);
     if made != outputs {
         return Some(false);
     }

@@ -580,9 +580,9 @@ fn day_files_older_than_ninety_days_go_once_a_day_and_nothing_else_does() {
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
-    names.sort();
+    crate::order::sort_by(&mut names, &Ord::cmp);
     let mut kept = vec![old(95.0), old(90.0), old(1.0), "notes.txt".into()];
-    kept.sort();
+    crate::order::sort_by(&mut kept, &Ord::cmp);
     assert_eq!(names, kept, "a link named like an old day stays");
     // Pruned once a day: a file older than kept, put back the same day, stays until the next.
     fs::write(dir.path(&old(91.0)), "{}\n").unwrap();
@@ -657,10 +657,13 @@ fn a_line_after_one_cut_short_starts_on_its_own_and_a_reader_passes_over_the_cut
 #[test]
 fn the_hours_are_appended_from_memory_and_send_the_board_nothing() {
     let dir = Scratch::new("no-request");
-    let client = crate::store_fixture::client();
+    let client = crate::store_fixture::postgresql();
+    client.make_database().unwrap();
     let log = client.queries();
     let (recorder, _) = keeping(&dir.0, &Arc::new(Gate::default()), &log);
-    client.query("RETURN 1;", serde_json::json!({})).unwrap();
+    client
+        .request(&[crate::pg::Step::bare("SELECT 1")])
+        .unwrap();
     let every = i64::MIN..=i64::MAX;
     let sent = log.within(&every).0.count;
     assert!(sent > 0, "the request is counted");

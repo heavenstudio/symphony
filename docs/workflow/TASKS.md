@@ -29,9 +29,8 @@ server when it is not running: a `just tasks`, `just symphony` as it starts, a p
 of the Symphony, which never makes a board. It starts detached, so it outlives
 whoever started it, and that is also the restart: a server that was killed is
 started again on the same data. A start says so in one line on stderr, as it
-takes seconds. A board made before PostgreSQL was a new board's runs on SurrealDB
-(namespace `sf`, database `tasks`, its address recorded beside its store) until
-its store is moved ([POSTGRESQL](../operations/POSTGRESQL.md)).
+takes seconds. A board still on SurrealDB is refused until it is moved
+([POSTGRESQL](../operations/POSTGRESQL.md#a-board-still-on-surrealdb)).
 The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 `TASKS_DATABASE` reach another board, as the tests do. It is working state, not
 history: `just tasks export` writes a readable snapshot to
@@ -41,7 +40,7 @@ Each project has a board of its own. A run's project is named by the nearest
 `symphony.toml` from its folder up, never past the top of the checkout it is in;
 with none, by the machine registry's entry for its repository's main checkout,
 else by that checkout's folder name. Its board is that repository's, in its
-common dir, under the same namespace and database. The Symphony serves each
+common dir, in the same database. The Symphony serves each
 registered project's board, and reconnects to one whose server restarted. A
 project's heartbeat keys, sweep state and staffing lock stay in its common dir.
 
@@ -65,17 +64,10 @@ whichever worktree it runs; a branch's own build runs only on a scratch board
 (`--database NAME`). The heartbeat hook finds the build as the recipe does, and
 builds nothing. The sweeps work finishing starts, and the Symphony's reap and
 finish, run the main checkout's build found that way, never a linked worktree's.
-There is no Python board adapter. The server is the pinned
-SurrealDB at `symphony/surreal/VERSION/surreal` in the git common dir, or the binary
-`SYMPHONY_SURREAL` names. In this repository `bash tools/surreal.sh` fetches it there,
-checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
-project fetches the same tarball there, checked against the same SHA-256, by the
-line `symphony init` lists among the steps left, which the board also says when
-it is missing; a machine no build is pinned for puts SurrealDB's release binary
-there. A new project's board is made by its first board command, `just tasks list`
-say, which `symphony init` lists among the steps left too while the board is not
-made: the Symphony only reads a board, and its board page says so, in the
-refusal's words, in place of the board until a read answers.
+There is no Python board adapter. A new project's board is made by its first
+board command, `just tasks list` say, which `symphony init` lists among the steps
+left while the board is not made: the Symphony only reads a board, and its board
+page says so, in the refusal's words, in place of the board until a read answers.
 
 | | |
 |---|---|
@@ -87,9 +79,9 @@ refusal's words, in place of the board until a read answers.
 | `just tasks asks [--all] [--json]` | what the owner waits on an agent for: the open asks, oldest first, each with its age and who holds it; `--all` adds those answered in the last day ([Asks](#asks)) |
 | `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
 | `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it; it moves nothing while a writer seen in the last week is behind the schema it would move to, naming each, unless `--leave-behind` ([Who writes a board](../operations/BOARD_OPERATIONS.md#who-writes-a-board)) |
-| `just tasks database [hold WHY \| release [--of HOLDER]] [--as HANDLE]` | the board's database: whether it is held, what runs on its data, what a start or replay under way does, and the snapshots kept until the owner removes them; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release` by its holder (or by another naming it with `--of`), which starts nothing |
+| `just tasks database [hold WHY \| release [--of HOLDER]] [--as HANDLE]` | the board's database: whether it is held and what runs on its data; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release` by its holder (or by another naming it with `--of`), which starts nothing |
 | `just tasks schema [--accept VERSION]` | the board's schema and the highest its live board was seen at; exit 1, in the rollback's words, while it went back below it; `--accept VERSION` (`none` for a store with no board), the owner's, accepts an older board they meant ([A board that went back](../operations/BOARD_OPERATIONS.md#a-board-that-went-back)) |
-| `just tasks snapshot [--list]` | a copy-on-write clone of the board's store, taken only while no server has it open; one whose write-ahead log holds writes is kept until the owner removes it, and the newest three of the others; `--list` names them ([Snapshots](../operations/BOARD_OPERATIONS.md#the-store-and-its-server)) |
+| `just tasks snapshot [--list]` | a copy of the board's whole PostgreSQL cluster, copy-on-write where the volume clones, taken only while no server runs on it, and kept until the owner removes it; `--list` names them ([Snapshots](../operations/BOARD_OPERATIONS.md#the-store-and-its-server)) |
 | `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |
 | `just tasks callback --session-url URL --as HANDLE` | give the session the web address its Go to session control links to; empty clears it ([Going to a session](#going-to-a-session)) |
 | `just tasks pull --as HANDLE` | the whole PULL digest as HANDLE hears it now; a callback carries only what changed since the last PULL it received |
@@ -122,6 +114,21 @@ nothing cancelled goes back to the status its block line recorded, or to `ready`
 from `in_progress` when nobody executes it; a block line written before the
 status was recorded sends it to `ready` (`in_progress` with an executor). A task
 blocked by hand stays blocked.
+
+A task's **kind** says what its work is: `feature`, `fix`, `red`, `tests` or `docs`
+(`crates/tasks/src/kind.rs`). `just tasks create --kind KIND` names it, as the api's `create`
+does (`kind`, api 2.7, [BOARD_API](../engineering/BOARD_API.md)) and the create-task skill asks
+a filer to; `just tasks kind SLUG KIND [--as HANDLE]` gives an open task one or changes it, as an
+orchestrator does for a task the owner filed from a page as it briefs it, and says on the
+task's thread the kind it gave and the one it replaced. A word not of the list is refused,
+naming the list, and a done or cancelled task keeps the kind it was filed with. A task filed red
+([Slots](#slots)) with no kind is given `red` in the same write. A task
+may have none, as every task filed before kinds were kept has, and its slug is never read as
+one. `just tasks show` prints it (`kind: fix`, `--json`'s `fields._board.kind`), its page shows it
+among its facts, and the Reports page groups the landed tasks by it
+([Where the tokens go](#where-the-tokens-go)). It is the board field `fields._board.kind`,
+beside the red mark and an experiment's arm and out of `set_field`'s reach, so it is no schema
+step.
 
 `just tasks priority SLUG N [--as HANDLE]` changes an existing task's priority,
 from `0` to `4`, and records the actor and both values on its thread. `next`,
@@ -217,7 +224,8 @@ once the land's `owner` stamp stands on the tip of its branch (`refs/heads/SLUG`
 reader ([Needed stamps](#needed-stamps)): an owner's approve on the task's thread naming the tip,
 `unblocked: the owner approved 1a2b3c4; back to review`, or the owner's approve of every card
 the branch posted, committed, with nothing after it but the owner's lines and merges of the
-default branch, `unblocked: the owner approved card NAME, at 1a2b3c4; back to review`; an approve
+default branch, `unblocked: the owner approved card NAME, at 1a2b3c4; back to review`; a
+decider's ([People](#people)) is said as theirs, `unblocked: ana approved 1a2b3c4`; an approve
 of another commit, or an owner's line no commit carries, ends nothing. The machine's one server
 judges both on its board clock,
 from the cards its pages hold and the board it read that tick (`crates/symphony/src/decided.rs`):
@@ -690,8 +698,11 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   which answers it once that land advanced the candidate; one covered by any other landing has
   its fix on main and not in the candidate, which is dropped. A red fixed outside this
   repository is answered by its task cancelled, saying where; one done otherwise waits for its
-  land. Where a pull request delivers it ([below](#a-land-delivered-by-a-pull-request)), a fix
-  that changes what the client is built from is the one branch that merges main before its land:
+  land. Where a pull request delivers it ([below](#a-land-delivered-by-a-pull-request)), the fix
+  never merges `release-candidate`, which an advance moves to a head main's history does not
+  hold: one started before that advance is rebased onto it while not yet published or approved,
+  a new head, and left as it is after, its land dropping the candidate. And a fix that changes
+  what the client is built from is the one branch that merges main before its land:
   once from a second head, after the head that commits its own outputs is approved
   ([RELEASES](RELEASES.md#the-release-candidate)).
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
@@ -1025,7 +1036,9 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    eligible at its head is refused before anything is published.
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
-   published again or refused, never merged as it was.
+   published again or refused, never merged as it was. Each `publish` names the pull request the
+   journal binds (`pull`), or none once the journal of one closed unmerged is dropped, so the
+   program binds another only once no journal names the one closed.
 3. **Armed.** `arm` turns on the host's own merge of that head, by the squash and the text a
    merge asks: the host merges it once every check it requires passes, `symphony/eligible` among
    them, and the watcher closes the task ([below](#a-land-dispatched-at-review)). A pull request
@@ -1084,7 +1097,12 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   `SLUG.dispatching` there, naming who moved it, until a dispatch binds the task's pull request,
   and from then on its binding is what a later write dispatches it by: so a first dispatch that
   stopped before it published is made again by the next write, and a task never moved to review,
-  or delivered and closed, starts none. A dispatch that stops says why on the task's thread, to
+  or delivered and closed, starts none. A task the regenerator files in review is dispatched as
+  one moved there, once its run lets go of the regenerator's lock, as a generated task's dispatch
+  is refused while that lock is held. Where nothing dispatched it yet, its mark names the session
+  that filed it; that session left at once, so the dispatch acts as the task's orchestrator where
+  one holds it, and one that does not start is said once on its thread to `@orchestrator`, as the
+  board's own line. A dispatch that stops says why on the task's thread, to
   `@orchestrator`, with the `just land SLUG --dispatch` that dispatches it again: nobody reads its
   log. A board that `TASKS_SERVER` names (a test's) starts one only under `TASKS_DISPATCH=on`;
   `TASKS_DISPATCH=off` starts none anywhere. One dispatch runs at a time under the land's lock,
@@ -1344,13 +1362,17 @@ is one commit on that tip, of the generators' outputs alone, and it becomes a ta
   `generated/outputs-at-TIP-COMMIT` is pointed at the commit (the tip's first twelve letters and
   the commit's first seven, so no two generations share a name; a branch of that name at another
   commit stops the round, which says so) and the task of that name is filed,
-  claimed by the session that files it and moved to review. Each step is made only where it is
-  not there, so a run cut short at any of them is gone on from by the next, which makes nothing
-  again.
+  claimed by the session that files it and moved to review, and dispatched as any task moved
+  there is once the run lets go of its lock ([a land dispatched at
+  review](#a-land-dispatched-at-review)). Each step is made only where it is not there, so a run
+  cut short at any of them is gone on from by the next, which makes nothing again and dispatches
+  what nothing dispatched.
 - **Assessed as any task.** The regenerator names no stamp and waives none. An assessor reads the
-  head, the catalogue decides what it needs, and `just land generated/outputs-at-TIP-COMMIT` delivers
-  it: the same journal, the same squash, the same proof and receipt, whose `operation` says
-  `generated`. The host is asked nothing a task's land does not ask.
+  head, the catalogue decides what it needs, and each write after it dispatches the task again,
+  so the host merges it once the last stamp stands, with nobody running a land; `just land
+  generated/outputs-at-TIP-COMMIT` delivers one whose merge did not come. Either way it is the
+  same journal, the same squash, the same proof and receipt, whose `operation` says `generated`.
+  The host is asked nothing a task's land does not ask.
 - **One generation for one set of inputs.** While the record stands, a round whose tip holds the
   inputs it was made of makes nothing and says where the task stands: each keyed generator's
   key is the one recorded, and for a generator with no key no path outside the generators'
@@ -1600,7 +1622,8 @@ why.
   default) or uploaded (`/artifacts/uploads/`, the owner's or an agent's `symphony attach`):
   met; missing while the newest such post names another commit or none, or there is none.
 - **owner**: the owner's approve naming the tip, a line of the owner's whose first word is
-  `approve`: met; held until then. Needed or not, it is held while a card the task posted
+  `approve`, or of a person holding `decide` on the board ([People](#people)): met; held until
+  then. Needed or not, it is held while a card the task posted
   waits on the owner, by the sign-off lane's rule above. Until the task page is ported
   ([the design](analysis/needed-stamps.md#the-task-page)), its approval offers the stamp:
   where no plugin's board action offers anything, the Symphony's own, `owner-approve`,
@@ -1634,7 +1657,8 @@ The server keeps what its own gates are read from, each part by what tells it ha
 
 - the task, its thread and the tasks under it, by the task's stamp on the board
   (`Store::task_stamp`): its row, links, roles and executors' recorded branches, the tasks
-  right under it and its thread's newest line, in one small read;
+  right under it and its thread's newest line, in one small read, which brings the board's
+  [people](#people) too, so who holds decide for its `owner` stamp is read with it;
 - the recorder's runs, by their files: the history and each operation's record are read again
   once the file is another, by its length, when it changed and its inode, and an unfinished
   operation's lease is asked on every read;
@@ -1642,8 +1666,8 @@ The server keeps what its own gates are read from, each part by what tells it ha
 - whether the tip holds work of its own, by that tip and the default branch's.
 
 So a read with nothing new asks the board once, for the stamp, resolves the three refs, and reads
-nothing else again; a post, a role, a recorded run, a new tip or a commit on the default branch
-shows at the next read. One thing shows later: a task moved under one of the task's subtasks
+nothing else again; a post, a role, a recorded run, a new tip, a commit on the default branch or
+a change of the board's people shows at the next read. One thing shows later: a task moved under one of the task's subtasks
 joins the runs its `tests` stamp counts at the task's next post, role, status or subtask. The
 land reads its own, never what the page keeps.
 
@@ -1735,14 +1759,18 @@ landing](#the-default-landing)).
   register, that the merge base of T with the default branch holds no copy of in any document, the
   owner's lines and its mark aside, as the pages read a branch's posted cards), each card it posted
   has `approved` as its newest owner verdict at T, committed (a reject, a question, pending,
-  dismissed or none, on any of them, and it does not), and nothing came after the newest of those
-  approves but the owner's lines: every commit on T's first-parent line after the one the owner's
-  page showed when the owner gave it (the commit before the first that carries the approve) adds the
-  owner's lines under those cards and nothing else, or is a merge of the default branch that is
-  git's own merge of its two parents. Any other commit after it, code, a document or a card's text,
-  keeps it from standing, whoever reviewed it: the owner asked for a look of their own, and its
-  reading names that commit. Met by the cards, the reading names them, `Approved by the owner on
-  card NAME, at 1a2b3c4`, which the task page shows and the land's line carries. It is never waived.
+  dismissed or none, on any of them, and it does not; a person a board named decides as the owner
+  does while she holds `decide` there ([People](#people)), and her approve is then named hers;
+  one who holds none decides nothing, so her approve is none, and anyone's later word that is no
+  approve stops it), and nothing came after the
+  newest of those approves but the owner's lines: every commit on T's first-parent line after the
+  one the owner's page showed when the owner gave it (the commit before the first that carries the
+  approve) adds the owner's lines under those cards and nothing else, or is a merge of the default
+  branch that is git's own merge of its two parents. Any other commit after it, code, a document or
+  a card's text, keeps it from standing, whoever reviewed it: the owner asked for a look of their
+  own, and its reading names that commit. Met by the cards, the reading names them, `Approved by the
+  owner on card NAME, at 1a2b3c4`, which the task page shows and the land's line carries. It is
+  never waived.
 - **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
   reach as the red mark is: the stamps, the tip the assessment read (none, from
   the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as
@@ -1866,6 +1894,9 @@ description, and anything more for its agent goes on the task's thread.
 A consuming project's optional wait guard refuses a loop waiting on machine-wide process state
 (`pgrep`/`ps` for verify, test-sim, godot): wait on your own run's log or PID.
 
+- `--group NAME` writes the group or the person it belongs to on it
+  ([Which group a thing belongs to](#which-group-a-thing-belongs-to)): a short name, or `owner`.
+  It is unrelated to `--for`, which names the session it is reserved for.
 - `--for HANDLE` reserves it for that handle with no lapse of the hour (the
   handle is one the orchestrator registered for the agent). `next` offers it to no
   one else, and only that handle can claim it. The reservation still drops when
@@ -2220,7 +2251,9 @@ Who opens and closes them:
   task's ask in the message's own write. A line on the thread by a session
   holding a role on the task, or by the one the owner's last line there was
   sent to, answers it. A line the app posts as the owner for a board action with
-  no note opens none.
+  no note opens none. A person a board named writes here as the owner does: her
+  line, marked on its row as a person's (`message.person`), opens or joins the
+  ask, and answers a question an agent sent the owner.
 - **The shared server's clock.** It closes an ask once its answer can be read:
   one on a card once main's page holds the card, on the branch's page the owner
   saw it on or as main's, waiting on no agent; one on a comment once the comment
@@ -2304,6 +2337,309 @@ server reads the board and its writes are refused:
 
 From the restart, saves open asks, and the open verdict tasks wait as they were
 until the last step turns them.
+
+## People
+
+A board names the people who reach it besides the person at the machine, the groups they are in
+and what each may do ([where people are kept](../product/analysis/users-and-identity.md#where-people-are-kept)).
+With nobody named, the person at the machine holds every power and everything reads and writes
+as it did before. That person stays `owner`, with every power, once others are named.
+
+- **The rows** are the board's own, beside its tasks, in schema 28's additive step `PEOPLE`: a
+  person (`people`, by short name: their groups and the powers they hold themselves), a group
+  (`people_group`: its powers) and a log of every change (`people_log`, numbered from 1, the
+  newest the board's people revision). A change writes the log's next line and its rows at once,
+  or nothing: two made at once each take a number of their own, the second read again and decided
+  again. A copy carries the three tables. A board made without the step reads nobody and refuses
+  a change, `people are not on this board yet`, with nothing written.
+- **The powers** are `read`, `speak`, `decide`, `direct_agents` and `administer`. Every power
+  includes read, and a person holds their own and their groups'. A person listed with none reaches
+  nothing. `direct_agents` has a person's words reach the board's agents and control their
+  attempts: one who holds it writes on a task as the person at the machine does, and the words of
+  one who may speak and may not are held for people ([below](#words-held-for-people)).
+  `administer` guards the People page's changes ([below](#the-people-page)); the command is the
+  terminal's, and an agent is asked before it (below).
+- **One name space.** A person's name and a group's are short names, as a line writes them
+  ([REVIEW](REVIEW.md#card-history)), never `owner`, `agent`, `board` or
+  `unknown`, never another person's or group's, never a handle any session on the board was
+  given, and never an adjective and a noun the board names sessions by (`amber-heron`, 960 names
+  in all), so a register and an add of one name at once never both take it. A session
+  registering is given no handle a person or group holds, and the command line writes as
+  sessions alone, so a thread line under a person's name is theirs, written through the
+  Symphony. A name stays theirs across a removal, as their profile keeps it: nothing removes a
+  profile, and `people add` of a name that has one adds that same person, so a removed person's
+  lines are never read as another's.
+- **A profile is the machine's**, not the board's: `people.json` in the machine folder, with its
+  lock `people.lock`, both mode 600, holding each person's display name, sign-ins
+  (`SERVICE:SUBJECT`, each one person's alone, matched ignoring case), git handles, emails, chat and
+  preferences.
+- **Where a notice reaches a person** is their profile's: `emails`, the first the one a notice by
+  mail goes to; `chat`, their Slack member id under `slack` and their WhatsApp number under
+  `whatsapp`; and `preferences`, the way each kind of notice goes by (`card`, `question` or
+  `verdict` to `email`, `slack` or `whatsapp`, a held message by the question's). A kind with no way
+  goes by none, as the page and the Mac app show every notice. Each address is held to the rule its
+  notice plugin sends by ([NOTICES](../engineering/NOTICES.md#ways-and-addresses)), a WhatsApp
+  number kept as `+` and its digits, and a refusal says the rule, never the address. `chat` and
+  `preferences` read any JSON, so a file written before they had a meaning reads as it did: a value
+  is an address or a way only where it is text its rule takes. `Profiles::reach` is the server's
+  read of where one notice of theirs goes, the way and the address, which nothing prints: `list`
+  shows no address and no way, and no agent or project plugin is handed one. A git handle is not one
+  person's alone: a person writes their own, and nothing checks that no other profile holds it, so
+  nothing decides by a git handle alone whose commit or write something is (a plugin is told them as
+  the sender's, never as proof). A board and its copies hold none of it. The board's log and the
+  server's log lines name the short name, never a sign-in's subject or an email. A `people.json`
+  that does not parse is said by its line and column, the field (`people[0].signins`, a profile's
+  own names alone) and the kind of fault, never a value found in it, and none of its profiles is
+  read or written over. An add holds the lock from its check of the sign-ins through the board's
+  change and the profile's write, so of two adds of one sign-in at once the second is refused, with
+  nothing written.
+- **Who reaches a board.** A visitor under another Tailscale login is the profile holding that
+  `tailscale` sign-in, on each board that gives its short name a power, as that name
+  ([the server guide](../../apps/symphony-server/README.md#who-a-request-is-from)).
+- **What each write needs**, read from the board as the write arrives, so a revoke holds from the
+  next one: a card's verdict and its note, Later, a task's priority, field, cancel and action (the
+  approve that is the `owner` stamp among them), a workflow's edge and a setting need `decide`; an
+  ask, its reply, the quick chat, a quick task and passing a held message or a held comment on
+  (`/api/task-pass`, `/api/document-pass`) need `speak` and `direct_agents`; a task's message, a
+  document's comment and a card's message need `speak`, held for people where their writer lacks
+  `direct_agents`, but for a task's line that reads as an approve, which is written with its note
+  and asks where its writer may decide the task, and held where they may not; an upload needs
+  `speak`; an attempt's controls need `decide` and `direct_agents`; a change of the board's
+  people needs `administer`, and a profile's write from the People page and a hand-over
+  ([below](#which-group-a-thing-belongs-to)) being on the board; anything else is the person at
+  the machine's alone. A refusal is a 403 naming the power,
+  `Forbidden: ana may not decide on this board`, and nothing is written. A document's asks read
+  (`/api/asks`) says `may_ask` for whoever may ask and follow an ask up (the person at the
+  machine, a person holding `speak` and `direct_agents`, never a hosted visitor), and the page
+  draws Use selected passage, the question and each thread's Follow up for them alone; anyone else
+  reads the threads alone, and nothing where there are none.
+- **Deciding a thing is its owner's** ([below](#which-group-a-thing-belongs-to)): a card's
+  verdict and its Later (with its Undo, and the visit that clears its mark), a task's priority,
+  field, cancel, action and workflow edge, and a setting (the Settings
+  page's owner) are a person's while they hold `decide` and are a member of its group or the
+  person it is written for, and always the person at the machine's. Anyone else is refused once
+  the body is read, a 403 in the board's words with nothing written: `Forbidden: bo is no member
+  of the group design, whose it is, so may not decide it: nothing was written`. On a board that
+  names people and maps no group a thing keeps, it is the person at the machine's, and the refusal
+  says which group to map: `… so ana may not decide it until an admin maps one (just tasks-people
+  map PLACE GROUP)`. A page draws the deciding controls (a card's verdicts and Later, a task's
+  priority, cancel and approve, the Settings page's writes) for those who decide the thing alone,
+  with the wire's `decides` on its owner; a card's message and a hand-over stay as they were. A
+  custom workflow's `owner` capability on a task is held by those who decide it, as by the person
+  at the machine.
+- **What waits on each person** is the cards they decide: the queue's cards and spot-checks, the
+  board's first cards and counts (`/api/board`, Home), the postponed list, the pending list, a
+  folder's count and a project's row in the machine's list hold those alone, on main's page and a
+  branch's, and the feed sends a person no other card's key, words, count or place. Who decides
+  each card is read as its verdict and a notice of it read it, a name written on it included: a
+  branch's proposal from its worktree's file, any other card from main's with the saves still
+  waiting merged. It is read on the people and map the board's last look read, so a person put
+  in a group, a place mapped or a card handed over reaches each reader's queue within that look,
+  as one event. What is postponed is one order, the
+  board's, each person shown their cards of it. The person at the machine, a hosted page's
+  visitor and every reader of a board that names nobody are shown every card, as before, and
+  their feed carries nothing more.
+- **The `owner` stamp** is met by the approve of the owner or of anyone who decides the task (who
+  holds `decide` and is of its group or the person it is written for), on the thread or on the
+  cards, named as theirs: `Approved by ana at 1a2b3c4`. Who decides is read when the stamp is
+  read, and a task's stamp carries the map's lines, so a remap is read at once. A revoke or a
+  remap withdraws an approve its person gave, and a grant or a map made after an approve counts
+  that approve too. That is safe: while she could not decide the task (she lacked `decide`, or
+  was not of its owner) the server refused her verdicts and her approve, the board refuses her a
+  task's message whose first word is `approve` (`… so may not decide it, and a line of theirs that
+  starts with approve reads as one: nothing was written`), and her held words passed on read as
+  the passer's first (`[passed on by bo] approve …`), so no line of hers that reads as an approve
+  was written through the Symphony while she could not decide. A line committed into a document by hand is its
+  committer's, as an owner's line written so already is.
+
+`just tasks-people … --as HANDLE` changes them, each change a line of the log naming `--as`; a
+change of nothing writes nothing, and a refusal says why and writes nothing, on the board or in
+the machine folder. No allow rule passes that recipe, so an agent's run of it asks first, as
+`just symphony` does. `just tasks people list` and `log` read them unasked, and `just tasks`,
+which an agent runs unasked, refuses every change by its own reading of the command line, however
+it is written (`--as` before the command, an option or a `--` before the action): no prefix rule
+could match each spelling, and Codex's rules take no word but those they name.
+
+- `list [--json]`: each person, their powers, groups and the services they sign in by, never a
+  subject; `log [--json]`: the changes in order.
+- `add NAME [--display D] [--signin SERVICE:SUBJECT]… [--git H]… [--power P]… [--group G]…`: the
+  board's row, and the profile, written or added to. `remove NAME`: the row goes, their lines stay
+  theirs and their profile the machine's.
+- `join NAME GROUP`, `leave NAME GROUP`, `grant NAME POWER…`, `revoke NAME POWER…`, `grant --group
+  GROUP POWER…`, `revoke --group GROUP POWER…`, `group add GROUP [POWER…]`, `group remove GROUP`
+  (its members are out of it).
+- `profile NAME [--display D] [--signin …]… [--git H]… [--email E] [--slack ID] [--whatsapp N]
+  [--notice KIND=WAY]…`: the profile alone, on no board. `--email` replaces the first email
+  (those after it stay), `--slack` and `--whatsapp` set those addresses, each an empty one taking
+  it away, and `--notice card=slack` sends that kind by that way, `card=` by none. `add` takes them
+  too.
+- `map [--json]`: the map of places to groups and its log; `map PLACE GROUP`, `unmap PLACE`
+  ([below](#which-group-a-thing-belongs-to)), changes by someone holding `administer`.
+
+### Which group a thing belongs to
+
+Every card and every task belongs to one group or person, by step 4 of [the way from one
+owner](../product/analysis/users-and-identity.md#the-way-from-one-owner). It is, in this order:
+
+1. **the name written on it**, where the board holds a group or a person by it: a card's
+   `*For:* NAME` in its text ([REVIEW](REVIEW.md#writing-a-card)), a task's `--group NAME`
+   (`just tasks create … --group design`, kept as `fields._board.group`). `owner` names the person
+   at the machine;
+2. **its place's group**, from the board's map: a card's document folder, the deepest one mapped
+   (`folder:docs/design`), or a task's area, the word before its slug's first `/` (`area:app`);
+   the Settings page (`settings`) is a place, whose group changes the settings;
+3. **the board's default** group (`default`), where one is mapped;
+4. otherwise the person at the machine.
+
+A name the board holds no group or person by falls through to the map, and is said as unheld. A
+group the board no longer keeps gives nothing, and the next place decides. On a board that names
+nobody, every thing is the person at the machine's, and nothing of this is drawn or printed.
+
+- **The map** is the board's own, in schema 28's additive step `OWNERSHIP`: one table,
+  `ownership`, whose lines (numbered from 1, the newest the map's revision) map a place to a group,
+  take one off the map, or hand a thing on. A place's group is its newest map or unmap line. A line
+  is written only on the newest line it read; two at once each take a number of their own, the
+  second decided again. A copy carries the table. A build without the step never reads it: it
+  gives no thing a group, as every build before it did. A board made without the step reads an
+  empty map and refuses a change, `the map of places is not on this board yet`, with nothing
+  written.
+- **Who keeps it.** `just tasks-people map PLACE GROUP --as HANDLE` maps a place to a group the
+  board keeps, and `unmap PLACE` takes it off: someone holding `administer`, refused under
+  `SYMPHONY_UNASKED` as every change of the people is. A map of a place to the group it maps to
+  already writes nothing. `just tasks people map` reads the map and its log unasked.
+- **A hand-over.** A member of a thing's group, the person it is written for, or the person at the
+  machine hands it to another group or person of the board: on a task's page or a card's, with the
+  **Hand to** select drawn for them alone. A task's name is written on it, with the board's line
+  on its thread (`ana handed it to engineering (it was design, from the area app)`); a card's
+  `*For:*` is written in its file, as its verdict is, the board's line naming who did, as the
+  commit does not, and taken back where the file is not written. Anyone else is refused, `bo is no
+  member of the group design, whose it is, so may not hand it on` (or `it is ana's, so bo may not
+  hand it on: only ana or the person at the machine does`), with nothing written; so is a name the
+  board does not hold, a closed task and a card that waits on no answer. A session hands nothing: a
+  thing is handed on by a person. Two hand-overs at once take a line number each, the second
+  decided again on what the first left.
+- **What is read.** `just tasks show SLUG` prints `group: NAME (WHAT GAVE IT)` and `--json` its
+  `owning`, on a board that names someone. The task page shows the same line among its facts,
+  and a card shows it beside its actions (`/api/card-owners?path=DOC`), each with what gave it:
+  `named on it`, `from the folder docs/design`, `the board's default group`.
+
+### Words held for people
+
+A task's message from a person who may speak and may not direct agents is held for people: the
+board keeps her words in a row of their own (`held_message`, schema 28's additive step `HELD`)
+that no read of a thread reads, and writes a line of its own to `owner`, `a message is held for
+people: #N`, N that line's number. What an agent reads of the thread (`show`, `inbox`, `wait`, a
+callback, `--json`, `search`) is that line and nothing of her words or her name, and `show` says
+how many are held (`held for people: 1 message`, `"held"` in its JSON). The line pushes to no
+session's inbox, as a line to `owner` never does. It waits on the person at the machine as a
+question does, until a person's line follows it on the thread, the one its pass writes among
+them. An approve she types on a task she may decide is no message: it is written with its note,
+and asks, as a card's note is; on a task she may not decide it is held.
+
+- **On the task page** a person's read draws the held message at that line: her name, to whom, her
+  words and the state `held`, and Pass on for the person at the machine and anyone holding `speak`
+  and `direct_agents`, no one else. The feed brings it to an open page as any line.
+- **A pass** (`just tasks pass SLUG N --as HANDLE`, or Pass on, `/api/task-pass`) writes her words
+  on the thread under her name, marked a person's, to whom she wrote them, with the passer first:
+  `[passed on by bo] …`. From then they read as any person's message: they reach the task's agents,
+  once, open or join its ask, and, written to its executor where none reads them, tell
+  `@orchestrator` so, as a post does. The held row is marked passed, by whom and as which line, and
+  the page draws the held line `passed on by bo`, her words the new line's. A second pass is refused
+  naming who passed it, and a number no message held on the task has is refused, each with nothing
+  written. A session's pass is the person at the machine's, as every board command is.
+- **Who is told** of a held message is the person at the machine, on whom the board's line for it
+  waits, and those who may pass it on, never its author. They are the members of the task's
+  group, or the person it is written to, who hold `speak` and `direct_agents`. Where none of them
+  does, they are every person of the board who holds both. Where nobody does, the person at the
+  machine alone is told. The machine's server tells them a `held` notice by the way each chose
+  for questions, a link alone to the message on the task page
+  ([NOTICES](../engineering/NOTICES.md#the-servers-part)). A message passed on before its line
+  is told of tells no one, and its pass is a person's line, which tells no one either. A board
+  with nobody named holds nothing, and every line reads as before.
+- **On a document** a callout or a card's message from such a person is held the same way, in a
+  row of the same table that names its document (its path, and the checkout of the page it was
+  typed on, a branch's page that draws main's card among them, or once passed the checkout its
+  pass wrote to, main's once the sweep removes that worktree), its kind, its card, or
+  the block a callout was left after by its section's key, its last line and its lines then; no
+  task's read, thread or ask carries it. Nothing of it reaches a clone: no file is written, no
+  commit or delivery made, no ask opened and no callback sent, and an agent is told nothing of it.
+  The document's page draws each where it was left (`/api/document-held?path=DOC`), a callout under
+  its section and a message in its card, with her name, its kind, the state `held` and her words,
+  and Pass on for those who may pass a held message on. A pass (`/api/document-pass`) writes it
+  into the file as her own save would, her name on it and the passer first in its words, then
+  opens or joins its ask and tells the chat, as hers; a callout goes after its block found again
+  in the file as it is now, the one block under its heading holding the same lines, else the one
+  block anywhere that does, and is refused with nothing written where none or several do, two
+  alike under its heading among them, as its place there moves with every block above. A card's
+  message goes where her own line would go then: on main's card where the branch's page it was
+  typed on draws main's. A second pass is refused naming who passed it. A press after one whose
+  words went in and whose mark did not writes nothing again and marks it: the document holds what
+  a pass writes, her words with a passer first, more often than the rows passed into that file
+  already put there, from whichever page each was typed on and, once the sweep removed a branch's
+  worktree, all it held landed, from that branch too, while her own words written as hers never
+  count. Between a landing and its sweep the branch's line is not counted on main, so a later
+  pass of the same words onto main's card is marked and writes nothing; three rarer cases, each
+  after a press whose mark was refused, leave her words twice on one card (the save's comment
+  where it counts says them). Those who may pass it on, of its card's or its document's group
+  else of the board, are told a `held` notice linking
+  `DOC#held-N`, none of its words; a look whose read of them fails says so once and tells the
+  rest, cards and lines and the notices due, and what was told of them stands. The
+  note beside a verdict is no message: one who may decide a card writes it with the verdict.
+- **A build and a board a step apart** follow [the additive step rule](RELEASES.md): a build
+  without the step never reads or writes the table, so it serves no agent the words, the board's
+  line reads as any line, and it refuses a person without `direct_agents` a task's message, as
+  every build before it did; a build with it, on a board without it, holds nothing and refuses a
+  hold or a pass, `this write names held_message`, with nothing written.
+
+### The People page
+
+`/people`, after Settings in the header, shows whoever is on the board its people, each with the
+powers they hold, their own told apart from their groups' by a word as well as an edge, their
+groups, the services they sign in by and their git handles; its groups; and its log, newest first.
+It shows no sign-in's subject to anyone. A person's addresses (the email a notice goes to, their
+Slack member id and WhatsApp number) are shown to them, to the person at the machine and to the
+board's admins, and the way each kind of notice goes by to them and the person at the machine alone:
+anyone else's answer carries neither, on the wire as on the page. Their card's Notices, beside its
+Profile, sets both. Its controls are drawn for whoever holds `administer`, as the person at the
+machine always does: a person added with a display name, git handles, powers and groups (and
+sign-ins, by the person at the machine alone), put in a group or taken out of one, given a power or
+one taken back, taken off the board; a group made, given a power or removed, direct agents as any
+other. Taking a person off the board and removing a group, which a press cannot take back, ask first
+as a task's Cancel does: a named confirmation, then Confirm removal or Keep. Each change is one
+change of the log, the command's own, named as the actor who made it (`owner` for the person at the
+machine). `administer` is read from the board as the change arrives, so one from someone without it
+is a 403, `Forbidden: ana may not administer on this board`, with nothing written. The page is the
+project's own board's: a worktree's server and a hosted visitor are refused it
+([the server guide](../../apps/symphony-server/README.md)).
+
+Who writes a profile:
+
+- the person at the machine writes any profile, its sign-ins among them;
+- a person writes their own display name, git handles, addresses and the ways their notices go
+  by, from their own row, and no sign-in;
+- a board's admin makes a profile only for someone the machine holds none of, with a display
+  name and git handles and no sign-in, address or way, as where a person's notices go is theirs
+  to say: someone who has one is added as their profile is, and an
+  add that names a display name or a git handle for them is refused, with nothing written;
+- a sign-in is the person at the machine's alone to give, to a new profile as to an existing
+  one, as a sign-in says who a visitor is on every board of the machine holding the name, now
+  or later: one an admin of another board gave could take a name a board holds with no profile
+  (a board moved from another machine, a failed take-back), or one a board adds later. A person
+  an admin adds reaches no board until the person at the machine gives them a sign-in.
+
+A refusal to anyone but the person at the machine names no other person and no profile: an
+admin's add of a sign-in is refused before any profile is read, and their add of a display name
+for a name the machine holds says only that an admin names one for a name new to the machine.
+Whether it is refused still tells whether the machine holds a profile of that name, as the page
+does once the person is added, since a profile is one per machine. A failure (the profiles not
+locked or written, the board not reached) is told to anyone but the person at the machine
+without its cause, which can name the machine folder's path or the board's, and with what
+stands; the server's log keeps it whole, and the page's problem line is said the same way.
+
+Nothing keeps a board's last `administer`: the person at the machine always administers. A
+process on the machine reaches the save routes as the machine's person, so the page's write is
+as open to a local agent as every other save is; the ask-first rule covers the command, and the
+board refusing a session is not this step's.
 
 ## Sessions
 
@@ -2645,7 +2981,10 @@ a lock it lifts goes back if the removal is refused. A detached agent's merged o
 `worktree-agent-ID` branch stays while its live or stale session still binds its worktree.
 In-process agents work only in their own `agent-ID` worktree; a different directory they create
 is not bound by their agent id. Full sessions register from the worktree they use. Each removal
-says what the worktree held on disk, and the summary what the sweep freed; a sweep started
+says what the worktree held on disk, and the summary what the sweep freed. The comments on
+documents a pass wrote into a removed worktree are kept under main's from then on, where a later
+pass's count reads them, once no other worktree holds its branch; a board that refuses that is
+said, the sweep going on. A sweep started
 detached (a land's, work finishing's) writes them to `symphony/tasks/sweep.log` under a line saying when
 and why.
 A board `TASKS_SERVER` names (a test's) starts no sweep unless
@@ -3258,19 +3597,27 @@ money spent ([What the tokens cost](#what-the-tokens-cost)):
   A task with none shows no figure.
 - **The Agents page** gives each agent its tokens and cost under its line, from the agents API.
 - **Reports** has *Tokens and cost*: the cost and the tokens of each hour, day or week by role
-  (orchestrators, executors, reviewers and the rest), and below them the window's own: tokens and
-  cost all told, each top-level task landed in the window priced once with its subtasks (the
-  median and the ten dearest, each a link to its page), and the review rounds after the first
-  against the first rounds, from the [day files](../product/analysis/reports-and-monitoring.md#the-day-files).
-  An hour's tokens are what the board's `usage` gained between two hourly roll-ups, shared among
-  the hours between them by time: an hour no two roll-ups span is a gap, never a zero.
+  (orchestrators, executors, reviewers and the rest), and each period's landed tasks: the median
+  and the p90 cost of one, and what 100 of their lines cost, each beside its **All in**, every
+  token of the period over its landed tasks and over every line that reached the default branch.
+  Its *Landed tasks* tab prices each top-level task landed in the window once with its subtasks,
+  at its last landing, and draws them task by task: the dearest ten, the median by kind, the mean
+  by review rounds, and every task's cost against the lines its landing changed
+  ([REPORTS](../product/REPORTS.md#landed-tasks)), all from the
+  [day files](../product/analysis/reports-and-monitoring.md#the-day-files). An hour's tokens are
+  what the board's `usage` gained between two hourly roll-ups, shared among the hours between
+  them by time: an hour no two roll-ups span is a gap, never a zero. What is not recorded above
+  counts on no task, and the page says so.
 
 `just tasks stats` ends with the same reading of its window's day files: tokens and cost by day
-and role, the landed tasks' median and ten dearest, and the review rounds against the first, a
+and role, the landed tasks' median and ten dearest, the review rounds against the first, and
+how many were back after review (`back after review: N of M were reviewed twice or more`), a
 day no two roll-ups span saying `no record`; `--json` carries it as `tokens`: `prices`, `per_day`
 (each `day` with its `by_role`, `null` for no record), and `landed` (`tasks`, `without`,
-`median_dollars`, `dearest`, `first_round`, `later_rounds`, `again`). Without day files (a private server's board, or a board that
-`TASKS_SERVER` names) it says there are none and prints the rest.
+`median_dollars`, `dearest`, `first_round`, `later_rounds`, `back_after_review`, and `again`,
+the tasks with any round past the first, kept for a reader of it). Without day files (a private
+server's board, or a board that `TASKS_SERVER` names) it says there are none and prints the
+rest.
 
 The table moves the board to schema 19, which a build on schema 18 reads unharmed (the
 Symphony, the shared server among them): it opens a board one schema ahead to read
@@ -3480,13 +3827,13 @@ reads of them before it moves a board: [BOARD_OPERATIONS](../operations/BOARD_OP
 
 ### Stuck servers
 
-A board server that outlasts its one ask to end, or a private replay nobody can tell is
-through, and what the owner does about each: [BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#stuck-servers).
+A board server that outlasts its one ask to stop, or does not say it is ready, and what the
+owner does about each: [BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#stuck-servers).
 
 ### A board that went back
 
 A board refused because its store holds less than the schema it was seen at: what it means,
-accepting an older board that was meant, and recovering what was lost, step by step:
+accepting an older board that was meant, and recovering what was lost:
 [BOARD_OPERATIONS](../operations/BOARD_OPERATIONS.md#a-board-that-went-back). Do not run `just tasks migrate` on it.
 
 ### A board that was copied or restored

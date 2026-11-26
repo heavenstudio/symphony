@@ -1,4 +1,4 @@
-//! PostgreSQL twin of `store/admission/effects.rs`'s statements (`super::super::surreal::effects`).
+//! The statements of `store/admission/effects.rs` on PostgreSQL.
 
 use super::Pg;
 
@@ -24,12 +24,13 @@ pub(in crate::store) fn standing() -> Pg<'static> {
     )
 }
 
-/// Twin of `super::super::surreal::effects::PREPARED`, spliced into `super::workflow::apply`.
+/// A prepare edge's intent recorded at its transition's revision, spliced into
+/// `super::workflow::apply`.
 pub(in crate::store) const PREPARED: &str = "INSERT INTO workflow (id, kind, body, at) VALUES (
         jsonb_build_array('intent', v ->> 'slug', v -> 'transition' -> 'revision'), 'intent',
         v -> 'intent', (v -> 'transition' ->> 'at')::double precision);";
 
-/// Twin of `super::super::surreal::effects::SETTLED`.
+/// The intent written over the one read at `stage_was`, not yet finalized: `stale` where it moved.
 pub(in crate::store) const SETTLED: &str = "UPDATE workflow SET body = v -> 'intent'
         WHERE id = jsonb_build_array('intent', v ->> 'slug', v -> 'intent' -> 'revision')
         AND body ->> 'stage' = v ->> 'stage_was' AND body ->> 'finalized' IS NULL;
@@ -37,7 +38,8 @@ pub(in crate::store) const SETTLED: &str = "UPDATE workflow SET body = v -> 'int
         RAISE EXCEPTION 'stale';
     END IF;";
 
-/// Twin of `super::super::surreal::effects::moved`.
+/// The intent moved on ([`SETTLED`]) with no transition of its task, fenced on the task's version
+/// and the active workflow, then the line `logged`: `stale` where either moved.
 pub(in crate::store) fn moved(logged: &str) -> Pg<'static> {
     Pg::script(format!(
         "

@@ -31,8 +31,12 @@ pub(super) async fn page(shared: &Shared, kind: &str, html: &mut String) {
 /// modules or another build's paths; restrict URLs to immutable local JavaScript build assets.
 fn links(source: &[u8], kind: &str) -> Option<String> {
     let line = std::str::from_utf8(source).ok()?.lines().next()?;
-    let manifest: serde_json::Value =
-        serde_json::from_str(line.strip_prefix("const modules = ")?.strip_suffix(';')?).ok()?;
+    let manifest: serde_json::Value = serde_json::from_slice(
+        line.strip_prefix("const modules = ")?
+            .strip_suffix(';')?
+            .as_bytes(),
+    )
+    .ok()?;
     let imports: Vec<String> =
         serde_json::from_value(manifest.get(kind)?.get("imports")?.clone()).ok()?;
     let mut seen = std::collections::BTreeSet::new();

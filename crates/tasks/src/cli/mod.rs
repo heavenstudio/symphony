@@ -27,6 +27,8 @@ mod sweep;
 pub(crate) mod text;
 mod usage;
 
+pub use beat::WAIT_VAR as BEAT_WAIT_VAR;
+
 use crate::lock::Recovered as _;
 use crate::maps::Collect as _;
 use crate::rpc::Client;
@@ -96,13 +98,25 @@ impl Env {
 }
 
 /// Board-state writes, including JSON calls, act as agents. Derived-cache maintenance has no
-/// agent identity; owner saves call the store directly.
+/// agent identity; owner saves call the store directly, and so do a person's
+/// ([`crate::Store::for_person`]), which the command line never makes: a name it is given is a
+/// session's handle, refused by the board where no session holds it. A word no person is given
+/// ([`symphony_docs::syntax::RESERVED_NAMES`]) is refused here, before the board is read. A
+/// person's or a group's name is refused by the board as any name no session holds: no session is
+/// ever given one ([`crate::people::refused_name`], `Store::register`), so no line the command
+/// line writes reads as a person's.
 fn check_actor(actor: &str) -> Result<(), crate::Error> {
     if actor == "owner" {
         return Err(crate::Error::Refused(
             "the owner acts from the Symphony; use a registered agent handle on the command line"
                 .into(),
         ));
+    }
+    if symphony_docs::syntax::RESERVED_NAMES.contains(&actor) {
+        return Err(crate::Error::Refused(format!(
+            "{actor} names no session: it is a word the board keeps for its lines; use a \
+             registered agent handle on the command line"
+        )));
     }
     Ok(())
 }
@@ -366,7 +380,7 @@ pub fn connect(env: &Env) -> Result<Store, String> {
 /// The next write a `tasks` command makes follows what the branch commits.
 pub(super) fn connect_unfollowing(env: &Env) -> Result<Store, String> {
     let reached = reach(env, &env.cwd, true)?;
-    let database = reached.database();
+    let database = reached.database()?;
     let (store, _) = opened(reached, database, &Clock::of(env)?, crate::Opening::write())?;
     Ok(capped(looking_up(store, env), env))
 }
@@ -519,17 +533,10 @@ pub struct Reached {
 }
 
 impl Reached {
-    /// A client of this board's selected engine. The existing `client` remains available for
-    /// consumers that name SurrealDB alone; new readers use this database-neutral entry.
-    pub fn database(&self) -> crate::Database {
-        named_database(
-            Client::new(
-                self.client.addr(),
-                self.client.namespace(),
-                self.client.database(),
-            )
-            .waiting(self.client.wait_limit()),
-        )
+    /// A client of this board, a client of its own: refused where `client` names a SurrealDB
+    /// server ([`crate::Database::named`]). `client` stays as consumers' code reads it.
+    pub fn database(&self) -> Result<crate::Database, String> {
+        crate::Database::named(&self.client)
     }
 
     /// `how`, naming this board's project and opening it as the live board it is, if it is one: a
@@ -597,7 +604,7 @@ enum Reaching {
 }
 
 /// How long the Symphony's read waits on another's start of the board's server (the starters'
-/// lock) before it is refused, naming that start: a start without a replay takes about a second.
+/// lock) before it is refused, naming that start: a start takes about a second.
 const READ_WAIT: Duration = Duration::from_secs(5);
 
 /// The machine folder `env` names ([`crate::project::machine_folder`]), if it names one.
@@ -659,12 +666,11 @@ fn reach_board(
         common: common.clone(),
     });
     guard(&live)?;
-    let mut home = Home::in_common(common, env.read(symphony_env::SURREAL).map(Path::new));
+    let mut home = Home::in_common(common);
     if how == Reaching::Read {
         // The Symphony's thread that reads the board serves its pages too: it is refused, naming
-        // the start under way, rather than wait out a replay of minutes, another's or its own,
-        // which runs on a thread of its own.
-        home = home.waiting_at_most(READ_WAIT).starting_apart();
+        // the start, stop or hold under way, rather than wait it out.
+        home = home.waiting_at_most(READ_WAIT);
     }
     // Held, every reach is refused naming the hold, one that would only read the record too.
     if let Some(hold) = home.held() {
@@ -686,15 +692,14 @@ fn reach_board(
     let start = !matches!(how, Reaching::Running | Reaching::Peek);
     let running = home
         .board_server(&project.place.root, start)
-        .map_err(|error| match error {
-            // Where the board's server comes from is the project's board guide's to say, and what
-            // a board not made yet is made on, which its start could not make it on.
-            crate::server::ServerError::NoSurreal(_)
-            | crate::server::ServerError::Unserved { .. } => {
+        .map_err(|error| {
+            // What a board not made yet is made on, which its start could not make it on, is the
+            // project's board guide's to say.
+            if unmade && start {
                 format!("{error} ({}#where-it-lives)", project.guide())
+            } else {
+                error.to_string()
             }
-            error if unmade && start => format!("{error} ({}#where-it-lives)", project.guide()),
-            error => error.to_string(),
         })?;
     Ok(Reached {
         client: Client::new(&running.addr, NAMESPACE, db),
@@ -720,23 +725,12 @@ fn socket_named(addr: &str, what: &str) -> Result<(), String> {
     }
 }
 
-/// The database `db` on the server at `addr`, SurrealDB's `HOST:PORT` or PostgreSQL's
-/// `postgresql:/SOCKET`, which `what` names in a refusal: what a program handed a server's
-/// address opens its store on.
+/// The database `db` on the PostgreSQL at `addr`, `postgresql:/SOCKET`, which `what` names in a
+/// refusal: what a program handed a server's address opens its store on. A SurrealDB server's
+/// `HOST:PORT` is refused ([`crate::Database::named`]).
 pub(crate) fn database_at(addr: &str, db: &str, what: &str) -> Result<crate::Database, String> {
     socket_named(addr, &format!("{what} "))?;
-    Ok(named_database(Client::new(addr, NAMESPACE, db)))
-}
-
-/// A named scratch server can be a PostgreSQL socket folder. Repository discovery still
-/// reaches the existing server; no configured or live board is switched by this adapter.
-fn named_database(client: Client) -> crate::Database {
-    match client.addr().strip_prefix("postgresql:") {
-        Some(socket) => crate::pg::Client::new(Path::new(socket), client.database())
-            .waiting(client.wait_limit())
-            .into(),
-        None => client.into(),
-    }
+    crate::Database::named(&Client::new(addr, NAMESPACE, db))
 }
 
 /// The board `reached`, to read and write by this build's schema, read by `clock`: a newer board
@@ -749,7 +743,7 @@ fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
 /// As [`open`], by `how` (`tasks migrate`'s, which may move a live board). Its refusals name a
 /// scratch board as `tasks` and `agent-send` take it, `--database NAME`.
 fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store, String> {
-    let database = reached.database();
+    let database = reached.database()?;
     open_as_database(reached, database, clock, how)
 }
 
@@ -806,7 +800,7 @@ fn following(store: &Store, how: &crate::Opening) {
 /// once when there is a record ([`crate::live::seen::checked`]).
 fn open_unchecked(reached: Reached, clock: &Clock) -> Result<Store, String> {
     let live = reached.live.clone();
-    let store = unchecked(reached, clock);
+    let store = unchecked(reached, clock)?;
     if let Some(live) = live
         && let Some(back) = crate::live::seen::checked(&live, || {
             store.board_version().map_err(|why| why.to_string())
@@ -833,7 +827,7 @@ fn not_gone_back(reached: &Reached) -> Result<(), String> {
 /// refuses the beat's write to a board that went back.
 fn open_beating(reached: Reached, clock: &Clock) -> Result<Store, String> {
     let live = reached.live.clone();
-    let store = unchecked(reached, clock);
+    let store = unchecked(reached, clock)?;
     if let Some(live) = &live
         && let Some(back) =
             crate::live::seen::past_guard(live, crate::Schema::this_build().version(), || {
@@ -845,17 +839,19 @@ fn open_beating(reached: Reached, clock: &Clock) -> Result<Store, String> {
     Ok(store)
 }
 
-/// The board `reached`, its tables taken as they are, by no check of its own.
-fn unchecked(reached: Reached, clock: &Clock) -> Store {
+/// The board `reached`, its tables taken as they are, by no check of its own: refused where its
+/// address names a SurrealDB server ([`crate::Database::named`]).
+fn unchecked(reached: Reached, clock: &Clock) -> Result<Store, String> {
     let (clock, probe, host) = parts(clock);
     let how = crate::Opening::write()
         .of(reached.project.as_deref())
         .live(reached.live);
     let named = reached.project.is_none();
-    naming(
-        Store::unchecked_on(named_database(reached.client), clock, probe, &host, &how),
+    let database = crate::Database::named(&reached.client)?;
+    Ok(naming(
+        Store::unchecked_on(database, clock, probe, &host, &how),
         named,
-    )
+    ))
 }
 
 /// `store`, saying its server in the commands it tells when `TASKS_SERVER` `named` it (a board
@@ -886,10 +882,28 @@ fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_command_line_refuses_every_word_the_board_keeps_and_takes_a_handle() {
+        let refused = |actor| match check_actor(actor) {
+            Err(crate::Error::Refused(why)) => why,
+            other => panic!("{actor}: {other:?}"),
+        };
+        assert!(refused("owner").starts_with("the owner acts from the Symphony"));
+        for word in ["agent", "board", "unknown"] {
+            assert!(
+                refused(word).starts_with(&format!("{word} names no session")),
+                "{word}"
+            );
+        }
+        for actor in ["amber-heron", "solar-finch-320", "ana", "Owner"] {
+            assert!(check_actor(actor).is_ok(), "{actor}");
+        }
+    }
+
     /// Only a live board opened to write follows its project's committed workflow.
     #[test]
     fn a_live_board_opened_to_write_follows_its_committed_workflow_and_nothing_else_does() {
-        use crate::store_fixture::{Backend, Fixture, Seed};
+        use crate::store_fixture::{Fixture, Seed};
         use crate::workflow::activate::tests::{MAPPED, TWO};
         let repo = crate::workflow::tests::Scratch::new("following");
         std::fs::write(repo.0.join("symphony.toml"), format!("{TWO}{MAPPED}")).unwrap();
@@ -898,10 +912,7 @@ mod tests {
             project: "demo".into(),
             common: repo.0.join(".git"),
         };
-        let f = Fixture::on(
-            Backend::SurrealDb,
-            Seed::default().task("sim/ready", "ready"),
-        );
+        let f = Fixture::new(Seed::default().task("sim/ready", "ready"));
         let write = crate::Opening::write();
         for how in [
             write.clone(),
@@ -918,7 +929,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_scratch_servers_keep_their_backend_and_database() {
+    fn an_explicit_scratch_server_keeps_its_database_and_a_surrealdb_one_is_refused() {
         for (address, postgres) in [
             ("127.0.0.1:9", false),
             ("postgresql:/tmp/board socket", true),
@@ -934,8 +945,12 @@ mod tests {
             let reached = reach_board(&env, &env.cwd, Reaching::Peek, None).unwrap();
             assert!(reached.project.is_none());
             assert!(reached.live.is_none());
-            let database = named_database(reached.client);
-            assert_eq!(database.is_postgresql(), postgres);
+            if !postgres {
+                let refused = reached.database().unwrap_err();
+                assert!(refused.contains(crate::server::GONE), "{refused}");
+                continue;
+            }
+            let database = reached.database().unwrap();
             assert_eq!(database.addr(), address);
             assert_eq!(database.database(), "scratch_route");
             assert_eq!(

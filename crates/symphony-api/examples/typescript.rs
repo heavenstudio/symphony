@@ -104,8 +104,15 @@ fn constants() -> String {
         ("ASK_LATE_SECONDS", api::ASK_LATE_SECONDS.to_string()),
         ("FILE_QUERY", text(api::FILE_QUERY)),
         ("REPORTS_PATH", text(api::REPORTS_PATH)),
+        ("REPORTS_LANDED_PATH", text(api::REPORTS_LANDED_PATH)),
         ("SETTINGS_PATH", text(api::SETTINGS_PATH)),
         ("SETTING_WRITE_PATH", text(api::SETTING_WRITE_PATH)),
+        ("PEOPLE_PATH", text(api::PEOPLE_PATH)),
+        ("PEOPLE_CHANGE_PATH", text(api::PEOPLE_CHANGE_PATH)),
+        ("PROFILE_PATH", text(api::PROFILE_PATH)),
+        ("CARD_OWNERS_PATH", text(api::CARD_OWNERS_PATH)),
+        ("TASK_HAND_ROUTE", text(api::TASK_HAND_ROUTE)),
+        ("CARD_HAND_ROUTE", text(api::CARD_HAND_ROUTE)),
         ("RUNS_PATH", text(api::RUNS_PATH)),
         ("RUN_PATH", text(api::RUN_PATH)),
         ("RUN_LOG_PATH", text(api::RUN_LOG_PATH)),
@@ -124,6 +131,9 @@ fn constants() -> String {
             api::QUICK_TASK_TITLE_MAX.to_string(),
         ),
         ("TASK_ACTION_ROUTE", text(api::TASK_ACTION_ROUTE)),
+        ("TASK_PASS_ROUTE", text(api::TASK_PASS_ROUTE)),
+        ("DOCUMENT_HELD_PATH", text(api::DOCUMENT_HELD_PATH)),
+        ("DOCUMENT_PASS_ROUTE", text(api::DOCUMENT_PASS_ROUTE)),
         ("TASK_TOKENS_PATH", text(api::TASK_TOKENS_PATH)),
         ("TASK_COSTS_PATH", text(api::TASK_COSTS_PATH)),
         ("TASK_COSTS_MOST", api::TASK_COSTS_MOST.to_string()),
@@ -162,6 +172,12 @@ fn constants() -> String {
     for (name, value) in constants {
         let _ = writeln!(out, "export const {name} = {value};");
     }
+    page_constants(&mut out);
+    out
+}
+
+/// The Symphony's own routes and its pages' names, after the other constants in wire.ts.
+fn page_constants(out: &mut String) {
     let _ = writeln!(
         out,
         "export const SYMPHONY_ROUTES = {} as const;",
@@ -174,12 +190,12 @@ fn constants() -> String {
         "BOARD": api::page_names::BOARD,
         "REPORTS": api::page_names::REPORTS,
         "SETTINGS": api::page_names::SETTINGS,
+        "PEOPLE": api::page_names::PEOPLE,
         "RUNS": api::page_names::RUNS,
         "AGENTS": api::page_names::AGENTS,
         "PROJECTS": api::page_names::PROJECTS,
     });
     let _ = writeln!(out, "export const PAGE_NAMES = {pages} as const;");
-    out
 }
 
 /// The types the client reads, in wire.ts's order.
@@ -188,6 +204,7 @@ fn declarations() -> Vec<Declared> {
     let cfg = Config::new().with_large_int("number");
     [
         board_declarations(&cfg),
+        page_declarations(&cfg),
         document_declarations(&cfg),
         task_declarations(&cfg),
     ]
@@ -196,7 +213,7 @@ fn declarations() -> Vec<Declared> {
     .collect()
 }
 
-/// The types the frame, the feed, the queue, Reports, the task board and the agents page read.
+/// The types the frame, the feed, the queue, Reports and Settings read.
 fn board_declarations(cfg: &Config) -> Vec<Declared> {
     vec![
         declared::<api::ProjectView>(cfg),
@@ -221,9 +238,12 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         // Reports'.
         declared::<api::Grain>(cfg),
         declared::<api::report_page::ReportMark>(cfg),
-        declared::<api::report_page::LandedSpend>(cfg),
-        declared::<api::report_page::LandedTask>(cfg),
         declared::<api::report_page::Spend>(cfg),
+        declared::<api::report_page::LandedPage>(cfg),
+        declared::<api::report_page::LandedRow>(cfg),
+        declared::<api::report_page::LandedFigures>(cfg),
+        declared::<api::report_page::KindRow>(cfg),
+        declared::<api::report_page::ReviewRow>(cfg),
         // The Settings page's.
         declared::<api::SettingsPage>(cfg),
         declared::<api::SettingsFile>(cfg),
@@ -242,6 +262,28 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::SettingValue>(cfg),
         declared::<api::SettingWrite>(cfg),
         declared::<api::SettingWritten>(cfg),
+    ]
+}
+
+/// The types the People page, the Runs page, the task board and the agents page read, after the
+/// board's in wire.ts.
+fn page_declarations(cfg: &Config) -> Vec<Declared> {
+    vec![
+        // The People page's.
+        declared::<api::PeoplePage>(cfg),
+        declared::<api::PersonRow>(cfg),
+        declared::<api::Addresses>(cfg),
+        declared::<api::NoticeWay>(cfg),
+        declared::<api::GroupRow>(cfg),
+        declared::<api::PeopleLogLine>(cfg),
+        declared::<api::PeopleAction>(cfg),
+        declared::<api::PeopleChange>(cfg),
+        declared::<api::ProfileWrite>(cfg),
+        // Whose a card or a task is.
+        declared::<api::Owner>(cfg),
+        declared::<api::CardOwners>(cfg),
+        declared::<api::DocumentHeld>(cfg),
+        declared::<api::HeldComment>(cfg),
         // The Runs page's, its schema updates too.
         declared::<api::RunsPage>(cfg),
         declared::<api::RunPage>(cfg),
@@ -406,6 +448,7 @@ fn task_declarations(cfg: &Config) -> Vec<Declared> {
         // agents page's types).
         declared::<api::TaskPage>(cfg),
         declared::<api::TaskEntry>(cfg),
+        declared::<api::HeldWords>(cfg),
         declared::<api::Message>(cfg),
         declared::<api::TaskHistory>(cfg),
         declared::<api::TaskBrief>(cfg),
@@ -805,8 +848,16 @@ const CARRIED: &[(&str, &str, &str)] = &[
         "defaultDays, src/reports.tsx",
     ),
     (API_AGENTS, "web_address", "webAddress, src/links.ts"),
-    (API_AGENTS, "control", "sessionControl, src/session.tsx"),
-    (API_AGENTS, "via_parent", "viaParent, src/session.tsx"),
+    (
+        API_AGENTS,
+        "control",
+        "sessionControl, src/session-control.ts",
+    ),
+    (
+        API_AGENTS,
+        "via_parent",
+        "viaParent, src/session-control.ts",
+    ),
     (API_LINKS, "app_path", "appPath, src/links.ts"),
     (API_LINKS, "linkable", "linkable, src/links.ts"),
     (API_GATES, "count", "countOf, src/gates-model.ts"),
@@ -1408,8 +1459,22 @@ fn samples() -> Value {
     samples.extend(agents_samples());
     samples.insert("reports".into(), json!(reports()));
     samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
+    samples.insert("landed".into(), json!(landed_page()));
+    samples.insert(
+        "emptyLanded".into(),
+        json!(api::report_page::LandedPage::default()),
+    );
     samples.insert("settings".into(), json!(settings()));
     samples.insert("emptySettings".into(), json!(api::SettingsPage::default()));
+    samples.insert("people".into(), json!(people()));
+    samples.insert(
+        "emptyPeople".into(),
+        json!(api::PeoplePage {
+            administers: true,
+            machine: true,
+            ..api::PeoplePage::default()
+        }),
+    );
     samples.extend(tokens_samples());
     samples.insert("blocks".into(), json!(blocks()));
     samples.extend(
@@ -2087,11 +2152,12 @@ fn documents() -> Vec<(&'static str, Value)> {
         ),
         (
             "asks",
-            json!({"asks": [part::ask()], "listening": true, "recipient": "amber-heron"}),
+            json!({"asks": [part::ask()], "listening": true, "recipient": "amber-heron",
+                "may_ask": true}),
         ),
         (
             "noAsks",
-            json!({"asks": [], "listening": false, "recipient": null}),
+            json!({"asks": [], "listening": false, "recipient": null, "may_ask": false}),
         ),
     ]
 }
@@ -2377,7 +2443,6 @@ fn settings_section(
     api::SettingsSection {
         id: id.into(),
         title: title.into(),
-        about: format!("About {title}."),
         entries,
     }
 }
@@ -2597,6 +2662,91 @@ fn settings_stored() -> Vec<api::StoredSetting> {
     ]
 }
 
+/// The People page as the person at the machine reads it: Ana, given speak and deciding by the
+/// group staff, signing in by two services, reached by mail and Slack, her cards by Slack and her
+/// verdicts by mail; Bo, who has no profile, given administer; Cy, a reader who set nothing for
+/// notices; the group staff; and the log of every change that made them.
+fn people() -> api::PeoplePage {
+    let words = |powers: &[&str]| powers.iter().map(|power| (*power).to_string()).collect();
+    let person = |name: &str, display: &str, powers: &[&str], own: &[&str], groups: &[&str]| {
+        api::PersonRow {
+            name: name.into(),
+            display: display.into(),
+            powers: words(powers),
+            own: words(own),
+            groups: words(groups),
+            ..api::PersonRow::default()
+        }
+    };
+    let line =
+        |n: i32, did: &str, name: &str, group: Option<&str>, powers: &[&str]| api::PeopleLogLine {
+            n: n.into(),
+            at: 1_763_000_000.0 + 3600.0 * f64::from(n),
+            by: "owner".into(),
+            did: did.into(),
+            name: name.into(),
+            group: group.map(Into::into),
+            powers: words(powers),
+        };
+    let notices = |ways: [Option<&str>; 3]| {
+        let kinds = ["card", "question", "verdict"];
+        let ways = kinds
+            .into_iter()
+            .zip(ways)
+            .map(|(kind, way)| api::NoticeWay {
+                kind: kind.into(),
+                way: way.map(Into::into),
+            });
+        Some(ways.collect())
+    };
+    api::PeoplePage {
+        people: vec![
+            api::PersonRow {
+                signins: words(&["tailscale", "github"]),
+                git: words(&["ana-lima"]),
+                profile: true,
+                addresses: Some(api::Addresses {
+                    email: Some("ana@example.com".into()),
+                    slack: Some("U024BE7LH".into()),
+                    whatsapp: None,
+                }),
+                notices: notices([Some("slack"), None, Some("email")]),
+                ..person(
+                    "ana",
+                    "Ana Lima",
+                    &["read", "speak", "decide"],
+                    &["speak"],
+                    &["staff"],
+                )
+            },
+            person("bo", "bo", &["read", "administer"], &["administer"], &[]),
+            api::PersonRow {
+                signins: words(&["tailscale"]),
+                profile: true,
+                addresses: Some(api::Addresses::default()),
+                notices: notices([None, None, None]),
+                ..person("cy", "Cy Okafor", &["read"], &["read"], &[])
+            },
+        ],
+        groups: vec![api::GroupRow {
+            name: "staff".into(),
+            powers: words(&["decide"]),
+        }],
+        log: vec![
+            line(1, "group-add", "staff", None, &["decide"]),
+            line(2, "add", "ana", None, &["speak"]),
+            line(3, "join", "ana", Some("staff"), &[]),
+            line(4, "add", "bo", None, &["administer"]),
+            line(5, "add", "cy", None, &["read"]),
+        ],
+        revision: 5,
+        administers: true,
+        machine: true,
+        you: None,
+        problem: None,
+    }
+}
+
 /// A Settings page of every shape an entry takes: one with a state, a need met and one not, a
 /// plugin's that is a sentence with where it is said and no setting, a setting a local file writes
 /// over the committed one and over the store, one the store holds, reviewed sentences, the
@@ -2621,11 +2771,7 @@ fn settings() -> api::SettingsPage {
                 vec![settings_herdr(), settings_described()],
             ),
             settings_section("models", "Models and limits", vec![settings_models()]),
-            settings_section(
-                "reviewed",
-                "Shown here, changed by a reviewed task",
-                settings_reviewed(),
-            ),
+            settings_section("reviewed", "Reviewed settings", settings_reviewed()),
             settings_section("device", "This device", vec![settings_appearance()]),
         ],
         stored: settings_stored(),
@@ -2651,23 +2797,6 @@ fn reports() -> api::ReportsPage {
             changed: vec!["settings".into()],
         }],
         unread: vec!["/repo/.git/symphony/reports/2026-11-08.json: not read".into()],
-        landed: Some(api::report_page::LandedSpend {
-            tasks: 2,
-            without: 1,
-            median: Some(1.5),
-            dearest: vec![{
-                let api::report_page::Spend { tokens, cost } = spend(2.0, false);
-                api::report_page::LandedTask {
-                    slug: "sim/jump".into(),
-                    at: MONDAY + 7_200.0,
-                    tokens,
-                    cost,
-                }
-            }],
-            first_round: spend(2.0, false),
-            later_rounds: spend(1.0, true),
-            again: 1,
-        }),
         prices: "2026-11-16".into(),
     }
 }
@@ -2868,6 +2997,108 @@ fn report_bucket(start: f64) -> api::ReportBucket {
                 spent("awaiting", "Awaiting", 6.0),
             ],
         }),
+        landed: Some(api::report_page::BucketLanded {
+            tasks: 3,
+            median: Some(1.5),
+            p90: Some(2.8),
+            lined_cost: 2.0,
+            lines: 400,
+            unread: 1,
+        }),
+    }
+}
+
+/// The landed tasks of [`reports`]' window, every member the tab reads written: one of each kind
+/// and of none, a task priced in part, one with no lines read and one of no counted line.
+fn landed_page() -> api::report_page::LandedPage {
+    use api::report_page::{KindRow, LandedFigures, LandedPage, LandedRow, ReviewRow};
+    const MONDAY: f64 = 1_794_182_400.0;
+    let row =
+        |slug: &str, kind: Option<&str>, first: f64, later: f64, lines: Option<u64>| LandedRow {
+            slug: slug.into(),
+            at: MONDAY + 7_200.0,
+            kind: kind.map(str::to_string),
+            first,
+            later,
+            tokens: 120_000,
+            unpriced: false,
+            reviews: u32::from(later > 0.0),
+            lines,
+        };
+    LandedPage {
+        grain: api::Grain::Day,
+        days: 1,
+        from: MONDAY,
+        to: MONDAY + 86_400.0,
+        tasks: vec![
+            LandedRow {
+                unpriced: true,
+                reviews: 2,
+                ..row("app/charts", Some("feature"), 2.0, 1.5, Some(400))
+            },
+            row("docs/guide", Some("docs"), 1.0, 0.0, None),
+            row("generated/outputs", None, 0.5, 0.0, Some(0)),
+        ],
+        without: 1,
+        figures: LandedFigures {
+            tasks: 3,
+            median: Some(1.0),
+            mean: Some(5.0 / 3.0),
+            p90: Some(3.0),
+            cost: 5.0,
+            later: 1.5,
+            back: 1,
+            lined: 1,
+            lined_cost: 3.5,
+            lines: 400,
+            unlined: 1,
+            unread: 1,
+        },
+        kinds: vec![
+            KindRow {
+                kind: Some("feature".into()),
+                tasks: 1,
+                median: Some(3.5),
+                cost: 3.5,
+                lined_cost: 3.5,
+                lines: 400,
+            },
+            KindRow {
+                kind: Some("docs".into()),
+                tasks: 1,
+                median: Some(1.0),
+                cost: 1.0,
+                lined_cost: 0.0,
+                lines: 0,
+            },
+            KindRow {
+                kind: None,
+                tasks: 1,
+                median: Some(0.5),
+                cost: 0.5,
+                lined_cost: 0.0,
+                lines: 0,
+            },
+        ],
+        reviews: vec![
+            ReviewRow {
+                reviews: 0,
+                tasks: 2,
+                first: 0.75,
+                later: 0.0,
+                median: Some(0.75),
+            },
+            ReviewRow {
+                reviews: 2,
+                tasks: 1,
+                first: 2.0,
+                later: 1.5,
+                median: Some(3.5),
+            },
+        ],
+        kinds_from: Some(MONDAY + 3_600.0),
+        prices: "2026-11-16".into(),
+        unread: vec!["/repo/.git/symphony/reports/2026-11-08.json: not read".into()],
     }
 }
 

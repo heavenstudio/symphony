@@ -169,9 +169,9 @@ pub fn lagging(lines: Vec<Writer>, target: i64, now: f64, machine: &Path, runs: 
             None => behind.push(line),
         }
     }
-    behind.sort_by(by_name);
-    gone.sort_by(|a, b| by_name(&a.0, &b.0));
-    unused.sort_by(by_name);
+    symphony_board::order::sort_by(&mut behind, &by_name);
+    symphony_board::order::sort_by(&mut gone, &|a, b| by_name(&a.0, &b.0));
+    symphony_board::order::sort_by(&mut unused, &by_name);
     let linked = behind
         .iter()
         .any(|line| line.host == host && runs.runs(line));

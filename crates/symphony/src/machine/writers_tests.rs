@@ -123,7 +123,7 @@ fn a_writer_behind_holds_the_move_unless_it_is_a_release_of_this_machine_or_unse
             here.clone(),
         ),
     ];
-    expected.sort_by(|a, b| (&a.1, &a.0).cmp(&(&b.1, &b.0)));
+    symphony_board::order::sort_by(&mut expected, &|a, b| (&a.1, &a.0).cmp(&(&b.1, &b.0)));
     assert_eq!(paths(&behind), expected);
     // A machine folder with no release installed has no release's own.
     built(&own, now, 10.0 * day);

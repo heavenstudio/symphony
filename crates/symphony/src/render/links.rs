@@ -102,8 +102,8 @@ pub(crate) fn doc_paths(root: &Path) -> Vec<String> {
             history.push(entry.route(inside));
         }
     }
-    live.sort();
-    history.sort();
+    symphony_board::order::sort_by(&mut live, &Ord::cmp);
+    symphony_board::order::sort_by(&mut history, &Ord::cmp);
     live.into_iter().chain(history).collect()
 }
 

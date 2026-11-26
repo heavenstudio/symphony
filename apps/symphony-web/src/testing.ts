@@ -91,6 +91,8 @@ export const CASES = cases as unknown as {
   samples: {
     settings: unknown;
     emptySettings: unknown;
+    people: unknown;
+    emptyPeople: unknown;
     queue: unknown;
     emptyQueue: unknown;
     board: unknown;
@@ -111,6 +113,8 @@ export const CASES = cases as unknown as {
     agentScreen: unknown;
     reports: unknown;
     emptyReports: unknown;
+    landed: unknown;
+    emptyLanded: unknown;
     taskTokens: unknown;
     emptyTaskTokens: unknown;
     taskCosts: unknown;
@@ -187,6 +191,7 @@ export function aTaskPage(task: Task, more: Partial<TaskPage> = {}): TaskPage {
     brief_revision: "",
     sessions: {},
     local: false,
+    passes: false,
     gates: null,
     ...more,
   };

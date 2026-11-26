@@ -97,6 +97,12 @@ pub(super) struct Delivery {
     /// ([`keep`]). Empty, and left out of the entry, for an owner's save.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     by: String,
+    /// The person whose save it is, by the short name their lines carry, when a board names them
+    /// ([`Delivery::saved_by`]): its task is filed and sent to review as theirs, and a settings
+    /// edit's store entries are cleared as theirs. Empty, and left out of the entry, for the
+    /// owner's, the machine's person, and for an agent's.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    person: String,
     /// The later agent's saves committed on this save's branch with it, by their entries'
     /// numbers ([`joining`]): each takes that branch up as its own. Left out of the entry with
     /// none.
@@ -144,6 +150,43 @@ impl Delivery {
             base: git(root, &["rev-parse", "--verify", "-q", &main_ref(root)]).unwrap_or_default(),
             ..Self::default()
         }
+    }
+
+    /// [`Delivery::saved`], `person`'s save (`owner` for the machine's person, kept as none).
+    pub(super) fn saved_by(root: &Path, person: &str) -> Self {
+        Self {
+            person: person_of(person),
+            ..Self::saved(root)
+        }
+    }
+
+    /// Who acts for the person whose save it is: their short name, or `owner`.
+    fn acting(&self) -> &str {
+        if self.person.is_empty() {
+            crate::postpone::OWNER
+        } else {
+            &self.person
+        }
+    }
+
+    /// Whose save it is, as its task's words say: `the owner's`, or a person's (`ana's`).
+    fn whose(&self) -> String {
+        if self.person.is_empty() {
+            "the owner's".into()
+        } else {
+            format!("{}'s", self.person)
+        }
+    }
+}
+
+/// `person` as a delivery keeps it: none for the owner, and for anything that is no short name
+/// (the save then stands as the owner's, as every save did before a board named anyone).
+fn person_of(person: &str) -> String {
+    let person = person.trim();
+    if person != crate::postpone::OWNER && symphony_docs::syntax::is_short_name(person) {
+        person.into()
+    } else {
+        String::new()
     }
 }
 
@@ -262,7 +305,7 @@ fn entries(root: &Path) -> Vec<(u64, QueuedPublication)> {
             saved.delivery.is_some().then_some((sequence, saved))
         })
         .collect();
-    found.sort_by_key(|(sequence, _)| *sequence);
+    symphony_board::order::sort_by_key(&mut found, &|(sequence, _)| *sequence);
     found
 }
 
@@ -792,10 +835,12 @@ fn group(
 /// once each of them may go ([`behind`]), and another's once each of them is kept and free.
 fn joining(root: &Path, leader: u64) -> Vec<(u64, QueuedPublication)> {
     let entries = entries(root);
-    let taken: std::collections::BTreeSet<u64> = (entries.iter())
-        .filter_map(|(_, saved)| saved.delivery.as_ref())
-        .flat_map(|delivery| delivery.members.iter().copied())
-        .collect();
+    let mut taken: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+    taken.extend(
+        (entries.iter())
+            .filter_map(|(_, saved)| saved.delivery.as_ref())
+            .flat_map(|delivery| delivery.members.iter().copied()),
+    );
     let free = |sequence: u64, delivery: &Delivery| {
         sequence > leader
             && !delivery.by.is_empty()
@@ -1010,8 +1055,10 @@ fn committed(root: &Path, batch: &[Batched]) -> Result<(String, String, Vec<u64>
 /// each an edit and who saved it.
 fn filed(root: &Path, delivery: &Delivery, saves: &[(Edit, String)]) -> Result<(), String> {
     use symphony_board::{BEFORE_WORK, NewTask};
-    let owner = crate::postpone::OWNER;
-    let store = crate::taskview::connect(root)?;
+    // The person whose save it is files the task and sends it to review: the owner, or a person a
+    // board names, for whom the Symphony's store vouches as it does for their save.
+    let owner = delivery.acting();
+    let store = crate::taskview::connect(root)?.for_person(owner);
     let app = crate::verdicts::app_handle(&store).map_err(|e| e.to_string())?;
     let slug = &delivery.branch;
     let receipt = format!("document-save:{slug}:{}", delivery.tip);
@@ -1047,12 +1094,24 @@ fn filed(root: &Path, delivery: &Delivery, saves: &[(Edit, String)]) -> Result<(
             let page = pages[0].clone();
             // An agent's saves, kept from the checkout on the default branch ([`keep`]), are filed
             // the same way, in words that say whose they are.
-            let (title, saved, whose, own) = if delivery.by.is_empty() {
+            let (title, saved, whose, own) = if delivery.by.is_empty() && delivery.person.is_empty()
+            {
                 (
                     format!("Deliver the owner's save of {page}"),
                     format!("The owner saved an answer on {page} in the Symphony"),
                     "the owner's save".to_string(),
-                    " and its text is the owner's own",
+                    " and its text is the owner's own".to_string(),
+                )
+            } else if delivery.by.is_empty() {
+                let whose = delivery.whose();
+                (
+                    format!("Deliver {whose} save of {page}"),
+                    format!(
+                        "{} saved an answer on {page} in the Symphony",
+                        delivery.person
+                    ),
+                    format!("{whose} save"),
+                    format!(" and its text is {whose} own"),
                 )
             } else if saves.len() == 1 {
                 (
@@ -1062,7 +1121,7 @@ fn filed(root: &Path, delivery: &Delivery, saves: &[(Edit, String)]) -> Result<(
                         by.join(", ")
                     ),
                     "the agent's save".to_string(),
-                    "",
+                    String::new(),
                 )
             } else {
                 let more = match pages.len() {
@@ -1079,7 +1138,7 @@ fn filed(root: &Path, delivery: &Delivery, saves: &[(Edit, String)]) -> Result<(
                         pages.join(", ")
                     ),
                     "the agent's saves".to_string(),
-                    "",
+                    String::new(),
                 )
             };
             let files = files.join(", ");
@@ -1157,8 +1216,8 @@ fn cleared(root: &Path, edit: &Edit, delivery: &mut Delivery) -> bool {
     let Some(Ok(changes)) = super::settings::changes(edit) else {
         return false;
     };
-    let removed =
-        crate::taskview::connect(root).and_then(|store| super::settings::cleared(&store, &changes));
+    let removed = crate::taskview::connect(root)
+        .and_then(|store| super::settings::cleared_by(&store, &changes, delivery.acting()));
     match removed {
         Ok(()) => false,
         Err(why) => {
@@ -1191,12 +1250,13 @@ fn covered(
     let (text, key) = if alone {
         (
             format!(
-                "The {} save this task delivers is on the remote default branch already: \
+                "{} save this task delivers is on the remote default branch already: \
                  {brought}. Nothing more is delivered by {}: close it as covered by that landing.",
-                if delivery.by.is_empty() {
-                    "owner's"
-                } else {
-                    "agent's"
+                match (delivery.by.is_empty(), delivery.person.is_empty()) {
+                    (false, _) => "The agent's".to_string(),
+                    (true, true) => "The owner's".to_string(),
+                    // A short name is written as it is, never capitalized.
+                    (true, false) => delivery.whose(),
                 },
                 delivery.branch
             ),

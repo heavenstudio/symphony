@@ -6,8 +6,25 @@ use super::{Pg, act, logged, rows};
 use crate::orchestration::WAITING;
 use crate::red::FIELDS;
 use crate::stages::{ARROW, BLOCK_LINE, MOVED};
-use crate::store::surreal::work::Creating;
 use std::borrow::Cow;
+
+/// What a new task's write turns on.
+pub(in crate::store) struct Creating {
+    /// A session files it, not the owner.
+    pub(in crate::store) acts: bool,
+    /// It keeps an owner's save receipt.
+    pub(in crate::store) receipt: bool,
+    /// Its filer marks it red.
+    pub(in crate::store) red: bool,
+    /// It is filed on an arm.
+    pub(in crate::store) arm: bool,
+    /// It is filed as a kind (`crate::kind`).
+    pub(in crate::store) kind: bool,
+    /// It is filed for a group or a person (`crate::people::ownership`).
+    pub(in crate::store) group: bool,
+    /// A custom workflow is active, and it starts at the initial pair (`super::workflow::PLACED`).
+    pub(in crate::store) placed: bool,
+}
 
 /// The task, its dependencies and parent there, its assignee a session, and a slug nobody took.
 const CREATE: &str = "IF EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug') THEN \
@@ -68,7 +85,7 @@ pub(in crate::store) const FILED: &str = "IF (SELECT kind FROM session WHERE han
 END IF;";
 
 /// A new task ([`CREATE`]) with the marks `new` names, its line on the thread (`said`) and, where
-/// a task it waits on is cancelled, its block (`super::super::surreal::work::create`).
+/// a task it waits on is cancelled, its block.
 pub(in crate::store) fn create(new: &Creating) -> String {
     let mut block = String::new();
     if new.acts {
@@ -99,6 +116,14 @@ pub(in crate::store) fn create(new: &Creating) -> String {
         block.push_str(&field_set("_board,arm", "v -> 'arm'"));
         block.push('\n');
     }
+    if new.kind {
+        block.push_str(&field_set("_board,kind", "v -> 'kind'"));
+        block.push('\n');
+    }
+    if new.group {
+        block.push_str(&field_set("_board,group", "v -> 'group'"));
+        block.push('\n');
+    }
     block.push_str(&said("v ->> 'said'"));
     block.push('\n');
     block.push_str(&block_cancelled_dependencies(false));
@@ -106,8 +131,8 @@ pub(in crate::store) fn create(new: &Creating) -> String {
 }
 
 /// Cancellation does not satisfy a prerequisite: the unfinished dependents of a cancelled task
-/// blocked, with the line that says so and the status each held (`super::super::surreal::work`'s
-/// own). `cancelling`: the task cancelled is `v ->> 'slug'`; else it is the one created or moved.
+/// blocked, with the line that says so and the status each held. `cancelling`: the task cancelled
+/// is `v ->> 'slug'`; else it is the one created or moved.
 pub(in crate::store) fn block_cancelled_dependencies(cancelling: bool) -> String {
     let scope = if cancelling {
         "l.target = v ->> 'slug'"
@@ -163,6 +188,37 @@ END;",
     )
 }
 
+/// `v ->> 'slug'` given the kind `kind` by `actor`, a session's write when `acts`, with the line
+/// that names it and the one it replaced, unless it is of that kind already (`missing` refuses a
+/// task not there, `closed` one done or cancelled).
+pub(in crate::store) fn set_kind(acts: bool) -> String {
+    let act = if acts { act() } else { String::new() };
+    format!(
+        "{act} \
+DECLARE \
+    task_ record; \
+BEGIN \
+    SELECT status, fields #>> '{{_board,kind}}' AS kind INTO task_ FROM task \
+        WHERE slug = v ->> 'slug'; \
+    IF NOT FOUND THEN \
+        RAISE EXCEPTION '%', v ->> 'missing'; \
+    END IF; \
+    IF task_.status IN ('done', 'cancelled') THEN \
+        RAISE EXCEPTION '%', (v ->> 'closed') || task_.status || ': only an open task is given a kind'; \
+    END IF; \
+    IF task_.kind IS DISTINCT FROM v ->> 'kind' THEN \
+        UPDATE task SET fields = board_fields(id, fields, '{{_board,kind}}', v -> 'kind'), \
+            version = version + 1 WHERE slug = v ->> 'slug'; \
+        {} \
+    END IF; \
+END;",
+        said(
+            "CASE WHEN task_.kind IS NULL THEN (v ->> 'actor') || ' gave it the kind ' || (v ->> 'kind') \
+             ELSE (v ->> 'actor') || ' changed its kind ' || task_.kind || ' → ' || (v ->> 'kind') END"
+        )
+    )
+}
+
 /// The actor's line `text` (a text expression) on `v ->> 'slug'`'s thread, the board's own record.
 pub(in crate::store) fn said(text: &str) -> String {
     logged("v ->> 'slug'", "v ->> 'actor'", "'system'", text, "NULL")
@@ -206,7 +262,7 @@ INSERT INTO counter (id, last) VALUES ('\"tree\"', 1) \
 UPDATE task SET parent = v ->> 'parent', updated = (v ->> 'now')::double precision, \
     version = version + 1 WHERE slug = v ->> 'slug';";
 
-/// What `Store::run_for` reads, in one statement (`super::super::surreal::work::run_for_read`).
+/// What `Store::run_for` reads, in one statement.
 pub(in crate::store) fn run_for_read() -> Pg<'static> {
     const SEEN_AS: &str =
         "SELECT s.handle, s.last_seen, s.busy_until, s.pid, s.host FROM session s";
@@ -254,7 +310,7 @@ pub(in crate::store) const RECEIVER_GONE: &str = "EXISTS (SELECT 1 \
 
 /// A pass's writes, after its fences: each receiver still there and fenced, its slot counter where
 /// it was read; each give's role, version, slot counter and line, sent by `sender`; each mark set
-/// or lifted (`super::super::surreal::work::gives`).
+/// or lifted.
 pub(in crate::store) fn gives() -> String {
     format!(
         "IF {RECEIVER_GONE} THEN \
@@ -493,9 +549,10 @@ END;",
     Pg::script(guarding(fenced, &body, guarded))
 }
 
-/// The owner's tasks saved under the receipt `receipt`, two at most.
+/// The tasks the owner, or the person `by_person`, saved under the receipt `receipt`, two at most.
 pub(in crate::store) const OWNER_SAVED: Pg<'static> = Pg::Read(Cow::Borrowed(
-    "coalesce((SELECT jsonb_agg(o.slug) FROM (SELECT slug FROM task WHERE created_by = 'owner' \
+    "coalesce((SELECT jsonb_agg(o.slug) FROM (SELECT slug FROM task \
+    WHERE (created_by = 'owner' OR created_by = v ->> 'by_person') \
     AND fields #>> '{_symphony,owner_save}' = v ->> 'receipt' ORDER BY slug LIMIT 2) AS o), '[]')",
 ));
 
@@ -529,6 +586,8 @@ mod tests {
             receipt,
             red,
             arm,
+            kind: false,
+            group: false,
             placed: false,
         };
         let placed = |acts| Creating {
@@ -539,6 +598,8 @@ mod tests {
             field_set("_symphony,owner_save", "v -> 'owner_save'"),
             field_set("_board,red", "v -> 'red'"),
             field_set("_board,arm", "v -> 'arm'"),
+            field_set("_board,kind", "v -> 'kind'"),
+            field_set("_board,group", "v -> 'group'"),
         ];
         // Filed as the board's own, refused in the write while a custom workflow is active.
         let bare = create(&new(false, false, false, false));
@@ -557,19 +618,35 @@ mod tests {
         );
         assert!(marks.iter().all(|mark| !bare.contains(mark.as_str())));
         assert!(!bare.contains(FILED));
-        let all = create(&new(true, true, true, true));
+        let all = create(&Creating {
+            kind: true,
+            group: true,
+            ..new(true, true, true, true)
+        });
         let act = act();
         let said = said("v ->> 'said'");
         let blocks = block_cancelled_dependencies(false);
         in_order(
             &all,
             &[
-                &act, UNPLACED, CREATE, &marks[0], FILED, &marks[1], &marks[2], &said, &blocks,
+                &act, UNPLACED, CREATE, &marks[0], FILED, &marks[1], &marks[2], &marks[3],
+                &marks[4], &said, &blocks,
             ],
         );
         let red = create(&new(true, false, true, false));
         assert!(red.contains(FILED) && red.contains(marks[1].as_str()));
-        assert!(!red.contains(marks[2].as_str()));
+        assert!(!red.contains(marks[2].as_str()) && !red.contains(marks[3].as_str()));
+        let kind = create(&Creating {
+            kind: true,
+            ..new(false, false, false, false)
+        });
+        assert!(kind.contains(marks[3].as_str()) && !kind.contains(FILED));
+        assert!(!kind.contains(marks[4].as_str()), "a kind is no group");
+        let group = create(&Creating {
+            group: true,
+            ..new(false, false, false, false)
+        });
+        assert!(group.contains(marks[4].as_str()) && !group.contains(marks[3].as_str()));
     }
 
     #[test]

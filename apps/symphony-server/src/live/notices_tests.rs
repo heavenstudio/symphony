@@ -1,0 +1,1414 @@
+//! The one server's notices for a project, on a scratch board and a temporary machine folder whose
+//! `notices/programs.toml` names a fake program: a card that starts waiting, an agent's question to
+//! the person at the machine and a reviewer's verdict reach each member of the thing's group once,
+//! by their way, and nobody else; a held message's line tells who may pass it on, of the task's
+//! group else of the board, never its author, and its pass, a person's line, tells no one, and a
+//! look that cannot read its held row tells it at the next that can; a comment held on a document
+//! tells who of its group may pass it on, with no word of it, as long as it waits; a board that
+//! names nobody tells no one; and the worker hands what a wake finds and ends at the stop. A pass
+//! tells by the tick's look at the board's people, none while the board does not read, and one
+//! that cannot look still hands what is due; one that can hand nothing waits for a wake.
+
+use super::super::Hub;
+use super::{Said, Turns};
+use crate::notices::hand::Bounds;
+use crate::notices::runner::Runner;
+use crate::testing::board::{Fixture, Seed};
+use crate::testing::{Tree, repository_holding, store_on};
+use serde_json::json;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use symphony_board::people::ownership::Place;
+use symphony_board::people::{Power, Profile, Profiles};
+use symphony_board::recording::Gate;
+
+const DOC: &str = "docs/design/palette.md";
+const ORIGIN: &str = "http://studio.tailnet.ts.net:8765";
+const ANA_SLACK: &str = "U024BE7LH";
+const BO_EMAIL: &str = "bo@example.com";
+
+fn page(waiting: bool) -> String {
+    let card = if waiting {
+        "- [ ] **new-palette** — Which palette?\n"
+    } else {
+        ""
+    };
+    page_holding(card)
+}
+
+/// The palette page, `card` waiting after the card decided.
+fn page_holding(card: &str) -> String {
+    format!(
+        "# Palette\n\n<!-- register:start -->\n\
+         - [x] **old-grid** — The grid.\n  [2026-01-02 10:00] owner · approved — A\n\
+         {card}<!-- register:end -->\n"
+    )
+}
+
+/// A project, its board, its machine folder and its hub, the hub's main page and board read and
+/// its people looked at, as a tick does, and its server generation's recording gate, open; the
+/// hub's clock and its retries' clock, which the test moves.
+struct Telling {
+    tree: Tree,
+    root: PathBuf,
+    f: Fixture,
+    hub: Arc<Hub>,
+    gate: Arc<Gate>,
+    clock: Arc<Mutex<f64>>,
+    retry: Arc<Mutex<Instant>>,
+}
+
+impl Telling {
+    /// The board names ana and bo (design) and cy (engineering) unless `nobody`; design holds the
+    /// folder docs/design and the area app. Ana goes by Slack, bo by email, cy by WhatsApp, for
+    /// which the machine names no program, which takes each notice, or answers `75` while
+    /// [`Telling::later`] stands.
+    fn new(nobody: bool) -> Telling {
+        let tree = Tree::new();
+        let root = repository_holding(&tree, "main", DOC, &page(false));
+        let f = Fixture::new(
+            Seed::default()
+                .session("worker")
+                .session("rev")
+                .task("app/x", "review")
+                .role("app/x", "worker", "executor")
+                .role("app/x", "rev", "reviewer"),
+        );
+        if !nobody {
+            let store = &f.store;
+            for group in ["design", "engineering"] {
+                store.add_group(group, &[], "owner").unwrap();
+            }
+            for (name, group) in [("ana", "design"), ("bo", "design"), ("cy", "engineering")] {
+                (store.add_person(name, &[group.into()], &[Power::Speak], "owner")).unwrap();
+            }
+            for place in [
+                Place::Folder("docs/design".into()),
+                Place::Area("app".into()),
+            ] {
+                store.map_place(&place, "design", "owner").unwrap();
+            }
+        }
+        let machine = tree.path("machine");
+        let sender = machine.join("notices/sender");
+        std::fs::create_dir_all(sender.parent().unwrap()).unwrap();
+        crate::fixture_script::write(
+            &sender,
+            "#!/bin/sh\nhere=\"${0%/*}\"\n\
+             if [ -e \"$here/later\" ]; then cat > /dev/null; exit 75; fi\n\
+             cat >> \"$here/told\"\nexit 0\n",
+            false,
+        );
+        tree.write(
+            "machine/notices/programs.toml",
+            &format!("slack = \"{0}\"\nemail = \"{0}\"\n", sender.display()),
+        );
+        profiles().write(&machine).unwrap();
+        let mut hub = Hub::new(&root, &root.join("build/client"));
+        hub.machine = Some(machine);
+        let clock = Arc::new(Mutex::new(symphony_board::sweep::trigger::now()));
+        let read = Arc::clone(&clock);
+        hub.clock = Box::new(move || *read.lock().unwrap());
+        let retry = Arc::new(Mutex::new(Instant::now()));
+        let read = Arc::clone(&retry);
+        hub.retry_clock = Box::new(move || *read.lock().unwrap());
+        let board = f.other_database();
+        hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
+        hub.refresh_page("", &root).unwrap();
+        hub.observe(&f.store);
+        hub.people_read(&f.store);
+        let gate = Arc::new(Gate::default());
+        hub.gate_recorders(Arc::clone(&gate));
+        Telling {
+            tree,
+            root,
+            f,
+            hub: Arc::new(hub),
+            gate,
+            clock,
+            retry,
+        }
+    }
+
+    /// The notices the fake program was handed, each its kind, way, address and link.
+    fn told(&self) -> Vec<(String, String, String, String)> {
+        let told =
+            std::fs::read_to_string(self.tree.path("machine/notices/told")).unwrap_or_default();
+        (told.lines())
+            .map(|line| {
+                let notice = symphony_notice::Notice::read(line).unwrap();
+                (
+                    notice.kind().word().into(),
+                    notice.to().way().into(),
+                    notice.to().address().into(),
+                    notice.link().into(),
+                )
+            })
+            .collect()
+    }
+}
+
+fn profiles() -> Profiles {
+    let every = |way: &str| {
+        let mut preferences = serde_json::Map::new();
+        for kind in ["card", "question", "verdict"] {
+            preferences.insert(kind.into(), json!(way));
+        }
+        preferences
+    };
+    let chat = |way: &str, address: &str| {
+        let mut chat = serde_json::Map::new();
+        chat.insert(way.into(), json!(address));
+        chat
+    };
+    Profiles {
+        people: vec![
+            Profile {
+                name: "ana".into(),
+                chat: chat("slack", ANA_SLACK),
+                preferences: every("slack"),
+                ..Profile::default()
+            },
+            Profile {
+                name: "bo".into(),
+                emails: vec![BO_EMAIL.into()],
+                preferences: every("email"),
+                ..Profile::default()
+            },
+            Profile {
+                name: "cy".into(),
+                chat: chat("whatsapp", "+15551234567"),
+                preferences: every("whatsapp"),
+                ..Profile::default()
+            },
+        ],
+    }
+}
+
+/// The worker's turns of the project `symphony`, taken one at a time by the test.
+fn turns() -> Turns {
+    Turns::new(
+        "symphony",
+        bounds(),
+        Box::new(|| ORIGIN.to_string()),
+        Arc::default(),
+    )
+}
+
+impl Turns {
+    fn pass(&mut self, hub: &Hub) {
+        hub.notice_turn(self);
+    }
+
+    /// The runner's cursor: none before a runner opened its record and looked.
+    fn cursor(&self) -> Option<i64> {
+        self.runner.as_ref().and_then(Runner::cursor)
+    }
+}
+
+/// The card waiting on design, the question asked the person at the machine and the reviewer's
+/// verdict on app/x, then the hub's page and board read again.
+fn ask_everything(telling: &Telling) {
+    std::fs::write(telling.root.join(DOC), page(true)).unwrap();
+    let store = &telling.f.store;
+    (store.say("app/x", "worker", "Which way?", Some("owner"))).unwrap();
+    (store.say("app/x", "worker", "Working on it.", Some("@orchestrator"))).unwrap();
+    store.say("app/x", "owner", "Carry on.", None).unwrap();
+    store.verdict("app/x", "rev", "approve", "").unwrap();
+    telling.hub.refresh_page("", &telling.root).unwrap();
+    telling.hub.observe(store);
+}
+
+#[test]
+fn a_waiting_card_a_question_and_a_verdict_reach_each_member_of_its_group_once_by_their_way() {
+    let telling = Telling::new(false);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    assert!(passes.cursor().is_some(), "the first look");
+    assert!(telling.told().is_empty(), "nothing of what stood");
+    ask_everything(&telling);
+    passes.pass(&telling.hub);
+    let task = format!("{ORIGIN}/symphony/task/app/x");
+    let card = format!("{ORIGIN}/symphony/{DOC}#new-palette");
+    let by = |kind: &str, way: &str, address: &str, link: &str| {
+        (
+            kind.to_string(),
+            way.to_string(),
+            address.to_string(),
+            link.to_string(),
+        )
+    };
+    assert_eq!(
+        telling.told(),
+        [
+            by("question", "slack", ANA_SLACK, &task),
+            by("question", "email", BO_EMAIL, &task),
+            by("verdict", "slack", ANA_SLACK, &task),
+            by("verdict", "email", BO_EMAIL, &task),
+            by("card", "slack", ANA_SLACK, &card),
+            by("card", "email", BO_EMAIL, &card),
+        ],
+        "cy is in engineering; the line to @orchestrator and the owner's own tell no one"
+    );
+    // Another pass, and another after the board moved for nothing that tells: nobody again.
+    passes.pass(&telling.hub);
+    (telling.f.store.say("app/x", "worker", "Done.", None)).unwrap();
+    telling.hub.observe(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 6);
+    // A card that starts waiting by a document's edit alone, no board line with it.
+    let both = "- [ ] **new-palette** — Which palette?\n- [ ] **new-grid** — Which grid?\n";
+    std::fs::write(telling.root.join(DOC), page_holding(both)).unwrap();
+    telling.hub.refresh_page("", &telling.root).unwrap();
+    passes.pass(&telling.hub);
+    let grid = format!("{ORIGIN}/symphony/{DOC}#new-grid");
+    assert_eq!(
+        telling.told()[6..],
+        [
+            by("card", "slack", ANA_SLACK, &grid),
+            by("card", "email", BO_EMAIL, &grid),
+        ]
+    );
+    let record = std::fs::read_to_string(telling.root.join("artifacts/notices.json")).unwrap();
+    assert!(
+        !record.contains(ANA_SLACK) && !record.contains(BO_EMAIL),
+        "{record}"
+    );
+}
+
+impl Telling {
+    /// Gives each of `names` the direct agents power, as the person at the machine, and the
+    /// board's people are looked at again, as the next tick does.
+    fn direct_agents(&self, names: &[&str]) {
+        for name in names {
+            let holder = symphony_board::people::Holder::Person(name);
+            (self.f.store.grant(holder, &[Power::DirectAgents], "owner")).unwrap();
+        }
+        self.hub.people_read(&self.f.store);
+    }
+
+    /// Names a program for WhatsApp too, cy's way.
+    fn whatsapp(&self) {
+        let sender = self.tree.path("machine/notices/sender");
+        self.tree.write(
+            "machine/notices/programs.toml",
+            &format!(
+                "slack = \"{0}\"\nemail = \"{0}\"\nwhatsapp = \"{0}\"\n",
+                sender.display()
+            ),
+        );
+    }
+
+    /// Ana's message on app/x, held, its line read by the hub: its link.
+    fn hold(&self, text: &str) -> (i64, String) {
+        let ana = self.f.other().for_person("ana");
+        let held = (ana.hold_words("app/x", "ana", text, None)).unwrap();
+        self.hub.observe(&self.f.store);
+        (
+            held.id,
+            format!("{ORIGIN}/symphony/task/app/x#message-{}", held.id),
+        )
+    }
+}
+
+/// What the fake program was handed after its first `from`, each its kind, way and address.
+fn told_after(telling: &Telling, from: usize) -> Vec<(String, String, String)> {
+    (telling.told().into_iter().skip(from))
+        .map(|(kind, way, address, _)| (kind, way, address))
+        .collect()
+}
+
+fn notice(kind: &str, way: &str, address: &str) -> (String, String, String) {
+    (kind.into(), way.into(), address.into())
+}
+
+/// A message held for people (`symphony_board::held`) is told of by the board's line for it: as
+/// `held`, a link alone to its place on the task's page, to each of the task's group who may pass
+/// it on, never its author, and to no member who may not; once it is passed on, no one, and its
+/// pass, a person's line, tells no one either. A line to `owner` that only reads as one is a
+/// question to the group.
+#[test]
+fn a_held_message_tells_who_of_its_tasks_group_may_pass_it_never_its_author() {
+    let telling = Telling::new(false);
+    telling.whatsapp();
+    // cy joins design without direct agents, and bo is given it.
+    (telling.f.store.join_group("cy", "design", "owner")).unwrap();
+    telling.direct_agents(&["bo"]);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let (held, link) = telling.hold("Cut the header");
+    passes.pass(&telling.hub);
+    assert_eq!(
+        telling.told(),
+        [("held".into(), "email".into(), BO_EMAIL.into(), link.clone())],
+        "bo alone: ana wrote it and cy may not direct agents"
+    );
+    // Ana may pass a message now; hers are still not told to her, two in one look each told.
+    telling.direct_agents(&["ana"]);
+    let (_, second) = telling.hold("And the footer");
+    let (_, third) = telling.hold("And the margins");
+    passes.pass(&telling.hub);
+    let bo = |link: &str| {
+        (
+            "held".into(),
+            "email".into(),
+            BO_EMAIL.into(),
+            link.to_string(),
+        )
+    };
+    assert_eq!(telling.told()[1..], [bo(&second), bo(&third)]);
+    // A pass, a person's line, tells no one.
+    (telling.f.store.pass("app/x", held, "owner")).unwrap();
+    telling.hub.observe(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 3, "the pass is a person's line");
+    // One passed on before the runner looked at its line tells no one.
+    let ana = telling.f.other().for_person("ana");
+    let early = (ana.hold_words("app/x", "ana", "Never mind", None)).unwrap();
+    (telling.f.store.pass("app/x", early.id, "owner")).unwrap();
+    telling.hub.observe(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 3, "passed before its notice was made");
+    // An agent's line to owner that reads as one is a question to the group, ana, bo and cy.
+    let marker = format!("{}#{held}", symphony_board::held::MARKER);
+    (telling
+        .f
+        .store
+        .say("app/x", "worker", &marker, Some("owner")))
+    .unwrap();
+    telling.hub.observe(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(
+        told_after(&telling, 3),
+        [
+            notice("question", "slack", ANA_SLACK),
+            notice("question", "email", BO_EMAIL),
+            notice("question", "whatsapp", "+15551234567"),
+        ]
+    );
+}
+
+/// A comment held on a document (`symphony_board::held::OnDocument`) is told of as `held`, a link
+/// alone to its place on the document's page, to each of its document's group who may pass it on,
+/// never its author: none of its words goes in a notice. Once passed on, it tells no one again.
+#[test]
+fn a_comment_held_on_a_document_tells_who_of_its_group_may_pass_it_with_no_word_of_it() {
+    use symphony_board::held::{Block, Place as Left};
+    let telling = Telling::new(false);
+    telling.direct_agents(&["bo", "cy"]);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let place = |card: Option<&str>| Left {
+        path: DOC.into(),
+        scope: None,
+        kind: if card.is_some() {
+            "message"
+        } else {
+            "question"
+        }
+        .into(),
+        card: card.map(String::from),
+        block: card.is_none().then(|| Block {
+            key: "section:palette:0".into(),
+            line: 1,
+            text: "# Palette".into(),
+        }),
+    };
+    let ana = telling.f.other().for_person("ana");
+    let callout = (ana.hold_on_document("ana", "Too many swatches", &place(None))).unwrap();
+    let message = (ana.hold_on_document("ana", "Why grey?", &place(Some("old-grid")))).unwrap();
+    // On a branch's copy of the document, under its checkout's scope.
+    let branch = Left {
+        scope: Some("feature".into()),
+        ..place(None)
+    };
+    let branched = (ana.hold_on_document("ana", "And the reds", &branch)).unwrap();
+    passes.pass(&telling.hub);
+    let link = |id: i64| format!("{ORIGIN}/symphony/{DOC}#held-{id}");
+    let feature = format!("{ORIGIN}/symphony/@feature/{DOC}#held-{}", branched.id);
+    assert_eq!(
+        telling.told(),
+        [
+            (
+                "held".into(),
+                "email".into(),
+                BO_EMAIL.into(),
+                link(callout.id)
+            ),
+            (
+                "held".into(),
+                "email".into(),
+                BO_EMAIL.into(),
+                link(message.id)
+            ),
+            ("held".into(), "email".into(), BO_EMAIL.into(), feature),
+        ],
+        "bo alone: ana wrote them and cy is in engineering"
+    );
+    let told = std::fs::read_to_string(telling.tree.path("machine/notices/told")).unwrap();
+    assert!(
+        !told.contains("swatches") && !told.contains("grey"),
+        "{told}"
+    );
+    // Passed on, it tells no one again, and another look finds nothing new.
+    let bo = telling.f.other().for_person("bo");
+    (bo.pass_on_document(callout.id, "bo")).unwrap();
+    passes.pass(&telling.hub);
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 3);
+    let record = std::fs::read_to_string(telling.root.join("artifacts/notices.json")).unwrap();
+    assert!(!record.contains("swatches"), "{record}");
+}
+
+/// A look whose read of the comments held on documents fails tells nothing and says so once; the
+/// next look that reads them tells the held comment then.
+#[test]
+fn a_comment_held_on_a_document_whose_row_does_not_read_is_told_at_the_next_look_that_reads_it() {
+    use symphony_board::held::Place as Left;
+    let telling = Telling::new(false);
+    telling.direct_agents(&["bo"]);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let ana = telling.f.other().for_person("ana");
+    let message = Left {
+        path: DOC.into(),
+        scope: None,
+        kind: "message".into(),
+        card: Some("old-grid".into()),
+        block: None,
+    };
+    let held = (ana.hold_on_document("ana", "Why grey?", &message)).unwrap();
+    // A field no build knows: the comments held on documents do not read.
+    let row = || (telling.f.store.raw()).row("held_message", json!(["document", held.id]));
+    row().set(json!({"stray": true})).unwrap();
+    for _ in 0..2 {
+        passes.pass(&telling.hub);
+        assert!(telling.told().is_empty(), "{:?}", telling.told());
+    }
+    let said = passes.said.0.get("held").cloned().unwrap_or_default();
+    assert!(
+        said.starts_with("the comments held on documents: "),
+        "{said}"
+    );
+    row().set(json!({"stray": null})).unwrap();
+    passes.pass(&telling.hub);
+    let link = format!("{ORIGIN}/symphony/{DOC}#held-{}", held.id);
+    assert_eq!(
+        telling.told(),
+        [("held".into(), "email".into(), BO_EMAIL.into(), link)]
+    );
+    assert!(!passes.said.0.contains_key("held"), "the fault cleared");
+}
+
+/// A look whose read of the comments held on documents fails leaves them out alone: it says so
+/// once, and the card that started waiting, the question and the verdict are told and handed;
+/// what was told of a held comment stands, so once they read again it is told no one again, while
+/// one held meanwhile is told then.
+#[test]
+fn a_held_comment_that_does_not_read_leaves_out_the_held_part_of_a_look_alone() {
+    use symphony_board::held::Place as Left;
+    let telling = Telling::new(false);
+    telling.direct_agents(&["bo"]);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let ana = telling.f.other().for_person("ana");
+    let message = Left {
+        path: DOC.into(),
+        scope: None,
+        kind: "message".into(),
+        card: Some("old-grid".into()),
+        block: None,
+    };
+    let told_of = (ana.hold_on_document("ana", "Why grey?", &message)).unwrap();
+    passes.pass(&telling.hub);
+    let link = |id: i64| format!("{ORIGIN}/symphony/{DOC}#held-{id}");
+    let held = |id: i64| ("held".into(), "email".into(), BO_EMAIL.into(), link(id));
+    assert_eq!(telling.told(), [held(told_of.id)]);
+    let meanwhile = (ana.hold_on_document("ana", "And the reds?", &message)).unwrap();
+    let row = || (telling.f.store.raw()).row("held_message", json!(["document", meanwhile.id]));
+    row().set(json!({"stray": true})).unwrap();
+    ask_everything(&telling);
+    passes.pass(&telling.hub);
+    let kinds: Vec<String> = (telling.told().into_iter()).map(|told| told.0).collect();
+    assert_eq!(
+        kinds,
+        [
+            "held", "question", "question", "verdict", "verdict", "card", "card"
+        ],
+        "the rest told and handed"
+    );
+    let said = passes.said.0.get("held").cloned().unwrap_or_default();
+    assert!(
+        said.starts_with("the comments held on documents: "),
+        "{said}"
+    );
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 7);
+    row().set(json!({"stray": null})).unwrap();
+    passes.pass(&telling.hub);
+    assert_eq!(
+        telling.told()[7..],
+        [held(meanwhile.id)],
+        "the one held meanwhile alone"
+    );
+    assert!(!passes.said.0.contains_key("held"), "the fault cleared");
+}
+
+/// With nobody of the task's group able to pass it on but its author, every person of the board
+/// who may is told; with nobody but its author on the whole board, no one is, as the person at the
+/// machine is told by the page.
+#[test]
+fn a_held_message_no_one_of_its_group_may_pass_tells_the_board_who_may_else_no_one() {
+    let telling = Telling::new(false);
+    telling.whatsapp();
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    // Nobody may pass it but ana, its author: no one is told.
+    telling.direct_agents(&["ana"]);
+    telling.hold("Cut the header");
+    passes.pass(&telling.hub);
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    // cy, of engineering, may: told, and design's bo, who may not, is not.
+    telling.direct_agents(&["cy"]);
+    telling.hold("And the footer");
+    passes.pass(&telling.hub);
+    assert_eq!(
+        told_after(&telling, 0),
+        [notice("held", "whatsapp", "+15551234567")]
+    );
+    // Once bo of design may, design's alone are told again.
+    telling.direct_agents(&["bo"]);
+    telling.hold("And the margins");
+    passes.pass(&telling.hub);
+    assert_eq!(told_after(&telling, 1), [notice("held", "email", BO_EMAIL)]);
+}
+
+/// A look whose read of a task's held messages fails takes no line and moves no cursor, and says
+/// so once: the next look reads the same lines again, though nothing moved, and tells the held
+/// message then.
+#[test]
+fn a_held_message_whose_row_does_not_read_is_told_at_the_next_look_that_reads_it() {
+    let telling = Telling::new(false);
+    telling.direct_agents(&["bo"]);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let before = passes.cursor();
+    assert!(before.is_some(), "the first look");
+    let (held, link) = telling.hold("Cut the header");
+    // A field no build knows: the task's held rows do not read.
+    let row = || telling.f.store.raw().row("held_message", held);
+    row().set(json!({"stray": true})).unwrap();
+    for _ in 0..2 {
+        passes.pass(&telling.hub);
+        assert!(telling.told().is_empty(), "{:?}", telling.told());
+        assert_eq!(passes.cursor(), before, "no line taken");
+    }
+    let said = passes.said.0.get("lines").cloned().unwrap_or_default();
+    assert!(
+        said.starts_with("the board's lines: ") && said.contains("the held messages"),
+        "{said}"
+    );
+    row().set(json!({"stray": null})).unwrap();
+    passes.pass(&telling.hub);
+    assert_eq!(
+        telling.told(),
+        [("held".into(), "email".into(), BO_EMAIL.into(), link)]
+    );
+    assert!(passes.cursor() > before, "{:?}", passes.cursor());
+    assert!(!passes.said.0.contains_key("lines"), "the fault cleared");
+}
+
+/// Who of a board is told of a held message, by whose its task is: of a group, its members who may
+/// pass it on; of a person, they where they may; of the person at the machine, or where none of
+/// its owner may, every person of the board who may; never its author; none where nobody but its
+/// author may, and none on a board that names nobody.
+#[test]
+fn who_is_told_of_a_held_message_is_who_may_pass_it_of_its_owner_else_of_the_board() {
+    use super::passers;
+    use symphony_board::people::ownership::{By, Kind, Owning};
+    use symphony_board::people::{Group, Member, People};
+    let passes = [Power::Speak, Power::DirectAgents];
+    let member = |name: &str, group: &str, powers: &[Power]| Member {
+        name: name.into(),
+        groups: vec![group.into()],
+        powers: powers.to_vec(),
+        revision: 0,
+    };
+    let people = People {
+        members: vec![
+            member("ana", "design", &passes),
+            member("bo", "design", &[Power::Speak]),
+            member("cy", "engineering", &passes),
+            member("dee", "design", &passes),
+        ],
+        groups: ["design", "engineering"]
+            .map(|name| Group {
+                name: name.into(),
+                ..Group::default()
+            })
+            .into(),
+        revision: 1,
+    };
+    let owning = |name: &str, kind: Kind| Owning {
+        name: name.into(),
+        kind,
+        by: By::Named,
+        place: None,
+        unheld: None,
+    };
+    let design = owning("design", Kind::Group);
+    assert_eq!(passers(&people, &design, "bo"), ["ana", "dee"]);
+    assert_eq!(
+        passers(&people, &design, "ana"),
+        ["dee"],
+        "never its author"
+    );
+    let engineering = owning("engineering", Kind::Group);
+    assert_eq!(passers(&people, &engineering, "bo"), ["cy"]);
+    assert_eq!(
+        passers(&people, &engineering, "cy"),
+        ["ana", "dee"],
+        "none of engineering but its author: the board's"
+    );
+    assert_eq!(
+        passers(&people, &owning("dee", Kind::Person), "bo"),
+        ["dee"]
+    );
+    assert_eq!(
+        passers(&people, &owning("dee", Kind::Person), "dee"),
+        ["ana", "cy"],
+        "its owner wrote it: the board's"
+    );
+    assert_eq!(
+        passers(&people, &owning("bo", Kind::Person), "dee"),
+        ["ana", "cy"],
+        "bo may not pass it: the board's"
+    );
+    let machine = owning("owner", Kind::Machine);
+    assert_eq!(passers(&people, &machine, "bo"), ["ana", "cy", "dee"]);
+    let alone = People {
+        members: vec![
+            member("ana", "design", &passes),
+            member("bo", "design", &[]),
+        ],
+        ..people.clone()
+    };
+    assert!(
+        passers(&alone, &design, "ana").is_empty(),
+        "the page tells the machine's person"
+    );
+    assert!(passers(&People::default(), &machine, "ana").is_empty());
+}
+
+#[test]
+fn a_board_that_names_nobody_tells_no_one() {
+    let telling = Telling::new(true);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    ask_everything(&telling);
+    passes.pass(&telling.hub);
+    assert!(telling.told().is_empty());
+    assert_eq!(passes.runner.as_ref().and_then(Runner::next_due), None);
+}
+
+#[test]
+fn the_worker_hands_what_a_wake_finds_and_ends_at_the_stop() {
+    let telling = Telling::new(false);
+    telling
+        .hub
+        .start_notices_with("symphony", bounds(), Box::new(|| ORIGIN.to_string()));
+    // Its first pass takes what stands; a wake after the asks finds them.
+    let record = telling.root.join("artifacts/notices.json");
+    test_time::until_true("the worker's first look", hand_bound(), || record.is_file())
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    ask_everything(&telling);
+    telling.hub.wake_notices();
+    test_time::until_true("the six notices handed", hand_bound(), || {
+        telling.told().len() == 6
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    telling.hub.stop_notices();
+    let worker = telling.hub.notice_worker.get().unwrap();
+    assert!(worker.thread.lock().unwrap().is_none(), "joined");
+    assert!(worker.running.stopping());
+    telling.hub.wake_notices();
+}
+
+#[test]
+fn a_second_start_starts_no_second_worker() {
+    let telling = Telling::new(false);
+    let hub = &telling.hub;
+    hub.start_notices_with("symphony", bounds(), Box::new(|| ORIGIN.to_string()));
+    let second = Arc::new(());
+    let held = Arc::clone(&second);
+    hub.start_notices_with(
+        "symphony",
+        bounds(),
+        Box::new(move || {
+            let _ = &held;
+            ORIGIN.to_string()
+        }),
+    );
+    assert_eq!(
+        Arc::strong_count(&second),
+        1,
+        "its origin is let go as it returns: no worker took it"
+    );
+    hub.stop_notices();
+}
+
+#[test]
+fn a_hub_dropped_without_a_stop_ends_its_worker_and_lets_the_record_go() {
+    let Telling {
+        tree,
+        root,
+        f: _board,
+        hub,
+        gate: _gate,
+        ..
+    } = Telling::new(false);
+    let alive = Arc::new(());
+    let held = Arc::clone(&alive);
+    hub.start_notices_with(
+        "symphony",
+        bounds(),
+        Box::new(move || {
+            let _ = &held;
+            ORIGIN.to_string()
+        }),
+    );
+    let record = root.join("artifacts/notices.json");
+    test_time::until_true("the worker's first look", hand_bound(), || record.is_file())
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    drop(hub);
+    // Its wake went with the hub: the worker ends and lets its turns go, its origin before its
+    // runner, whose lock is then waited for on its own.
+    test_time::until_true("the worker's turns let go", hand_bound(), || {
+        Arc::strong_count(&alive) == 1
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    let machine = tree.path("machine");
+    test_time::until_true("the record's lock let go", hand_bound(), || {
+        let key = symphony::notices::Key::of(&machine).unwrap();
+        Runner::open(&root, "symphony", key).is_ok()
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
+}
+
+/// A wall-clock backstop a stall alone reaches: six fake programs' runs on a loaded machine.
+fn hand_bound() -> std::time::Duration {
+    test_time::backstop(crate::notices::hand::MOST)
+}
+
+/// The server's hand bounds, each as the test's backstop, so a hand's outcome is the code's and
+/// never a loaded machine's stall.
+fn bounds() -> Bounds {
+    Bounds {
+        ends: test_time::backstop(Bounds::SERVER.ends),
+        heard: test_time::backstop(Bounds::SERVER.heard),
+    }
+}
+
+#[test]
+fn what_the_machine_folder_does_not_let_it_trust_tells_no_one_said_once() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let chmod = |path: &std::path::Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    let telling = Telling::new(false);
+    let machine = telling.tree.path("machine");
+    // A key another account may read opens no runner, said once; mended, it opens one.
+    symphony::notices::Key::of(&machine).unwrap();
+    let key = machine.join("notices/record.key");
+    chmod(&key, 0o644);
+    let mut said = Said::default();
+    assert!(telling.hub.open_notices("symphony", &mut said).is_none());
+    assert!(
+        said.0["key"].starts_with("nothing is told: "),
+        "{:?}",
+        said.0
+    );
+    chmod(&key, 0o600);
+    let mut passes = turns();
+    // Profiles that do not read: no look, said.
+    let profiles = machine.join("people.json");
+    let kept = std::fs::read(&profiles).unwrap();
+    std::fs::write(&profiles, "{ not json").unwrap();
+    passes.pass(&telling.hub);
+    assert_eq!(passes.cursor(), None);
+    assert!(passes.said.0.contains_key("profiles"));
+    std::fs::write(&profiles, kept).unwrap();
+    passes.pass(&telling.hub);
+    assert!(!passes.said.0.contains_key("profiles"));
+    let first = passes.cursor().unwrap();
+    // Programs another account may write: nothing sent, said, and the look goes on.
+    let programs = machine.join("notices/programs.toml");
+    chmod(&programs, 0o666);
+    ask_everything(&telling);
+    passes.pass(&telling.hub);
+    assert!(telling.told().is_empty());
+    assert!(passes.said.0["programs"].contains("may be written by another account"));
+    assert!(passes.cursor().unwrap() > first, "its lines are looked at");
+    // Mended: what passed while it was refused is not told after.
+    chmod(&programs, 0o600);
+    passes.pass(&telling.hub);
+    assert!(!passes.said.0.contains_key("programs"));
+    assert!(telling.told().is_empty());
+    // A hub with no machine folder opens no runner.
+    let bare = Hub::new(&telling.root, &telling.root.join("build/client"));
+    assert!(
+        bare.open_notices("symphony", &mut Said::default())
+            .is_none()
+    );
+}
+
+#[test]
+fn a_fault_is_said_once_until_it_changes_or_clears() {
+    let mut said = Said::default();
+    said.once("symphony", "board", "down".into());
+    said.once("symphony", "board", "down".into());
+    assert_eq!(said.0["board"], "down");
+    said.once("symphony", "board", "refused".into());
+    assert_eq!(said.0["board"], "refused");
+    said.clear("board");
+    assert!(said.0.is_empty());
+}
+
+/// Words standing under one place are not said again under another, as one failure two places
+/// meet: each place keeps them and clears alone, and they are said again only once no place
+/// holds them, or as other words.
+#[test]
+fn a_fault_standing_under_another_place_is_not_said_again() {
+    let mut said = Said::default();
+    said.once("symphony", "look", "unwritten".into());
+    said.once("symphony", "record", "unwritten".into());
+    assert_eq!(said.1, ["unwritten"]);
+    assert_eq!(
+        (said.0["look"].as_str(), said.0["record"].as_str()),
+        ("unwritten", "unwritten")
+    );
+    said.clear("look");
+    said.once("symphony", "look", "unwritten".into());
+    assert_eq!(said.1, ["unwritten"], "the record's words still stand");
+    said.once("symphony", "record", "refused".into());
+    said.once("symphony", "record", "unwritten".into());
+    assert_eq!(
+        said.1,
+        ["unwritten", "refused"],
+        "the look's words still stand"
+    );
+    said.clear("look");
+    said.clear("record");
+    said.once("symphony", "record", "unwritten".into());
+    assert_eq!(said.1, ["unwritten", "refused", "unwritten"]);
+}
+
+#[test]
+fn a_replacement_tells_nothing_until_its_gate_opens_then_tells_from_the_record_as_it_stands() {
+    let telling = Telling::new(false);
+    // The generation being replaced: its runner holds the record and tells.
+    let mut old = turns();
+    old.pass(&telling.hub);
+    assert!(old.cursor().is_some());
+    // The replacement's hub on the same project, its gate held until its hand-off commits.
+    let gate = Arc::new(Gate::default());
+    gate.hold();
+    let mut replacement = Hub::new(&telling.root, &telling.root.join("build/client"));
+    replacement.machine = telling.hub.machine.clone();
+    let board = telling.f.other_database();
+    replacement.connect_reader = Box::new(move |_| Ok(store_on(&board)));
+    replacement.refresh_page("", &telling.root).unwrap();
+    replacement.gate_recorders(Arc::clone(&gate));
+    let mut new = turns();
+    let record = telling.root.join("artifacts/notices.json");
+    let before = std::fs::read(&record).unwrap();
+    ask_everything(&telling);
+    replacement.refresh_page("", &telling.root).unwrap();
+    replacement.observe(&telling.f.store);
+    replacement.people_read(&telling.f.store);
+    new.pass(&replacement);
+    assert!(new.runner.is_none(), "a held gate reads no record");
+    old.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 6, "the old generation tells");
+    assert_ne!(std::fs::read(&record).unwrap(), before);
+    // The hand-off commits: the old gate closes, the new one opens.
+    telling.gate.close(1.0);
+    gate.open(1.0);
+    // A hand the old generation has under way still holds the record: the new reads it after.
+    new.pass(&replacement);
+    assert!(new.runner.is_none());
+    assert!(new.said.0["lock"].contains("held by another server's notices"));
+    old.pass(&telling.hub);
+    assert!(old.runner.is_none(), "a closed gate lets the record go");
+    new.pass(&replacement);
+    assert!(new.runner.is_some());
+    assert_eq!(
+        new.cursor(),
+        old_cursor(&record),
+        "the record as the old one left it"
+    );
+    assert_eq!(telling.told().len(), 6, "nothing told twice");
+    // From then the new generation tells what comes.
+    let both = "- [ ] **new-palette** — Which palette?\n- [ ] **new-grid** — Which grid?\n";
+    std::fs::write(telling.root.join(DOC), page_holding(both)).unwrap();
+    replacement.refresh_page("", &telling.root).unwrap();
+    new.pass(&replacement);
+    assert_eq!(telling.told().len(), 8);
+    assert!(
+        telling.told()[6..]
+            .iter()
+            .all(|told| told.3.ends_with("#new-grid"))
+    );
+}
+
+/// The cursor the record at `path` holds.
+fn old_cursor(path: &std::path::Path) -> Option<i64> {
+    let record: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    record["line"].as_i64()
+}
+
+#[test]
+fn a_branchs_proposal_written_for_one_person_tells_them_alone_as_its_verdict_reads_it() {
+    let telling = Telling::new(false);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let worktree = telling.tree.path("proposal");
+    let add = ["worktree", "add", "-q", "-b", "design/policy"];
+    crate::testing::git(
+        &telling.root,
+        &[&add[..], &[worktree.to_str().unwrap()]].concat(),
+    );
+    // In design's folder, written for bo: design's members but bo are not told.
+    let card = "- [ ] **proposed** — *For:* bo. Which palette for the policy?\n";
+    std::fs::write(worktree.join(DOC), page_holding(card)).unwrap();
+    crate::testing::git(&worktree, &["commit", "-qam", "Propose"]);
+    telling.hub.refresh_docs(None).unwrap();
+    passes.pass(&telling.hub);
+    let told = telling.told();
+    assert_eq!(told.len(), 1, "{told:?}");
+    let (kind, way, address, link) = &told[0];
+    assert_eq!(
+        (kind.as_str(), way.as_str(), address.as_str()),
+        ("card", "email", BO_EMAIL)
+    );
+    assert!(link.ends_with("#proposed"), "{link}");
+}
+
+/// A tick's look at the board's people and map is the one read of them: the pass it wakes reads
+/// neither again, its one request the comments held on documents. Measured before, on the same
+/// board and before the pass read those comments: the tick's look made 2 requests and the pass 2
+/// more, its own people and map (4), where people are named, and 1 and 2 (3) on a board that
+/// names nobody.
+#[test]
+fn a_tick_and_the_pass_it_wakes_read_the_boards_people_once() {
+    for (nobody, look) in [(false, 2), (true, 1)] {
+        let telling = Telling::new(nobody);
+        let mut passes = turns();
+        passes.pass(&telling.hub);
+        let queries = telling.f.store.database().queries();
+        let count = || queries.within(&(i64::MIN..=i64::MAX)).0.count;
+        let before = count();
+        telling.hub.people_read(&telling.f.store);
+        assert_eq!(
+            count() - before,
+            look,
+            "the people, and the map where it names any"
+        );
+        passes.pass(&telling.hub);
+        assert_eq!(
+            count() - before,
+            look + 1,
+            "nobody={nobody}: the pass reads the held comments alone"
+        );
+    }
+}
+
+/// A pass tells by the board's people as its tick's last look read them: before any look it looks
+/// at nothing; where the last look could not read them it looks at nothing and says so once; and
+/// a change of the people waits for the look that reads it.
+#[test]
+fn a_pass_tells_by_the_ticks_look_at_the_people_and_where_it_failed_says_so_once() {
+    let telling = Telling::new(false);
+    *telling.hub.people.lock().unwrap() = Default::default();
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    assert_eq!(passes.cursor(), None, "no look before the tick's");
+    telling.hub.people_read(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert!(passes.cursor().is_some(), "the first look");
+    // A field no build knows: the board's people do not read.
+    let row = || telling.f.store.raw().row("people", "ana");
+    row().set(json!({"stray": true})).unwrap();
+    telling.hub.people_read(&telling.f.store);
+    ask_everything(&telling);
+    for _ in 0..2 {
+        passes.pass(&telling.hub);
+        assert!(telling.told().is_empty(), "{:?}", telling.told());
+    }
+    let said = passes.said.0.get("board").cloned().unwrap_or_default();
+    assert!(said.starts_with("the board's people: "), "{said}");
+    row().set(json!({"stray": null})).unwrap();
+    telling.hub.people_read(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(telling.told().len(), 6, "{:?}", telling.told());
+    assert!(!passes.said.0.contains_key("board"), "the fault cleared");
+    // cy joins design: the card waiting on design is told to cy once a look reads cy there.
+    (telling.f.store.join_group("cy", "design", "owner")).unwrap();
+    telling.whatsapp();
+    passes.pass(&telling.hub);
+    assert_eq!(
+        telling.told().len(),
+        6,
+        "the look has not read cy in design"
+    );
+    telling.hub.people_read(&telling.f.store);
+    passes.pass(&telling.hub);
+    assert_eq!(
+        told_after(&telling, 6),
+        [notice("card", "whatsapp", "+15551234567")]
+    );
+}
+
+impl Telling {
+    /// Moves the hub's clock on by `seconds`.
+    fn pass_time(&self, seconds: f64) {
+        *self.clock.lock().unwrap() += seconds;
+    }
+
+    /// Moves the retries' clock past the longest wait a failed board tick asks
+    /// ([`super::super::retry`]): the next tick is due.
+    fn retry_due(&self) {
+        *self.retry.lock().unwrap() += Duration::from_secs(61);
+    }
+
+    /// Whether the fake program answers each notice `75`, not sent this time, rather than take it.
+    fn later(&self, later: bool) {
+        let flag = self.tree.path("machine/notices/later");
+        if later {
+            std::fs::write(flag, "").unwrap();
+        } else {
+            std::fs::remove_file(flag).unwrap();
+        }
+    }
+
+    /// The card new-palette starts waiting on design by a document's edit alone, which the hub's
+    /// page reads.
+    fn card_waits(&self) {
+        std::fs::write(self.root.join(DOC), page(true)).unwrap();
+        self.hub.refresh_page("", &self.root).unwrap();
+    }
+
+    /// A tick of the hub's board, on `board` as the last left it, opening another store of the
+    /// fixture's where it has none.
+    fn tick(&self, board: &mut Option<symphony_board::Store>) {
+        self.hub
+            .board_tick(board, &mut |_: &Path| Ok(self.f.other()));
+    }
+
+    /// The table the board's marker reads gone (`away`) or back: each board read of a tick fails
+    /// while it is gone, as the board still takes its people's writes.
+    fn marker_table(&self, away: bool) {
+        let (from, to) = ("session_revision", "session_revision_away");
+        let (from, to) = if away { (from, to) } else { (to, from) };
+        let sql = format!("ALTER TABLE {from} RENAME TO {to}");
+        self.f.postgresql().simple(&sql).unwrap();
+    }
+}
+
+/// The card new-palette as the fake program is handed it by `way` to `address`.
+fn card_for(way: &str, address: &str) -> (String, String, String) {
+    notice("card", way, address)
+}
+
+/// While the board's tick cannot read the board, a pass tells by no look: a person removed
+/// meanwhile is told nothing of a card that starts waiting by a document's edit alone, and the
+/// failure is said once, in the first failure's words, whatever words the next failures carry, of
+/// the board (a slow one's) or of its people.
+/// The next tick that reads looks again and wakes a pass, which tells the card once, to those that
+/// look names. Before, the pass told it to bo by the look taken before the failure.
+#[test]
+fn a_failed_board_read_holds_the_look_until_a_tick_reads_the_people_again() {
+    let telling = Telling::new(false);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    assert!(passes.cursor().is_some(), "the first look");
+    let mut board = None;
+    telling.tick(&mut board);
+    assert!(board.is_some(), "a tick that reads");
+    telling.marker_table(true);
+    telling.tick(&mut board);
+    assert!(board.is_none(), "the tick's read failed");
+    (telling.f.store.leave_group("bo", "design", "owner")).unwrap();
+    telling.card_waits();
+    passes.pass(&telling.hub);
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    let first = telling.hub.people_looked().unwrap_err();
+    assert!(first.contains("session_revision"), "{first}");
+    let said = format!("the board's people: {first}");
+    assert_eq!(passes.said.0.get("board"), Some(&said));
+    // A slow board's words next, then a people read that fails on a field no build knows, then
+    // the tick's own failure again: the first failure's words stand, so nothing is said again.
+    let slow = "the board's database: request 7 is slow: no answer within 5 s".to_string();
+    telling.hub.board_error(slow);
+    let row = || telling.f.store.raw().row("people", "ana");
+    row().set(json!({"stray": true})).unwrap();
+    telling.hub.people_read(&telling.f.store);
+    row().set(json!({"stray": null})).unwrap();
+    let mut after = vec![telling.hub.people_looked().unwrap_err()];
+    passes.pass(&telling.hub);
+    let mut told = vec![passes.said.0["board"].clone()];
+    telling.retry_due();
+    telling.tick(&mut board);
+    after.push(telling.hub.people_looked().unwrap_err());
+    passes.pass(&telling.hub);
+    told.push(passes.said.0["board"].clone());
+    assert_eq!(after, [first.clone(), first]);
+    assert_eq!(told, [said.clone(), said]);
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    // The board reads again: the tick looks and wakes, and ana alone is told, once.
+    telling.marker_table(false);
+    telling.retry_due();
+    telling.tick(&mut board);
+    assert!(board.is_some());
+    passes.pass(&telling.hub);
+    passes.pass(&telling.hub);
+    assert_eq!(told_after(&telling, 0), [card_for("slack", ANA_SLACK)]);
+    assert!(!passes.said.0.contains_key("board"), "the fault cleared");
+}
+
+/// A tick wakes the notices only once it looked at the board's people: the one wake of a tick
+/// finds that tick's look, never the one before it. A tick whose read fails wakes nothing and
+/// leaves the look failed.
+#[test]
+fn a_ticks_wake_finds_its_own_look() {
+    let telling = Telling::new(false);
+    let before = telling.hub.people_looked().unwrap().unwrap();
+    (telling.f.store.leave_group("bo", "design", "owner")).unwrap();
+    super::woken::take();
+    let mut board = None;
+    telling.tick(&mut board);
+    let now = telling.hub.people_looked().unwrap().unwrap();
+    assert!(
+        now.0.revision > before.0.revision,
+        "the tick read bo's leaving"
+    );
+    let (wakes, found) = super::woken::take();
+    assert_eq!(wakes, 1);
+    let found = found.unwrap().unwrap().unwrap();
+    assert!(Arc::ptr_eq(&found, &now), "the wake found this tick's look");
+    telling.marker_table(true);
+    telling.retry_due();
+    telling.tick(&mut board);
+    assert!(board.is_none(), "the tick's read failed");
+    assert_eq!(super::woken::take().0, 0, "a failed tick wakes nothing");
+    assert!(telling.hub.people_looked().is_err());
+}
+
+/// The most turns [`worker_turns`] lets the worker take: far more than one wake's.
+const MOST_TURNS: usize = 50;
+
+/// The worker's turns on `hub` from `turns`, each wait it asks answered as its wake channel
+/// answers when no wake comes: a wait of no time at once, so it turns again, up to [`MOST_TURNS`];
+/// a longer one, or one for a wake alone, ends them. The waits it asked, one a turn.
+fn worker_turns(hub: &Arc<Hub>, turns: &mut Turns) -> Vec<Option<Duration>> {
+    let mut waits = Vec::new();
+    super::turn_until(&Arc::downgrade(hub), turns, |within| {
+        waits.push(within);
+        within == Some(Duration::ZERO) && waits.len() < MOST_TURNS
+    });
+    waits
+}
+
+/// The card new-palette waiting, its two notices made and answered `75`, then the hub's clock past
+/// their next hand: both are due, and the program takes them from then on.
+fn due_again(telling: &Telling, passes: &mut Turns) {
+    passes.pass(&telling.hub);
+    telling.later(true);
+    telling.card_waits();
+    passes.pass(&telling.hub);
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    assert!(passes.runner.as_ref().and_then(Runner::next_due).is_some());
+    telling.later(false);
+    telling.pass_time(crate::notices::runner::again_after(1) + 1.0);
+}
+
+/// A pass that cannot look still hands what is due: before the tick's first look, and while the
+/// board's last read failed, the notices due again after a `75` are handed, and the worker then
+/// waits for a wake, one turn in all. Counted before: it turned at once again and again until the
+/// look came, handing nothing ([`MOST_TURNS`] here).
+#[test]
+fn a_pass_that_cannot_look_hands_what_is_due_and_the_worker_waits_for_a_wake() {
+    for failed in [false, true] {
+        let telling = Telling::new(false);
+        let mut passes = turns();
+        due_again(&telling, &mut passes);
+        if failed {
+            telling
+                .hub
+                .board_error("the board could not be reached".into());
+        } else {
+            *telling.hub.people.lock().unwrap() = Default::default();
+        }
+        assert_eq!(
+            worker_turns(&telling.hub, &mut passes),
+            [None],
+            "failed={failed}"
+        );
+        assert_eq!(
+            told_after(&telling, 0),
+            [card_for("slack", ANA_SLACK), card_for("email", BO_EMAIL)]
+        );
+    }
+}
+
+/// A pass that can hand nothing, its profiles unread or its record unwritten, has the worker wait
+/// for a wake with its notices due, one turn, said once; the turn a wake starts once they mend
+/// hands them. Counted before: it turned at once again and again ([`MOST_TURNS`] here).
+#[test]
+fn a_pass_that_can_hand_nothing_waits_for_a_wake() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let chmod = |path: &Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    for unread in [true, false] {
+        let telling = Telling::new(false);
+        let mut passes = turns();
+        due_again(&telling, &mut passes);
+        let profiles = telling.tree.path("machine/people.json");
+        let artifacts = telling.root.join("artifacts");
+        let kept = std::fs::read(&profiles).unwrap();
+        let place = if unread {
+            std::fs::write(&profiles, "{ not json").unwrap();
+            "profiles"
+        } else {
+            chmod(&artifacts, 0o555);
+            "record"
+        };
+        let first = worker_turns(&telling.hub, &mut passes);
+        let said = passes.said.0.contains_key(place);
+        std::fs::write(&profiles, kept).unwrap();
+        chmod(&artifacts, 0o755);
+        assert_eq!(first, [None], "{place}");
+        assert!(said, "{place}: {:?}", passes.said.0);
+        assert!(telling.told().is_empty(), "{:?}", telling.told());
+        assert_eq!(worker_turns(&telling.hub, &mut passes), [None], "{place}");
+        assert_eq!(
+            told_after(&telling, 0),
+            [card_for("slack", ANA_SLACK), card_for("email", BO_EMAIL)],
+            "{place}"
+        );
+        assert!(!passes.said.0.contains_key(place), "{place}: cleared");
+    }
+}
+
+/// A look whose record cannot be written makes no notice, said once in a place of its own, which
+/// the hand after it, with nothing due, never clears; once the record writes, the next look tells
+/// the card that started waiting meanwhile.
+#[test]
+fn a_look_whose_record_cannot_be_written_is_said_once_and_tells_once_it_writes() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let chmod = |path: &Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    let telling = Telling::new(false);
+    let mut passes = turns();
+    passes.pass(&telling.hub);
+    let artifacts = telling.root.join("artifacts");
+    chmod(&artifacts, 0o555);
+    telling.card_waits();
+    let mut said = Vec::new();
+    for _ in 0..2 {
+        passes.pass(&telling.hub);
+        said.push(passes.said.0.clone());
+    }
+    chmod(&artifacts, 0o755);
+    for said in &said {
+        assert!(said.contains_key("look"), "{said:?}");
+        assert!(!said.contains_key("record"), "nothing was due: {said:?}");
+    }
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    passes.pass(&telling.hub);
+    assert!(!passes.said.0.contains_key("look"), "the fault cleared");
+    assert_eq!(
+        told_after(&telling, 0),
+        [card_for("slack", ANA_SLACK), card_for("email", BO_EMAIL)]
+    );
+}
+
+/// A record that cannot be written while a notice is due is said once by a pass: the look, moved
+/// by a line, meets it first, in its own place, and the hand of what is due meets the same words in
+/// the record's, where they stand unsaid; the next pass says nothing. Once the record writes, both
+/// clear and what was due is handed. Before, the first pass said the same line twice.
+#[test]
+fn a_record_that_cannot_be_written_with_a_notice_due_is_said_once() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let chmod = |path: &Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    let telling = Telling::new(false);
+    let mut passes = turns();
+    due_again(&telling, &mut passes);
+    let before = passes.said.1.len();
+    let store = &telling.f.store;
+    (store.say("app/x", "worker", "Carrying on.", Some("@orchestrator"))).unwrap();
+    telling.hub.observe(store);
+    let artifacts = telling.root.join("artifacts");
+    chmod(&artifacts, 0o555);
+    let mut said = Vec::new();
+    for _ in 0..2 {
+        passes.pass(&telling.hub);
+        said.push(passes.said.1[before..].to_vec());
+    }
+    let places = passes.said.0.clone();
+    chmod(&artifacts, 0o755);
+    let unwritten = places.get("record").cloned().unwrap_or_default();
+    assert!(unwritten.contains("notices.json"), "{places:?}");
+    assert_eq!(places.get("look"), Some(&unwritten), "the look met it too");
+    assert_eq!(said, [[unwritten.clone()], [unwritten]]);
+    assert!(telling.told().is_empty(), "{:?}", telling.told());
+    passes.pass(&telling.hub);
+    assert!(!passes.said.0.contains_key("look"), "{:?}", passes.said.0);
+    assert!(!passes.said.0.contains_key("record"), "{:?}", passes.said.0);
+    assert_eq!(
+        told_after(&telling, 0),
+        [card_for("slack", ANA_SLACK), card_for("email", BO_EMAIL)]
+    );
+}
+
+/// The worker waits until the next notice is due, a retry after a `75`, and a wake while it waits
+/// turns it: the notice due by then is handed.
+#[test]
+fn the_worker_waiting_for_a_retry_hands_it_at_a_wake_once_it_is_due() {
+    let telling = Telling::new(false);
+    telling.later(true);
+    let hub = &telling.hub;
+    hub.start_notices_with("symphony", bounds(), Box::new(|| ORIGIN.to_string()));
+    let record = telling.root.join("artifacts/notices.json");
+    test_time::until_true("the worker's first look", hand_bound(), || record.is_file())
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    telling.card_waits();
+    hub.wake_notices();
+    // A notice not handing has no `handing` in the record.
+    let answered = || {
+        let record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+        let pending = record["pending"].as_array().cloned().unwrap_or_default();
+        pending.len() == 2
+            && (pending.iter()).all(|notice| notice["hands"] == 1 && notice["handing"] != true)
+    };
+    test_time::until_true("both notices answered 75", hand_bound(), answered)
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    telling.later(false);
+    telling.pass_time(crate::notices::runner::again_after(1) + 1.0);
+    hub.wake_notices();
+    test_time::until_true("both notices handed again", hand_bound(), || {
+        telling.told().len() == 2
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    hub.stop_notices();
+    assert_eq!(
+        told_after(&telling, 0),
+        [card_for("slack", ANA_SLACK), card_for("email", BO_EMAIL)]
+    );
+}

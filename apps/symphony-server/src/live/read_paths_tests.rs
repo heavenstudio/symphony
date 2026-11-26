@@ -25,7 +25,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use symphony_board::rpc::Client;
 use tower::ServiceExt;
 
 #[path = "../hosted/native_tests.rs"]
@@ -68,11 +67,55 @@ pub(super) fn observe(hub: &Hub, store: &symphony_board::Store, agents: &[&str])
 /// How many requests every client of `store`'s board in this process has sent it.
 pub(super) fn requests(store: &symphony_board::Store) -> u64 {
     store
-        .client()
+        .database()
         .queries()
         .report(symphony_board::sweep::trigger::now())
         .0
         .count
+}
+
+/// A change of the board alone, written past its commands ([`symphony_board::Store::raw`]) as no
+/// command of the store writes it: no file, no ref, and no refresh of the documents.
+pub(super) enum Move {
+    /// `fields` set on the task `slug`.
+    Set(&'static str, serde_json::Value),
+    /// The task `slug` come to link the document `target`.
+    Link(&'static str, &'static str),
+    /// Every link of the task `slug` removed.
+    Unlink(&'static str),
+    /// Nothing written.
+    Nothing,
+}
+
+/// `change` made on `store`'s board.
+pub(super) fn moved(store: &symphony_board::Store, change: Move) {
+    let raw = store.raw();
+    match change {
+        Move::Set(slug, fields) => raw.row("task", slug).set(fields),
+        Move::Link(slug, target) => {
+            let link = serde_json::json!({ "slug": slug, "kind": "doc", "target": target });
+            (raw.row("link", serde_json::json!([slug, "doc", target]))).create(link)
+        }
+        Move::Unlink(slug) => (raw.table("link"))
+            .matching(serde_json::json!({ "slug": slug }))
+            .delete(),
+        Move::Nothing => Ok(()),
+    }
+    .unwrap();
+}
+
+/// A store on a board whose server went after the store was opened: nothing listens where its
+/// socket was.
+fn gone() -> symphony_board::Store {
+    let socket = std::path::PathBuf::from(format!("/tmp/symphony-gone-{}", std::process::id()));
+    let db = symphony_board::pg::Client::new(&socket, "gone").waiting(Duration::from_secs(1));
+    symphony_board::Store::unchecked_on(
+        db.into(),
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        HOST,
+        &symphony_board::Opening::write(),
+    )
 }
 
 /// A FIFO at `path`: a render that reads it waits until the test writes.
@@ -487,13 +530,8 @@ fn a_first_read_begun_before_a_board_read_moved_its_linking_task_reads_again() {
     // board's tasks before it, is out: this one is not among them yet.
     let (read_while_held, read) =
         first_read_across(&hub, "docs/SLOW.md", &root.join("docs/held.png"), || {
-            f.store
-                .client()
-                .query(
-                    "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/slow' RETURN NONE;",
-                    serde_json::json!({}),
-                )
-                .unwrap();
+            let status = serde_json::json!({ "status": "in_progress" });
+            moved(&f.store, Move::Set("tools/slow", status));
             observe(&hub, &f.store, &[]);
         });
     assert!(read_while_held, "the board read waited on the first read");
@@ -642,7 +680,7 @@ fn a_document_or_folder_read_takes_its_tasks_from_the_board_the_hub_holds_and_re
     let sections = hub
         .document_sections("", "docs/README.md", &["intro".into()])
         .unwrap();
-    let folder = hub.folder("", "docs").unwrap();
+    let folder = hub.folder("", "docs", None).unwrap();
     assert_eq!(
         requests(&f.store),
         before,
@@ -749,7 +787,7 @@ fn a_task_pages_reads_share_one_store_of_the_board_and_the_agents_pages_read_no_
     );
     let mut hub = Hub::new(&root, &root.join("build/client"));
     let connects = Arc::new(AtomicUsize::new(0));
-    let (counted, board) = (Arc::clone(&connects), f.other_client());
+    let (counted, board) = (Arc::clone(&connects), f.other_database());
     hub.connect_reader = Box::new(move |_| {
         counted.fetch_add(1, Ordering::SeqCst);
         Ok(store_on(&board))
@@ -824,19 +862,10 @@ fn a_store_the_board_failed_is_dropped_and_the_next_read_opens_the_board_anew() 
         let f = Fixture::new(Seed::default().task("tools/open", "ready"));
         let mut hub = Hub::new(&root, &root.join("build/client"));
         let connects = Arc::new(AtomicUsize::new(0));
-        let (counted, board) = (Arc::clone(&connects), f.other_client());
+        let (counted, board) = (Arc::clone(&connects), f.other_database());
         hub.connect_reader = Box::new(move |_| {
             if counted.fetch_add(1, Ordering::SeqCst) == 0 {
-                // A server that went after the store was opened: nothing listens where it was.
-                let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-                let addr = gone.local_addr().unwrap().to_string();
-                drop(gone);
-                return Ok(symphony_board::Store::unchecked(
-                    Client::new(&addr, "sf", "gone").waiting(Duration::from_secs(1)),
-                    Box::new(|| NOW),
-                    Box::new(|_| false),
-                    HOST,
-                ));
+                return Ok(gone());
             }
             Ok(store_on(&board))
         });
@@ -882,19 +911,10 @@ fn a_task_board_search_reads_on_the_store_the_task_pages_share_and_drops_it_only
     );
     let mut hub = Hub::new(&root, &root.join("build/client"));
     let connects = Arc::new(AtomicUsize::new(0));
-    let (counted, board) = (Arc::clone(&connects), f.other_client());
+    let (counted, board) = (Arc::clone(&connects), f.other_database());
     hub.connect_reader = Box::new(move |_| {
         if counted.fetch_add(1, Ordering::SeqCst) == 0 {
-            // A server that went after the store was opened: nothing listens where it was.
-            let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let addr = gone.local_addr().unwrap().to_string();
-            drop(gone);
-            return Ok(symphony_board::Store::unchecked(
-                Client::new(&addr, "sf", "gone").waiting(Duration::from_secs(1)),
-                Box::new(|| NOW),
-                Box::new(|_| false),
-                HOST,
-            ));
+            return Ok(gone());
         }
         Ok(store_on(&board))
     });
@@ -935,7 +955,7 @@ fn agent_page_order_study_preserves_full_payload_filters_and_pagination() {
         let root = repository(&tree);
         let f = Fixture::new(Seed::default());
         let mut hub = Hub::new(&root, &root.join("build/client"));
-        let board = f.other_client();
+        let board = f.other_database();
         hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
         hub.refresh_page("", &root).unwrap();
         let mut rows: Vec<_> = (0..count)
@@ -986,6 +1006,10 @@ fn agent_page_order_study_preserves_full_payload_filters_and_pagination() {
             });
             let total = expected.agents.len();
             let mut candidate = expected.agents.clone();
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the standard sort this test holds the shared sorter to"
+            )]
             expected.agents.sort_by(|a, b| a.handle.cmp(&b.handle));
             symphony_board::order::sort_by(
                 &mut candidate,
@@ -1045,6 +1069,10 @@ fn activity_order_study_preserves_full_payload_stable_ties_and_truncate_boundary
         let mut live = symphony_api::Activity {
             items: original.clone(),
         };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the standard sort this test holds the shared sorter to"
+        )]
         original.sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
         original.truncate(40);
         symphony_board::order::sort_by(
@@ -1085,11 +1113,12 @@ fn activity_order_study_keeps_native_forty_plus_forty_merge_and_refresh_payload(
             kind: "msg".into(),
             text: format!("Task payload {id}"),
             ts: NOW + f64::from(i32::try_from(id).unwrap()),
+            person: false,
         });
     }
     let f = Fixture::new(seed);
     let mut hub = Hub::new(&root, &root.join("build/client"));
-    let board = f.other_client();
+    let board = f.other_database();
     hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
     hub.refresh_page("", &root).unwrap();
     let mut expected = hub.pages.read().unwrap()[""].activity.items.clone();
@@ -1098,7 +1127,7 @@ fn activity_order_study_keeps_native_forty_plus_forty_merge_and_refresh_payload(
     assert_eq!(tasks.len(), 40, "the board's bounded owner-message input");
     expected.extend(tasks);
     assert_eq!(expected.len(), 80);
-    expected.sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
+    symphony_board::order::sort_by(&mut expected, &|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
     expected.truncate(40);
     observe(&hub, &f.store, &["amber"]);
     assert_eq!(hub.pages.read().unwrap()[""].activity.items, expected);

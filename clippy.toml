@@ -21,7 +21,7 @@ allow-print-in-tests = true
 
 # Names `doc_markdown` would otherwise want in backticks: the products and formats the docs name as
 # words. `..` keeps clippy's own list (JavaScript, GitHub, macOS and the rest).
-doc-valid-idents = ["SurrealDB", "SurrealKV", "SQLite", "GDScript", "CBOR", ".."]
+doc-valid-idents = ["SurrealDB", "SQLite", "GDScript", "CBOR", "WhatsApp", ".."]
 
 # No code waits a length of time and then looks or acts (RULES.md `code/no-timed-waits`): it waits
 # for the thing itself (a message, a signal, a child's end, a watcher's event) and acts at once. A
@@ -29,7 +29,9 @@ doc-valid-idents = ["SurrealDB", "SurrealKV", "SQLite", "GDScript", "CBOR", ".."
 # until it is converted says why in `#[expect(clippy::disallowed_methods, reason = "no-timed-waits
 # baseline: ...")]`, which fails once the site is gone. A deadline that only bounds a wait for an
 # event (`recv_timeout`, `Condvar::wait_timeout`, `thread::park_timeout`, `tokio::time::timeout`) is
-# not listed. Tables, not one array, so crates/tasks/clippy.toml adds its own after this file whole.
+# not listed. Tables, not one array, so a crate's own clippy.toml (crates/tasks', crates/symphony's,
+# apps/symphony-server's) adds its own after this file whole, which
+# crates/symphony/src/channel_tests.rs holds each to.
 [[disallowed-methods]]
 path = "std::thread::sleep"
 reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"

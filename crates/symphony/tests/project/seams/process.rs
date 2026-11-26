@@ -482,6 +482,19 @@ fn a_plugins_process_offers_and_takes_its_board_action_as_it_does_linked() {
                 plugins.board_actions()[0].submit(&tree.root, &task, &submission)
             };
             assert_eq!(taken(&piped), taken(&linked), "{status} {payload}");
+            // Who sent it crosses the pipe whole, and the plugin answers by it.
+            let sender = symphony_plugin::Sender::new("ana", "Ana Lima", vec!["ana-l".into()]);
+            let sent = |plugins: &Plugins| {
+                plugins.board_actions()[0].submit_from(&tree.root, &task, &submission, &sender)
+            };
+            assert_eq!(sent(&piped), sent(&linked), "{status} {payload} from ana");
+            if let Ok(done) = sent(&piped) {
+                assert!(
+                    done.said.ends_with(", from ana (Ana Lima, ana-l)"),
+                    "{}",
+                    done.said
+                );
+            }
         }
     }
 }
@@ -1496,7 +1509,7 @@ fn the_cost_of_a_plugins_calls_linked_and_from_its_process() {
             more.push((process - linked, name.clone()));
         }
     }
-    more.sort_by(|a, b| a.0.total_cmp(&b.0));
+    symphony_board::order::sort_by(&mut more, &|a, b| a.0.total_cmp(&b.0));
     if let (Some((least, cheapest)), Some((most, dearest))) = (more.first(), more.last()) {
         println!(
             "from the process, a call costs {least:.1} µs ({cheapest}) to {most:.1} µs ({dearest}) \

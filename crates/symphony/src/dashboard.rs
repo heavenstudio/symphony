@@ -330,7 +330,8 @@ pub(crate) fn merge_decisions<'a>(
         proposals.insert((branch.path(), branch.card.slug.as_str()), branch);
         ones.push((branch, one, main.is_some()));
     }
-    let proposed_slugs: BTreeSet<_> = ones.iter().map(|(b, _, _)| b.card.slug.as_str()).collect();
+    let mut proposed_slugs: BTreeSet<_> = BTreeSet::new();
+    proposed_slugs.extend(ones.iter().map(|(b, _, _)| b.card.slug.as_str()));
     for doc in docs.iter_mut() {
         doc.decisions
             .retain(|card| !proposed_slugs.contains(card.slug.as_str()));
@@ -503,7 +504,7 @@ fn agent_queue(
             answered += u32::from(answered_today);
         }
     }
-    activity.sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
+    symphony_board::order::sort_by(&mut activity, &|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
     activity.truncate(40);
     (activity, answered)
 }
@@ -654,16 +655,11 @@ pub fn snapshot(
     let today = clock::now_stamp();
     let (activity, answered) = agent_queue(root, &project, &plugins, &docs, &today, &mut queue);
     let pending = pending(root, &project, &docs, &proposals, &queue.waiting);
+    let mut waiting_docs = BTreeSet::new();
+    waiting_docs.extend(queue.waiting.iter().map(|c| document_path(&c.doc)));
     let counts = Counts {
         waiting: count(queue.waiting.len()),
-        docs_waiting: count(
-            queue
-                .waiting
-                .iter()
-                .map(|c| document_path(&c.doc))
-                .collect::<BTreeSet<_>>()
-                .len(),
-        ),
+        docs_waiting: count(waiting_docs.len()),
         spot_check: count(queue.spot_check.len()),
         answered_today: answered,
         tasks: None,

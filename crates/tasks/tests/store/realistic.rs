@@ -382,6 +382,7 @@ pub fn generated() -> Dump {
                     .into(),
                 text: text(d, length),
                 ts,
+                person: false,
             }
         })
         .collect();
@@ -491,7 +492,7 @@ pub fn generated() -> Dump {
         })
         .collect();
     let mut sessions = sessions;
-    sessions.sort_by(|a, b| a.handle.cmp(&b.handle));
+    symphony_board::order::sort_by(&mut sessions, &|a, b| a.handle.cmp(&b.handle));
     keyed(&mut task_links, |l| {
         (l.slug.clone(), l.kind.clone(), l.target.clone())
     });
@@ -529,6 +530,6 @@ pub fn generated() -> Dump {
 
 /// `rows` in the order of `key`, each key once: a table's rows as the board keys them.
 fn keyed<T, K: Ord>(rows: &mut Vec<T>, key: impl Fn(&T) -> K) {
-    rows.sort_by_key(|row| key(row));
+    symphony_board::order::sort_by_key(rows, &|row| key(row));
     rows.dedup_by(|a, b| key(a) == key(b));
 }

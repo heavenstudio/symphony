@@ -1,8 +1,13 @@
-//! The `tasks` command line over a real SurrealDB server: the store's tests' server, one per binary.
+//! The `tasks` command line over a real PostgreSQL server: the store's tests' server, one per
+//! binary, a database of its own per test.
 
 // How a test starts its own children ([`children::Child`]).
 #[path = "../support/children.rs"]
 mod children;
+
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "../support/test_channel.rs"]
+mod test_channel;
 
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
@@ -27,16 +32,23 @@ mod detached;
 mod finish;
 mod gates;
 mod handover;
+mod held;
 mod machine_work;
 // Each run's scratch in a folder of its own under the temp folder, swept when a killed run left it.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "symphony-chrome's harness file, read by path: a published package the shared sorter's rule leaves out"
+)]
 #[path = "../../../chrome-devtools/src/harness_scratch.rs"]
 mod harness_scratch;
+mod kind;
 mod launch;
 mod launch_rollback;
 mod limits;
 mod main_only;
 mod monitor;
 mod output;
+mod people;
 mod pg_lifecycle;
 mod priority;
 mod probes;
@@ -74,13 +86,19 @@ pub struct Ran {
 
 /// An environment reaching a database of its own on the tests' server, its clock at `common::NOW`.
 pub fn env() -> Env {
-    let db = common::client();
+    let db = common::postgresql();
     let vars: BTreeMap<String, String> = [
-        ("TASKS_SERVER", db.addr().to_string()),
+        ("TASKS_SERVER", db.addr()),
         ("TASKS_DATABASE", db.database().to_string()),
         ("TASKS_NOW", common::NOW.to_string()),
         (
             symphony_board::UNANSWERED_WAIT_VAR,
+            common::LOOKUP_BACKSTOP.to_string(),
+        ),
+        // The beat hook's own two seconds, which a loaded machine's server can take to start a
+        // connection, after which the hook gives up without a word.
+        (
+            symphony_board::BEAT_WAIT_VAR,
             common::LOOKUP_BACKSTOP.to_string(),
         ),
     ]
@@ -229,6 +247,24 @@ pub fn git(dir: &Path, args: &[&str]) {
     )
     .unwrap();
     assert!(done.status.success(), "git {args:?}: {done:?}");
+}
+
+/// The socket folder of a board no server answers: a connection to it is refused at once.
+pub const UNREACHED_FOLDER: &str = "/nonexistent/symphony-unreached";
+
+/// A board that cannot be reached ([`UNREACHED_FOLDER`]), as `TASKS_SERVER` names it.
+pub const UNREACHED_SERVER: &str = "postgresql:/nonexistent/symphony-unreached";
+
+/// The text of the project file of the project `id`, `rest` after its `[project]` lines, naming
+/// the machine's PostgreSQL (`[board] postgresql`): the programs its board's server runs on,
+/// whatever a child's `PATH` holds.
+pub fn project_file(id: &str, rest: &str) -> String {
+    let programs =
+        symphony_board::server::postgres::discover_programs(&common::project_root()).unwrap();
+    format!(
+        "[project]\nid = \"{id}\"\n{rest}[board]\npostgresql = {:?}\n",
+        programs.display().to_string()
+    )
 }
 
 /// A repository at `path` with one commit on `main`.

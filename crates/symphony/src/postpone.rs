@@ -1,5 +1,7 @@
-//! The owner's queue order, kept outside the design documents. The app currently has one
-//! owner identity across all devices; the file keeps identities separate for future callers.
+//! The owner's queue order, kept outside the design documents. It is the board's one order
+//! ([`OWNER`]'s, across all devices): a person a board named postpones only a card they decide, and
+//! is shown their cards of it ([`crate::owners::theirs`]). The file keeps identities separate for
+//! future callers.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
@@ -271,11 +273,13 @@ fn apply_cards(
                 reordered[slot] = card;
             }
         }
-        let positions = entries
-            .into_iter()
-            .flat_map(|entries| entries.iter())
-            .map(|(id, entry)| (id.clone(), entry.position))
-            .collect();
+        let mut positions = BTreeMap::new();
+        positions.extend(
+            entries
+                .into_iter()
+                .flat_map(|entries| entries.iter())
+                .map(|(id, entry)| (id.clone(), entry.position)),
+        );
         (reordered, positions)
     })?;
     waiting.clone_from_slice(&reordered.0);
@@ -402,15 +406,16 @@ fn later(
         prune(order, cards, now);
         let entries = order.owners.entry(owner.into()).or_default();
         passed(entries, id);
-        let remaining = cards
-            .iter()
-            .filter(|(candidate, meta)| {
-                candidate.as_str() != id
-                    && meta.group == card.group
-                    && !entries.contains_key(*candidate)
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
+        let mut remaining = BTreeSet::new();
+        remaining.extend(
+            (cards.iter())
+                .filter(|(candidate, meta)| {
+                    candidate.as_str() != id
+                        && meta.group == card.group
+                        && !entries.contains_key(*candidate)
+                })
+                .map(|(id, _)| id.clone()),
+        );
         let position = entries
             .values()
             .map(|entry| entry.position)
@@ -523,6 +528,10 @@ mod collection_tests {
             .collect();
         let mut expected = rows.clone();
         let (_, standard_cpu) = test_time::cpu::spent(|| {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the standard sort this test holds the shared sorter to"
+            )]
             expected.sort_by(|a, b| a.posted.cmp(&b.posted));
         });
         let comparisons = std::cell::Cell::new(0);

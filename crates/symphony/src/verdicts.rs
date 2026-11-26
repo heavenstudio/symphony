@@ -246,11 +246,14 @@ static LISTED: LazyLock<Regex> =
 /// Every card a verdict task lists, in its brief (`body`) or a post of more on its `thread`, as
 /// (page, slug): a card listed again is one card.
 fn listed<'a>(body: &'a str, thread: impl Iterator<Item = &'a str>) -> BTreeSet<(String, String)> {
-    std::iter::once(body)
-        .chain(thread.filter(|text| text.starts_with(MORE)))
-        .flat_map(|text| LISTED.captures_iter(text))
-        .map(|found| (found[1].to_string(), found[2].to_string()))
-        .collect()
+    let mut listed = BTreeSet::new();
+    listed.extend(
+        std::iter::once(body)
+            .chain(thread.filter(|text| text.starts_with(MORE)))
+            .flat_map(|text| LISTED.captures_iter(text))
+            .map(|found| (found[1].to_string(), found[2].to_string())),
+    );
+    listed
 }
 
 /// How the line that turns a verdict task into asks begins: a task whose thread has it was turned

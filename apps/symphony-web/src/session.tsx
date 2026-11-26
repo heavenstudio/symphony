@@ -4,27 +4,18 @@
 // button that shows the pane's screen, read only. A subagent's goes to its parent's session and says
 // so; with nothing known there is none.
 //
-// What crates/symphony-api's agents.rs decides for it (`SessionGo::control`, `via_parent`) is
-// carried here, held to the Rust by the cases it writes (wire.cases.json, session.test.tsx), as
-// project.ts carries the project's routes; the address it links is a `webAddress` (links.ts). What a
-// press does, a focus or a screen read, is session-press.ts, a chunk imported as one is first pressed.
+// Which of them a session is given is session-control.ts's, which carries the Rust that decides it.
+// What a press does, a focus or a screen read, is session-press.ts, a chunk imported as one is first
+// pressed. A task's role chips import the control itself as a chunk (session-part.tsx), for a holder
+// whose session it names a control for alone.
 
 import { useState } from "react";
 import { Button } from "./button";
-import { webAddress } from "./links";
 import { useMount } from "./mount";
+import { type SessionControl, sessionControl, viaParent } from "./session-control";
 import type { press } from "./session-press";
 import { snapshot } from "./shared";
 import type { AgentScreen, SessionGo } from "./wire";
-
-/** What a Go to session control does for the page that shows it. */
-export type SessionControl =
-  /** A button: the server's machine shows the pane in the Herdr app and brings it forward. */
-  | { kind: "focus"; pane: string }
-  /** An ordinary link to the session's web address. */
-  | { kind: "link"; url: string }
-  /** The pane's screen, read only: what a page on another machine sees. */
-  | { kind: "screen"; pane: string };
 
 /** Unicode's White_Space but its one range (U+2000 to U+200A), by their code points. */
 const SPACES = [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0x85, 0xa0, 0x1680, 0x2028, 0x2029, 0x202f];
@@ -37,24 +28,6 @@ const MORE_SPACES = [0x205f, 0x3000];
  */
 export function whiteSpace(code: number): boolean {
   return (code >= 0x2000 && code <= 0x200a) || SPACES.includes(code) || MORE_SPACES.includes(code);
-}
-
-/**
- * The control a page shows for `go`, `local` when it was asked from the server's own machine: a pane
- * is focused there, else its web address is linked, else its screen is shown; none with neither.
- * An address that is no `webAddress` is never linked.
- */
-export function sessionControl(go: SessionGo, local: boolean): SessionControl | null {
-  const url = go.url !== null && webAddress(go.url) ? go.url : null;
-  if (go.pane !== null && local) return { kind: "focus", pane: go.pane };
-  if (url !== null) return { kind: "link", url };
-  if (go.pane !== null) return { kind: "screen", pane: go.pane };
-  return null;
-}
-
-/** Whether `go` goes to another session than `handle`'s own: a subagent's parent's. */
-export function viaParent(go: SessionGo, handle: string): boolean {
-  return go.handle !== handle;
 }
 
 /** What a press of Go to session shows: whether it is on its way, what it said, and a screen read. */
@@ -71,7 +44,7 @@ const pressing = () => import("./session-press");
  * What a control says where what a press does did not come, once the shell said the page's build is
  * there (where it is gone, the page loads again).
  */
-export const UNPRESSED = "This page could not load the session's control. Try again.";
+export const UNPRESSED = "The session's control could not load; try again.";
 
 /**
  * A press of `control`'s button for `handle`'s session (session-press.ts `press`), once what a press

@@ -91,7 +91,7 @@ const draw = (draft: Partial<Draft>) =>
   );
 
 describe("the sheet", () => {
-  it("is hidden while closed, on the chat's tab, asking about the page", () => {
+  it("is hidden while closed, on the chat's tab, its empty thread quiet", () => {
     page();
     const markup = draw({});
     expect(markup).toMatch(
@@ -105,9 +105,8 @@ describe("the sheet", () => {
     expect(markup).toMatch(
       /aria-label="Collapse panel"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"[^>]*><path d="m6 9 6 6 6-6"><\/path><\/svg><\/button>/,
     );
-    expect(markup).toContain(
-      '<div class="quick-thread" aria-live="polite"><p class="muted">Ask about this page.</p></div>',
-    );
+    // An empty chat says nothing of itself: its thread is quiet, the Message box under the tabs.
+    expect(markup).toContain('<div class="quick-thread quiet" aria-live="polite"></div>');
     expect(markup).toContain('<label for="quick-text">Message</label>');
     expect(markup).toContain('required="" maxLength="4000"');
     expect(markup).not.toContain("quick-title");
@@ -471,6 +470,9 @@ describe("the sheet's thread", () => {
     page();
     expect(thread({ draft: { ...NEW_DRAFT, ask: 7 }, readError: "offline" })).toMatch(
       /^<div class="quick-thread" aria-live="polite"><p role="status">Conversation could not be refreshed: offline<\/p><span class="status-text" role="status">Loading conversation…<\/span>/,
+    ); // With no conversation yet, the failure alone, the thread no longer quiet.
+    expect(thread({ draft: NEW_DRAFT, readError: "offline" })).toBe(
+      '<div class="quick-thread" aria-live="polite"><p role="status">Conversation could not be refreshed: offline</p></div>',
     );
   });
 

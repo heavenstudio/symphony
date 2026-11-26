@@ -31,8 +31,8 @@ fn pass(clock: &Mutex<Instant>, seconds: u64) {
 }
 
 fn reader(fixture: &Fixture, schema: Schema) -> Result<Store, String> {
-    Store::opening(
-        fixture.other_client(),
+    Store::opening_on(
+        fixture.other_database(),
         Box::new(|| NOW),
         Box::new(|_| false),
         HOST,
@@ -60,12 +60,12 @@ impl Listener {
         let path = PathBuf::from(format!(
             "/tmp/symphony-retry-{}-{}{name}.sock",
             std::process::id(),
-            fixture.store.client().database()
+            fixture.store.database().database()
         ));
         let socket = UnixListener::bind(&path).unwrap();
         let stopped = Arc::new(AtomicBool::new(false));
         let stop = stopped.clone();
-        let (send, messages) = mpsc::channel();
+        let (send, messages) = crate::test_channel::channel();
         let thread = std::thread::spawn(move || {
             for stream in socket.incoming() {
                 let mut stream = stream.unwrap();
@@ -381,7 +381,7 @@ fn schema_open_failures_are_bounded_across_ticks_and_recover_only_when_due() {
     let (hub, clock) = clocked(&tree);
     let fixture = Fixture::new(Seed::default().task("tools/pending", "ready"));
     // A newer reader cannot open this board. It must never migrate it to help a retry.
-    let newer = Schema::this_build().then("");
+    let newer = Schema::this_build().then_each("");
     let repaired = AtomicBool::new(false);
     let attempts = AtomicUsize::new(0);
     let mut connect = |_: &std::path::Path| {
@@ -487,9 +487,9 @@ fn failed_assignment_is_independent_capped_and_gives_pending_work_after_repair()
     );
     let old = reader(&fixture, Schema::this_build().before()).unwrap();
     let snapshot = old.clock_board().unwrap();
-    // RPC observations use the real wall clock, independently of the board's seeded clock.
+    // The client's observations use the real wall clock, independently of the board's seeded clock.
     let count = || {
-        old.client()
+        old.database()
             .queries()
             .report(symphony_board::sweep::trigger::now())
             .0

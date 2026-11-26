@@ -1,10 +1,11 @@
 //! The Markdown syntax every reader of the docs shares, against the rules the docs are read by.
 
 use symphony_docs::syntax::{
-    CARD_LINE, LineIndex, WikiLink, anchors, card_end, card_line, carded, cards, code_ranges,
-    components, entries, entry_line, heading, heading_anchor, is_continuation, is_indented,
-    line_links, line_of, lines, links, mask_code_spans, pictures, unseen_owner, unseen_owner_line,
-    wikilinks,
+    CARD_LINE, FOR, LineIndex, RESERVED_NAMES, SHORT_NAME_MAX, WikiLink, anchors, card_end,
+    card_for, card_line, card_line_for, carded, cards, code_ranges, components, entries,
+    entry_line, heading, heading_anchor, is_continuation, is_indented, is_short_name, line_links,
+    line_of, lines, links, mask_code_spans, pictures, said, said_line, unseen_owner,
+    unseen_owner_line, wikilinks,
 };
 
 #[test]
@@ -552,5 +553,192 @@ fn a_date_cut_through_a_character_is_no_stamp() {
     assert_eq!(
         (whole.ts.as_deref(), whole.who, whole.text.as_str()),
         (Some("2026-09-25 10:00"), "owner", "")
+    );
+}
+
+#[test]
+fn a_short_name_is_lowercase_parts_joined_by_hyphens_and_never_a_handle_or_a_reserved_word() {
+    for name in [
+        "ana",
+        "ana-l",
+        "a",
+        "a1",
+        "ana-lima-2b",
+        "x2-y",
+        &"a".repeat(SHORT_NAME_MAX),
+    ] {
+        assert!(is_short_name(name), "{name}");
+    }
+    for name in [
+        "",
+        "Ana",
+        "ana_l",
+        "ana.l",
+        "-ana",
+        "ana-",
+        "ana--l",
+        "1ana",
+        "anà",
+        "ana l",
+        // A session's handle ends in a number alone.
+        "amber-heron-12",
+        "ana-2",
+        &"a".repeat(SHORT_NAME_MAX + 1),
+    ] {
+        assert!(!is_short_name(name), "{name:?}");
+    }
+    for word in RESERVED_NAMES {
+        assert!(!is_short_name(word), "{word}");
+    }
+    assert_eq!(RESERVED_NAMES, ["agent", "owner", "board", "unknown"]);
+}
+
+#[test]
+fn a_dated_line_by_a_short_name_is_a_persons_entry_and_keeps_its_name() {
+    let said = said_line("  [2026-11-23 18:00] ana · approved — A").unwrap();
+    assert_eq!(said.name, "ana");
+    assert_eq!(
+        (
+            said.entry.ts.as_deref(),
+            said.entry.who,
+            said.entry.verdict.as_deref()
+        ),
+        (Some("2026-11-23 18:00"), "owner", Some("approved"))
+    );
+    assert_eq!(said.entry.text, "A");
+    // The entry is a person's, as the owner's always was.
+    assert_eq!(
+        entry_line("  [2026-11-23 18:00] ana · approved — A"),
+        Some(said.entry)
+    );
+    for (line, name, who) in [
+        ("  [2026-11-23] ana-l — why?", "ana-l", "owner"),
+        ("  [2026-11-23] owner · rejected", "owner", "owner"),
+        ("  [2026-11-23] agent — Posted.", "agent", "agent"),
+    ] {
+        let said = said_line(line).unwrap();
+        assert_eq!((said.name.as_str(), said.entry.who), (name, who), "{line}");
+    }
+}
+
+#[test]
+fn a_dated_line_whose_word_is_no_name_is_no_entry() {
+    for line in [
+        // Reserved for the board's own lines and the vocabulary's unread author.
+        "  [2026-11-23] board — moved",
+        "  [2026-11-23] unknown · approved",
+        // A handle's shape, a capital, a word run on into the next.
+        "  [2026-11-23] amber-heron-12 — hi",
+        "  [2026-11-23] Ana · approved",
+        "  [2026-11-23] ana·approved",
+        "  [2026-11-23] ana: approved",
+        "  [2026-11-23]  — nobody",
+        // No space between the date and the name.
+        "  [2026-11-23]ana · approved",
+    ] {
+        assert_eq!(said_line(line), None, "{line}");
+        assert_eq!(entry_line(line), None, "{line}");
+    }
+    // Under a card it reads as an owner's undated note, as before names.
+    let found = said(&["  [2026-11-23] Ana · approved"]);
+    assert_eq!(
+        (
+            found[0].name.as_str(),
+            found[0].entry.who,
+            found[0].entry.ts.as_deref()
+        ),
+        ("owner", "owner", None)
+    );
+}
+
+#[test]
+fn said_names_every_entry_of_a_card_and_entries_reads_the_same_lines() {
+    let raw = [
+        "  [2026-11-23 10:00] agent — Posted.",
+        "  [2026-11-23 10:05] ana · question — Which?",
+        "    and when?",
+        "  [2026-11-23 10:06] owner · approved — B",
+        "  an undated note",
+        "  ↳ an undated answer",
+    ];
+    let found = said(&raw);
+    let names: Vec<(&str, &str)> = found
+        .iter()
+        .map(|said| (said.name.as_str(), said.entry.who))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("agent", "agent"),
+            ("ana", "owner"),
+            ("owner", "owner"),
+            ("owner", "owner"),
+            ("agent", "agent"),
+        ]
+    );
+    assert_eq!(found[1].entry.text, "Which?\nand when?");
+    let plain: Vec<_> = found.into_iter().map(|said| said.entry).collect();
+    assert_eq!(entries(&raw), plain);
+}
+
+#[test]
+fn a_card_is_for_the_first_name_its_text_writes_after_for() {
+    assert_eq!(FOR, "*For:*");
+    assert_eq!(card_for("*For:* design. Which palette?"), Some("design"));
+    assert_eq!(
+        card_for("Which palette? *For:* ana-lima, as she drew it"),
+        Some("ana-lima")
+    );
+    assert_eq!(card_for("*For:* owner"), Some("owner"));
+    assert_eq!(
+        card_for("*For:*  design-"),
+        Some("design"),
+        "a hyphen ends no name"
+    );
+    assert_eq!(
+        card_for("*For:* design *For:* engineering"),
+        Some("design"),
+        "the first"
+    );
+    for none in [
+        "Which palette?",
+        "*For:*design",
+        "*For:* Design",
+        "*For:* ",
+        "For: design",
+    ] {
+        assert_eq!(card_for(none), None, "{none:?}");
+    }
+}
+
+#[test]
+fn a_cards_line_is_written_for_a_name_in_its_place_or_first_in_its_text() {
+    let line = "- [ ] **new-palette** — Which palette? Approve, or comment.";
+    let named = card_line_for(line, "design").unwrap();
+    assert_eq!(
+        named,
+        "- [ ] **new-palette** — *For:* design. Which palette? Approve, or comment."
+    );
+    assert_eq!(card_line(&named).unwrap().1, "new-palette");
+    assert_eq!(card_for(card_line(&named).unwrap().2), Some("design"));
+    let renamed = card_line_for(&named, "engineering").unwrap();
+    assert_eq!(
+        renamed,
+        "- [ ] **new-palette** — *For:* engineering. Which palette? Approve, or comment."
+    );
+    assert_eq!(
+        card_line_for("- [x] **a** Plain text *For:* ana here.", "owner").unwrap(),
+        "- [x] **a** Plain text *For:* owner here."
+    );
+    assert_eq!(
+        card_line_for("- [ ] **a**", "design").unwrap(),
+        "- [ ] **a** *For:* design."
+    );
+    assert_eq!(card_line_for("not a card", "design"), None);
+    assert_eq!(card_line_for(line, "Not A Name"), None);
+    assert_eq!(
+        card_line_for(line, "agent"),
+        None,
+        "a reserved word is no one's"
     );
 }

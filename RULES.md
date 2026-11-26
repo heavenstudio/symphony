@@ -158,6 +158,13 @@ but a stop: that is a sleep the lint cannot see, and a reviewer refuses it.
 for. The baseline only shrinks: a new suppression is a new timer, which a reviewer refuses.
 Shell scripts are read in review alone.
 
+### `code/shared-sorter`
+
+In the board, `symphony` and the server a sort is `symphony_board::order`'s, and a collect into a
+`BTreeMap` or `BTreeSet` is `extend` on an empty one: std compiles its whole sort, which a B-tree's
+`collect` runs, again for each element type. Only the sites `order`'s doc names keep std's, each
+under an `#[expect]`. `just lint-rs` refuses any other direct sort; a reviewer, a collect.
+
 ## Tests
 
 ### `workflow/tests-after`
@@ -251,11 +258,12 @@ An approved card is never reopened by a question on it, and nothing an earlier v
 put to the owner. What follows from an approved choice while the option chosen stays the one the
 card described, a cost or a trade it did not state included, is a plain agent line on that card
 quoting the owner's words; only a change that would make the option another is a new card, which
-links the approved one. Before any card goes to the owner its agent checks the owner's earlier
-verdicts: an approved card decides a later one only when the choice it approved already answers
-what the later card asks and each of the later card's other options would change that choice.
-Only the owner's own words decide, never an auto-approved card, an agent's recorded answer or a
-question of the owner's ([REVIEW](docs/workflow/REVIEW.md#before-a-card-goes-to-the-owner)).
+links the approved one. Before any card goes to the owner its agent checks the earlier verdicts
+of every person, the owner's and any a board named: an approved card decides a later one only when
+the choice it approved already answers what the later card asks and each of the later card's other
+options would change that choice. Only a person's own words decide, never an auto-approved card, an
+agent's recorded answer or a person's question
+([REVIEW](docs/workflow/REVIEW.md#before-a-card-goes-to-the-owner)).
 
 ### `docs/cards-clear-and-concise`
 
@@ -366,6 +374,16 @@ or pattern (`pkill`, `killall`, `kill` fed by `pgrep`, `ps | grep` or `lsof`, a 
 
 Every script, stylesheet and font a Symphony page loads is in this repository and committed;
 nothing loads from a CDN or any outside URL.
+
+### `code/pages-explain-nothing`
+
+A page draws no sentence that explains it, a section, how it works or where its values come from,
+and no control that cannot act. What it says is a label, a unit, an error or a refusal, an empty
+state in one short line, a state, or a consequence on the control it follows from (its label, its
+title or its confirmation). A heading is a label of a few words, never a sentence. It holds for
+what the server and a plugin draw too: the product docs explain a page, never the page itself.
+The client's `src/explain-nothing.test.ts` refuses the classes such text was drawn in; review
+holds the rest.
 
 ## Keeping these rules
 

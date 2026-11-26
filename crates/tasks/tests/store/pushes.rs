@@ -2,7 +2,6 @@
 //! says what changed since the last one it received; it never hears its own writes, nor the roles
 //! its own children take or let go; a child going quiet is said once per transition. A session
 //! with no channel reads the same lines by waiting (`Store::collect_callbacks`).
-use crate::common::Backend;
 
 use super::callbacks::Listener;
 use super::common::Fixture;
@@ -28,9 +27,9 @@ fn child(f: &Fixture, parent: &str) -> String {
     })
 }
 
-on_both! {
-fn a_backlog_left_unstaffed_is_not_said_again_when_it_gains_a_row(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_backlog_left_unstaffed_is_not_said_again_when_it_gains_a_row() {
+    let f = Fixture::new(crate::common::Seed::default());
     let sender = f.session("worker");
     for n in 0..33 {
         f.task(&format!("tools/backlog-{n:02}"));
@@ -55,11 +54,10 @@ fn a_backlog_left_unstaffed_is_not_said_again_when_it_gains_a_row(backend: Backe
         assert!(o.drain(&f, &sender, &orch).is_empty());
     }
 }
-}
 
-on_both! {
-fn what_its_own_children_take_on_and_let_go_is_not_pushed_but_their_moves_are(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn what_its_own_children_take_on_and_let_go_is_not_pushed_but_their_moves_are() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, o) = orchestrator(&f);
     let kid = child(&f, &orch);
     let stranger = f.session("worker");
@@ -96,11 +94,10 @@ fn what_its_own_children_take_on_and_let_go_is_not_pushed_but_their_moves_are(ba
     let told = o.drain(&f, &stranger, &orch);
     assert_eq!(told[0], "STATUS tools/kid in_progress → review", "{told:?}");
 }
-}
 
-on_both! {
-fn a_pull_names_every_unanswered_post_it_tells_however_many(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_pull_names_every_unanswered_post_it_tells_however_many() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, o) = orchestrator(&f);
     let barrier = f.session("worker");
     // Eight executors, each sent a post, all gone quiet past the half hour a post waits.
@@ -131,11 +128,10 @@ fn a_pull_names_every_unanswered_post_it_tells_however_many(backend: Backend) {
     }
     assert!(!told.iter().any(|l| l.contains("unanswered …")), "{told:?}");
 }
-}
 
-on_both! {
-fn its_own_move_is_never_echoed_to_it(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn its_own_move_is_never_echoed_to_it() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, o) = orchestrator(&f);
     let other = f.session("orchestrator");
     for slug in ["tools/mine", "tools/theirs"] {
@@ -155,11 +151,10 @@ fn its_own_move_is_never_echoed_to_it(backend: Backend) {
         ["STATUS tools/theirs ready → blocked"]
     );
 }
-}
 
-on_both! {
-fn a_move_of_the_orchestrator_role_is_said_to_the_other_side_only(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_move_of_the_orchestrator_role_is_said_to_the_other_side_only() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, o) = orchestrator(&f);
     let (other, p) = orchestrator(&f);
     let worker = f.session("worker");
@@ -192,11 +187,10 @@ fn a_move_of_the_orchestrator_role_is_said_to_the_other_side_only(backend: Backe
     );
     assert_eq!(o.drain(&f, &worker, &orch), Vec::<String>::new());
 }
-}
 
-on_both! {
-fn a_quiet_child_is_said_stale_once_a_transition_not_once_a_pass(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_quiet_child_is_said_stale_once_a_transition_not_once_a_pass() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, o) = orchestrator(&f);
     let kid = child(&f, &orch);
     let sender = f.session("worker");
@@ -223,7 +217,6 @@ fn a_quiet_child_is_said_stale_once_a_transition_not_once_a_pass(backend: Backen
     f.store.dispatch_callbacks().unwrap();
     assert!(o.drain(&f, &sender, &orch).is_empty());
     assert_eq!(quiet(LIVE_SECONDS + 30.0), [stale.as_str()]);
-}
 }
 
 /// The lines a collecting look printed: each text is one delivery's.
@@ -254,9 +247,9 @@ pub(super) fn sent(f: &Fixture, act: impl FnOnce()) -> (u64, u64) {
     (after.0 - before.0, after.1 - before.1)
 }
 
-on_both! {
-fn a_waiting_session_looking_at_a_board_that_stood_still_writes_nothing(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_waiting_session_looking_at_a_board_that_stood_still_writes_nothing() {
+    let f = Fixture::new(crate::common::Seed::default());
     let reader = f.session("orchestrator");
     for slug in ["tools/one", "tools/two"] {
         f.task(slug);
@@ -286,15 +279,14 @@ fn a_waiting_session_looking_at_a_board_that_stood_still_writes_nothing(backend:
     assert_eq!(writes, 0, "{requests} requests");
     assert!(requests <= LOOK_REQUESTS, "{requests} requests");
 }
-}
 
 /// The most requests one look of `tasks wait` sends while the board stands still, all reads:
 /// nine, measured on 2026-11-11.
 pub(super) const LOOK_REQUESTS: u64 = 9;
 
-on_both! {
-fn a_session_with_no_channel_reads_what_a_channel_would_carry_once(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_session_with_no_channel_reads_what_a_channel_would_carry_once() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (heard, o) = orchestrator(&f);
     let reader = f.session("orchestrator");
     let sender = f.session("worker");
@@ -327,11 +319,10 @@ fn a_session_with_no_channel_reads_what_a_channel_would_carry_once(backend: Back
     );
     assert!(read(&f, &reader).is_empty());
 }
-}
 
-on_both! {
-fn a_childs_release_does_not_hide_the_move_it_made_before_it(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_childs_release_does_not_hide_the_move_it_made_before_it() {
+    let f = Fixture::new(crate::common::Seed::default());
     let reader = f.session("orchestrator");
     let kid = child(&f, &reader);
     f.task("tools/kid");
@@ -356,13 +347,12 @@ fn a_childs_release_does_not_hide_the_move_it_made_before_it(backend: Backend) {
     f.store.release("tools/kid", &kid, None).unwrap();
     assert!(read(&f, &reader).is_empty());
 }
-}
 
 const VERDICT: &str = "OWNER accepted card 7 in docs/DECISIONS.md — land it";
 
-on_both! {
-fn a_waiting_orchestrator_holds_the_vacant_chat_seat(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_waiting_orchestrator_holds_the_vacant_chat_seat() {
+    let f = Fixture::new(crate::common::Seed::default());
     let reader = f.session("orchestrator");
     read(&f, &reader);
     assert_eq!(f.store.chat_recipient().unwrap(), Some(reader.clone()));
@@ -377,11 +367,10 @@ fn a_waiting_orchestrator_holds_the_vacant_chat_seat(backend: Backend) {
     let other = f.session("orchestrator");
     assert!(f.store.unheard_owner_events(&other).unwrap().is_empty());
 }
-}
 
-on_both! {
-fn a_channel_holds_the_chat_seat_before_a_waiting_orchestrator(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_channel_holds_the_chat_seat_before_a_waiting_orchestrator() {
+    let f = Fixture::new(crate::common::Seed::default());
     let reader = f.session("orchestrator");
     read(&f, &reader);
     let (heard, o) = orchestrator(&f);
@@ -390,11 +379,10 @@ fn a_channel_holds_the_chat_seat_before_a_waiting_orchestrator(backend: Backend)
     assert_eq!(o.drain(&f, &reader, &heard), [VERDICT]);
     assert!(read(&f, &reader).is_empty());
 }
-}
 
-on_both! {
-fn registering_a_channel_takes_a_waiter_off_the_waiting_list(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn registering_a_channel_takes_a_waiter_off_the_waiting_list() {
+    let f = Fixture::new(crate::common::Seed::default());
     let reader = f.session("orchestrator");
     read(&f, &reader);
     let _channel = listen(&f, &reader);
@@ -404,11 +392,10 @@ fn registering_a_channel_takes_a_waiter_off_the_waiting_list(backend: Backend) {
     read(&f, &reader);
     assert_eq!(f.store.chat_recipient().unwrap(), Some(reader));
 }
-}
 
-on_both! {
-fn what_the_owner_says_to_nobody_is_read_by_every_orchestrator_until_one_takes_it(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn what_the_owner_says_to_nobody_is_read_by_every_orchestrator_until_one_takes_it() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (first, second) = (f.session("orchestrator"), f.session("orchestrator"));
     let worker = f.session("worker");
     f.store.owner_callback("asks-1", VERDICT).unwrap();
@@ -426,7 +413,6 @@ fn what_the_owner_says_to_nobody_is_read_by_every_orchestrator_until_one_takes_i
     assert!(f.store.unheard_owner_events(&second).unwrap().is_empty());
     assert!(f.store.callback_inbox(&second).unwrap().is_empty());
 }
-}
 
 /// Whether `lines` are a whole digest: its header, first, names every count, changed or not.
 pub(super) fn whole(lines: &[String]) -> bool {
@@ -435,9 +421,9 @@ pub(super) fn whole(lines: &[String]) -> bool {
     })
 }
 
-on_both! {
-fn a_waiter_that_registers_a_channel_hears_the_whole_digest_there_first(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_waiter_that_registers_a_channel_hears_the_whole_digest_there_first() {
+    let f = Fixture::new(crate::common::Seed::default());
     let reader = f.session("orchestrator");
     assert!(whole(&read(&f, &reader)));
     f.task("tools/new");
@@ -447,12 +433,11 @@ fn a_waiter_that_registers_a_channel_hears_the_whole_digest_there_first(backend:
     assert!(whole(&first), "{first:?}");
     assert!(first.contains(&"ready_unstaffed p2 tools/new — Jump departure".to_string()));
 }
-}
 
-on_both! {
-fn a_channel_another_process_listens_on_starts_from_the_whole_digest(backend: Backend) {
+#[test]
+fn a_channel_another_process_listens_on_starts_from_the_whole_digest() {
     for elsewhere in [false, true] {
-        let f = Fixture::on(backend, crate::common::Seed::default());
+        let f = Fixture::new(crate::common::Seed::default());
         let (orch, o) = orchestrator(&f);
         let barrier = f.session("worker");
         f.task("tools/told");
@@ -479,11 +464,10 @@ fn a_channel_another_process_listens_on_starts_from_the_whole_digest(backend: Ba
         }
     }
 }
-}
 
-on_both! {
-fn a_channel_turned_off_starts_the_wait_from_the_whole_digest_but_a_told_post(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_channel_turned_off_starts_the_wait_from_the_whole_digest_but_a_told_post() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (orch, o) = orchestrator(&f);
     let barrier = f.session("worker");
     f.task("tools/gap");
@@ -513,11 +497,10 @@ fn a_channel_turned_off_starts_the_wait_from_the_whole_digest_but_a_told_post(ba
         "{again:?}"
     );
 }
-}
 
-on_both! {
-fn a_session_with_a_channel_or_gone_cannot_read_by_waiting(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_session_with_a_channel_or_gone_cannot_read_by_waiting() {
+    let f = Fixture::new(crate::common::Seed::default());
     let (heard, _o) = orchestrator(&f);
     let env = Env::of_process();
     let refused = |handle: &str| match f.store.collect_callbacks(handle, &env, &mut |_| Ok(())) {
@@ -543,5 +526,4 @@ fn a_session_with_a_channel_or_gone_cannot_read_by_waiting(backend: Backend) {
         refused(never),
         format!("no session {never} here to wait for")
     );
-}
 }

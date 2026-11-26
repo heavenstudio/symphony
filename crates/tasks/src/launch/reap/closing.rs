@@ -244,6 +244,10 @@ fn record(store: &Store, handle: &str, terminal: &Object, why: &str) -> Result<S
                 .map(move |r| (r.since, t.slug.clone(), r.role))
         })
         .collect();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a busy board path keeps std's in-place sort (crate::order): the idle reap"
+    )]
     roles.sort_unstable_by(|a, b| {
         a.0.total_cmp(&b.0)
             .then_with(|| (&a.1, &a.2).cmp(&(&b.1, &b.2)))

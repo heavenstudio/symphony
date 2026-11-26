@@ -2,6 +2,10 @@
 include!("common/commit_fixture.rs");
 use symphony_board::{rpc, sys};
 
+// How a test makes a channel ([`test_channel::channel`]).
+#[path = "common/test_channel.rs"]
+mod test_channel;
+
 #[path = "after_commit/delivery.rs"]
 mod delivery;
 #[path = "after_commit/publication_reports.rs"]
@@ -166,7 +170,7 @@ fn child_stages_are_forwarded_before_the_child_closes_its_output() {
     }
     // A pipe no git another test spawns meanwhile can keep: the relay's end comes with `child`'s.
     let (reader, mut child) = sys::pipe().unwrap();
-    let (send, receive) = std::sync::mpsc::channel();
+    let (send, receive) = crate::test_channel::channel();
     let forwarding = std::thread::spawn(move || {
         let mut saved = Vec::new();
         relay_output(
@@ -251,6 +255,14 @@ fn a_save_under_delivery_is_kept_pending_on_a_branch_and_filed_as_the_owners_tas
     isolated(
         "a_save_under_delivery_is_kept_pending_on_a_branch_and_filed_as_the_owners_task",
         delivery::kept_pending_on_a_branch_and_filed_as_the_owners_task,
+    );
+}
+
+#[test]
+fn a_persons_save_under_delivery_is_filed_and_sent_to_review_as_theirs() {
+    isolated(
+        "a_persons_save_under_delivery_is_filed_and_sent_to_review_as_theirs",
+        delivery::a_persons_save_is_filed_and_sent_to_review_as_theirs,
     );
 }
 
@@ -424,7 +436,7 @@ fn two_verdicts_race_without_lost_files_or_merge_commits() {
             .filter(|line| !line.is_empty())
             .map(str::to_owned)
             .collect();
-            changed.sort();
+            symphony_board::order::sort_by(&mut changed, &Ord::cmp);
             assert_eq!(changed, ["docs/a.md", "docs/b.md"]);
             f.clean_workers();
         },
@@ -2064,12 +2076,13 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
             let mut flusher = symphony::callbacks::Flusher::new(&root);
             flusher.flush(&root).unwrap();
             flusher.flush(&root).unwrap();
-            let board = rpc::Client::new(
+            let board = symphony_board::Database::named(&rpc::Client::new(
                 &std::env::var("TASKS_SERVER").unwrap(),
                 "sf",
                 &std::env::var("TASKS_DATABASE").unwrap(),
-            );
-            let rows = symphony_board::Raw::on(&board)
+            ))
+            .unwrap();
+            let rows = symphony_board::Raw::of(&board)
                 .table("chat_event")
                 .fields(&["text"])
                 .unwrap();
@@ -2202,17 +2215,20 @@ fn a_journal_from_before_asks_and_an_ask_the_board_refuses_still_deliver_their_c
                 .flush(&root)
                 .unwrap();
             assert_eq!(sqlite("SELECT count(*) FROM callbacks;"), "0");
-            let board = rpc::Client::new(
+            let board = symphony_board::Database::named(&rpc::Client::new(
                 &std::env::var("TASKS_SERVER").unwrap(),
                 "sf",
                 &std::env::var("TASKS_DATABASE").unwrap(),
-            );
-            let rows = symphony_board::Raw::on(&board)
+            ))
+            .unwrap();
+            let rows = symphony_board::Raw::of(&board)
                 .table("chat_event")
                 .fields(&["text"])
                 .unwrap();
             let mut rows = rows.as_array().unwrap().clone();
-            rows.sort_by(|a, b| a["text"].as_str().cmp(&b["text"].as_str()));
+            symphony_board::order::sort_by(&mut rows, &|a, b| {
+                a["text"].as_str().cmp(&b["text"].as_str())
+            });
             assert_eq!(
                 rows,
                 [
@@ -2332,9 +2348,9 @@ fn verdict_saves_run_no_board_command_and_write_nothing_on_the_board() {
                 None,
                 "a save ran the board command"
             );
-            let board = board();
+            let board = symphony_board::Database::named(&board()).unwrap();
             let values = |table: &str, field: &str| {
-                let rows = symphony_board::Raw::on(&board)
+                let rows = symphony_board::Raw::of(&board)
                     .table(table)
                     .fields(&[field]);
                 let rows = rows.unwrap().as_array().unwrap().clone();
@@ -2402,12 +2418,13 @@ fn a_failed_callback_journal_retries_the_saved_comment_once() {
             let mut flusher = symphony::callbacks::Flusher::new(&root);
             flusher.flush(&root).unwrap();
             flusher.flush(&root).unwrap();
-            let board = rpc::Client::new(
+            let board = symphony_board::Database::named(&rpc::Client::new(
                 &std::env::var("TASKS_SERVER").unwrap(),
                 "sf",
                 &std::env::var("TASKS_DATABASE").unwrap(),
-            );
-            let rows = symphony_board::Raw::on(&board)
+            ))
+            .unwrap();
+            let rows = symphony_board::Raw::of(&board)
                 .table("chat_event")
                 .fields(&["text"])
                 .unwrap();

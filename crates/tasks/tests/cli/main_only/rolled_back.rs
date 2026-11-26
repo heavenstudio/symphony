@@ -1,7 +1,7 @@
 //! A live board whose store went back below the highest schema it was seen at
-//! ([`symphony_board::live::seen`]): a snapshot of its store taken by `tasks snapshot` while no
-//! server ran on it, the board moved forward since, then its store put back from the snapshot, as a
-//! store that lost its newest writes comes back. Every program that opens it refuses it, `tasks
+//! ([`symphony_board::live::seen`]): a snapshot of its PostgreSQL taken by `tasks snapshot` while
+//! no server ran on it, the board moved forward since, then its cluster put back from the snapshot,
+//! as a store that lost its newest writes comes back. Every program that opens it refuses it, `tasks
 //! migrate` included, in the rollback's words, writing nothing, until the owner accepts the older
 //! board with `tasks schema --accept`; a store that lost the whole board is refused the same way.
 
@@ -13,9 +13,14 @@ use symphony_board::live::seen::{self, Rollback};
 use symphony_board::{Opening, Raw, Store};
 
 impl Live {
-    /// The board's store, in its folder in the common dir.
+    /// The board's PostgreSQL data, in its folder in the common dir.
     fn data(&self) -> PathBuf {
-        self.main.join(".git/symphony/tasks/data")
+        self.main.join(".git/symphony/tasks/postgresql")
+    }
+
+    /// The folder its PostgreSQL snapshots are kept in.
+    fn snapshots(&self) -> PathBuf {
+        self.main.join(".git/symphony/tasks/postgresql-snapshots")
     }
 
     /// The board, as the project's live one.
@@ -40,13 +45,13 @@ impl Live {
 
     /// How many tasks the board holds: one read.
     fn tasks_held(&self) -> i64 {
-        let held = Raw::on(&self.client("tasks")).table("task").count();
+        let held = Raw::of(&self.database("tasks")).table("task").count();
         i64::try_from(held.unwrap()).unwrap()
     }
 }
 
-/// `snapshot` cloned to `data`, which must not exist, as a restore puts a store back: copy-on-write,
-/// never the snapshot itself.
+/// `snapshot` cloned to `data`, which must not exist, as a restore puts a cluster back:
+/// copy-on-write, never the snapshot itself.
 fn restore(snapshot: &Path, data: &Path) {
     let clone = if cfg!(target_os = "macos") {
         &["-c", "-R"][..]
@@ -72,21 +77,19 @@ fn a_live_board_put_back_below_the_schema_it_was_seen_at_is_refused_everywhere_u
     let ran = live.tasks(&live.main, &["snapshot"]);
     assert_eq!(ran.code, 2, "{}", ran.out);
     assert!(
-        ran.err.starts_with("✖ the board's server (pid ")
-            && ran.err.contains(&format!(
-                "runs on {}: a snapshot is taken only while no process serves the store, never of \
-                 files a server is writing, so none was taken",
-                live.data().display()
-            )),
+        ran.err.starts_with(&format!(
+            "✖ PostgreSQL at {} is running or its status is unknown: no snapshot was taken (",
+            live.data().display()
+        )),
         "{}",
         ran.err
     );
-    live.home().stop().unwrap();
+    live.home().stop_board().unwrap();
     let ran = live.tasks(&live.main, &["snapshot"]);
     assert_eq!(ran.code, 0, "{}", ran.err);
     assert!(
         ran.out
-            .starts_with("✔ took a snapshot of the live board's store: "),
+            .starts_with("✔ took a PostgreSQL snapshot of the live board's store: "),
         "{}",
         ran.out
     );
@@ -94,14 +97,14 @@ fn a_live_board_put_back_below_the_schema_it_was_seen_at_is_refused_everywhere_u
     assert_eq!(listed.code, 0, "{}", listed.err);
     let rows: Vec<&str> = listed.out.lines().collect();
     assert_eq!(rows.len(), 1, "{}", listed.out);
-    let (name, at) = rows[0].split_once("  ").unwrap();
-    let snapshot = PathBuf::from(at);
+    let snapshot = PathBuf::from(rows[0]);
     assert_eq!(
         snapshot,
-        live.main.join(".git/symphony/tasks/snapshots").join(name)
+        live.snapshots()
+            .join(symphony_board::server::snapshot::stamp(NOW))
     );
     assert!(
-        ran.out.trim_end().ends_with(at),
+        ran.out.trim_end().ends_with(rows[0]),
         "the taking names what is listed: {}",
         ran.out
     );
@@ -117,7 +120,7 @@ fn a_live_board_put_back_below_the_schema_it_was_seen_at_is_refused_everywhere_u
 
     // Main's build moves the board forward from any folder, and the record says what it saw. (The
     // server is the test's, which outlives each command.)
-    live.home().ensure().unwrap();
+    live.start();
     let ran = live.tasks(&live.wt, &["list"]);
     assert_eq!(ran.code, 0, "{}", ran.err);
     assert_eq!(live.version("tasks"), Some(this()));
@@ -132,14 +135,14 @@ fn a_live_board_put_back_below_the_schema_it_was_seen_at_is_refused_everywhere_u
     );
 
     // The store goes back: stopped, and put back from the snapshot, at the older schema.
-    live.home().stop().unwrap();
+    live.home().stop_board().unwrap();
     std::fs::rename(
         live.data(),
-        live.main.join(".git/symphony/tasks/data.newer"),
+        live.main.join(".git/symphony/tasks/postgresql.newer"),
     )
     .unwrap();
     restore(&snapshot, &live.data());
-    live.home().ensure().unwrap();
+    live.start();
     let why = live.rollback(Some(before()));
 
     for cwd in [&live.wt, &live.main] {
@@ -169,8 +172,8 @@ fn a_live_board_put_back_below_the_schema_it_was_seen_at_is_refused_everywhere_u
         symphony_board::Schema::this_build(),
         symphony_board::Schema::this_build().before(),
     ] {
-        let reader = Store::opening(
-            live.client("tasks"),
+        let reader = Store::opening_on(
+            live.database("tasks"),
             Box::new(|| NOW),
             Box::new(|_| false),
             "this-host",
@@ -263,9 +266,14 @@ fn a_store_that_lost_the_whole_board_went_back_too_and_is_accepted_as_none() {
     assert_eq!(ran.code, 0, "{}", ran.err);
     assert_eq!(live.version("tasks"), Some(this()));
 
-    live.home().stop().unwrap();
-    std::fs::rename(live.data(), live.main.join(".git/symphony/tasks/data.lost")).unwrap();
-    live.home().ensure().unwrap();
+    // Its cluster gone, the next start makes an empty one, which holds no board.
+    live.home().stop_board().unwrap();
+    std::fs::rename(
+        live.data(),
+        live.main.join(".git/symphony/tasks/postgresql.lost"),
+    )
+    .unwrap();
+    live.start();
     let why = live.rollback(None);
     assert!(
         why.starts_with(&format!(
@@ -357,13 +365,10 @@ fn a_scratch_board_keeps_no_record_and_a_board_tasks_server_names_has_no_store_t
     );
     let ran = live.tasks(&live.wt, &["snapshot", "--list"]);
     assert_eq!(
-        (ran.code, ran.out),
+        (ran.code, ran.out.as_str()),
         (
             0,
-            format!(
-                "no snapshot of the live board's store is kept in {}\n",
-                live.main.join(".git/symphony/tasks/snapshots").display()
-            )
+            "no PostgreSQL snapshot of the live board's store is kept\n"
         )
     );
     // The live board, never opened, has no record yet.
@@ -375,30 +380,6 @@ fn a_scratch_board_keeps_no_record_and_a_board_tasks_server_names_has_no_store_t
             format!(
                 "the live board holds no board; no schema it was seen at is recorded yet ({})\n",
                 seen::path(&live.board().common).display()
-            )
-        ),
-        "{}",
-        ran.err
-    );
-
-    // Four snapshots in the same second (the clock is pinned): the fourth says the oldest went.
-    live.home().stop().unwrap();
-    let stamp = symphony_board::server::snapshot::stamp(NOW);
-    for _ in 0..3 {
-        assert_eq!(live.tasks(&live.wt, &["snapshot"]).code, 0);
-    }
-    let ran = live.tasks(&live.wt, &["snapshot"]);
-    assert_eq!(
-        (ran.code, ran.out),
-        (
-            0,
-            format!(
-                "✔ took a snapshot of the live board's store: {}; of those whose write-ahead log \
-                 is empty the newest 3 are kept, so {stamp} went\n",
-                live.main
-                    .join(".git/symphony/tasks/snapshots")
-                    .join(format!("{stamp}.3"))
-                    .display()
             )
         ),
         "{}",
@@ -420,7 +401,6 @@ fn board_client_refuses_a_live_board_below_its_record_and_passes_a_healthy_or_sc
         };
         for (name, value) in [
             ("HOME", live.base.join("home")),
-            ("SYMPHONY_SURREAL", crate::common::surreal()),
             ("SYMPHONY_MACHINE_DIR", live.machine.clone()),
         ] {
             env.vars.insert(name.into(), value.to_str().unwrap().into());

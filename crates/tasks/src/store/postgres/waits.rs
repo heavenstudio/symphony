@@ -13,15 +13,14 @@ pub(in crate::store) fn assessment_state() -> Pg<'static> {
     )
 }
 
-/// The time of the line just written (`ts_`) as a JSON number SurrealDB would keep: a time of a
-/// whole second still a float (`1800000000.0`), as the reader of a task's fields compares it.
+/// The time of the line just written (`ts_`) as a JSON float, a time of a whole second too
+/// (`1800000000.0`), as the reader of a task's fields compares it.
 const WRITTEN_AT: &str =
     "CASE WHEN ts_ = trunc(ts_) THEN to_jsonb(round(ts_::numeric, 1)) ELSE to_jsonb(ts_) END";
 
 /// What task `slug`'s landing waits on, `record` of the assessment `assessment`, written with its
 /// line unless that pair was committed before or stands: the pair standing is kept among the
-/// task's assessments first (`super::super::surreal::waits::record`). `acting`, the actor is a
-/// session, checked and its activity recorded.
+/// task's assessments first. `acting`, the actor is a session, checked and its activity recorded.
 pub(in crate::store) fn record(acting: bool) -> Pg<'static> {
     let act = if acting { act() } else { String::new() };
     let kept = |id: &str, record: &str, at: &str, sid: &str| {

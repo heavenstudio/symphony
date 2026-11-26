@@ -1,11 +1,10 @@
-//! A realistic board ([`crate::realistic`]) from SurrealDB, on the board's own engine, to
-//! PostgreSQL and back: SurrealDB's export, copied into PostgreSQL, reads back as that export,
-//! table by table and as one text, with the rows the copy derives from it (the counters, each
-//! sender's last word), and searches alike; PostgreSQL's is SurrealDB's text, which SurrealDB
-//! took. An import into PostgreSQL cut short leaves the board as it was, and made again ends where
-//! one never cut short does.
+//! A realistic board ([`crate::realistic`]) copied into a board and out again: its export reads
+//! back as the board it was given, table by table, and copied into another board reads back as
+//! the same text, with the rows the copy derives from it (the counters, each sender's last word)
+//! and searches alike. An import cut short leaves the board as it was, and made again ends where
+//! one never cut short does. A plugin's numbers keep the tokens they were copied or written in.
 
-use crate::common::{Backend, BoardServer, Fixture, Seed, postgresql};
+use crate::common::{Fixture, Seed, postgresql};
 use crate::copy::everything;
 use crate::realistic;
 use crate::search::answered;
@@ -15,7 +14,10 @@ use std::fmt::Debug;
 use std::time::Duration;
 use symphony_board::pg::{self, Step};
 use symphony_board::rows::Dump;
-use symphony_board::{Database, Error, Store};
+use symphony_board::{Error, Store};
+
+/// A task's plugin fields, as a dump holds them.
+type Fields = std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>;
 
 /// Where `a` and `b` first differ, row by row: none when they are equal.
 fn first_difference<T: PartialEq + Debug>(a: &[T], b: &[T]) -> Option<String> {
@@ -55,7 +57,7 @@ fn same(a: &Dump, b: &Dump, what: &str) {
 }
 
 /// The rows a copy derives from `board`: the counters it sets and each sender's last word (its
-/// newest `msg` or `verdict` line), each row read by its id, so as each database reads it alike.
+/// newest `msg` or `verdict` line), each row read by its id.
 fn derived(store: &Store, board: &Dump) -> Value {
     let raw = store.raw();
     let counter = |id: &str| {
@@ -94,88 +96,93 @@ const SEARCHED: [&str; 12] = [
 ];
 
 /// What each request of a test that copies the realistic board waits within: six times the
-/// clients' own wait (300 s, the same on either database), a backstop only a stall reaches
+/// clients' own wait (300 s), a backstop only a stall reaches
 /// ([`test_time::backstop`]). A copy is one request, so its client's wait is its whole bound, and
 /// these tests are of what a copy gives, not how soon (RULES.md `tests/no-test-fails-on-load`).
 fn patient() -> Duration {
     test_time::backstop(postgresql().wait())
 }
 
-/// SurrealDB's side is a server on the board's own engine and memtable ([`BoardServer`]), as
-/// PostgreSQL's is the board's own server: its export is the one a board's server gives, and its
-/// copy of a whole board is the work a board's is, not the in-memory engine's many times over.
+/// The realistic board copied into one board, then its export copied into another: each export
+/// is the board it was given, both are one text, and the two boards derive the same rows from it
+/// and find the same answers to every search.
 #[test]
-fn a_realistic_board_goes_from_surrealdb_to_postgresql_and_back_whole() {
+fn a_realistic_board_is_copied_whole_and_its_export_makes_the_same_board() {
     let board = realistic::board();
     let wait = patient();
-    let server = BoardServer::start();
-    let surreal = Fixture::in_database(
-        server.client().waiting(wait).into(),
+    let first = Fixture::in_database(
+        postgresql().waiting(wait).into(),
         Seed {
             dump: board.clone(),
         },
     );
-    let exported = surreal.store.dump().unwrap();
-    same(
-        &exported,
-        &board,
-        "SurrealDB's export of the board it was given",
-    );
-    let postgres = Fixture::in_database(
+    let exported = first.store.dump().unwrap();
+    same(&exported, &board, "the export of the board it was given");
+    let second = Fixture::in_database(
         postgresql().waiting(wait).into(),
         Seed {
             dump: exported.clone(),
         },
     );
-    let back = postgres.store.dump().unwrap();
-    same(&back, &exported, "PostgreSQL's export of SurrealDB's");
-    // One text, so SurrealDB takes PostgreSQL's export back as it took the board.
+    let back = second.store.dump().unwrap();
+    same(&back, &exported, "the export of the export copied");
     assert_eq!(
         serde_json::to_string(&back).unwrap(),
         serde_json::to_string(&exported).unwrap(),
         "the two exports are one text"
     );
     assert_eq!(
-        derived(&postgres.store, &board),
-        derived(&surreal.store, &board)
+        derived(&second.store, &board),
+        derived(&first.store, &board)
     );
     for query in SEARCHED {
-        let there = answered(&surreal.store, query);
+        let there = answered(&first.store, query);
         assert!(!there.0.is_empty(), "{query:?} finds nothing on this board");
-        assert_eq!(answered(&postgres.store, query), there, "{query:?}");
+        assert_eq!(answered(&second.store, query), there, "{query:?}");
     }
 }
 
-on_both! {
-    fn a_board_copy_keeps_the_separate_artifact_ledger(backend: Backend) {
-        // Artifact-root export/restore is a separate contract: Dump contains core board rows.
-        // Importing those rows must retain the destination's independently scoped ledger.
-        let f = Fixture::on(backend, Seed::default());
-        let body = json!({"format": 1, "nested": [null, {"number": 1e18, "zero": -0.0}]});
-        assert!(f.store.artifact_ledger_cas("tenant", "project", 0, &body).unwrap());
-        let ledger = f.store.artifact_ledger("tenant", "project").unwrap();
-        let board = everything();
-        for _ in 0..2 {
-            f.store.copy(&board).unwrap();
-            assert_eq!(f.store.dump().unwrap(), board);
-            assert_eq!(f.other().artifact_ledger("tenant", "project").unwrap(), ledger);
-        }
-        let mut refused = board.clone();
-        refused.tasks[0].status = "not-a-status".into();
-        assert!(f.store.copy(&refused).is_err());
+#[test]
+fn a_board_copy_keeps_the_separate_artifact_ledger() {
+    // Artifact-root export/restore is a separate contract: Dump contains core board rows.
+    // Importing those rows must retain the destination's independently scoped ledger.
+    let f = Fixture::new(Seed::default());
+    let body = json!({"format": 1, "nested": [null, {"number": 1e18, "zero": -0.0}]});
+    assert!(
+        f.store
+            .artifact_ledger_cas("tenant", "project", 0, &body)
+            .unwrap()
+    );
+    let ledger = f.store.artifact_ledger("tenant", "project").unwrap();
+    let board = everything();
+    for _ in 0..2 {
+        f.store.copy(&board).unwrap();
         assert_eq!(f.store.dump().unwrap(), board);
-        assert_eq!(f.store.artifact_ledger("tenant", "project").unwrap(), ledger);
-        assert!(f.store.artifact_ledger_cas("tenant", "project", 1, &body).unwrap());
-        assert_eq!(f.store.artifact_ledger("tenant", "project").unwrap().unwrap()["revision"], 2);
+        assert_eq!(
+            f.other().artifact_ledger("tenant", "project").unwrap(),
+            ledger
+        );
     }
-}
-
-/// A PostgreSQL client of its own on the board `f` is on.
-fn connection(f: &Fixture) -> pg::Client {
-    match f.other_database() {
-        Database::PostgreSql(client) => client,
-        Database::SurrealDb(_) => panic!("this board is on SurrealDB"),
-    }
+    let mut refused = board.clone();
+    refused.tasks[0].status = "not-a-status".into();
+    assert!(f.store.copy(&refused).is_err());
+    assert_eq!(f.store.dump().unwrap(), board);
+    assert_eq!(
+        f.store.artifact_ledger("tenant", "project").unwrap(),
+        ledger
+    );
+    assert!(
+        f.store
+            .artifact_ledger_cas("tenant", "project", 1, &body)
+            .unwrap()
+    );
+    assert_eq!(
+        f.store
+            .artifact_ledger("tenant", "project")
+            .unwrap()
+            .unwrap()["revision"],
+        2
+    );
 }
 
 /// The one value `sql` answers on `client`.
@@ -215,7 +222,7 @@ fn an_import_cut_short_leaves_the_board_as_it_was_and_made_again_ends_whole() {
             dump: before.clone(),
         },
     );
-    let (holder, watcher) = (connection(&f), connection(&f));
+    let (holder, watcher) = (f.postgresql(), f.postgresql());
     // The copy's last table: the import waits there, every other table emptied and written.
     holder
         .simple("BEGIN; LOCK TABLE usage IN SHARE MODE")
@@ -241,10 +248,34 @@ fn an_import_cut_short_leaves_the_board_as_it_was_and_made_again_ends_whole() {
     same(&f.store.dump().unwrap(), &board, "the import made again");
 }
 
-/// jsonb expands exponents and forgets negative zero. The exported numeric tokens, including
+/// `value` with every object's keys in their order, at every depth: two documents' texts compared
+/// so differ only where a value does, a number's spelling among them, not where their keys' order
+/// does.
+fn keys_in_order(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
+            symphony_board::order::sort_by(&mut entries, &|a, b| a.0.cmp(&b.0));
+            Value::Object(
+                (entries.into_iter())
+                    .map(|(key, value)| (key, keys_in_order(value)))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(keys_in_order).collect()),
+        other => other,
+    }
+}
+
+/// A dump's text, its keys in order ([`keys_in_order`]).
+fn text_of(dump: &Dump) -> String {
+    serde_json::to_string(&keys_in_order(serde_json::to_value(dump).unwrap())).unwrap()
+}
+
+/// jsonb expands exponents and forgets negative zero. The copied numeric tokens, including
 /// integers above f64's exact range and exponent floats which are also valid i64s, survive.
 #[test]
-fn numeric_fields_keep_the_surrealdb_exports_representation() {
+fn numeric_fields_keep_the_copied_representation() {
     let mut board = everything();
     board.tasks[0].fields = serde_json::from_value(json!({"probe": {"numbers": {
         "large": 1e30, "small": 1e-30, "fraction": 1.234_567_890_123_456_7,
@@ -253,22 +284,14 @@ fn numeric_fields_keep_the_surrealdb_exports_representation() {
         "text": "1e+30", "null": null, "bool": true
     }}}))
     .unwrap();
-    let surreal = Fixture::on(Backend::SurrealDb, Seed { dump: board });
-    let exported = surreal.store.dump().unwrap();
-    let postgres = Fixture::on(
-        Backend::PostgreSql,
-        Seed {
-            dump: exported.clone(),
-        },
-    );
-    let mut expected = exported;
+    let postgres = Fixture::new(Seed {
+        dump: board.clone(),
+    });
+    let mut expected = board;
     let check = |expected: &Dump| {
         let back = postgres.store.dump().unwrap();
         assert_eq!(&back, expected);
-        assert_eq!(
-            serde_json::to_string(&back).unwrap(),
-            serde_json::to_string(expected).unwrap()
-        );
+        assert_eq!(text_of(&back), text_of(expected));
     };
     check(&expected);
     let slug = expected.tasks[0].slug.clone();
@@ -311,40 +334,32 @@ fn numeric_fields_keep_the_surrealdb_exports_representation() {
 }
 
 /// Actual edits keep the addressed replacement's tokens: array positions are not element
-/// identities. An equal-valued raw document update is a no-op on SurrealDB, while a write that
-/// changes the document keeps its new numeric forms and the untouched siblings' old forms.
+/// identities. An equal-valued raw document update changes nothing, while a write that changes the
+/// document keeps its new numeric forms and the untouched siblings' old forms. Each step's fields
+/// are read back as text, so a number's spelling counts as well as its value.
 #[test]
-fn edited_numeric_fields_keep_the_written_tokens_on_both_databases() {
+fn edited_numeric_fields_keep_the_written_tokens() {
     let mut board = everything();
     board.tasks[0].fields = serde_json::from_value(json!({"probe": {
         "values": [1e18, 1_000_000_000_000_000_000_i64],
         "object": {"leaf": 1e18}, "leaf": 1e18, "sibling": 1e18
     }}))
     .unwrap();
-    let (surreal, postgres) = (
-        Fixture::on(
-            Backend::SurrealDb,
-            Seed {
-                dump: board.clone(),
-            },
-        ),
-        Fixture::on(
-            Backend::PostgreSql,
-            Seed {
-                dump: board.clone(),
-            },
-        ),
-    );
+    let f = Fixture::new(Seed {
+        dump: board.clone(),
+    });
+    let store = &f.store;
     let slug = board.tasks[0].slug.as_str();
-    let fields = |store: &Store| {
-        store
-            .dump()
-            .unwrap()
-            .tasks
-            .into_iter()
+    let fields_of = |slug: &str| {
+        let task = (store.dump().unwrap().tasks.into_iter())
             .find(|task| task.slug == slug)
-            .unwrap()
-            .fields
+            .unwrap();
+        task.fields
+    };
+    let fields = || fields_of(slug);
+    let mut seen: Vec<(String, String)> = Vec::new();
+    let mut note = |step: String, fields: &Fields| {
+        seen.push((step, serde_json::to_string(fields).unwrap()));
     };
     let cases = [
         json!({"fields.probe.values": [1_000_000_000_000_000_000_i64]}),
@@ -360,121 +375,150 @@ fn edited_numeric_fields_keep_the_written_tokens_on_both_databases() {
         json!({"fields": null}),
     ];
     for patch in cases {
-        for store in [&surreal.store, &postgres.store] {
-            store.copy(&board).unwrap();
-            store.raw().row("task", slug).set(patch.clone()).unwrap();
-        }
-        let expected = fields(&surreal.store);
-        let back = fields(&postgres.store);
-        assert_eq!(back, expected, "{patch}");
-        assert_eq!(
-            serde_json::to_string(&back).unwrap(),
-            serde_json::to_string(&expected).unwrap(),
-            "{patch}"
-        );
+        store.copy(&board).unwrap();
+        store.raw().row("task", slug).set(patch.clone()).unwrap();
+        note(format!("set {patch}"), &fields());
     }
     // A failed task write rolls back the saved text too, even after its field setter ran.
-    for store in [&surreal.store, &postgres.store] {
-        store.copy(&board).unwrap();
-        let before = fields(store);
-        assert!(
-            store
-                .raw()
-                .row("task", slug)
-                .set(json!({
-                    "fields.probe.values": [1_000_000_000_000_000_000_i64], "title": null
-                }))
-                .is_err()
-        );
-        assert_eq!(fields(store), before);
-    }
+    store.copy(&board).unwrap();
+    let before = fields();
+    assert!(
+        store
+            .raw()
+            .row("task", slug)
+            .set(json!({
+                "fields.probe.values": [1_000_000_000_000_000_000_i64], "title": null
+            }))
+            .is_err()
+    );
+    assert_eq!(fields(), before);
     // An upsert of the existing task updates the same saved JSON as an ordinary assignment.
-    let mut replacement = surreal.store.raw().row("task", slug).get().unwrap();
+    let mut replacement = store.raw().row("task", slug).get().unwrap();
     replacement["title"] = json!("Upserted");
     replacement["fields"]["probe"]["values"] = json!([1_000_000_000_000_000_000_i64]);
-    for store in [&surreal.store, &postgres.store] {
-        store
-            .raw()
-            .row("task", slug)
-            .put(replacement.clone())
-            .unwrap();
-    }
-    assert_eq!(fields(&postgres.store), fields(&surreal.store));
-    // The public setter's MERGE is separate from its version bump: SurrealDB keeps the old
-    // document on an equal-valued MERGE, including its existing number's spelling.
-    for store in [&surreal.store, &postgres.store] {
-        store.copy(&board).unwrap();
-        store
-            .set_field(
-                slug,
-                "probe",
-                "leaf",
-                &json!(1_000_000_000_000_000_000_i64),
-                "owner",
-            )
-            .unwrap();
-    }
-    let expected = fields(&surreal.store);
-    assert_eq!(expected["probe"]["leaf"], json!(1e18));
-    assert_eq!(fields(&postgres.store), expected);
-    for store in [&surreal.store, &postgres.store] {
-        store
-            .set_field(slug, "probe", "leaf", &json!(1e30), "owner")
-            .unwrap();
-    }
-    let expected = fields(&surreal.store);
-    assert_eq!(expected["probe"]["leaf"], json!(1e30));
-    assert_eq!(fields(&postgres.store), expected);
-    for store in [&surreal.store, &postgres.store] {
-        store
-            .raw()
-            .row("task", slug)
-            .add("fields.probe.leaf", json!(0))
-            .unwrap();
-    }
-    assert_eq!(fields(&postgres.store), fields(&surreal.store));
-    for store in [&surreal.store, &postgres.store] {
-        store
-            .set_field(slug, "probe", "leaf", &json!("1e+18 is text"), "owner")
-            .unwrap();
-    }
-    let expected = fields(&surreal.store);
-    assert_eq!(expected["probe"]["leaf"], json!("1e+18 is text"));
-    assert_eq!(fields(&postgres.store), expected);
+    store.raw().row("task", slug).put(replacement).unwrap();
+    note("upsert".into(), &fields());
+    // The public setter's MERGE is separate from its version bump: an equal-valued MERGE keeps
+    // the old document, its existing number's spelling among it.
+    store.copy(&board).unwrap();
+    let leaf = json!(1_000_000_000_000_000_000_i64);
+    store
+        .set_field(slug, "probe", "leaf", &leaf, "owner")
+        .unwrap();
+    assert_eq!(fields()["probe"]["leaf"], json!(1e18));
+    note("set_field leaf to an equal integer".into(), &fields());
+    store
+        .set_field(slug, "probe", "leaf", &json!(1e30), "owner")
+        .unwrap();
+    assert_eq!(fields()["probe"]["leaf"], json!(1e30));
+    note("set_field leaf 1e30".into(), &fields());
+    store
+        .raw()
+        .row("task", slug)
+        .add("fields.probe.leaf", json!(0))
+        .unwrap();
+    note("add 0 to leaf".into(), &fields());
+    let text = json!("1e+18 is text");
+    store
+        .set_field(slug, "probe", "leaf", &text, "owner")
+        .unwrap();
+    assert_eq!(fields()["probe"]["leaf"], text);
+    note("set_field leaf to text".into(), &fields());
     // Tasks imported without fields also retain numeric tokens when a plugin adds one later.
     let empty_slug = board.tasks[1].slug.as_str();
-    for store in [&surreal.store, &postgres.store] {
-        store
-            .set_field(empty_slug, "probe", "new", &json!(1e18), "owner")
-            .unwrap();
-    }
-    let empty_fields = |store: &Store| {
-        store
-            .dump()
-            .unwrap()
-            .tasks
-            .into_iter()
-            .find(|task| task.slug == empty_slug)
-            .unwrap()
-            .fields
-    };
-    assert_eq!(empty_fields(&surreal.store)["probe"]["new"], json!(1e18));
-    assert_eq!(empty_fields(&postgres.store), empty_fields(&surreal.store));
+    store
+        .set_field(empty_slug, "probe", "new", &json!(1e18), "owner")
+        .unwrap();
+    assert_eq!(fields_of(empty_slug)["probe"]["new"], json!(1e18));
+    note(
+        "set_field on a task without fields".into(),
+        &fields_of(empty_slug),
+    );
     // Removing all fields and then adding one must not reuse a deleted token or lose the
     // new input's form on a task whose fields have already been tracked.
-    for store in [&surreal.store, &postgres.store] {
-        store
-            .raw()
-            .row("task", slug)
-            .set(json!({"fields": null}))
-            .unwrap();
-        store
-            .raw()
-            .row("task", slug)
-            .set(json!({"fields.probe.leaf": 1e18}))
-            .unwrap();
-    }
-    let expected = fields(&surreal.store);
-    assert_eq!(expected["probe"]["leaf"], json!(1e18));
-    assert_eq!(fields(&postgres.store), expected);
+    let raw = store.raw();
+    raw.row("task", slug).set(json!({"fields": null})).unwrap();
+    (raw.row("task", slug))
+        .set(json!({"fields.probe.leaf": 1e18}))
+        .unwrap();
+    assert_eq!(fields()["probe"]["leaf"], json!(1e18));
+    note("fields removed, then a leaf set".into(), &fields());
+    let expected: Vec<(String, String)> = EDITED
+        .iter()
+        .map(|(step, text)| (step.to_string(), text.to_string()))
+        .collect();
+    assert_eq!(seen, expected, "{seen:#?}");
 }
+
+/// What [`edited_numeric_fields_keep_the_written_tokens`] reads back after each step.
+const EDITED: [(&str, &str); 18] = [
+    (
+        r#"set {"fields.probe.values":[1000000000000000000]}"#,
+        r#"{"probe":{"leaf":1e+18,"object":{"leaf":1e+18},"sibling":1e+18,"values":[1000000000000000000]}}"#,
+    ),
+    (
+        r#"set {"fields.probe.values":[1e+18]}"#,
+        r#"{"probe":{"leaf":1e+18,"object":{"leaf":1e+18},"sibling":1e+18,"values":[1e+18]}}"#,
+    ),
+    (
+        r#"set {"fields.probe.values":[1000000000000000000,1e+18]}"#,
+        r#"{"probe":{"leaf":1e+18,"object":{"leaf":1e+18},"sibling":1e+18,"values":[1e+18,1000000000000000000]}}"#,
+    ),
+    (
+        r#"set {"fields.probe.object":{"leaf":1000000000000000000}}"#,
+        r#"{"probe":{"leaf":1e+18,"object":{"leaf":1e+18},"sibling":1e+18,"values":[1e+18,1000000000000000000]}}"#,
+    ),
+    (
+        r#"set {"fields.probe.object.leaf":1000000000000000000}"#,
+        r#"{"probe":{"leaf":1e+18,"object":{"leaf":1e+18},"sibling":1e+18,"values":[1e+18,1000000000000000000]}}"#,
+    ),
+    (
+        r#"set {"fields.probe.object.leaf":1000000000000000000,"title":"Changed"}"#,
+        r#"{"probe":{"leaf":1e+18,"object":{"leaf":1000000000000000000},"sibling":1e+18,"values":[1e+18,1000000000000000000]}}"#,
+    ),
+    (
+        r#"set {"fields.probe.values":[1000000000000000000,1e+18],"fields.probe.added":"new"}"#,
+        r#"{"probe":{"added":"new","leaf":1e+18,"object":{"leaf":1e+18},"sibling":1e+18,"values":[1000000000000000000,1e+18]}}"#,
+    ),
+    (
+        r#"set {"fields":{"probe":{"values":[1000000000000000000],"leaf":1000000000000000000,"sibling":1e+18}}}"#,
+        r#"{"probe":{"leaf":1000000000000000000,"sibling":1e+18,"values":[1000000000000000000]}}"#,
+    ),
+    (
+        r#"set {"fields.probe.object.leaf":null,"fields.probe.values":[]}"#,
+        r#"{"probe":{"leaf":1e+18,"object":{},"sibling":1e+18,"values":[]}}"#,
+    ),
+    (
+        r#"set {"fields.probe.values":[1e-30,{"n":1e+30}]}"#,
+        r#"{"probe":{"leaf":1e+18,"object":{"leaf":1e+18},"sibling":1e+18,"values":[1e-30,{"n":1e+30}]}}"#,
+    ),
+    (r#"set {"fields":null}"#, "{}"),
+    (
+        "upsert",
+        r#"{"probe":{"leaf":1000000000000000000,"object":{"leaf":1000000000000000000},"sibling":1000000000000000000,"values":[1000000000000000000]}}"#,
+    ),
+    (
+        "set_field leaf to an equal integer",
+        r#"{"probe":{"leaf":1e+18,"object":{"leaf":1e+18},"sibling":1e+18,"values":[1e+18,1000000000000000000]}}"#,
+    ),
+    (
+        "set_field leaf 1e30",
+        r#"{"probe":{"leaf":1e+30,"object":{"leaf":1e+18},"sibling":1e+18,"values":[1e+18,1000000000000000000]}}"#,
+    ),
+    (
+        "add 0 to leaf",
+        r#"{"probe":{"leaf":1e+30,"object":{"leaf":1e+18},"sibling":1e+18,"values":[1e+18,1000000000000000000]}}"#,
+    ),
+    (
+        "set_field leaf to text",
+        r#"{"probe":{"leaf":"1e+18 is text","object":{"leaf":1e+18},"sibling":1e+18,"values":[1e+18,1000000000000000000]}}"#,
+    ),
+    (
+        "set_field on a task without fields",
+        r#"{"probe":{"new":1e+18}}"#,
+    ),
+    (
+        "fields removed, then a leaf set",
+        r#"{"probe":{"leaf":1e+18}}"#,
+    ),
+];

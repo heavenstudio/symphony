@@ -293,6 +293,18 @@
   > :is(p, ul, ol, h2, h3, h4, blockquote) {
   max-width: var(--measure);
 }
+/* So is a held callout under a section, whose prose keeps the measure. */
+.doc-section:where(:not(.doc-card):has(> .held-comments)) {
+  box-sizing: border-box;
+  max-width: calc(var(--measure) + 12ch);
+  padding-right: 0;
+}
+.doc-section:where(:not(.doc-card):has(> .held-comments)) > .section-prose {
+  max-width: var(--measure);
+}
+.doc-section:where(:not(.doc-card):has(> .section-prose > .callout)) > .section-prose {
+  max-width: none;
+}
 /* The section's "+ comment" (.add) sits over its first callout's top right corner: that callout's
  * title stops its first line short of the button, with room for its longer "Close comment". */
 .doc-section:where(:has(> .section-prose > .callout))
@@ -430,6 +442,11 @@
   display: flex;
   justify-content: flex-end;
   margin-top: 8px;
+}
+/* A card's owner on the left of its actions. */
+.doc-actions > .owner {
+  margin-right: auto;
+  font-size: var(--fs-sm);
 }
 .doc-actions button {
   font-size: 0.75rem;
@@ -592,6 +609,40 @@ form.verdict {
 .section-loading {
   min-height: 160px;
   color: var(--muted-foreground);
+}
+/* ---- A comment held for people: a callout's box, dashed, until it is passed on. ---- */
+.held-comment {
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  background: var(--card);
+  padding: 10px 16px;
+  margin: 12px 0;
+}
+.held-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.held-kind,
+.held-head > .entry-held {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0 7px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--muted);
+}
+.held-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 80ch;
+}
+.held-comment > .row {
+  margin-top: 8px;
 }
 /* ---- Callouts: soft cards tinted by their kind. ---- */
 .callout {

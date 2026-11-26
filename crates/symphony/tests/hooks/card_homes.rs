@@ -110,7 +110,7 @@ fn a_document_is_a_tracked_markdown_file_under_docs_the_history_aside() {
         "README.md",
     ]);
     let mut found = documents(&root);
-    found.sort();
+    symphony_board::order::sort_by(&mut found, &Ord::cmp);
     std::fs::remove_dir_all(&root).unwrap();
     assert_eq!(found, ["docs/a.md", "docs/analysis/b.md"]);
 }

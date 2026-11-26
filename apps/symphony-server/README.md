@@ -11,6 +11,47 @@ The public Rust items a consumer calls follow the
 replacement for a release, then remove it in a separate later task with consumer migration
 evidence and the guard list updated.
 
+## Who a request is from
+
+Every request is judged by its client's address before any route (`src/gate.rs`). Loopback is
+allowed without asking, an address of the Tailscale ranges when `tailscale whois` names a node
+of this tailnet for it, and anything else is refused (403). The same whois answer says whose
+node it is, and the gate keeps who the request is from:
+
+- **The person at the machine**: loopback, one of this machine's own tailnet addresses, and a
+  node under the Tailscale login this machine is under (`Self.UserID` in `tailscale status`, the
+  call the Host check already makes), such as the owner's phone. Their writes read `owner`.
+- **Another login's person**: a node under any other user. Tailscale's word says who: the login
+  is a sign-in, `tailscale:LOGIN`, of at most one profile in the machine's `people.json`, and a
+  board that gives that profile's short name a power has added them. They see nothing else.
+- **Nobody**: a tagged node, or one whose answer names no user.
+
+A status call that gives no answer keeps the login it last gave, as it keeps the names. Until one
+has answered, only loopback is the person at the machine: this machine's own tailnet addresses are
+known from that answer too, so every node, the Mac's own included, counts as another login's or as
+nobody's. A Mac that is itself tagged is under no login, so only the Mac reaches its boards.
+
+What a visitor reaches is each board's word (`Gate::member`, asked of `src/roster.rs`): the
+person at the machine is on every board, and another login's person is on a board that gives
+their short name any power ([People](../../docs/workflow/TASKS.md#people)), as the actor of that
+name, shown by their profile's display name. A failed read of the profiles or of the board adds
+nobody. The one server judges each request once and keeps only the
+projects whose board has added its visitor: a request under a project's id asks that board
+first, and no other once it has added them, while any other request, and one under a board that
+has not, asks every board (`src/projects.rs`). To them every other project is one the server does
+not hold, in no list, and each path under its id answers as an id nobody registered, the same
+bytes. `/api/front` and the list's installation id are the machine's, answered to the person at
+it alone. A server of its own refuses a visitor its board has not added, as an address the gate
+refuses. A project's router takes the visitor's actor with the request, and every save, workflow
+action and attempt control is that actor's.
+
+A write from anyone but the person at the machine is checked against that board's people as it
+arrives, before its body is read (`src/powers.rs`, the table of what each route needs, and
+`src/write.rs`): read fresh from the board, so a revoke holds from the next write. One whose
+power the person lacks is answered 403 with the power it needs, `Forbidden: ana may not decide on
+this board`, and nothing is written; a board that cannot be read answers 503. The server's log
+line for a refusal names the person's short name, never a sign-in or an email.
+
 ## Hosted admission
 
 `symphony_server::hosted::router(shared, config, host)` is an explicit, additive admission
@@ -48,7 +89,8 @@ The first profile refuses worktree selectors, machine diagnostics/controls, pane
 and actorless plugin dispatch. Saves and `/x/` routes go only to `Host::dispatch`, whose default
 is deny, with verified `Context` and canonical input, without credential headers. An adapter
 resolves any domain-specific references and rechecks authority before state or provider I/O.
-It must not forward hosted mutations into the local owner's save/plugin APIs. Binary upload
+It must not forward hosted mutations into the local owner's save/plugin APIs, and those saves
+refuse a request the hosted admission holds: each save is the person the local gate admits. Binary upload
 and storage integration need their own actor-aware adapter; a local upload URL is no grant.
 Redirects stay relative or on the configured origin, with no login redirects for refusals.
 
@@ -63,12 +105,19 @@ No production host adapter or CLI switch is supplied here.
 The one server (`serve --home`) keeps its record (`server.json`), log, lease and lock in the
 machine folder: `~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_HOME/symphony`
 elsewhere, `SYMPHONY_MACHINE_DIR` when set (every test sets a temporary one). The registry
-beside them (`projects.json`) holds each project's root, id and `symphony.toml`, and the
+beside them (`projects.json`) holds each project's root, id and `symphony.toml`; the people's
+profiles (`people.json`, with its lock `people.lock`, both mode 600: they hold sign-ins and
+contact details) are there, which `just tasks-people` writes; and the
 releases installed on the machine are there too (`releases/NAME/`, with the `current` link); `symphony
 project add [DIR]` writes it, and every start runs it. The build and client stay in the
 starter's install folder (`--install`, `symphony/server/` in its git common dir), where a record
 an older server left is read once; a project's own state (asks, thumbnails,
-the queue order, the port record) stays in its artifacts folder.
+the queue order, the port record, the notices' record) stays in its artifacts folder.
+
+The one server alone tells each project's people of a card waiting, an agent's question and a
+reviewer's verdict, a worker of each project's hub beside its board ticks (`src/live/notices.rs`),
+handing each notice to the program the machine folder's `notices/programs.toml` names for its way
+([NOTICES](../../docs/engineering/NOTICES.md#the-servers-part)); a private server tells no one.
 
 Each registered project is served at `/<id>/` by its own read hub: its watcher, feed cursor,
 board snapshot and branch scan (`src/projects.rs`). `/<id>/theme.css` serves its theme
@@ -126,7 +175,10 @@ nothing, when the project's pin or schema is newer than the running build's and 
 cannot replace it. A project with no plugins, and a start of a release, never replaces it. A start
 whose build holds every registered linked plugin replaces it by hand-off: it writes
 `handover.json` (its executable, root and install folder) in the machine folder and sends
-`SIGUSR1`; the server hands its sockets to that build as a reload does. While a release is
+`SIGUSR1`; the server hands its sockets to that build as a reload does. That signal and a stop's
+(SIGTERM, SIGINT, SIGHUP) are watched before a server binds, records its port or prints its URL,
+so one sent as it starts is kept and acted on once it has started: a stop then still clears its
+port record. While a release is
 installed, every project naming a linked plugin says on its pages that it holds the machine's
 server on a project's build, naming the command that lets it go, and `just release --status` says
 the same ([RELEASES](../../docs/workflow/RELEASES.md#status)); a stop and a start then make the release
@@ -218,17 +270,18 @@ cannot keep installing after `--stop` returns.
 | `/queue` with `Accept: application/json` | Same queue; ordinary navigation opens the client board |
 | `/api/tasks` | Version, task records and sessions without process ids |
 | `/api/task-board?q=…&status=…&cursor=…` | Thirty brief-free summaries in the requested column; `counts=1` returns only counts and sign-off slugs |
-| `/api/task-page?slug=…` | Task, shared typed brief blocks and child count; `gates`, once the server has answered the task's gates since it started, says how many there were, how many the task waited on and how many had no who and when (`GatesSeen`), the room the page holds while it reads them again |
+| `/api/task-page?slug=…` | Task, shared typed brief blocks and child count; `gates`, once the server has answered the task's gates since it started, says how many there were, how many the task waited on and how many had no who and when (`GatesSeen`), the room the page holds while it reads them again; `passes`, whether the one reading may pass a held message on |
 | `/api/task-diff?slug=…` | Changed paths and added/removed counts, from the branch's merge base or the recorded landing merge's first parent; at most 500 paths and 256 KiB of Git output. Binary counts are null; missing branches or history are said explicitly (`TaskDiff`) |
 | `/api/task-diff-file?slug=…&path=…&base=…&head=…` | One file's patch, at most 256 KiB; the comparison must still match the summary's commit ids, otherwise 409. All Git calls in either read share five seconds, and cancellation ends the child (`src/api/task_diff.rs`) |
 | `/api/task-gates?slug=…` | The task's gates at its recorded branch's tip (`TaskGates`): the Symphony's review, check and owner gates and the project's plugins' own, each met, missing, waived, held or unknown, what the task waits on first; a plugin that errs or is slow is an unknown gate, a task not on the board 404 ([TASKS](../../docs/workflow/TASKS.md#gates)) |
 | `/api/task-offer?slug=…` | Resolved branch and the first offer of the project's board actions that has a payload, on work of any status (each action decides which it offers on); fetched near the controls |
-| `/api/task-history?slug=…&before=…` | Thirty structured messages with timestamps and typed blocks; `after=…` catches up a loaded thread after a lost feed |
+| `/api/task-history?slug=…&before=…` | Thirty structured messages with timestamps and typed blocks, and on the board's line for a message held for people and the line it became once passed on, that message (`HeldWords`, `symphony_board::held`); `after=…` catches up a loaded thread after a lost feed |
 | `/api/agent-page?cursor=…` | Twenty connected agents and their current work and five latest finished tasks; `health=lost` pages lost agents |
 | `/api/task-thread?slug=…` | Alias for the typed paged task history |
 | `/api/agents` | The board's agents view, including probe availability |
 | `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the commits in the window that changed the settings file, the rules or a skill, each with what it changed (`ReportMark`); what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`). The answer is kept between reads with what it was read from (the hour, each day file by its stat, the default branch's tip), so a read that finds none of it moved opens no file and starts no git (`src/api/reports/kept.rs`). Its window ends at the moment `TASKS_NOW` holds the board's clock at, when the server's environment sets it, else at the server's clock (`Hub::recorded_now`), so a server over records written at a held moment reads them, as the product specs' pictures do |
 | `/api/settings` | The Settings page's one read (`SettingsPage`): the files read, what does not load, and every entry in one shape with each setting's value in force, source, scopes and class (`crates/symphony/src/settings.rs`). It reads the project's files, the board's store of preferences, the project file's saves waiting for delivery, this machine's `PATH` and the committed `symphony-github.toml`, runs no program, and writes nothing; `/api/setting` is its write. A hosted visitor is refused it, as it says what this machine has |
+| `/api/people` | The People page's one read (`PeoplePage`): the board's people, groups and log, each person's powers held (their own and their groups'), display name and git handles from the machine's profiles, and the services each signs in by, never a subject, an email or a chat address; who reads it and whether they administer. A board or profiles that cannot be read are said in `problem` beside what was read, a cause only to the person at the machine and never a value of the profiles' file (`src/people.rs`). A hosted visitor is refused it, as the board's people are this machine's |
 | `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/workflow/RUNS.md#logs)) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
@@ -272,7 +325,7 @@ The task board opts into read-only Build/Test placement with `activity=1`; its
 status filter, counts and cursor use one filtered machine snapshot. The returned
 `lifecycle_counts` retain the underlying task totals. Without that opt-in,
 queries keep lifecycle status and paging semantics.
-Search uses SurrealDB full-text indexes over titles, briefs, slugs and thread
+Search uses the board's full-text word index over titles, briefs, slugs and thread
 messages, ordered by BM25 relevance with an exact slug first. Matching remains
 in the database; a message-only match keeps its task in the returned results.
 Canonical `/tasks`, `/task/…`, `/reports`, `/settings` and `/agents` routes serve the client shell.
@@ -289,10 +342,9 @@ write, and every page says so on the notice until the board and the build agree.
 a board whose step is declared to keep the Symphony writing: its ticks and saves write it as at
 the build's own schema, and the notice says nothing of it (`Hub::read_only_ahead`). A board that
 took a read on a connection that worked and did not answer it within the 3 s wait is slow: 504,
-"the task board is slow", never "cannot be reached". On PostgreSQL the wait bounds each write of a
-request and each read of its answer, and a request is never sent again, as the server may have run
-it; a board still on SurrealDB sends a read once more, so it waits at most twice the wait, inside
-the client's 15 s request limit. Native routes apply both
+"the task board is slow", never "cannot be reached". The wait bounds each write of a request and
+each read of its answer, inside the client's 15 s request limit, and a request is never sent
+again, as the server may have run it. Native routes apply both
 the peer gate and the Host check; sandboxed frames cannot read the API.
 
 `just symphony` installs the release client with the shared server, in
@@ -454,8 +506,11 @@ without rewriting seen/statuses, so an older concurrent dispatcher still refresh
 snapshot; changed observations commit their sequence with their queued events.
 
 Owner POSTs to `/api/decision`, `/api/comment`, `/api/message`,
-`/api/task-message`, `/api/quick-chat`, `/api/quick-task`, `/api/ask`,
+`/api/task-message`, `/api/task-pass`, `/api/quick-chat`, `/api/quick-task`, `/api/ask`,
 `/api/ask-reply`, `/api/task-action` and `/api/setting` run natively through `symphony::save`.
+A task's message from a person who may not direct agents is held for people and answers its
+line's number (`"held"`); `/api/task-pass` (`{slug, id}`) passes one on, and the task page's
+`passes` says whether the one reading may ([TASKS](../../docs/workflow/TASKS.md#words-held-for-people)).
 `/api/setting` is the Settings page's write (`SettingWrite`): a preference kept in the board's
 store, its entry removed, or its stored value made the project's by a commit of the project file
 ([PROJECT_FILE](../../docs/operations/PROJECT_FILE.md#the-settings-page)); a hosted visitor is refused it. A task
@@ -463,6 +518,16 @@ action is a board action of the project's plugins, named by the offer it answers
 (`TaskOffer`: the action, its label, the branch and the payload it hands back);
 an action no plugin of the project offers is a 404, and one the action refuses
 says and moves nothing on the board.
+`/api/people-change` (`PeopleChange`) is one change of the People page, the command's own
+(`symphony_board::people::change` for an add, which writes the profile with the board's row under
+one lock), and needs `administer`; `/api/people-profile` (`ProfileWrite`) writes a profile alone,
+the person at the machine's any, a person's their own display name and git handles, and needs
+only being on the board ([TASKS](../../docs/workflow/TASKS.md#the-people-page)). Each answers the
+page as it reads after the write, is the project's own board's (a worktree's scope answers 404),
+and is refused a hosted visitor; a server that names no machine folder answers 503 to a write of
+a profile. Only the person at the machine gives a sign-in, and a failure's cause (which can name
+the machine folder's path) is told only to them: anyone else is told what failed and what
+stands, and the server's log keeps the cause.
 Writes require an allowed Host and, when supplied, the app's exact Origin. So does the feed's
 WebSocket upgrade, as a page of any site may open a WebSocket and read what it says: its Origin
 must be the server's own page (`src/api/feed_socket.rs`).

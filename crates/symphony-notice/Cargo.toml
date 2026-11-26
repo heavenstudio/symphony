@@ -1,0 +1,27 @@
+# `symphony-notice`: the notice message, what the server hands a notice plugin, one person's notice
+# and that person's address at a time, and the plugin's side of that hand-off
+# (docs/engineering/NOTICES.md). A contract kept stable across releases: it builds with no workspace
+# member, so the core that makes a notice and each plugin that sends one (Slack, WhatsApp, email,
+# each a package of its own) link this alone of each other. Not published: the reference is the
+# contract for a program in any other language.
+[package]
+name = "symphony-notice"
+version = "1.0.0"
+publish.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+# The machine folder's rule, which the crate repeats rather than links: its tests hold the two the
+# same.
+symphony-board = { path = "../tasks" }
+
+[lints]
+workspace = true

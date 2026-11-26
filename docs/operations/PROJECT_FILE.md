@@ -65,8 +65,8 @@ not have.
 `/settings`, under each project and in the header after Reports, shows what is in force for the
 project and where each value comes from: one read, `/api/settings`
 (`crates/symphony/src/settings.rs`, the wire types `crates/symphony-api/src/settings.rs`), which
-the client draws. Every thing it shows is an entry in one shape: its
-name, what it is for, its state and why, what it needs and whether this machine has it, and its
+the client draws, explaining nothing of itself (RULES.md `code/pages-explain-nothing`). Every
+thing it shows is an entry in one shape: its name, its state and why, what it needs and whether this machine has it, and its
 settings, each with its key, its value in force, its source (the default, the file with the
 table, the key and the line, or [the board's store](#the-boards-store), as `just tasks limits`
 names one, with the value it stands over: for the store's the committed value and its line, for a
@@ -291,8 +291,8 @@ engine carries the entries.
 Each table serves one folder at one URL. With none written, one keeps the convention: `docs/` at
 `/docs/`, Markdown and HTML, `docs/history` listed but never read as documents. A key not listed here
 refuses the file, as a misspelt one would change what is served. A route the Symphony answers
-itself (`symphony_api::SYMPHONY_ROUTES`: `tasks`, `queue`, `reports`, `runs`, `settings` and the
-rest) wins over every entrypoint, so one whose `url` lies on such a route refuses the file by name.
+itself (`symphony_api::SYMPHONY_ROUTES`: `tasks`, `queue`, `reports`, `runs`, `settings`, `people`
+and the rest) wins over every entrypoint, so one whose `url` lies on such a route refuses the file by name.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
@@ -510,9 +510,9 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `assessments` | none: an assessment is refused | the folder of the project's landing assessments; under `.git/`, the git common dir |
 
 A project's board runs on the machine's PostgreSQL: a board not made yet is made on it by its
-first command ([getting started](GETTING_STARTED.md#2-set-the-project-up)), and only a board made
-on SurrealDB before that, which holds its store and names no other engine, still runs there
-until it is moved ([POSTGRESQL](POSTGRESQL.md)). Its setup requires version 18 or later,
+first command ([getting started](GETTING_STARTED.md#2-set-the-project-up)), and a board still on
+SurrealDB is refused until it is moved
+([POSTGRESQL](POSTGRESQL.md#a-board-still-on-surrealdb)). Its setup requires version 18 or later,
 installed by the machine's package manager. Without an explicit `postgresql`, discovery takes the
 first executable `postgres` on `PATH`; `initdb`, `pg_ctl` and `psql` must be executable in the
 same folder. On a Mac with Homebrew:

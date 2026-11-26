@@ -116,8 +116,8 @@ impl Worker {
     fn connecting() -> Self {
         let tree = Tree::new();
         let root = repository(&tree);
-        let (ask, asked) = mpsc::channel();
-        let (give, given) = mpsc::channel();
+        let (ask, asked) = crate::test_channel::channel();
+        let (give, given) = crate::test_channel::channel();
         let connect = move |_: &Path| -> Connection {
             ask.send(()).map_err(|e| e.to_string())?;
             given

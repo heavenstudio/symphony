@@ -40,6 +40,8 @@ impl Hub {
     /// board.
     pub fn stop(&self) {
         self.draining.send_replace(true);
+        // A notice's program under way ends now; the record keeps it to hand again.
+        self.stop_notices();
         self.disarm_initial_board();
         // The ticks' wait between two reads ends at once.
         self.ticks.lock().recover().take();
@@ -162,7 +164,7 @@ impl Hub {
 
     /// Arm the activation the owned worker waits on; data reads wait until its first result.
     fn arm_initial_board(&mut self) -> mpsc::Receiver<()> {
-        let (start, starting) = mpsc::channel();
+        let (start, starting) = crate::wake::channel();
         // Each holder of this lock only takes or puts the sender, so a panic under it leaves either
         // the sender or nothing: both are a whole state, and the poisoned value is used as it is.
         *self.initial_start.get_mut().recover() = Some(start);

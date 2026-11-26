@@ -106,7 +106,8 @@ pub fn day(project: &str, start: f64, until: f64, now: f64, read: &ReportRead) -
 }
 
 /// Each top-level task of `replayed` landed from `start` to `until`, once at its last landing
-/// there, with the tokens `read` holds for it and its subtasks, oldest first.
+/// there, with the tokens `read` holds for it and its subtasks and its kind, oldest first. Its
+/// lines are the git roll-up's to fill (`symphony::reports::git::landings`).
 fn landed(replayed: &[Replayed], read: &ReportRead, start: f64, until: f64) -> Vec<Landed> {
     let mut landed: Vec<Landed> = Vec::new();
     for task in replayed.iter().filter(|r| r.task.parent.is_none()) {
@@ -126,6 +127,8 @@ fn landed(replayed: &[Replayed], read: &ReportRead, start: f64, until: f64) -> V
                         .filter(|(of, _)| of == slug)
                         .map(|(_, sum)| sum.clone())
                         .collect(),
+                    kind: task.task.kind.clone(),
+                    lines: None,
                 },
             );
         }
@@ -575,7 +578,7 @@ pub fn closed(folder: &Path, day: &str) -> bool {
 pub fn read(folder: &Path, day: &str) -> Result<Option<ReportDay>, String> {
     let path = folder.join(symphony_api::report_file(day));
     match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text)
+        Ok(text) => serde_json::from_slice(text.as_bytes())
             .map(Some)
             .map_err(|e| format!("{}: {e}", path.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),

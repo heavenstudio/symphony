@@ -70,11 +70,15 @@ pub(crate) const READS: &[&str] = &[
     "/api/ask",
     "/api/health",
     symphony_api::REPORTS_PATH,
+    symphony_api::REPORTS_LANDED_PATH,
     symphony_api::RUN_LOG_PATH,
     symphony_api::RUNS_PATH,
     symphony_api::RUN_PATH,
     symphony_api::SCHEMA_UPDATES_PATH,
     symphony_api::SETTINGS_PATH,
+    symphony_api::PEOPLE_PATH,
+    symphony_api::CARD_OWNERS_PATH,
+    symphony_api::DOCUMENT_HELD_PATH,
     symphony_api::workflow::WORKFLOW_PATH,
     symphony_api::workflow::WORKFLOW_ACTIONS_PATH,
     symphony_api::workflow::WORKFLOW_GUARDS_PATH,
@@ -373,6 +377,8 @@ fn arguments(asked: &Asked, request: &Request) -> Result<(), Box<Response>> {
             | "/api/versions"
             | "/api/diff"
             | "/api/asks"
+            | symphony_api::CARD_OWNERS_PATH
+            | symphony_api::DOCUMENT_HELD_PATH
     ) {
         document_argument(request).map_err(bad)?;
     }
@@ -428,6 +434,18 @@ async fn off_board(
             });
             answered(read.await, "the reports could not be read: ")
         }
+        // The landed tasks are the roll-up's day files alone, the board never read.
+        symphony_api::REPORTS_LANDED_PATH => {
+            let (grain, days) = reports::asked(
+                query(request, "grain").as_deref(),
+                query(request, "days").as_deref(),
+            )
+            .map_err(bad)?;
+            let hub = shared.hub()?;
+            let read =
+                crate::spawn::blocking(move || Ok(Json(reports::landed_answer(&hub, grain, days))));
+            answered(read.await, "the landed tasks could not be read: ")
+        }
         // A run's log is a file beside the project's day files: the board is never read.
         symphony_api::RUN_LOG_PATH => {
             let (run, asked) = run_log::asked(
@@ -460,9 +478,15 @@ async fn off_board(
         // descriptions: a read, which writes nothing (`symphony::settings`). The board is read on
         // the store the page reads share ([`Hub::on_reader`]), never one opened anew, its entries
         // and its running sessions on that one store; one that does not answer is said on the page
-        // for both, and the files' settings hold.
+        // for both, and the files' settings hold. A person a board named who is not of the
+        // Settings page's owner is answered no preference to write, so the page draws the values
+        // alone (`symphony::owners::changes_settings`).
         symphony_api::SETTINGS_PATH => {
             let hub = shared.hub()?;
+            let reader = (!crate::front::Admitted::machine(request.extensions())).then(|| {
+                let actor = crate::front::Admitted::actor(shared, request.extensions());
+                actor.name().to_string()
+            });
             let read = crate::spawn::blocking(move || {
                 let machine = symphony::settings::Machine::of_process();
                 let (entries, running) = match hub.on_reader(|store| {
@@ -473,12 +497,23 @@ async fn off_board(
                     Err(why) => (Err(why.clone()), Err(why)),
                 };
                 let board = symphony::settings::stored::Board::with(&hub.root, entries, running);
-                Ok(Json(symphony::settings::page_with(
-                    &hub.root, &machine, &board,
-                )))
+                let mut page = symphony::settings::page_with(&hub.root, &machine, &board);
+                let changes = reader.is_none()
+                    || hub
+                        .on_reader(|store| {
+                            Ok(symphony::owners::changes_settings(store, reader.as_deref()))
+                        })
+                        .unwrap_or(false);
+                if !changes {
+                    page.stored.clear();
+                }
+                Ok(Json(page))
             });
             answered(read.await, "the settings could not be read: ")
         }
+        // Who is on the board is its rows and the machine's profiles, read on the store the
+        // pages share (`crate::people`).
+        symphony_api::PEOPLE_PATH => crate::people::read(shared, request).await,
         symphony_api::RUN_PATH => {
             let run = query(request, "run")
                 .filter(|run| !run.is_empty())
@@ -584,10 +619,10 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
             task_diff::answer(hub.clone(), checkout(), &request, patch).await
         }
         "/api/feed" => feed(hub, scope, request).await,
-        symphony_api::TASK_ATTEMPTS_PATH => attempts(hub, &request).await,
+        symphony_api::TASK_ATTEMPTS_PATH => attempts(shared, hub, &request).await,
         symphony_api::workflow::WORKFLOW_GUARDS_PATH => guards(hub, &request).await,
         symphony_api::workflow::WORKFLOW_PATH | symphony_api::workflow::WORKFLOW_ACTIONS_PATH => {
-            workflow(hub, path, &request).await
+            workflow(shared, hub, path, &request).await
         }
         "/api/tasks" | "/api/task-board" => tasks(hub, path, &request).await,
         // The machine's work alone, for a page that reads the board's listings without it
@@ -603,20 +638,41 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
         | symphony_api::TASK_TIMELINE_PATH
         | symphony_api::TASK_TOKENS_PATH
         | symphony_api::TASK_COSTS_PATH
+        | symphony_api::CARD_OWNERS_PATH
+        | symphony_api::DOCUMENT_HELD_PATH
         | "/api/task-history" => board_read(shared, hub, &asked, &request).await,
-        _ => page_read(&hub, scope, path),
+        _ => page_read(&hub, scope, path, named_reader(&request).as_deref()),
     }
 }
 
-/// A task's execution attempts, the board's own read, the same for every branch: the local
-/// owner's, or the visitor's hosted admission verified (`crate::attempts`).
-async fn attempts(hub: Arc<Hub>, request: &Request) -> Response {
+/// The reader a board named who asks `request`, by short name, to whom what waits is said as
+/// theirs alone (`crate::live::theirs`): the visitor a gate let in on the board, not the person at
+/// the machine, whatever name they write under. None for anyone else (the person at the machine,
+/// a request a test hands a route past every gate, a hosted visitor, a principal no board names),
+/// each told it whole.
+pub(crate) fn named_reader(request: &Request) -> Option<String> {
+    if crate::hosted::admission(request).is_some() {
+        return None;
+    }
+    let admitted = request.extensions().get::<crate::front::Admitted>()?;
+    (!admitted.machine).then(|| admitted.actor.name().to_string())
+}
+
+/// A task's execution attempts, the board's own read, the same for every branch: the actor this
+/// machine's gate admitted the request as ([`crate::front::Admitted`]), or the visitor's hosted
+/// admission verified (`crate::attempts`).
+async fn attempts(shared: &Arc<Shared>, hub: Arc<Hub>, request: &Request) -> Response {
     let slug = query(request, "slug").unwrap_or_default();
-    let asker =
-        crate::hosted::admission(request).map_or(crate::attempts::Asker::Local, |admitted| {
+    let asker = crate::hosted::admission(request).map_or_else(
+        || {
+            let actor = crate::front::Admitted::actor(shared, request.extensions());
+            crate::attempts::Asker::Local(actor.principal)
+        },
+        |admitted| {
             let context = admitted.context();
             crate::attempts::Asker::hosted(&context.actor, &context.policy_revision)
-        });
+        },
+    );
     let read = crate::spawn::blocking(move || crate::attempts::read(&hub, &slug, &asker).map(Json));
     answered(read.await, "")
 }
@@ -636,15 +692,17 @@ async fn guards(hub: Arc<Hub>, request: &Request) -> Response {
     answered(read.await, "")
 }
 
-/// The board's active custom workflow, and the local owner's next actions on one task it holds
+/// The board's active custom workflow, and the next actions on one task it holds of the
+/// principal this machine's gate admitted the request as ([`crate::front::Admitted`])
 /// (docs/workflow/WORKFLOW.md, "The app"): the board's own reads, the same for every branch.
-async fn workflow(hub: Arc<Hub>, path: &str, request: &Request) -> Response {
+async fn workflow(shared: &Shared, hub: Arc<Hub>, path: &str, request: &Request) -> Response {
     let slug = query(request, "slug").unwrap_or_default();
     let actions = path == symphony_api::workflow::WORKFLOW_ACTIONS_PATH;
+    let asker = crate::front::Admitted::actor(shared, request.extensions()).principal;
     let read = crate::spawn::blocking(move || {
         let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
         let read = if actions {
-            owner_actions(&store, &slug)
+            next_actions(&store, &slug, &asker)
                 .map(|read| no_store(Json(read)))
                 .map_err(task_failure)
         } else {
@@ -732,9 +790,11 @@ async fn board_read(
     let after = query(request, "after").and_then(|id| id.parse().ok());
     let from = query(request, "from").and_then(|n| n.parse::<usize>().ok());
     // The cards a board drew, a JSON list of at most TASK_COSTS_MOST slugs.
-    let costs = serde_json::from_str::<Vec<String>>(&query(request, "slugs").unwrap_or_default())
-        .ok()
-        .filter(|slugs| slugs.len() <= symphony_api::TASK_COSTS_MOST);
+    let costs = serde_json::from_slice::<Vec<String>>(
+        query(request, "slugs").unwrap_or_default().as_bytes(),
+    )
+    .ok()
+    .filter(|slugs| slugs.len() <= symphony_api::TASK_COSTS_MOST);
     let page = AgentsAsked {
         offset: query(request, "offset")
             .and_then(|n| n.parse::<usize>().ok())
@@ -745,6 +805,17 @@ async fn board_read(
     // Whether a pane is focused or its screen shown depends on where the page was asked.
     let local = matches!(path.as_str(), "/api/agent-page" | "/api/task-page")
         && crate::session_go::local(shared, request).await;
+    // Whose a thing is is said to who asks, and whom they may hand it to; a hosted visitor, who
+    // saves nothing here, is told whose it is alone.
+    let asker = if hosted {
+        (String::new(), false)
+    } else {
+        let actor = crate::front::Admitted::actor(shared, request.extensions());
+        let name = actor.name().to_string();
+        (name, crate::front::Admitted::machine(request.extensions()))
+    };
+    let document = query(request, "path").unwrap_or_default();
+    let (scope, rel) = (asked.scope.clone(), asked.rel.clone());
     let read = crate::spawn::blocking(move || {
         let path = path.as_str();
         if matches!(path, "/api/agents" | "/api/agent-page") {
@@ -808,7 +879,19 @@ async fn board_read(
                     &root,
                 )))
             }),
+            symphony_api::CARD_OWNERS_PATH => {
+                symphony::owners::document(&store, &root, &document, &asker.0, asker.1)
+                    .map(|owners| no_store(Json(owners)))
+                    .map_err(|why| owners_failure(&why))
+            }
+            // A hosted visitor reads them and passes none on, as it saves nothing here.
+            symphony_api::DOCUMENT_HELD_PATH => {
+                let passes = !hosted && passes(&store, asker.1, &asker.0);
+                document_held(&store, &scope, &rel, passes).map(|held| no_store(Json(held)))
+            }
             "/api/task-page" => store.get(&slug).map_err(task_failure).and_then(|record| {
+                let owner = symphony::owners::task(&store, &record, &asker.0, asker.1)
+                    .map_err(|e| unavailable(&e.to_string(), ""))?;
                 symphony::taskview::page(&store, &record, &root)
                     .map(|page| {
                         let mut page = if hosted {
@@ -817,6 +900,8 @@ async fn board_read(
                             hub.observed_page(page)
                         };
                         page.local = local;
+                        page.passes = !hosted && passes(&store, asker.1, &asker.0);
+                        page.owner = owner;
                         // The room its gates held last time, from what is kept: the page never
                         // waits on them.
                         page.gates = hub.gates.seen(&root, &record.slug);
@@ -833,6 +918,69 @@ async fn board_read(
         hub.read_on(&store, read)
     });
     answered(read.await, "")
+}
+
+/// Whether `name` may pass a held message on (`symphony_api::TASK_PASS_ROUTE`): the person at the
+/// machine, or a person holding what the route needs. A board whose people cannot be read gives
+/// no one but the machine's person the control, whose press the route would refuse.
+fn passes(store: &symphony_board::Store, machine: bool, name: &str) -> bool {
+    machine || (store.people()).is_ok_and(|people| crate::powers::may_pass(&people, name))
+}
+
+/// Whether who asks `request` may ask about a document and follow an ask up, which its page draws
+/// Ask and Follow up for: the person at the machine, or a person holding what `/api/ask` needs
+/// ([`crate::powers::may_ask`]). Never a hosted visitor, who saves nothing here, and no one but the
+/// machine's person on a board whose people cannot be read, as the route would refuse their press.
+fn may_ask(shared: &Shared, hub: &Hub, request: &Request) -> bool {
+    if crate::hosted::admission(request).is_some() {
+        return false;
+    }
+    if crate::front::Admitted::machine(request.extensions()) {
+        return true;
+    }
+    let actor = crate::front::Admitted::actor(shared, request.extensions());
+    (hub.on_reader(symphony_board::Store::people))
+        .is_ok_and(|people| crate::powers::may_ask(&people, actor.name()))
+}
+
+/// The comments held for people on the document `rel` of the checkout `scope` (empty: the
+/// project's own), not passed on yet, oldest first, and whether the one reading may pass them on
+/// (`passes`): what its page draws ([`symphony_api::DocumentHeld`]).
+fn document_held(
+    store: &symphony_board::Store,
+    scope: &str,
+    rel: &str,
+    passes: bool,
+) -> Result<symphony_api::DocumentHeld, Failed> {
+    let scope = Some(scope).filter(|scope| !scope.is_empty());
+    let held = store.held_on_document(rel.trim_start_matches('/'), scope);
+    let held = held.map_err(|e| unavailable(&e.to_string(), ""))?;
+    let held = (held.into_iter())
+        .filter(|held| held.passed.is_none())
+        .map(|held| {
+            let block = held.document.block;
+            symphony_api::HeldComment {
+                id: held.id,
+                author: held.author,
+                kind: held.document.kind,
+                text: held.text,
+                card: held.document.card,
+                key: block.as_ref().map(|block| block.key.clone()),
+                line: block.map(|block| block.line),
+            }
+        })
+        .collect();
+    Ok(symphony_api::DocumentHeld { held, passes })
+}
+
+/// A document's cards' owners refused: a route no page is, 404, as a document's read answers it,
+/// else the board's failure.
+fn owners_failure(why: &str) -> Failed {
+    if why.starts_with("not found") {
+        (StatusCode::NOT_FOUND, why.to_string())
+    } else {
+        unavailable(why, "")
+    }
 }
 
 /// The page of agents `/api/agent-page` was asked for.
@@ -890,17 +1038,27 @@ fn agents(hub: &Hub, hosted: bool, page: Option<(AgentsAsked, bool)>) -> Result<
     })))
 }
 
-/// A region the hub keeps of the page of the worktree `scope`, as its last read left it.
-fn page_read(hub: &Hub, scope: &str, path: &str) -> Response {
+/// A region the hub keeps of the page of the worktree `scope`, as its last read left it: what of
+/// it waits as `reader`, a person a board named, is shown it (`crate::live::theirs`), and whole to
+/// anyone else.
+fn page_read(hub: &Hub, scope: &str, path: &str, reader: Option<&str>) -> Response {
     let pages = hub.pages.read().recover();
     let Some(page) = pages.get(scope) else {
         return error(StatusCode::NOT_FOUND, "this worktree was removed");
     };
+    let theirs = reader.map(|name| {
+        let deciders = page.deciders.as_deref();
+        crate::live::theirs::shown(&page.board, &page.queue, &page.pending, deciders, name)
+    });
+    let (board, queue, pending) = match &theirs {
+        Some(shown) => (&shown.board, &shown.queue, &shown.pending),
+        None => (&page.board, &page.queue, &page.pending),
+    };
     match path {
-        "/api/board" => no_store(Json(&page.board)),
-        "/api/queue" | "/queue" => no_store(Json(&page.queue)),
+        "/api/board" => no_store(Json(board)),
+        "/api/queue" | "/queue" => no_store(Json(queue)),
         "/api/postponed" => no_store(Json(
-            page.queue
+            queue
                 .waiting
                 .iter()
                 .filter(|card| card.postponed)
@@ -915,7 +1073,7 @@ fn page_read(hub: &Hub, scope: &str, path: &str) -> Response {
                 .map(|card| &card.slug)
                 .collect::<Vec<_>>(),
         )),
-        "/api/pending" => no_store(Json(&page.pending)),
+        "/api/pending" => no_store(Json(pending)),
         "/api/activity" => no_store(Json(&page.activity)),
         _ => error(StatusCode::NOT_FOUND, "no such API route"),
     }
@@ -978,8 +1136,14 @@ fn document_response(
                 .ok()
                 .and_then(|board| board.chat_recipient().ok().flatten())
         });
-        return match ask_response(&render, rel, scope, request, path == "/api/asks", recipient) {
-            Ok(value) => no_store(Json(value)),
+        let list = path == "/api/asks";
+        return match ask_response(&render, rel, scope, request, list, recipient) {
+            Ok(mut value) => {
+                if list {
+                    value["may_ask"] = json!(may_ask(shared, hub, request));
+                }
+                no_store(Json(value))
+            }
             Err((status, why)) => error(status, why),
         };
     }
@@ -1015,17 +1179,19 @@ fn document_response(
                 json!(doc)
             }
         }),
-        "/api/folder" => hub.folder(scope, rel).map(|mut folder| {
-            if query(request, "view").as_deref() == Some("outline") {
-                folder.intro = folder
-                    .intro
-                    .map(|doc| symphony::docview::outline(doc).document);
-            }
-            json!(folder)
-        }),
+        "/api/folder" => hub
+            .folder(scope, rel, named_reader(request).as_deref())
+            .map(|mut folder| {
+                if query(request, "view").as_deref() == Some("outline") {
+                    folder.intro = folder
+                        .intro
+                        .map(|doc| symphony::docview::outline(doc).document);
+                }
+                json!(folder)
+            }),
         "/api/section" if query(request, "keys").is_some() => {
-            let keys = match serde_json::from_str::<Vec<String>>(
-                &query(request, "keys").unwrap_or_default(),
+            let keys = match serde_json::from_slice::<Vec<String>>(
+                query(request, "keys").unwrap_or_default().as_bytes(),
             ) {
                 Ok(keys) => keys,
                 Err(_) => {
@@ -1288,18 +1454,16 @@ async fn plugin_response(shared: &Shared, root: &Path, path: &str, request: &Req
     }
 }
 
-/// The local owner's next actions on `slug`, with the accepted output standing for each task it
-/// depends on where an edge leaving its pair takes them, which the page sends with that edge
+/// `asker`'s next actions on `slug`, with the accepted output standing for each task it depends on
+/// where an edge leaving its pair takes them, which the page sends with that edge
 /// (docs/workflow/WORKFLOW.md, "Accepted outputs"): both from one read of the board.
-fn owner_actions(
+fn next_actions(
     store: &symphony_board::Store,
     slug: &str,
+    asker: &symphony_plugin::execution::Principal,
 ) -> Result<symphony_api::workflow::ActionsRead, symphony_board::Error> {
-    let (next, outputs) = store.workflow_actions_with_outputs(
-        slug,
-        &symphony_board::workflow::local_owner(),
-        &symphony_board::workflow::Host::local(),
-    )?;
+    let (next, outputs) =
+        store.workflow_actions_with_outputs(slug, asker, &store.host_on(asker, slug)?)?;
     let takes = (outputs.takes.into_iter())
         .map(|(task, output)| symphony_api::workflow::TakenOutput { task, output })
         .collect();
@@ -1475,7 +1639,7 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
     let document_filter = {
         let path = query(&request, "document").unwrap_or_default();
         let keys = query(&request, "sections")
-            .and_then(|keys| serde_json::from_str::<Vec<String>>(&keys).ok())
+            .and_then(|keys| serde_json::from_slice::<Vec<String>>(keys.as_bytes()).ok())
             .unwrap_or_default();
         (path, keys)
     };
@@ -1484,6 +1648,8 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
     let hosted = crate::hosted::admission(&request).cloned();
     let show_notices = hosted.is_none();
     let hide_machine = hosted.is_some();
+    // A person a board named is sent what waits as theirs alone (`crate::live::theirs`).
+    let reader = named_reader(&request);
     let notices = hub.server_notice.subscribe();
     let notices =
         futures_util::stream::unfold((notices, true), |(mut notices, first)| async move {
@@ -1503,53 +1669,62 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
             tokio::time::Instant::now() + ping_after,
             document_filter,
         ),
-        move |(hub, scope, mut since, mut receiver, mut pending, mut deadline, document_filter)| async move {
-            loop {
-                if let Some(event) = pending.pop_front() {
-                    since = event.version;
-                    let data = filtered_document_event(&event.json, &document_filter);
-                    let data = if hide_machine {
-                        match crate::hosted::project_feed(&data) {
-                            Some(data) => data,
-                            None => continue,
-                        }
-                    } else {
-                        data
-                    };
-                    let item = Said::delta(since, data);
-                    deadline = tokio::time::Instant::now() + ping_after;
-                    return Some((
-                        item,
-                        (
-                            hub,
-                            scope,
-                            since,
-                            receiver,
-                            pending,
-                            deadline,
-                            document_filter,
-                        ),
-                    ));
-                }
-                match tokio::time::timeout_at(deadline, receiver.changed()).await {
-                    Ok(Ok(())) => match events_since(&hub, &scope, since) {
-                        Ok(events) => pending = events,
-                        Err(_) => return None,
-                    },
-                    Ok(Err(_)) => return None,
-                    Err(_) => {
+        move |(hub, scope, mut since, mut receiver, mut pending, mut deadline, document_filter)| {
+            let reader = reader.clone();
+            async move {
+                loop {
+                    if let Some(event) = pending.pop_front() {
+                        since = event.version;
+                        let data = filtered_document_event(&event.json, &document_filter);
+                        let data = match &reader {
+                            Some(name) => {
+                                crate::live::theirs::sent_to(&data, event.waits.as_ref(), name)
+                            }
+                            None => data,
+                        };
+                        let data = if hide_machine {
+                            match crate::hosted::project_feed(&data) {
+                                Some(data) => data,
+                                None => continue,
+                            }
+                        } else {
+                            data
+                        };
+                        let item = Said::delta(since, data);
+                        deadline = tokio::time::Instant::now() + ping_after;
                         return Some((
-                            Said::ping(),
+                            item,
                             (
                                 hub,
                                 scope,
                                 since,
                                 receiver,
                                 pending,
-                                tokio::time::Instant::now() + ping_after,
+                                deadline,
                                 document_filter,
                             ),
                         ));
+                    }
+                    match tokio::time::timeout_at(deadline, receiver.changed()).await {
+                        Ok(Ok(())) => match events_since(&hub, &scope, since) {
+                            Ok(events) => pending = events,
+                            Err(_) => return None,
+                        },
+                        Ok(Err(_)) => return None,
+                        Err(_) => {
+                            return Some((
+                                Said::ping(),
+                                (
+                                    hub,
+                                    scope,
+                                    since,
+                                    receiver,
+                                    pending,
+                                    tokio::time::Instant::now() + ping_after,
+                                    document_filter,
+                                ),
+                            ));
+                        }
                     }
                 }
             }
@@ -1591,7 +1766,7 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
 /// threads only for sections its viewport has requested. Other streams receive no documents.
 fn filtered_document_event(json: &str, filter: &(String, Vec<String>)) -> String {
     let (path, keys) = filter;
-    let Ok(mut event) = serde_json::from_str::<serde_json::Value>(json) else {
+    let Ok(mut event) = serde_json::from_slice::<serde_json::Value>(json.as_bytes()) else {
         return json.into();
     };
     if let Some(changes) = event["changes"].as_array_mut() {
@@ -1683,7 +1858,7 @@ fn typed_anchors(value: &serde_json::Value) -> Vec<String> {
     }
     let mut ids = Vec::new();
     collect(value, &mut ids);
-    ids.sort();
+    symphony_board::order::sort_by(&mut ids, &Ord::cmp);
     ids.dedup();
     ids
 }
@@ -1717,6 +1892,7 @@ fn client_kind(project: &symphony_api::ProjectView, path: &str) -> Option<&'stat
         "/reports" => Some("reports"),
         "/runs" => Some("runs"),
         "/settings" => Some("settings"),
+        "/people" => Some("people"),
         _ if path.starts_with("/task/") => Some("task"),
         _ if project
             .nav

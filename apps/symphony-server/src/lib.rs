@@ -26,21 +26,32 @@ mod live;
 pub mod log;
 mod mark;
 mod media_files;
+mod notices;
 mod pages;
+mod people;
+mod powers;
 pub mod probe;
 mod projects;
 mod reload;
 pub mod repo;
+mod roster;
 mod session_go;
 pub mod shelf;
 mod shell;
 mod spawn;
 mod starter;
 pub mod sys;
+mod wake;
 mod write;
 
 #[cfg(test)]
 mod testing;
+
+// The library's tests make their channels through it, std's of any type; the library itself through
+// `wake`, of `()` alone (clippy.toml).
+#[cfg(test)]
+#[path = "../tests/common/test_channel.rs"]
+mod test_channel;
 
 #[cfg(test)]
 #[path = "../../../tools/test-support/script_board.rs"]

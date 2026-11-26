@@ -23,8 +23,8 @@ the project's progress.
 ### The greeting
 
 **Good morning** until noon, **Good afternoon** until six, **Good evening** after, by the clock of
-the device it is read on. Under it, *5 cards wait on you across 3 documents. Start with the one
-below.*, or *Your queue is empty.*
+the device it is read on. Under it, *5 cards wait on you across 3 documents.*, or *Your queue is
+empty.*
 
 Beside it, the links: **Full queue**, **All docs**, a link to each page the project adds of its
 own, **Decision register** where the project has one, and **How review works** where it has a
@@ -57,10 +57,12 @@ has none, its title, its document and why, and its task where it has one. Each o
 | Count | Says | Opens |
 | --- | --- | --- |
 | **waiting on you** | the cards that wait on the owner, *across 3 documents*, or *all clear* | the queue, at its first group |
-| **auto-approved to spot-check** | the cards approved on the owner's earlier words, *your verdict overrides* | the queue, at its spot-check group |
-| **answered by agents today** | the cards an agent replied on today, *replies to you* | **Recent activity**, in the frame ([what every page shares](FRAME.md#activity)) |
-| **tasks in progress · in review** | the open tasks at work and the open tasks in review, *in progress includes Build and Test* | [the board](BOARD.md) |
+| **auto-approved to spot-check** | the cards approved on the owner's earlier words | the queue, at its spot-check group |
+| **answered by agents today** | the cards an agent replied on today | **Recent activity**, in the frame ([what every page shares](FRAME.md#activity)) |
+| **tasks in progress · in review** | the open tasks at work and the open tasks in review | [the board](BOARD.md) |
 | **agents live** | the agents working now | [the agents page](AGENTS.md) |
+
+Only **waiting on you** says a line under its count; the others are their number and label.
 
 The last two say **–** in a project with no task board.
 
@@ -95,7 +97,7 @@ at noon.
 | --- | --- |
 | Loading, first visit | grey lines that stand in for the page, which a screen reader reads as *Loading the board…* |
 | Loading, a later visit | at once, home as this device last held it, with *Shown from this device, saved 14:32. Checking for changes…* until the server answers |
-| Nothing waits on the owner | **Next up**, *Nothing waits on you. ✦* and *Every card has your verdict, and the agents have the next move. Enjoy the quiet.*, then, while any are auto-approved, *While you are here: 2 auto-approved cards could use a glance.* with a link to them; no **Then** |
+| Nothing waits on the owner | **Next up** and *Nothing waits on you. ✦*, then, while any are auto-approved, *2 auto-approved cards to spot-check.*, its first words a link to them; no **Then** |
 | One card waiting | **Next up · 1 of 1**, and no **Then** |
 | No task board | the counts of tasks and agents say **–** |
 | The first read fails | **The board could not be loaded**, why, *Trying again…* and **Retry**; the page tries again by itself |

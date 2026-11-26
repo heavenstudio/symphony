@@ -2,7 +2,6 @@
 //! a pass begun after its ask has ended; when the holder is lost before that pass or during it, the
 //! one that asked takes the host over once the lease lapses, so no ask is left with nobody behind
 //! it, and every recipient still hears each message once.
-use crate::common::Backend;
 
 use super::common::Fixture;
 use super::dispatch_later::{Recipient, deferring, handing, ids, lease, recipient};
@@ -96,9 +95,9 @@ impl WhileHeld {
     }
 }
 
-on_both! {
-fn a_dispatcher_that_finds_another_running_waits_for_the_pass_it_asked_for(backend: Backend) {
-    let f = Arc::new(Fixture::on(backend, crate::common::Seed::default()));
+#[test]
+fn a_dispatcher_that_finds_another_running_waits_for_the_pass_it_asked_for() {
+    let f = Arc::new(Fixture::new(crate::common::Seed::default()));
     let to = recipient(&f, 0);
     let writer = f.session("worker");
     let before = to.listener.drain(&f, &writer, &to.handle);
@@ -124,11 +123,10 @@ fn a_dispatcher_that_finds_another_running_waits_for_the_pass_it_asked_for(backe
         json!({"until": 0, "asked": 1, "served": 1, "completed": 1})
     );
 }
-}
 
-on_both! {
-fn a_dispatcher_whose_lease_lapsed_leaves_the_next_holder_its_lease_and_its_asks(backend: Backend) {
-    let f = Arc::new(Fixture::on(backend, crate::common::Seed::default()));
+#[test]
+fn a_dispatcher_whose_lease_lapsed_leaves_the_next_holder_its_lease_and_its_asks() {
+    let f = Arc::new(Fixture::new(crate::common::Seed::default()));
     let to = recipient(&f, 0);
     let writer = f.session("worker");
     let before = to.listener.drain(&f, &writer, &to.handle);
@@ -165,13 +163,12 @@ fn a_dispatcher_whose_lease_lapsed_leaves_the_next_holder_its_lease_and_its_asks
         BTreeMap::from([(meanwhile.posted(), 1)])
     );
 }
-}
 
-on_both! {
-fn a_dispatcher_waiting_on_a_dead_holder_takes_the_host_over_once_its_lease_lapses(backend: Backend) {
-    let f = Arc::new(Fixture::on(backend, crate::common::Seed::default()));
+#[test]
+fn a_dispatcher_waiting_on_a_dead_holder_takes_the_host_over_once_its_lease_lapses() {
+    let f = Arc::new(Fixture::new(crate::common::Seed::default()));
     let mut recipients: Vec<Recipient> = (0..2).map(|n| recipient(&f, n)).collect();
-    recipients.sort_by(|a, b| a.handle.cmp(&b.handle));
+    symphony_board::order::sort_by(&mut recipients, &|a, b| a.handle.cmp(&b.handle));
     let (first, last) = (&recipients[0], &recipients[1]);
     let writer = f.session("worker");
     let writing = deferring(&f);
@@ -237,11 +234,10 @@ fn a_dispatcher_waiting_on_a_dead_holder_takes_the_host_over_once_its_lease_laps
     );
     assert_eq!(lease(&f)["until"], json!(0));
 }
-}
 
-on_both! {
-fn a_dispatcher_whose_asked_for_pass_began_but_never_ended_makes_it_itself(backend: Backend) {
-    let f = Arc::new(Fixture::on(backend, crate::common::Seed::default()));
+#[test]
+fn a_dispatcher_whose_asked_for_pass_began_but_never_ended_makes_it_itself() {
+    let f = Arc::new(Fixture::new(crate::common::Seed::default()));
     let to = recipient(&f, 0);
     let writer = f.session("worker");
     let before = to.listener.drain(&f, &writer, &to.handle);
@@ -332,25 +328,37 @@ fn a_dispatcher_whose_asked_for_pass_began_but_never_ended_makes_it_itself(backe
         json!({"until": 0, "asked": 1, "served": 1, "completed": 1})
     );
 }
-}
 
-on_both! {
-fn a_failed_dispatch_pass_releases_its_host_lease_for_the_next_pass(backend: Backend) {
-    let f = Fixture::on(backend, crate::common::Seed::default());
+#[test]
+fn a_failed_dispatch_pass_releases_its_host_lease_for_the_next_pass() {
+    let f = Fixture::new(crate::common::Seed::default());
     let handle = f.session("worker");
-    f.store.raw().row("callback_state", handle.as_str()).put(json!({
-        "handle":handle, "address":"codex:fixture", "host":crate::common::HOST,
-        "registration_revision":"not a number",
-    })).unwrap();
+    f.store
+        .raw()
+        .row("callback_state", handle.as_str())
+        .put(json!({
+            "handle":handle, "address":"codex:fixture", "host":crate::common::HOST,
+            "registration_revision":"not a number",
+        }))
+        .unwrap();
     let error = f.other().dispatch_detached().unwrap_err();
     assert!(error.to_string().contains("invalid type"), "{error}");
-    let lease_row = || f.store.raw().row("callback_lease", json!(["dispatch", crate::common::HOST])).get().unwrap();
+    let lease_row = || {
+        f.store
+            .raw()
+            .row("callback_lease", json!(["dispatch", crate::common::HOST]))
+            .get()
+            .unwrap()
+    };
     let released = lease_row();
     assert_eq!(released["until"], 0);
     assert_eq!(released["revision"], 1);
-    f.store.raw().row("callback_state", handle.as_str()).delete().unwrap();
+    f.store
+        .raw()
+        .row("callback_state", handle.as_str())
+        .delete()
+        .unwrap();
     assert_eq!(f.other().dispatch_detached().unwrap(), 1);
     assert_eq!(lease_row()["revision"], 2);
     assert!(!held(&f));
-}
 }

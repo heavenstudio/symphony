@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: 9745e41313e0e6ee files=SKILL.md -->
+<!-- symphony-stamp: 0b83b4fa2a494988 files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -32,7 +32,8 @@ land by how an executor carries the work: [fast bug fixes](../work/start.md#fast
    discarded in its red's own fix, and no other work is held back to keep the load down for a
    run. Then staff ready work, restore orphaned work and arrange independent reviews. File a gap
    between approved documents and the implementation only with evidence, complete acceptance and
-   no existing task (`just tasks create`, by the create-task skill).
+   no existing task (`just tasks create`, by the create-task skill). A task the owner filed from a
+   page has no kind: give it one as you brief it, `just tasks kind SLUG KIND --as HANDLE`.
 4. Follow the project's integration and dependency policy before starting, and the stacking the
    task states. Coordinate file ownership, a separate checkout per executor, and record actual
    conflicts on the thread.

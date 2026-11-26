@@ -1,11 +1,9 @@
 //! One canonical admission ledger builder, shared with the read-only holdings producer.
 
-use super::{
-    DEPTH, Failure, Level, Read, Recorded, RoleRead, Row, Store, View, branches, slots, sql,
-};
+use super::{DEPTH, Failure, Level, Read, Recorded, RoleRead, Row, Store, View, branches, slots};
 use crate::slots::{Entry, Ledger};
 use crate::store::postgres::cap as pg;
-use crate::store::statement::both;
+use crate::store::statement::Statement;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 
@@ -66,7 +64,8 @@ impl Observation {
         store: &Store,
         parent: Option<&str>,
     ) -> Result<(), Failure> {
-        let mut looked: BTreeSet<String> = self.rows.keys().cloned().collect();
+        let mut looked: BTreeSet<String> = BTreeSet::new();
+        looked.extend(self.rows.keys().cloned());
         for _ in 0..DEPTH {
             let above = self
                 .rows
@@ -82,7 +81,7 @@ impl Observation {
                 break;
             }
             looked.extend(wanted.iter().cloned());
-            let read = both(sql::level(), pg::level());
+            let read = Statement::from(pg::level());
             let level: Level = store.read_together(read, json!({"slot_wanted": wanted}))?;
             for row in level.tasks {
                 self.rows.entry(row.slug.clone()).or_insert(row);
@@ -107,7 +106,7 @@ impl Observation {
             }
         }
         for held in orchestrators.values_mut().chain(executors.values_mut()) {
-            held.sort_unstable();
+            crate::order::sort_by(held, &Ord::cmp);
             held.dedup();
         }
         let tasks = self.rows.values().map(|row| Entry {

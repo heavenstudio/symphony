@@ -3,9 +3,8 @@
 
 use super::postgres::depends as pg;
 use super::resume::back_to;
-use super::statement::both;
-use super::surreal::depends as sql;
-use super::work::{BLOCK_LINE, OWNER, no_task};
+use super::statement::Statement;
+use super::work::{BLOCK_LINE, no_task};
 use super::{Error, Failure, Opens, Store, Task, Which, executors_or, refused};
 use crate::slots::OPEN;
 use crate::stages::UNBLOCK_LINE;
@@ -103,8 +102,12 @@ impl Store {
             lines: Vec<String>,
             executing: bool,
         }
-        let add: BTreeSet<&str> = add.iter().map(String::as_str).collect();
-        let remove: BTreeSet<&str> = remove.iter().map(String::as_str).collect();
+        fn names(named: &[String]) -> BTreeSet<&str> {
+            let mut set = BTreeSet::new();
+            set.extend(named.iter().map(String::as_str));
+            set
+        }
+        let (add, remove) = (names(add), names(remove));
         if add.is_empty() && remove.is_empty() {
             return Err(refused(
                 "name a dependency to add, remove or replace".into(),
@@ -113,7 +116,7 @@ impl Store {
         if let Some(both) = add.intersection(&remove).next() {
             return Err(refused(format!("{both} cannot be both added and removed")));
         }
-        let acts = by != OWNER;
+        let acts = !self.is_person(by);
         let mut said = format!("{by} changed its dependencies:");
         for (verb, slugs) in [("removed", &remove), ("added", &add)] {
             if !slugs.is_empty() {
@@ -124,7 +127,7 @@ impl Store {
         let said = said.trim_end_matches(';').to_string();
         self.retrying(|| {
             let read: Read =
-                self.read_together(both(sql::READ, pg::READ), json!({"slug": slug}))?;
+                self.read_together(Statement::from(pg::READ), json!({"slug": slug}))?;
             let statuses: HashMap<&str, &str> = (read.tasks.iter())
                 .map(|(slug, status)| (slug.as_str(), status.as_str()))
                 .collect();
@@ -138,7 +141,8 @@ impl Store {
             for (from, to) in &read.deps {
                 deps.entry(from.as_str()).or_default().push(to.as_str());
             }
-            let mine: BTreeSet<&str> = deps.get(slug).into_iter().flatten().copied().collect();
+            let mut mine: BTreeSet<&str> = BTreeSet::new();
+            mine.extend(deps.get(slug).into_iter().flatten().copied());
             if let Some(gone) = remove.iter().find(|r| !mine.contains(*r)) {
                 return Err(Failure::Stop(refused(format!(
                     "{slug} does not depend on {gone}"
@@ -161,7 +165,8 @@ impl Store {
                 };
                 return Err(Failure::Stop(refused(why)));
             }
-            let kept: BTreeSet<&str> = mine.difference(&remove).chain(&add).copied().collect();
+            let mut kept: BTreeSet<&str> = BTreeSet::new();
+            kept.extend(mine.difference(&remove).chain(&add).copied());
             let watch: Vec<_> = (kept.iter())
                 .map(|dep| json!({"slug": dep, "status": statuses.get(dep)}))
                 .collect();
@@ -202,7 +207,7 @@ impl Store {
                     "slots": slots,
                 }),
             );
-            let body = both(sql::change(acts, guarded), pg::change(acts, guarded)).posting();
+            let body = Statement::from(pg::change(acts, guarded)).posting();
             self.written(body, vars, slug)
         })
     }

@@ -65,13 +65,9 @@ exec "$SYMPHONY_REAL_SQLITE" "$@" <<< "$script"
 "##,
             false,
         );
-        let client = board::client();
-        symphony_board::Store::open(symphony_board::rpc::Client::new(
-            client.addr(),
-            "sf",
-            client.database(),
-        ))
-        .unwrap();
+        let client = board::database();
+        // The board's command line makes the board; the Symphony, a reader, never does.
+        crate::testing::store_on(&client);
         let path = std::env::join_paths(
             std::iter::once(control.clone())
                 .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
@@ -161,7 +157,7 @@ exec "$SYMPHONY_REAL_SQLITE" "$@" <<< "$script"
         .unwrap();
     assert!(sys::pid_alive(pid), "the flush child is actually in flight");
     let mut stopped = shared.stopped.subscribe();
-    let (send, receive) = std::sync::mpsc::channel();
+    let (send, receive) = crate::test_channel::channel();
     let stopping = shared.clone();
     let stop = std::thread::spawn(move || {
         stopping.stop();
@@ -244,8 +240,8 @@ fn idle_shared(tree: &Tree) -> Arc<Shared> {
 fn the_stop_wakes_each_loop_by_message_and_one_that_asks_after_it_at_once() {
     let tree = Tree::new();
     let shared = idle_shared(&tree);
-    let (entered, ready) = std::sync::mpsc::channel();
-    let (finished, done) = std::sync::mpsc::channel();
+    let (entered, ready) = crate::test_channel::channel();
+    let (finished, done) = crate::test_channel::channel();
     let waiting = shared.clone();
     let worker = std::thread::spawn(move || {
         let wakes = Wakes::new();
@@ -284,7 +280,7 @@ fn a_stop_pipe_reads_its_end_at_the_stop_and_one_taken_after_it_at_once() {
     let tree = Tree::new();
     let shared = idle_shared(&tree);
     let mut before = shared.stop_pipe().unwrap();
-    let (read, ended) = std::sync::mpsc::channel();
+    let (read, ended) = crate::test_channel::channel();
     let reader = std::thread::spawn(move || {
         let mut rest = Vec::new();
         read.send(before.read_to_end(&mut rest).map(|_| rest))
@@ -407,7 +403,7 @@ fn a_signalled_stop_leaves_the_runtime_worker_free_while_it_waits() {
     // The stop the signal starts wakes it; BACKSTOP is its bound alone.
     let stopped = wakes.wait(Some(BACKSTOP));
     assert!(stopped, "{}", stalled("the signal to start a stop"));
-    let (answered, answer) = std::sync::mpsc::channel();
+    let (answered, answer) = crate::test_channel::channel();
     runtime.spawn(async move { answered.send(()).unwrap() });
     // Only a worker that stop does not hold can send this answer before the tick ends.
     let free = answer.recv_timeout(BACKSTOP);
@@ -423,7 +419,7 @@ fn a_signalled_stop_leaves_the_runtime_worker_free_while_it_waits() {
 
 /// [`Stages`] that send each stage the stop names, in order, to the receiver.
 fn told() -> (Stages, std::sync::mpsc::Receiver<String>) {
-    let (send, said) = std::sync::mpsc::channel();
+    let (send, said) = crate::test_channel::channel();
     let stages: Stages = Arc::new(move |stage: &str| {
         let _ = send.send(stage.to_owned());
     });
@@ -451,6 +447,7 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
             install: None,
         },
         false,
+        hand_off_asked(),
     )
     .await
     .unwrap();
@@ -533,6 +530,7 @@ async fn the_one_server_sweeps_every_project_it_serves_each_in_its_own_record() 
             install: None,
         },
         false,
+        hand_off_asked(),
     )
     .await
     .unwrap();

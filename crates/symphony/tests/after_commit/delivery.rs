@@ -50,7 +50,7 @@ fn journal(root: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
-    names.sort();
+    symphony_board::order::sort_by(&mut names, &Ord::cmp);
     names
 }
 
@@ -112,6 +112,56 @@ fn branches(root: &Path) -> Vec<String> {
     .lines()
     .map(str::to_owned)
     .collect()
+}
+
+/// A person a board named, `ana`, as a host that admitted them hands them to the saves.
+fn ana() -> symphony_plugin::Actor {
+    use symphony_plugin::execution::{Principal, PrincipalKind};
+    symphony_plugin::Actor::new(
+        symphony_plugin::Sender::new("ana", "Ana Lima", vec!["ana-l".into()]),
+        Principal::new(PrincipalKind::Human, "test-host".into(), "u-ana".into()),
+    )
+}
+
+pub(super) fn a_persons_save_is_filed_and_sent_to_review_as_theirs(f: &Fixture) {
+    let root = delivering(f);
+    let saves = ClosingSaves::start(&root);
+    let answer = saves.post_as(&ana(), "", "/api/decision", payload(APPROVE));
+    assert_eq!(answer, json!({"ok":true,"delivery":"pending"}));
+    drop(saves);
+    let pending = pending::saves(&root);
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    let branch = pending[0].branch.clone();
+    let delivered = git(&root, &["show", &format!("{branch}:docs/a.md")]);
+    assert!(delivered.contains("] ana · approved — yes"), "{delivered}");
+    // Filed as hers, and sent to review by her: no line of it is the owner's.
+    let store = f.store();
+    let task = store.get(&branch).unwrap();
+    assert_eq!(
+        (task.status.as_str(), task.created_by.as_str()),
+        ("review", "ana")
+    );
+    assert_eq!(task.title, "Deliver ana's save of docs/a.md");
+    assert!(
+        task.body.starts_with("ana saved an answer on docs/a.md"),
+        "{}",
+        task.body
+    );
+    assert!(
+        task.body.contains("of ana's save of docs/a.md"),
+        "{}",
+        task.body
+    );
+    let thread = store.thread(&branch).unwrap();
+    assert!(
+        (thread.iter()).any(|m| m.sender == "ana" && m.text.contains("→ review")),
+        "{thread:?}"
+    );
+    assert!((thread.iter()).all(|m| m.sender != "owner"), "{thread:?}");
+    // The filing is found again by its receipt: a restart files nothing twice.
+    pass(&root);
+    assert_eq!(store.thread(&branch).unwrap().len(), thread.len());
+    f.clean_workers();
 }
 
 pub(super) fn kept_pending_on_a_branch_and_filed_as_the_owners_task(f: &Fixture) {
@@ -378,7 +428,7 @@ pub(super) fn a_then_b_through_delivery_cancellation_and_restart(f: &Fixture) {
     assert_eq!(pending[3].state, State::Waiting, "{pending:?}");
     // A branch of each save but the refused one; a delivered one's is the sweep's to remove.
     let mut made = [a.clone(), b.clone(), c.clone(), d.clone()];
-    made.sort();
+    symphony_board::order::sort_by(&mut made, &Ord::cmp);
     assert_eq!(branches(&root), made);
     let later = git(&root, &["show", &format!("{d}:docs/a.md")]);
     assert!(later.contains("later"), "{later}");
@@ -919,7 +969,7 @@ pub(super) fn an_agents_saves_whose_turn_has_come_go_as_one_task(f: &Fixture) {
         (&State::Queued, &State::Waiting, &State::Waiting)
     );
     let mut made = vec![owner.clone(), batch.clone()];
-    made.sort();
+    symphony_board::order::sort_by(&mut made, &Ord::cmp);
     assert_eq!(branches(&root), made);
     assert_eq!(
         git(&root, &["rev-parse", &format!("{batch}^")]),
@@ -1102,7 +1152,7 @@ pub(super) fn a_tidys_saves_reach_main_in_one_commit_or_not_at_all(f: &Fixture) 
     // The reply goes alone: C's tidied page waits with its ledger entry, behind the first tidy.
     let alone = format!("docs/owner-save-{replied}");
     let mut made = vec![one.clone(), alone.clone()];
-    made.sort();
+    symphony_board::order::sort_by(&mut made, &Ord::cmp);
     assert_eq!(branches(&root), made);
     assert_eq!(
         git(&root, &["diff", "--name-only", "main", &alone]),

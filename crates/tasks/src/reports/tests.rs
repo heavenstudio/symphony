@@ -74,6 +74,7 @@ fn task(slug: &str, created: f64, status: &str, updated: f64, thread: Thread) ->
         instruction: false,
         marked_red: false,
         between: None,
+        kind: None,
         lines: thread.0,
     }
 }
@@ -824,11 +825,27 @@ fn a_day_file_s_text_is_the_one_serde_writes() {
     odd.usage = Some(vec![sum.clone(), sum.clone()]);
     // The odd day's first hour gained some; its second, none known.
     odd.hours[0].tokens = Some(vec![sum.clone()]);
+    // One with a kind and lines, one with lines of none, one with a kind alone, and one with
+    // neither, as a file before they were kept names it.
     odd.landed = vec![
         symphony_api::reports::Landed {
             slug: "sim/a".into(),
             at: 1.5,
             spent: vec![sum],
+            kind: Some("fe\"ature".into()),
+            lines: Some(symphony_api::reports::Lines {
+                added: u64::MAX,
+                removed: 7,
+            }),
+        },
+        symphony_api::reports::Landed {
+            slug: "sim/b".into(),
+            lines: Some(symphony_api::reports::Lines::default()),
+            ..symphony_api::reports::Landed::default()
+        },
+        symphony_api::reports::Landed {
+            kind: Some("docs".into()),
+            ..symphony_api::reports::Landed::default()
         },
         symphony_api::reports::Landed::default(),
     ];
@@ -849,6 +866,18 @@ fn a_day_file_s_text_is_the_one_serde_writes() {
     assert!(odd.contains(r#""tokens":[{"role":"exec\"utor""#), "{odd}");
     assert!(
         odd.contains(r#""tokens":null"#) && odd.contains(r#""spent":[]"#),
+        "{odd}"
+    );
+    assert!(
+        odd.contains(r#""kind":"fe\"ature","lines":{"added":18446744073709551615,"removed":7}}"#),
+        "{odd}"
+    );
+    assert!(
+        odd.contains(r#""slug":"sim/b","at":0.0,"spent":[],"lines":{"added":0,"removed":0}}"#),
+        "{odd}"
+    );
+    assert!(
+        odd.ends_with(r#"{"slug":"","at":0.0,"spent":[]}]}"#),
         "{odd}"
     );
 }
@@ -874,11 +903,13 @@ fn a_task_landed_in_the_day_is_named_once_at_its_last_landing_with_what_it_took(
     };
     let mut sub = landed("sim/b/part", &[1.0]);
     sub.parent = Some("sim/b".into());
+    let mut kinded = landed("sim/a", &[5.0]);
+    kinded.kind = Some("fix".into());
     let read = ReportRead {
         tasks: vec![
             // Landed twice in the day, and once the day before.
             landed("sim/b", &[-3.0, 2.0, 5.0]),
-            landed("sim/a", &[5.0]),
+            kinded,
             landed("sim/quiet", &[4.0]),
             landed("sim/tomorrow", &[30.0]),
             landed("sim/yesterday", &[-1.0]),
@@ -900,20 +931,25 @@ fn a_task_landed_in_the_day_is_named_once_at_its_last_landing_with_what_it_took(
         ..ReportRead::default()
     };
     let day = day("sim", D, D + DAY, at(40.0), &read);
-    let told: Vec<(&str, f64, Vec<u64>)> = (day.landed.iter())
+    let told: Vec<(&str, f64, Vec<u64>, Option<&str>)> = (day.landed.iter())
         .map(|task| {
             let spent = task.spent.iter().map(|sum| sum.input).collect();
-            (task.slug.as_str(), (task.at - D) / HOUR, spent)
+            let kind = task.kind.as_deref();
+            (task.slug.as_str(), (task.at - D) / HOUR, spent, kind)
         })
         .collect();
     assert_eq!(
         told,
         [
-            ("sim/quiet", 4.0, vec![]),
-            ("sim/a", 5.0, vec![7]),
-            ("sim/b", 5.0, vec![1, 2]),
+            ("sim/quiet", 4.0, vec![], None),
+            ("sim/a", 5.0, vec![7], Some("fix")),
+            ("sim/b", 5.0, vec![1, 2], None),
         ],
-        "top-level tasks alone, in the day alone, oldest first then by slug"
+        "top-level tasks alone, in the day alone, oldest first then by slug, each with its kind"
+    );
+    assert!(
+        day.landed.iter().all(|task| task.lines.is_none()),
+        "the git roll-up's to fill"
     );
     assert_eq!(day.usage, None, "the roll-up's to fill");
 }

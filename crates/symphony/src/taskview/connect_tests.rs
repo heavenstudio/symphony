@@ -49,7 +49,7 @@ fn sources(root: &Path, dir: &Path, found: &mut Vec<PathBuf>) {
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect();
-    entries.sort();
+    symphony_board::order::sort_by(&mut entries, &Ord::cmp);
     for path in entries {
         if path.is_dir() {
             sources(root, &path, found);
@@ -135,7 +135,7 @@ fn every_spelling_of_an_opening_is_found_and_a_name_ending_in_one_is_not() {
         ("Opening { access: Access::Write, ..how }", "Access::Write"),
         ("symphony_board::cli::connect(&env)", "cli::connect("),
         (
-            "Store::unchecked_as(c, clock, probe, host, how)",
+            "Store::unchecked_on(db, clock, probe, host, how)",
             "Store::unchecked",
         ),
         (
@@ -176,7 +176,7 @@ fn a_running_board_read_starts_no_server() {
     .unwrap();
     assert!(done.status.success(), "{done:?}");
     let mut env = crate::children::board_env();
-    for name in ["TASKS_SERVER", "TASKS_DATABASE", symphony_env::SURREAL.name] {
+    for name in ["TASKS_SERVER", "TASKS_DATABASE"] {
         env.vars.remove(name);
     }
     let refused = super::open(&tree.root, env, symphony_board::cli::held_running_board)
@@ -202,11 +202,16 @@ fn a_held_board_refuses_the_symphonys_reads_naming_the_hold() {
     .unwrap();
     assert!(done.status.success(), "{done:?}");
     let mut env = crate::children::board_env();
-    for name in ["TASKS_SERVER", "TASKS_DATABASE", "SYMPHONY_SURREAL"] {
+    for name in ["TASKS_SERVER", "TASKS_DATABASE"] {
         env.vars.remove(name);
     }
-    let home = symphony_board::server::Home::in_common(&tree.path(".git"), None);
-    let hold = home.hold("russet-lynx", "a swap").unwrap().hold;
+    let home = symphony_board::server::Home::in_common(&tree.path(".git"));
+    // No server runs, so the hold stops none and runs none of PostgreSQL's programs.
+    let hold = home
+        .postgresql(std::path::Path::new("/no/postgresql/bin"))
+        .hold("russet-lynx", "a swap")
+        .unwrap()
+        .hold;
     let said = symphony_board::server::ServerError::Held(hold).to_string();
     let reaches: [(super::Reach, &str); 2] = [
         (symphony_board::cli::held_board, "board"),
@@ -218,7 +223,12 @@ fn a_held_board_refuses_the_symphonys_reads_naming_the_hold() {
             .expect("the board is held");
         assert_eq!(refused, said, "{named}");
     }
-    assert!(!tree.path(".git/symphony/tasks/server.json").exists());
+    for made in ["postgresql", "backend.json"] {
+        assert!(
+            !tree.path(".git/symphony/tasks").join(made).exists(),
+            "{made}"
+        );
+    }
     assert!(home.release("russet-lynx", None).unwrap().is_some());
 }
 
@@ -233,7 +243,7 @@ fn a_held_board_refuses_the_symphonys_reads_naming_the_hold() {
 fn a_served_folder_left_without_its_git_reaches_no_board_above_it() {
     let tree = crate::test_tree::Tree::checkout();
     let mut env = crate::children::board_env();
-    for name in ["TASKS_SERVER", "TASKS_DATABASE", symphony_env::SURREAL.name] {
+    for name in ["TASKS_SERVER", "TASKS_DATABASE"] {
         env.vars.remove(name);
     }
     let reaches: [(super::Reach, &str); 2] = [

@@ -133,6 +133,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "the preferences the board keeps: list, set KEY VALUE, remove KEY",
             ),
             (
+                "people",
+                "people, groups and powers: list, log, add, grant, revoke, map",
+            ),
+            (
                 "stamps",
                 "the stamps a land can require, and what a task needs of them",
             ),
@@ -152,6 +156,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("create", "file a task: SLUG (area/short-name) and TITLE"),
             ("priority", "set a task's priority, 0 (most urgent) to 4"),
+            (
+                "kind",
+                "give an open task its kind: feature, fix, red, tests or docs",
+            ),
             ("parent", "put a task under another, or --none"),
             ("depends", "change what a task waits on"),
             ("field", "set a plugin's board field on a task"),
@@ -182,6 +190,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             (
                 "say",
                 "post on a task's thread, --to owner, @orchestrator or HANDLE",
+            ),
+            (
+                "pass",
+                "pass on a message held for people on a task, by its number",
             ),
             (
                 "verdict",
@@ -262,7 +274,7 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "snapshot",
-                "clone the board's store while no server runs on it; --list",
+                "copy the board's data while its server is stopped; --list",
             ),
             (
                 "run",
@@ -321,8 +333,8 @@ pub fn top() -> String {
          first,\n                   before every other word, and sweeps no repository\n\
          \nenvironment:\n  TASKS_SESSION    the session handle --as defaults to\n  TASKS_DATABASE   \
          the board's database, as --database NAME names it\n  TASKS_SERVER     the board's \
-         server, HOST:PORT, in place of the one the\n                   repository's common dir \
-         records\n",
+         server, postgresql:SOCKET, in place of the\n                   one the repository's \
+         common dir records\n",
     );
     text
 }
@@ -611,13 +623,89 @@ options:
 "#,
     ),
     (
+        "people",
+        r#"usage: just tasks people [-h] [--as ACTOR] [--json] [--display DISPLAY]
+                         [--signin SIGNIN] [--git GIT] [--email EMAIL]
+                         [--slack SLACK] [--whatsapp WHATSAPP]
+                         [--notice NOTICE] [--power POWER] [--group GROUP]
+                         ACTION [WORDS ...]
+"#,
+        r#"usage: just tasks people [-h] [--as ACTOR] [--json] [--display DISPLAY]
+                         [--signin SIGNIN] [--git GIT] [--email EMAIL]
+                         [--slack SLACK] [--whatsapp WHATSAPP]
+                         [--notice NOTICE] [--power POWER] [--group GROUP]
+                         ACTION [WORDS ...]
+
+Who is on this board and what each may do there, and the machine's profiles
+of them. With nobody added, the person at the machine is the only one on it,
+holding every power, as before. A person is on the board while they hold a
+power, their own or a group's, and every power includes read: read, speak,
+decide, direct_agents (direct-agents), administer. The words of someone who
+may speak and may not direct agents are held for people until someone who
+may passes them on (`pass`).
+
+`list` prints each person with the powers they hold and their groups, and
+each group; `log` every change, numbered, with who made it; `map` the map of
+places to groups, and every change of it and every hand-over. `add NAME` puts a
+person on the board, with --power and --group, and makes or fills their
+profile in the machine folder (people.json, mode 600) with --display,
+--signin SERVICE:SUBJECT (tailscale:LOGIN) and --git; `profile NAME` fills a
+profile alone. --email, --slack and --whatsapp set where notices reach them,
+each held to its sender's rule, an empty one taking it away; --notice
+KIND=WAY sends a card, question or verdict notice by email, slack or
+whatsapp, and KIND= by none, as the page and the Mac app show every notice.
+`remove NAME` takes a person off the board: their lines stay theirs, and
+their profile stays. `join NAME GROUP` and `leave NAME GROUP`;
+`grant NAME POWER...` and `revoke NAME POWER...`, or with --group GROUP the
+group's powers; `group add GROUP [POWER...]` and `group remove GROUP`, which
+takes its members out of it. `map PLACE GROUP` gives a place a group and
+`unmap PLACE` takes it off the map, a place folder:ROUTE (a folder of
+documents, as docs/design), area:NAME (a task's area, as app), settings or
+default: a card or a task with no name written on it belongs to the group its
+place maps to, else the default's. People and groups share one name space, a short
+name no session's handle is, nor an adjective and a noun the board names
+sessions by (amber-heron). A refusal says why and writes nothing. Nothing
+printed or logged names a sign-in's subject, an address or which way a
+notice goes.
+
+Every action but list, log and map alone is a change, which runs as `just tasks-people
+ACTION ...`: no allow rule passes that recipe, so an agent's run of it asks
+first. `just tasks`, which an agent runs unasked, refuses each change however
+the command line is written.
+
+positional arguments:
+  ACTION             list, log, add, remove, join, leave, grant, revoke,
+                     group, profile, map or unmap
+  WORDS              a name, a group, powers, a place: what ACTION takes
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR         who a change is recorded as made by
+  --json             the people, the log or the map as JSON (list, log, map)
+  --display DISPLAY  how the person is shown (add, profile)
+  --signin SIGNIN    SERVICE:SUBJECT, a sign-in of theirs (add, profile)
+  --git GIT          a git handle of theirs (add, profile)
+  --email EMAIL      the email a notice by mail goes to (add, profile)
+  --slack SLACK      their Slack member id, as U024BE7LH (add, profile)
+  --whatsapp WHATSAPP
+                     their WhatsApp number, +, country code, number (add,
+                     profile)
+  --notice NOTICE    KIND=WAY, the way a kind of notice goes by (add,
+                     profile)
+  --power POWER      a power the person is added with (add)
+  --group GROUP      a group the person is added in (add), or the group
+                     whose powers change (grant, revoke)
+"#,
+    ),
+    (
         "create",
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
                          [--body-file BODY_FILE] [--priority {0,1,2,3,4}]
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK] [--no-role]
-                         [--arm ARM]
+                         [--arm ARM] [--kind {feature,fix,red,tests,docs}]
+                         [--group GROUP]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
@@ -625,7 +713,8 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK] [--no-role]
-                         [--arm ARM]
+                         [--arm ARM] [--kind {feature,fix,red,tests,docs}]
+                         [--group GROUP]
                          slug title
 
 positional arguments:
@@ -663,6 +752,14 @@ options:
                         lowercase word such as control: `show` prints it and
                         `stats` gives each arm's figures; nothing changes it
                         after
+  --kind {feature,fix,red,tests,docs}
+                        what its work is: `show` prints it and the Reports
+                        page groups the landed tasks by it; `kind` changes it
+                        while it is open (default: none, or red for a task
+                        filed red)
+  --group GROUP         the group or the person it is filed for, written on
+                        it: else the group its area maps to (`just
+                        tasks-people map`), or the board's default
 "#,
     ),
     (
@@ -675,6 +772,24 @@ Set an existing task's priority (0 is most urgent); p0 to p4 read the same.
 positional arguments:
   slug
   {0,1,2,3,4}
+
+options:
+  -h, --help    show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "kind",
+        "usage: just tasks kind [-h] [--as ACTOR] slug {feature,fix,red,tests,docs}\n",
+        r#"usage: just tasks kind [-h] [--as ACTOR] slug {feature,fix,red,tests,docs}
+
+Give an open task its kind, what its work is, or change it: `show` prints it
+and the Reports page groups the landed tasks by it. A done or cancelled task
+keeps the kind it had.
+
+positional arguments:
+  slug
+  {feature,fix,red,tests,docs}
 
 options:
   -h, --help    show this help message and exit
@@ -1068,6 +1183,28 @@ options:
                no shell quoting
 "#,
     ),
+    (
+        "pass",
+        r#"usage: just tasks pass [-h] [--as ACTOR] slug id
+"#,
+        r#"usage: just tasks pass [-h] [--as ACTOR] slug id
+
+Pass on a message held for people: the words of someone who may speak and may
+not direct agents, which no agent is handed until someone who may passes them
+on. Its words go on the thread under its author's name, `[passed on by ACTOR]`
+first, to whom they were written, and reach the task's agents as a person's
+message does. `just tasks show SLUG` counts the messages held; the board's
+line for each names its number (`a message is held for people: #ID`).
+
+positional arguments:
+  slug
+  id          the number of the board's line for the held message
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
     ("launch", launch::USAGE, launch::HELP),
     ("restore", panes::RESTORE.0, panes::RESTORE.1),
     ("cleanup", panes::CLEANUP.0, panes::CLEANUP.1),
@@ -1157,21 +1294,15 @@ options:
 "#,
         r#"usage: just tasks snapshot [-h] [--as ACTOR] [--list]
 
-take a snapshot of the board's store now: a copy-on-write clone of
-symphony/tasks/data in symphony/tasks/snapshots/, named by its UTC time. Taken
-only while no process serves the store, under the lock every start of its
-server takes and holding the store's own LOCK, never of files a server is
-writing: refused while any server has the store open. The launcher takes one
-before each start of the server too, outside a scratch place, and on every
-board before a replay of its log, which never runs without it, and
-tasks-reclaim one of the old store before its own servers start on it. A
-volume that cannot clone takes none, but before a replay or a reclaim a plain
-copy. One whose write-ahead log holds writes not yet in its tables (taken
-after an unclean end, before a replay, or of a store that went back) is kept
-until the owner removes it (rm -rf its folder); of the others the newest 3 are
-kept. Each grows towards the whole store's size as the store moves on, and the
-room a reclaim frees comes back only once the snapshots of the old store are
-removed: docs/operations/BOARD_OPERATIONS.md, The store and its server.
+take a snapshot of the board's PostgreSQL data now: its whole cluster,
+symphony/tasks/postgresql with its write-ahead log, copied into
+symphony/tasks/postgresql-snapshots/ and named by its UTC time. Taken only
+while its server is stopped (`just tasks database hold WHY` stops it), under
+the lock every start of its server takes: refused while it runs. A
+copy-on-write clone where the volume clones, else a plain copy, listed only
+once whole; each is kept until the owner removes it (rm -rf its folder).
+`tasks-move --restore SNAPSHOT` puts one back over the board. A board still
+on SurrealDB is refused, naming how it moves.
 
 options:
   -h, --help  show this help message and exit

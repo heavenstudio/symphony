@@ -680,8 +680,8 @@ fn show_omits_who_only_when_the_reason_names_it_in_full() {
 #[test]
 fn the_kinds_are_the_wires() {
     let mut kinds = [WORKING, DECISION, CHECK, TASK, QUEUED, PARKED, NOBODY];
-    kinds.sort_unstable();
+    crate::order::sort_by(&mut kinds, &Ord::cmp);
     let mut wire = symphony_api::WAITS_KINDS;
-    wire.sort_unstable();
+    crate::order::sort_by(&mut wire, &Ord::cmp);
     assert_eq!(kinds, wire);
 }

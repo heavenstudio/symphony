@@ -1,10 +1,9 @@
-//! The statements of `store/search.rs` on PostgreSQL: SurrealDB's full-text match and score over
-//! the terms `words` holds ([`super::schema`]), so a search finds and ranks alike on either.
+//! The statements of `store/search.rs` on PostgreSQL: the full-text match and score over the terms
+//! `words` holds ([`super::schema`]).
 //!
-//! A row matches when it holds every term of the query (SurrealDB's `@@`, AND), and scores as
-//! SurrealDB 3.3's BM25 (`Scorer` of its `idx::ft::fulltext`), each value in the same type and
-//! order, so the score is the same to the bit: each term the query holds once, in the order it
-//! first comes, `idf · (k1 + 1) · tf′ / (tf′ + k1 · (1 − b + b · length / average))`, where
+//! A row matches when it holds every term of the query (AND), and scores by BM25, each value in
+//! this type and order: each term the query holds once, in the order it first comes,
+//! `idf · (k1 + 1) · tf′ / (tf′ + k1 · (1 − b + b · length / average))`, where
 //! `idf = max(0, ln((N − df + 0.5) / (df + 0.5)))` and `tf′ = 1 + ln(tf)`, summed as `f64` and
 //! given as `f32`, `k1` 1.2 and `b` 0.75 as `f32` are; `N` is every row of the field's index, an
 //! empty text among them, `df` those holding the term.

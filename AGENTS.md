@@ -5,9 +5,14 @@ The app's workspace owns its server, its web client and its Mac app under `apps/
 `apps/symphony-desktop`), and under `crates/` the review library (`crates/symphony`), its own build
 and release commands (`crates/symphony-build`), the wire types, the task board (`crates/tasks`),
 the plugin kit, the headless Chrome driver, the optional GitHub issue exchange
-(`crates/symphony-github`, [GITHUB](docs/operations/GITHUB.md)) and the tests' CPU meters and waits
-(`crates/test-time`). The app's formats and operating contract live in [docs/](docs/README.md). A
-consuming project owns its landing policy and shared-service safeguards.
+(`crates/symphony-github`, [GITHUB](docs/operations/GITHUB.md)), the notice message a notice plugin
+takes (`crates/symphony-notice`, [NOTICES](docs/engineering/NOTICES.md)), the plugins that send it
+by Slack (`crates/symphony-notice-slack`, [NOTICE_SLACK](docs/operations/NOTICE_SLACK.md)), by
+email (`crates/symphony-notice-email`, [NOTICE_EMAIL](docs/operations/NOTICE_EMAIL.md)) and by
+WhatsApp (`crates/symphony-notice-whatsapp`, [NOTICE_WHATSAPP](docs/operations/NOTICE_WHATSAPP.md))
+and the tests' CPU meters and waits (`crates/test-time`). The app's formats and operating
+contract live in [docs/](docs/README.md). A consuming project owns its landing policy and
+shared-service safeguards.
 
 This guide holds what every session here needs, each rule in one place: the standing rules are
 [RULES.md](RULES.md), which every agent follows, and how a part works is the document or module
@@ -99,8 +104,8 @@ A tool that is absent or incompatible fails with setup guidance; no hosted GitHu
 - Acceptance: a working Chrome (installed, or `SYMPHONY_CHROME`) and the client's pinned Node (on
   PATH, or fnm to fetch it once: `tools/node.sh`).
 - The client build: Git, Bash and jq.
-- Board fixtures: lsof, the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`), and
-  PostgreSQL 18 or later, on which a fixture's first board command makes its board.
+- Board fixtures: lsof and PostgreSQL 18 or later, on which a fixture's first board command
+  makes its board.
 - The board's server tests (`just test-rs -p symphony-board --test server`): PostgreSQL 18 or
   later with its programs beside it ([the setup](docs/operations/PROJECT_FILE.md#board)).
 - The hosted board's check (`just hosted-check`): PostgreSQL 16's programs as well, and
@@ -192,8 +197,9 @@ copy alone.
   installed skill (`.agents/skills/ROLE/project.md`), which init never writes.
 - **Prompts.** The allow rules pass the board and reply recipes (`just tasks`, `just agent-send`,
   `just symphony-status`, `just symphony-reply`, `just symphony-ask`) and `just land` with no
-  prompt; `just symphony` and `just symphony-cli` ask first, and so does any command with an env
-  prefix. A place an unasked recipe writes must lead into its checkout, or from a linked worktree
+  prompt; `just symphony`, `just symphony-cli` and `just tasks-people` (a change to a board's
+  people, which `just tasks` refuses) ask first, and so does any command with an env prefix. A
+  place an unasked recipe writes must lead into its checkout, or from a linked worktree
   into the main checkout's artifacts folder (`crates/tasks/src/confine.rs`).
 - **Recipes in text.** Every `just NAME` a skill, a doc, a guide or a binary's string names is an
   installed recipe, this repository's own where `tools/named-recipes.txt` lists it, or the

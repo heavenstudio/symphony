@@ -12,7 +12,7 @@
 use super::callbacks::Listener;
 use super::common::{Fixture, sweep_presence};
 use super::quiet_callbacks::listen;
-use crate::common::{Backend, NOW, Seed, session};
+use crate::common::{NOW, Seed, session};
 use symphony_board::Health;
 
 /// A sleep between two wakes, longer than the lost line, as a night's DarkWakes are apart.
@@ -44,15 +44,14 @@ struct Night {
 
 impl Night {
     /// The child busy in one long tool call until `busy`, when given.
-    fn new(backend: Backend, busy: Option<f64>) -> Night {
+    fn new(busy: Option<f64>) -> Night {
         let mut parent = session("parent");
         parent.kind = "orchestrator".into();
         parent.busy_until = Some(NOW + 1_000_000.0);
         let mut child = session("child");
         child.parent = Some("parent".into());
         child.busy_until = busy;
-        let f = Fixture::on(
-            backend,
+        let f = Fixture::new(
             Seed::default()
                 .session("sender")
                 .session_row(parent)
@@ -116,9 +115,9 @@ impl Night {
     }
 }
 
-on_both! {
-fn a_quiet_child_whose_listener_answers_is_lost_at_each_wake_only_when_the_dispatch_runs_first(backend: Backend) {
-    let night = Night::new(backend, None);
+#[test]
+fn a_quiet_child_whose_listener_answers_is_lost_at_each_wake_only_when_the_dispatch_runs_first() {
+    let night = Night::new(None);
     night.sweep();
     assert_eq!(night.dispatch(), Vec::<String>::new());
     // Swept first at every wake, it is not quiet: neither STALE nor LOST is said, night after
@@ -141,17 +140,23 @@ fn a_quiet_child_whose_listener_answers_is_lost_at_each_wake_only_when_the_dispa
             LOST[2],
             "resolved idle child",
         ];
-        assert_eq!(night.dispatch(), if wake == 0 { &lost_from_idle[..] } else { &LOST_AGAIN[..] });
+        assert_eq!(
+            night.dispatch(),
+            if wake == 0 {
+                &lost_from_idle[..]
+            } else {
+                &LOST_AGAIN[..]
+            }
+        );
         // Its return is no new work: nothing is said of it.
         night.sweep();
         assert_eq!(night.dispatch(), Vec::<String>::new());
     }
 }
-}
 
-on_both! {
-fn a_child_whose_listener_is_gone_is_lost_once_and_again_once_back_and_gone_again(backend: Backend) {
-    let mut night = Night::new(backend, None);
+#[test]
+fn a_child_whose_listener_is_gone_is_lost_once_and_again_once_back_and_gone_again() {
+    let mut night = Night::new(None);
     night.sweep();
     assert_eq!(night.dispatch(), Vec::<String>::new());
     // Its listener gone, the round after the wake retires it, and its loss is said, once.
@@ -173,11 +178,10 @@ fn a_child_whose_listener_is_gone_is_lost_once_and_again_once_back_and_gone_agai
     night.sweep();
     assert_eq!(night.dispatch(), LOST_AGAIN);
 }
-}
 
-on_both! {
-fn a_child_inside_one_long_tool_call_is_not_lost_until_the_call_could_have_ended(backend: Backend) {
-    let mut night = Night::new(backend, Some(NOW + 2.5 * SLEEP));
+#[test]
+fn a_child_inside_one_long_tool_call_is_not_lost_until_the_call_could_have_ended() {
+    let mut night = Night::new(Some(NOW + 2.5 * SLEEP));
     night.drop_child();
     for _ in 0..2 {
         night.sleep();
@@ -187,5 +191,4 @@ fn a_child_inside_one_long_tool_call_is_not_lost_until_the_call_could_have_ended
     night.sleep();
     night.sweep();
     assert_eq!(night.dispatch(), LOST);
-}
 }

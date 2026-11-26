@@ -357,7 +357,7 @@ fn a_project_justfile_by_any_name_just_reads_is_never_written() {
                 name.to_string(),
                 "symphony.just".to_string(),
             ];
-            names.sort();
+            symphony_board::order::sort_by(&mut names, &Ord::cmp);
             names
         });
         assert_eq!(tree.read(name), "build:\n    echo ours\n");
@@ -633,6 +633,74 @@ fn a_fresh_project_allows_just_land_and_is_asked_before_nothing_init_wrote() {
             "{server}"
         );
     }
+}
+
+/// Whether Claude's allow rule `rule` passes `command`, as its permissions read a rule of the one
+/// form init writes, `Bash(WORDS:*)`: the words alone, or the words and a space and anything.
+fn claude_allows(rule: &str, command: &str) -> bool {
+    let words = (rule.strip_prefix("Bash("))
+        .and_then(|rest| rest.strip_suffix(":*)"))
+        .unwrap_or_else(|| panic!("{rule} is not of the form init writes"));
+    command == words || command.starts_with(&format!("{words} "))
+}
+
+/// The words of each Codex rule in `rules` that decides `allow`, as the shipped rules write one:
+/// `prefix_rule(pattern=["WORD", …], decision="allow")`, its words literal.
+fn codex_allowed(rules: &str) -> Vec<Vec<String>> {
+    (rules.lines())
+        .filter_map(|line| line.strip_prefix("prefix_rule(pattern=["))
+        .filter_map(|rest| rest.strip_suffix("], decision=\"allow\")"))
+        .map(|words| {
+            (words.split(", "))
+                .map(|word| word.trim_matches('"').to_string())
+                .collect()
+        })
+        .collect()
+}
+
+/// A change to a board's people or a profile asks first, for Claude and for Codex: no rule init
+/// writes passes `just tasks-people`, which the shipped recipes hold, and `just tasks`, which a
+/// rule passes, takes the reads `people list` and `people log` unasked (`tasks` refuses the
+/// changes under the recipe's marker, which `just tasks-people` does not set).
+#[test]
+fn a_people_change_asks_first_for_either_agent_and_its_reads_do_not() {
+    let shipped = Shipped::builtin();
+    let codex = codex_allowed(&shipped.codex_rules);
+    assert_eq!(
+        codex.len(),
+        ALLOW.len(),
+        "one Codex rule for each of Claude's"
+    );
+    let allowed = |command: &str| {
+        let words: Vec<&str> = command.split(' ').collect();
+        let claude = ALLOW.iter().any(|rule| claude_allows(rule, command));
+        let codex = (codex.iter())
+            .any(|rule| words.starts_with(&rule.iter().map(String::as_str).collect::<Vec<_>>()));
+        assert_eq!(claude, codex, "Claude and Codex pass {command} alike");
+        claude
+    };
+    for read in [
+        "just tasks people list",
+        "just tasks people log --json --as amber-heron",
+    ] {
+        assert!(allowed(read), "{read}");
+    }
+    for change in [
+        "just tasks-people add ana --as amber-heron",
+        "just tasks-people grant ana decide",
+        "just tasks-people",
+        "just symphony --port 0",
+        "just symphony-cli init --root .",
+    ] {
+        assert!(!allowed(change), "{change} is passed unasked");
+    }
+    let recipes = shipped.recipes.as_deref().unwrap();
+    let recipe = (recipes.lines())
+        .skip_while(|line| !line.starts_with("tasks-people "))
+        .nth(1)
+        .unwrap();
+    assert_eq!(recipe, "    @{{ _symphony_run }} tasks people \"$@\"");
+    assert!(!recipe.contains("_symphony_unasked"), "it sets no marker");
 }
 
 /// The allow rules a landed init wrote while it asked before a land: no `just land`, and the
@@ -1027,7 +1095,7 @@ fn the_command_installs_and_reports_and_refuses_what_it_does_not_know() {
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        names.sort();
+        symphony_board::order::sort_by(&mut names, &Ord::cmp);
         names
     };
     for git_dir in [tree.path(".git"), bare.root.clone()] {
@@ -1394,7 +1462,6 @@ fn left_beside(tree: &Tree, path: &str, beside: Option<&Path>) -> Vec<String> {
         &Machine {
             folder: Some(&folder),
             path: Some(&path),
-            surreal: None,
             beside,
         },
     )
@@ -1404,8 +1471,8 @@ fn left_beside(tree: &Tree, path: &str, beside: Option<&Path>) -> Vec<String> {
 const NO_BUILDS: [&str; 2] = [
     "link the project's builds at .target/bin/symphony, .target/bin/tasks, \
      .target/bin/agent-send and .target/bin/symphony-server, or put them on PATH: the heartbeat, \
-     the memory guard, `just symphony-cli`, `just tasks`, `just agent-send` and `just symphony` \
-     run them and build nothing",
+     the memory guard, `just symphony-cli`, `just tasks`, `just tasks-people`, `just agent-send` \
+     and `just symphony` run them and build nothing",
     "build `symphony`, `tasks`, `agent-send` and `symphony-server` to link in a checkout of the \
      Symphony: `cargo build --locked --release --bin symphony --bin tasks --bin agent-send --bin \
      symphony-server` there leaves them in its .target/release/",
@@ -1485,7 +1552,7 @@ fn a_checkout_is_told_to_make_its_board_until_its_store_is_there() {
     let tree = Tree::new();
     tree.write("Lamp Shop/.git/HEAD", "ref: refs/heads/main\n");
     // After the PostgreSQL a new board is made on, before the registration the Symphony reads it
-    // by; and no SurrealDB is asked for.
+    // by; and no move from SurrealDB is asked for.
     let steps = left(&tree, "");
     let at = |start: &str| {
         steps
@@ -1501,17 +1568,30 @@ fn a_checkout_is_told_to_make_its_board_until_its_store_is_there() {
         steps.iter().all(|step| !step.contains("SurrealDB")),
         "{steps:?}"
     );
-    // A store a server left: a board, as far as the folder tells with nothing running, on
-    // SurrealDB, whose server is asked for in place of PostgreSQL.
+    // A store an earlier release's SurrealDB left: a board, made, that this build serves no more,
+    // told how it moves in place of the PostgreSQL a board here runs on, and never to be made.
     tree.write("Lamp Shop/.git/symphony/tasks/data/manifest", "");
     let steps = left(&tree, "");
     assert!(!steps.contains(&MAKE_BOARD.to_string()), "{steps:?}");
+    let moves: Vec<&String> = (steps.iter())
+        .filter(|step| step.contains("SurrealDB"))
+        .collect();
+    assert_eq!(moves, [&surrealdb_step()], "{steps:?}");
     assert!(
-        steps.iter().any(|step| step.starts_with("fetch SurrealDB")),
-        "{steps:?}"
+        moves[0].starts_with(
+            "move the board to PostgreSQL, as it is still on SurrealDB, which this release \
+             serves no more: "
+        ),
+        "{moves:?}"
     );
     assert!(
-        steps.iter().all(|step| !step.contains("PostgreSQL")),
+        moves[0].ends_with(symphony_board::server::GONE),
+        "{moves:?}"
+    );
+    assert!(
+        steps
+            .iter()
+            .all(|step| !step.starts_with("have PostgreSQL")),
         "{steps:?}"
     );
     // A stopped PostgreSQL board is made too: its cluster is there, its server is not.
@@ -1532,8 +1612,8 @@ fn a_checkout_is_told_to_make_its_board_until_its_store_is_there() {
     );
     // Outside a checkout no board is asked for.
     let outside = Tree::new();
-    assert!(!unmade_board(&outside.root, None));
-    assert_eq!(board_engine(&outside.root, None), None);
+    assert!(!unmade_board(&outside.root));
+    assert_eq!(board_engine(&outside.root), None);
 }
 
 #[test]
@@ -1599,7 +1679,6 @@ fn a_machine_without_just_is_told_to_install_it() {
             &Machine {
                 folder: Some(&folder),
                 path: Some(path),
-                surreal: None,
                 beside: None,
             },
         )
@@ -1626,12 +1705,18 @@ fn each_build_is_told_with_what_runs_it_and_every_one_the_recipes_run_is_there()
         runners("symphony", &[]),
         ["the heartbeat", "the memory guard", "`just symphony-cli`"]
     );
-    assert_eq!(runners("tasks", &[]), ["the heartbeat", "`just tasks`"]);
+    assert_eq!(
+        runners("tasks", &[]),
+        ["the heartbeat", "`just tasks`", "`just tasks-people`"]
+    );
     assert_eq!(runners("symphony-server", &[]), ["`just symphony`"]);
     assert_eq!(runners("elsewhere", &[]), Vec::<String>::new());
     // A recipe of the project's own replaces the Symphony's, which runs the build no more.
     let own = ["tasks", "symphony", "symphony-cli"];
-    assert_eq!(runners("tasks", &own), ["the heartbeat"]);
+    assert_eq!(
+        runners("tasks", &own),
+        ["the heartbeat", "`just tasks-people`"]
+    );
     assert_eq!(
         runners("symphony", &own),
         ["the heartbeat", "the memory guard"]
@@ -1640,7 +1725,12 @@ fn each_build_is_told_with_what_runs_it_and_every_one_the_recipes_run_is_there()
     for (recipe, binary) in RUNS {
         assert!(BUILDS.contains(&binary), "{recipe} runs {binary}");
     }
-    assert_eq!(BUILDS.len(), RUNS.len());
+    for build in BUILDS {
+        assert!(
+            RUNS.iter().any(|(_, binary)| *binary == build),
+            "a recipe runs {build}"
+        );
+    }
     for name in HEARTBEAT_BUILDS {
         assert!(BUILDS.contains(&name), "{name}");
     }
@@ -1795,7 +1885,6 @@ fn a_linked_worktree_finds_its_main_checkouts_builds_as_the_hooks_do() {
             &Machine {
                 folder: None,
                 path: None,
-                surreal: Some(Path::new("/bin/sh")),
                 beside: None,
             },
         )
@@ -1851,12 +1940,14 @@ fn a_build_only_recipes_the_project_replaced_would_run_is_not_asked_for() {
     let tree = Tree::new();
     tree.write("Lamp Shop/symphony.toml", "[project]\nid = \"lamps\"\n");
     tree.write("Lamp Shop/docs/README.md", "# Lamps\n");
-    // The project runs its own server and board by recipes of its own: `just symphony` and
-    // `just tasks` never run the Symphony's builds, though the heartbeat still runs `tasks`.
+    // The project runs its own server and board by recipes of its own: `just symphony`,
+    // `just tasks` and `just tasks-people` never run the Symphony's builds, though the heartbeat
+    // still runs `tasks`.
     tree.write(
         "Lamp Shop/justfile",
         "import 'symphony.just'\n\nsymphony *ARGS:\n    cargo run --bin symphony-server\n\n\
-         tasks *ARGS:\n    cargo run --bin tasks\n",
+         tasks *ARGS:\n    cargo run --bin tasks\n\n\
+         tasks-people *ARGS:\n    cargo run --bin tasks -- people\n",
     );
     init(&tree.path("Lamp Shop"), &kit(vec![])).unwrap();
     program(&tree, "Lamp Shop/.target/bin/symphony");
@@ -2250,7 +2341,6 @@ fn a_registry_that_cannot_be_read_holds_nothing_and_no_machine_folder_asks_nothi
         &Machine {
             folder: None,
             path: None,
-            surreal: None,
             beside: None,
         },
     );
@@ -2280,7 +2370,6 @@ fn no_root_or_a_relative_one_names_the_project_after_the_folder_it_resolves_to()
             &Machine {
                 folder: None,
                 path: None,
-                surreal: None,
                 beside: None,
             },
         );
@@ -2309,83 +2398,8 @@ fn the_binaries_init_looks_for_are_the_ones_the_installed_recipes_run() {
             ran.push((recipe.unwrap(), binary));
         }
     }
-    ran.sort();
+    symphony_board::order::sort_by(&mut ran, &Ord::cmp);
     let mut runs = RUNS.to_vec();
-    runs.sort();
+    symphony_board::order::sort_by(&mut runs, &Ord::cmp);
     assert_eq!(ran, runs);
-}
-
-#[test]
-fn a_checkout_is_told_where_its_boards_surrealdb_goes_until_one_is_there() {
-    let tree = Tree::new();
-    tree.write("Lamp Shop/.git/HEAD", "ref: refs/heads/main\n");
-    // A board whose store is SurrealDB's, as a board made before PostgreSQL was a new board's.
-    tree.write("Lamp Shop/.git/symphony/tasks/data/manifest", "");
-    let root = tree.path("Lamp Shop");
-    let pinned = root
-        .canonicalize()
-        .unwrap()
-        .join(".git/symphony/surreal")
-        .join(symphony_board::server::SURREAL_VERSION)
-        .join("surreal");
-    let asked = |named: Option<&Path>| {
-        let found = steps(
-            &root,
-            &Machine {
-                folder: None,
-                path: None,
-                surreal: named,
-                beside: None,
-            },
-        );
-        let mut asked = found.into_iter().filter(|step| step.contains("SurrealDB"));
-        let step = asked.next();
-        assert_eq!(asked.next(), None);
-        step
-    };
-    let version = symphony_board::server::SURREAL_VERSION;
-    let fetch = symphony_board::server::surreal_fetch(
-        &pinned,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
-    .expect("a machine the tests run on has a pinned build");
-    let fetched = format!(
-        "fetch SurrealDB {version}, which the board's server runs from {}: `{fetch}` (or name \
-         another with SYMPHONY_SURREAL)",
-        pinned.display()
-    );
-    assert_eq!(asked(None), Some(fetched.clone()));
-    let named = tree.path("elsewhere/surreal");
-    assert_eq!(
-        asked(Some(&named)),
-        Some(format!(
-            "put SurrealDB {version} at {}, where SYMPHONY_SURREAL names it: the board's server \
-             runs it",
-            named.display()
-        ))
-    );
-    program(&tree, "elsewhere/surreal");
-    assert_eq!(asked(Some(&named)), None);
-    tree.write(
-        &format!("Lamp Shop/.git/symphony/surreal/{version}/surreal"),
-        "not runnable",
-    );
-    assert_eq!(asked(None), Some(fetched));
-    // A machine no build is pinned for is told to put one there.
-    assert_eq!(
-        surreal_step(&pinned, false, None),
-        format!(
-            "put SurrealDB {version}'s release binary for this machine at {}, where the board's \
-             server runs it, or name one with SYMPHONY_SURREAL",
-            pinned.display()
-        )
-    );
-    program(
-        &tree,
-        &format!("Lamp Shop/.git/symphony/surreal/{version}/surreal"),
-    );
-    assert_eq!(asked(None), None);
-    let outside = Tree::new();
-    assert_eq!(missing_surreal(&outside.root, None), None);
 }

@@ -48,9 +48,8 @@ const WHERE: &str = "docs/workflow/RELEASES.md, \"Its notes\"";
 type Tool = (&'static str, &'static str, fn(&str) -> Option<String>);
 
 /// The tools a release pins, each read at a release's commit.
-const TOOLS: [Tool; 4] = [
+const TOOLS: [Tool; 3] = [
     ("Rust toolchain", "rust-toolchain.toml", toolchain),
-    ("SurrealDB", "tools/surreal.sh", surreal),
     ("Node", "apps/symphony-web/.node-version", node),
     (
         "PostgreSQL, the oldest major the board's server runs on,",
@@ -66,14 +65,6 @@ fn toolchain(text: &str) -> Option<String> {
         let value = value.strip_prefix('=')?.trim();
         Some(value.strip_prefix('"')?.strip_suffix('"')?.to_string())
     })
-}
-
-/// `VERSION=3.3.0` on a line of its own in `tools/surreal.sh`.
-fn surreal(text: &str) -> Option<String> {
-    text.lines()
-        .find_map(|line| line.strip_prefix("VERSION="))
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 /// The whole of `.node-version`.
@@ -850,35 +841,131 @@ pub(crate) fn owed(changed: &Changed, entries: &[Result<Entry, String>]) -> Vec<
     owed
 }
 
-/// A guard's line as the check compares it: without the comment that ends it, its spaces and its
-/// commas, so a call that `rustfmt` wraps anew, or that moves, is the same call. None for a
-/// comment or a blank.
-fn code(line: &str) -> Option<String> {
+/// A guard's line without the comment that ends it, trimmed. None for a comment or a blank.
+fn uncommented(line: &str) -> Option<&str> {
     let line = line.trim();
     if line.is_empty() || line.starts_with("//") {
         return None;
     }
-    let code = line.split_once(" //").map_or(line, |(code, _)| code);
     Some(
-        (code.chars())
-            .filter(|c| !c.is_whitespace() && *c != ',')
-            .collect(),
+        line.split_once(" //")
+            .map_or(line, |(code, _)| code.trim_end()),
     )
 }
 
-/// The lines of the guard `before` whose call the guard `now` holds nowhere, each as written: a
-/// call a consumer makes that the guard stopped holding it to. A line that only moved, was wrapped
-/// anew or gained a comment is not one, neither is a call added beside the old one, and a line of
-/// brackets alone names no call.
+/// A guard's line as the check compares it: without the comment that ends it, its spaces and its
+/// commas, so a call that `rustfmt` wraps anew, or that moves, is the same call. None for a
+/// comment or a blank.
+fn code(line: &str) -> Option<String> {
+    uncommented(line).map(|code| {
+        (code.chars())
+            .filter(|c| !c.is_whitespace() && *c != ',')
+            .collect()
+    })
+}
+
+/// What a guard holds, in its order: each path a `use` declaration names, and each other line.
+#[derive(Debug, PartialEq, Eq)]
+enum Held<'a> {
+    Path(String),
+    Line(&'a str),
+}
+
+/// A guard read as [`Held`]: a `use` declaration, over as many lines as `rustfmt` wraps it on, is
+/// the full path of each name its tree imports ([`paths`]), not a line. One that never closes (no
+/// line of it, to the end of the guard, ends in `;` once its comment is cut) is its lines as
+/// written, each a [`Held::Line`], so a call among them is still compared.
+fn holds(guard: &str) -> Vec<Held<'_>> {
+    let mut held = Vec::new();
+    // The tree read so far, and its lines as written.
+    let mut tree: Option<(String, Vec<&str>)> = None;
+    for line in guard.lines() {
+        let code = uncommented(line);
+        if let Some((tree, lines)) = tree.as_mut() {
+            lines.push(line);
+            if let Some(code) = code {
+                tree.push(' ');
+                tree.push_str(code);
+            }
+        } else if let Some(rest) = code.and_then(|code| code.strip_prefix("use ")) {
+            tree = Some((rest.to_string(), vec![line]));
+        } else {
+            held.push(Held::Line(line));
+        }
+        if let Some(whole) = tree.as_ref().and_then(|(tree, _)| tree.strip_suffix(';')) {
+            let mut named = Vec::new();
+            paths("", whole, &mut named);
+            held.extend(named.into_iter().map(Held::Path));
+            tree = None;
+        }
+    }
+    if let Some((_, lines)) = tree {
+        held.extend(lines.into_iter().map(Held::Line));
+    }
+    held
+}
+
+/// Each full path the `use` tree `tree` names under `prefix`, into `named`: `a::{b, c::{d}}` is
+/// `a::b` and `a::c::d`, `a::{self}` is `a`, and a rename keeps its `as`.
+fn paths(prefix: &str, tree: &str, named: &mut Vec<String>) {
+    let tree = tree.trim();
+    let Some((head, list)) = tree
+        .split_once('{')
+        .and_then(|(head, rest)| Some((head.trim(), rest.strip_suffix('}')?)))
+    else {
+        let leaf = tree.split_whitespace().collect::<Vec<_>>().join(" ");
+        if leaf == "self" {
+            named.push(prefix.trim_end_matches("::").to_string());
+        } else if !leaf.is_empty() {
+            named.push(format!("{prefix}{leaf}"));
+        }
+        return;
+    };
+    let prefix = format!("{prefix}{head}");
+    let mut depth = 0_u32;
+    let mut start = 0;
+    for (at, c) in list.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                paths(&prefix, &list[start..at], named);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    paths(&prefix, &list[start..], named);
+}
+
+/// What of the guard `before` the guard `now` holds nowhere, each as written: a call a consumer
+/// makes that the guard stopped holding it to. A line that only moved, was wrapped anew or gained
+/// a comment is not one, neither is a call added beside the old one, and a line of brackets alone
+/// names no call. A `use` declaration holds no call, only paths: each path it named that no
+/// declaration of `now` names is one, said `use PATH;`, and a name added to its list is not.
 pub(crate) fn lost(before: &str, now: &str) -> Vec<String> {
-    let held: String = now.lines().filter_map(code).collect();
-    (before.lines())
-        .filter(|line| {
-            code(line).is_some_and(|call| {
-                call.chars().any(char::is_alphanumeric) && !held.contains(&call)
-            })
+    let now = holds(now);
+    let imported: std::collections::BTreeSet<&str> = (now.iter())
+        .filter_map(|held| match held {
+            Held::Path(path) => Some(path.as_str()),
+            Held::Line(_) => None,
         })
-        .map(|line| line.trim().to_string())
+        .collect();
+    let calls: String = (now.iter())
+        .filter_map(|held| match held {
+            Held::Line(line) => code(line),
+            Held::Path(_) => None,
+        })
+        .collect();
+    (holds(before).into_iter())
+        .filter_map(|held| match held {
+            Held::Path(path) => (!imported.contains(path.as_str())).then(|| format!("use {path};")),
+            Held::Line(line) => code(line)
+                .is_some_and(|call| {
+                    call.chars().any(char::is_alphanumeric) && !calls.contains(&call)
+                })
+                .then(|| line.trim().to_string()),
+        })
         .collect()
 }
 

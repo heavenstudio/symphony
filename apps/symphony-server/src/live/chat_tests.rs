@@ -33,14 +33,9 @@ fn only_the_shared_server_drains_the_chat_journal() {
                     tree.path("preview").to_str().unwrap(),
                 ],
             );
-            let board = board::client();
+            let board = board::database();
             // The board's command line makes the board; the Symphony, a reader, never does.
-            symphony_board::Store::open(symphony_board::rpc::Client::new(
-                board.addr(),
-                "sf",
-                board.database(),
-            ))
-            .unwrap();
+            crate::testing::store_on(&board);
             let mut child = Command::new(std::env::current_exe().unwrap());
             child
                 .args(["--exact", TEST, "--nocapture"])
@@ -104,17 +99,7 @@ fn only_the_shared_server_drains_the_chat_journal() {
     };
     assert_eq!(queued(), [json!({"text": MESSAGE})]);
     let store = symphony::taskview::connect(&root).unwrap();
-    let board = symphony_board::rpc::Client::new(
-        &std::env::var("TASKS_SERVER").unwrap(),
-        "sf",
-        &std::env::var("TASKS_DATABASE").unwrap(),
-    );
-    let posted = || {
-        symphony_board::Raw::on(&board)
-            .table("chat_event")
-            .fields(&["text"])
-            .unwrap()
-    };
+    let posted = || store.raw().table("chat_event").fields(&["text"]).unwrap();
     assert_eq!(posted(), json!([]));
 
     let home = shared_server.then(|| root.parent().unwrap().join("installed"));

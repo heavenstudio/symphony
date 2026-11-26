@@ -33,7 +33,7 @@ fn reading(tree: &Tree) -> (Hub, Arc<AtomicUsize>) {
     let count = opened.clone();
     hub.connect_reader = Box::new(move |_| {
         count.fetch_add(1, SeqCst);
-        Ok(store_on(&fixture.other_client()))
+        Ok(store_on(&fixture.other_database()))
     });
     (hub, opened)
 }

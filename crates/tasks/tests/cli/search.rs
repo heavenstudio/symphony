@@ -75,67 +75,21 @@ fn search_keeps_relevance_order_and_list_fields_and_filters_before_limiting() {
     );
 }
 
-/// The rows of each table the deleted search by meaning wrote, which the schema still defines.
-fn derived_rows(c: &Case) -> Vec<Value> {
-    let store = c.store();
-    [
-        "task_chunk",
-        "task_embedding_source",
-        "task_embedding_checkpoint",
-    ]
-    .map(|table| serde_json::json!(store.raw().table(table).count().unwrap()))
-    .to_vec()
-}
-
-/// A board an older build left its search by meaning's rows on (chunks with their vectors under
-/// the HNSW index, their sources, the pass's checkpoint) opens, takes writes and searches by words
-/// as one without them: the rows are neither read nor removed, and a chunk's text is no match.
+/// The board searches by words alone, the search by meaning it had deleted: what a write adds is
+/// found by its words, and the modes and the catch-up of the search by meaning are refused as any
+/// unknown word is.
 #[test]
-fn a_board_holding_old_embeddings_opens_and_searches_by_words_alone() {
+fn the_board_searches_by_words_alone_and_refuses_the_deleted_modes() {
     let c = Case::new();
     filler(&c);
     create(&c, "engine/jump", "Jump drive", "The engine hums", 2);
-    let before = json(&c, &["search", "engine"]);
-    assert_eq!(before["tasks"].as_array().unwrap().len(), 1);
-
-    let mut vector = vec![0.0_f32; 384];
-    vector[0] = 1.0;
-    let model = "BAAI/bge-small-en-v1.5@5c38ec7c:cls-l2:chunks510:v1";
-    let store = c.store();
-    let raw = store.raw();
-    for (slug, text) in [
-        ("engine/jump", "Jump drive The engine hums"),
-        ("other/a", "an engine only this chunk names"),
-    ] {
-        raw.row("task_chunk", serde_json::json!([slug, "brief", 0]))
-            .create(serde_json::json!({
-                "slug": slug, "source": "brief", "source_hash": "old", "text_hash": "old",
-                "text": text, "model": model, "embedding": vector,
-            }))
-            .unwrap();
-        raw.row("task_embedding_source", serde_json::json!([slug, "brief"]))
-            .create(serde_json::json!({
-                "slug": slug, "source": "brief", "source_hash": "old", "model": model, "parts": 1,
-            }))
-            .unwrap();
-    }
-    raw.row("task_embedding_checkpoint", "board")
-        .create(serde_json::json!({"snapshot": {"model": model, "sources": 2}}))
-        .unwrap();
-    let held = vec![
-        serde_json::json!(2),
-        serde_json::json!(2),
-        serde_json::json!(1),
-    ];
-    assert_eq!(derived_rows(&c), held);
-
-    // The same answer, to the field, and in text as before.
-    assert_eq!(json(&c, &["search", "engine"]), before);
+    let first = json(&c, &["search", "engine"]);
+    assert_eq!(first["tasks"].as_array().unwrap().len(), 1);
     assert_eq!(
         c.ok("owner", &["search", "engine"]),
         "p2 ready       engine/jump                  Jump drive\n  body: The engine hums\n"
     );
-    // The board takes writes beside the old rows, and searches what they wrote.
+    // The board searches what later writes wrote.
     create(&c, "engine/warp", "Warp engine", "", 2);
     c.store()
         .say("other/b", "owner", "the engine room is cold", None)
@@ -147,9 +101,8 @@ fn a_board_holding_old_embeddings_opens_and_searches_by_words_alone() {
         .iter()
         .map(|row| row["slug"].as_str().unwrap())
         .collect();
-    slugs.sort_unstable();
+    symphony_board::order::sort_by(&mut slugs, &Ord::cmp);
     assert_eq!(slugs, ["engine/jump", "engine/warp", "other/b"]);
-    assert_eq!(derived_rows(&c), held, "ignored, never removed");
 
     // The modes and the catch-up are gone from the command line, refused as any unknown word is.
     for mode in ["keyword", "vector", "hybrid", "exact"] {
@@ -165,7 +118,6 @@ fn a_board_holding_old_embeddings_opens_and_searches_by_words_alone() {
     let ran = c.run_as("owner", &["embed", "--maintenance"], "");
     assert_eq!(ran.code, 2, "{}", said(&ran));
     assert!(ran.err.contains("no command 'embed'"), "{}", said(&ran));
-    assert_eq!(derived_rows(&c), held);
 }
 
 #[test]

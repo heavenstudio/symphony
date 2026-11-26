@@ -1,17 +1,14 @@
 //! What a move of a registered project's board to a release's schema shares, whoever moves it: a
 //! release's refresh (`crates/symphony-build/src/release/refresh.rs`) or the machine's server
 //! trying a held update again ([`super::held`]). The board's store is snapshotted through its
-//! running database just before it moves, into `snapshots/before-schema-N-RELEASE.surql` in its
-//! folder (`.sql`, `pg_dump`'s text, for a board on PostgreSQL), the newest [`KEPT_SNAPSHOTS`]
-//! kept; a board whose database runs an older SurrealDB than the release pins is never moved, as
-//! the move would replace that server; and the release's own `tasks migrate` runs in the project's
-//! main checkout without the variables [`UNSET`] names.
+//! running database just before it moves, into `snapshots/before-schema-N-RELEASE.sql` in its
+//! folder (`pg_dump`'s text of the board's database, which `psql` restores), the newest
+//! [`KEPT_SNAPSHOTS`] kept; and the release's own `tasks migrate` runs in the project's main
+//! checkout without the variables [`UNSET`] names.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-
-use symphony_board::server::{Engine, Home};
 
 /// The snapshots a project's board keeps of its store before a schema move, newest first.
 pub const KEPT_SNAPSHOTS: usize = 5;
@@ -33,15 +30,11 @@ pub const UNSET: [&str; 9] = [
 ];
 
 /// Where the snapshot of the board in `folder` (its board folder, in its git common dir) taken
-/// before its move to `target` by `release` goes, for a board on `engine`.
-pub fn snapshot_file(folder: &Path, target: i64, release: &str, engine: Engine) -> PathBuf {
-    let kind = match engine {
-        Engine::SurrealDb => "surql",
-        Engine::PostgreSql => "sql",
-    };
+/// before its move to `target` by `release` goes.
+pub fn snapshot_file(folder: &Path, target: i64, release: &str) -> PathBuf {
     folder
         .join("snapshots")
-        .join(format!("before-schema-{target}-{release}.{kind}"))
+        .join(format!("before-schema-{target}-{release}.sql"))
 }
 
 /// Remove from `folder` the snapshots but the newest `kept`; nothing else there is touched.
@@ -57,33 +50,11 @@ pub fn prune(folder: &Path, kept: usize) {
         })
         .filter_map(|path| Some((fs::metadata(&path).ok()?.modified().ok()?, path)))
         .collect();
-    found.sort();
+    symphony_board::order::sort_by(&mut found, &Ord::cmp);
     let gone = found.len().saturating_sub(kept);
     for (_, path) in found.into_iter().take(gone) {
         let _ = fs::remove_file(path);
     }
-}
-
-/// Whether the version `running` is older than `pinned`, part by dotted part.
-pub fn older(running: &str, pinned: &str) -> bool {
-    let parts = |version: &str| -> Vec<u64> {
-        (version.trim_start_matches('v').split(['.', '-', '+']))
-            .map(|part| part.parse().unwrap_or(0))
-            .collect()
-    };
-    parts(running) < parts(pinned)
-}
-
-/// The `surreal` a snapshot of the board in the git common dir `common` runs: `SYMPHONY_SURREAL`,
-/// else the one pinned beside that board, else `fallback`.
-pub fn surreal_for(common: &Path, fallback: Option<&Path>) -> PathBuf {
-    let named = symphony_env::SURREAL.os().map(PathBuf::from);
-    let beside = Home::in_common(common, None).surreal().to_path_buf();
-    (named.into_iter())
-        .chain([beside.clone()])
-        .chain(fallback.map(Path::to_path_buf))
-        .find(|path| path.is_file())
-        .unwrap_or(beside)
 }
 
 #[cfg(test)]

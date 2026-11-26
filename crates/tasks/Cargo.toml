@@ -7,7 +7,7 @@ publish = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Symphony's task board: the `tasks` and `agent-send` commands, its store on SurrealDB, the agents it staffs and the builds and tests it records."
+description = "Symphony's task board: the `tasks` and `agent-send` commands, its store on PostgreSQL, the agents it staffs and the builds and tests it records."
 readme = "README.md"
 keywords = ["symphony", "tasks", "board", "agents", "cli"]
 categories = ["command-line-utilities", "development-tools"]
@@ -15,11 +15,10 @@ categories = ["command-line-utilities", "development-tools"]
 # fixtures or examples, nor `fake-hc`, the tests' stand-in for the terminals the board drives.
 include = ["src/**", "!src/bin/fake-hc.rs", "build.rs", "README.md", "LICENSE"]
 
-# SurrealDB is the board's database: a server runs anyway (`just symphony`), and the server starts
-# the database. It is reached over its JSON-RPC on plain HTTP
-# (src/rpc.rs) rather than through the `surrealdb` client crate: serde and serde_json are already in that
-# crate's own tree, and the rest of it (tokio, the WebSocket stack) is ~260 CPU-s of build this does
-# without (docs/engineering/analysis/review-app-rust-port.md, "Clean release build").
+# PostgreSQL is the board's database, which the board's server starts. It is reached over its own
+# protocol on its Unix socket (src/pg.rs), spoken with std alone rather than through a driver crate,
+# so a build links no async runtime for it; only a hosted board's build links a driver (the
+# `hosted-postgresql` feature below).
 [dependencies]
 process-cwd = { path = "../process-cwd", version = "1.0.1" }
 # Its variables, each by its one SYMPHONY_ name.
@@ -30,11 +29,11 @@ symphony-args = { path = "../symphony-args", version = "1.0.0" }
 symphony-api = { path = "../symphony-api", version = "=0.2.0" }
 # A card and the owner's lines under it, read as the Symphony reads them: the owner's answers a
 # worktree holds that no commit has, which the sweep keeps and a land refuses (src/sweep/git/owner.rs).
-symphony-docs = { path = "../symphony-docs", version = "1.2.0" }
+symphony-docs = { path = "../symphony-docs", version = "1.3.0" }
 # The execution adapter contract (`symphony_plugin::execution`) whose attempts the board keeps
 # (src/execution.rs): the kit's types and its bounded `invoke`, never a provider's client; and the
 # trusted principal a workflow operation is admitted for (`Principal`, src/workflow.rs).
-symphony-plugin = { path = "../symphony-plugin", version = "1.2.0" }
+symphony-plugin = { path = "../symphony-plugin", version = "1.3.0" }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a time in a dump reads as exactly the float Python wrote, not one ulp off. The other
 # three are the features the server's build unifies on serde_json (crates/symphony and

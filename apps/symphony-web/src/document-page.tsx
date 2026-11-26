@@ -11,6 +11,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -27,6 +28,7 @@ import { type Item, shown } from "./cache";
 import { documentItem } from "./cache-document";
 import { watchContents } from "./contents";
 import { folderPill, isSettled, partEdges, partForm } from "./document";
+import { HeldContext, HeldUnder, useHeld } from "./document-held";
 import { api, DocumentLive, documentLive, FolderLive, followFolder, named } from "./document-live";
 import { readDiff, readFragment, readVersions } from "./document-read";
 import { Editor, PageContext } from "./editor";
@@ -35,10 +37,12 @@ import { useFrame, useRefreshed } from "./frame";
 import { appPath } from "./links";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
+import { CardOwnersContext, type CardOwnersValue, OwnerLine, readCardOwners } from "./owner";
+import { decides } from "./owner-read";
 import { PostponeControls } from "./postpone";
 import { documentsHref, entrypoints, fileAddress, href, project, scoped } from "./project";
 import { ComparisonNote, DocumentWithTasks, SectionDifference } from "./related";
-import { getJson, said } from "./request";
+import { getJson, post, said } from "./request";
 import { anchor, anchorIds, scrollAnchor, useAnchor } from "./route";
 import { failed as failedRead, ready as readyWord, Trouble } from "./trouble";
 import { AtOnce, NearViewport, Settle, Skeleton } from "./viewport";
@@ -49,10 +53,11 @@ import type {
   Folder,
   Fragment,
   LinkTarget,
+  Owner,
   Section,
   Version,
 } from "./wire";
-import { PAGE_NAMES } from "./wire";
+import { CARD_HAND_ROUTE, CARD_OWNERS_PATH, PAGE_NAMES } from "./wire";
 
 /** The original reader reserves a contents column only for three or more headings. */
 const TOC_MIN_HEADINGS = 3;
@@ -179,7 +184,7 @@ export function Missing({ path, scope, moved, hash, retry }: MissingProps) {
   return (
     <Trouble
       title="Document not found"
-      text={`There is no document at ${path}: it may have been moved, renamed or removed.`}
+      text={`There is no document at ${path}.`}
       back={[scoped(scope, documentsHref(project())), "All documents"]}
       retry={retry}
     >
@@ -240,6 +245,8 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
     return () => reading.abort();
   }, [scope, refreshed, orders]);
   const state = page.state;
+  const owners = useCardOwners(path, scope, state?.latest ?? null, refreshed);
+  const held = useHeld(path, scope, state?.shown.sections ?? null, page.heldMoves, refreshed);
   const device = shown(page.freshness);
   const trouble = page.trouble;
   // An intro the server no longer has follows no feed: the folder's next read drops it.
@@ -321,27 +328,79 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
   }
   return (
     <PageContext.Provider value={page}>
-      <div
-        className="document-page"
-        data-ready={ready}
-        data-feed={page.stale ? "stale" : "live"}
-        data-cache={device ? "device" : undefined}
-        aria-busy={`${state === null && trouble === null && !missing}`}
-      >
-        {body}
-        {/* Until the document is shown, what kept it away is the block above's to say, once. */}
-        {!embedded && (
-          <PageNotices
-            reconnecting={page.stale && state !== null}
-            reconnect={RECONNECT}
-            error={state !== null ? (trouble ?? "") : ""}
-            documentRemoved={removed}
-            device={device}
-            composer
-          />
-        )}
-      </div>
+      <CardOwnersContext.Provider value={owners}>
+        <HeldContext.Provider value={held}>
+          <div
+            className="document-page"
+            data-ready={ready}
+            data-feed={page.stale ? "stale" : "live"}
+            data-cache={device ? "device" : undefined}
+            aria-busy={`${state === null && trouble === null && !missing}`}
+          >
+            {body}
+            {/* Until the document is shown, what kept it away is the block above's to say, once. */}
+            {!embedded && (
+              <PageNotices
+                reconnecting={page.stale && state !== null}
+                reconnect={RECONNECT}
+                error={state !== null ? (trouble ?? "") : ""}
+                documentRemoved={removed}
+                device={device}
+                composer
+              />
+            )}
+          </div>
+        </HeldContext.Provider>
+      </CardOwnersContext.Provider>
     </PageContext.Provider>
+  );
+}
+
+/**
+ * The owners of the cards of the document `path` of the checkout `scope`, read once its copy
+ * `latest` holds a card and again as it moves, as the frame refreshes and after a hand-over from
+ * the page: none until read, and none where the board names nobody. A failed read draws no
+ * owner; the next move reads it again.
+ */
+function useCardOwners(
+  path: string,
+  scope: string,
+  latest: Document | null,
+  refreshed: unknown,
+): CardOwnersValue | null {
+  const [owners, setOwners] = useState<Record<string, Owner> | null>(null);
+  const [handed, setHanded] = useState(0);
+  const version = latest?.version ?? null;
+  const carded = (latest?.cards.length ?? 0) > 0;
+  useEffect(() => {
+    void refreshed;
+    void version;
+    void handed;
+    if (!carded) return;
+    const reading = new AbortController();
+    getJson(api(scope, CARD_OWNERS_PATH, path), reading.signal).then(
+      (value) => {
+        if (reading.signal.aborted) return;
+        const read = readCardOwners(value);
+        if (read !== null) setOwners(read);
+      },
+      () => {},
+    );
+    return () => reading.abort();
+  }, [path, scope, carded, version, refreshed, handed]);
+  return useMemo(
+    () =>
+      owners === null || Object.keys(owners).length === 0
+        ? null
+        : {
+            owners,
+            hand: async (slug: string, to: string) => {
+              const answer = await post(scoped(scope, CARD_HAND_ROUTE), { path, slug, to });
+              setHanded((count) => count + 1);
+              return answer;
+            },
+          },
+    [owners, path, scope],
   );
 }
 
@@ -506,6 +565,7 @@ export const DocumentBody = memo(function DocumentBody({
                 </NearViewport>
               );
             })}
+            <HeldUnder sectionKey="" />
           </article>
         </Settle>
       </div>
@@ -660,6 +720,11 @@ function DocSection({
   postponed,
 }: SectionProps) {
   const [editing, setEditing] = useState(false);
+  const cardOwners = useContext(CardOwnersContext);
+  const owner = card !== null ? (cardOwners?.owners[card.slug] ?? null) : null;
+  // Its verdicts and its Later, a move in its deciders' queues, are theirs alone; its message
+  // everyone's.
+  const decidesCard = decides(owner);
   const settled = isSettled(card);
   const summary = settledSummary(section) ?? [];
   const only = section.blocks.length === 1 ? section.blocks[0] : undefined;
@@ -667,7 +732,7 @@ function DocSection({
   const slug = card?.slug ?? null;
   const target = useAnchor();
   const later =
-    card !== null && (card.group === "decide" || card.group === "confirm") ? (
+    card !== null && decidesCard && (card.group === "decide" || card.group === "confirm") ? (
       <PostponeControls
         path={path}
         scope={scope}
@@ -696,8 +761,16 @@ function DocSection({
           <BlocksView blocks={thread.blocks} />
         </NearViewport>
       )}
+      <HeldUnder sectionKey={section.key} />
       {card !== null ? (
         <div className="doc-actions">
+          {owner !== null && cardOwners !== null && card !== null && (
+            <OwnerLine
+              owner={owner}
+              id={`hand-${encodeURIComponent(`${path}:${card.slug}`)}`}
+              hand={(to) => cardOwners.hand(card.slug, to)}
+            />
+          )}
           {postponed && <small className="postponed">postponed</small>}
           <Button
             id={opener}
@@ -705,7 +778,7 @@ function DocSection({
             aria-expanded={editing}
             onClick={() => setEditing(!editing)}
           >
-            {editing ? "Close" : "Verdict / message"}
+            {editing ? "Close" : decidesCard ? "Verdict / message" : "Message"}
           </Button>
         </div>
       ) : (
@@ -737,6 +810,7 @@ function DocSection({
         opener={opener}
         gone={gone}
         later={later}
+        decides={decidesCard}
       />
     </>
   );
@@ -898,12 +972,7 @@ export function bothShown(
 /** What a folder with no document says in their place: what makes the first one, and a card. */
 export function FirstDocument({ folder }: { folder: Folder }) {
   if (folder.intro !== null || folder.entries.length > 0) return null;
-  return (
-    <FirstSteps>
-      No document is here yet. A Markdown file in this folder is a page of its own, and a card in
-      its register waits for your verdict in the queue:
-    </FirstSteps>
-  );
+  return <FirstSteps>No document here yet.</FirstSteps>;
 }
 
 /** A folder's page: its head, its intro (a document drawn in it) and its entries. */
@@ -997,7 +1066,7 @@ export function FolderPage({ path, scope }: { path: string; scope: string }) {
     body = (
       <Trouble
         title="Folder not found"
-        text={`There is no folder at ${path}: it may have been moved, renamed or removed.`}
+        text={`There is no folder at ${path}.`}
         back={[scoped(scope, documentsHref(project())), "All documents"]}
         retry={retry}
       />

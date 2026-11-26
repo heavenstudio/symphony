@@ -1,7 +1,8 @@
 //! A task's stamp (`Store::task_stamp`): the same while nothing `get` and `thread` read of the task
 //! has changed, another after each thing that changes them.
 
-use crate::common::{Backend, Fixture, Seed, under};
+use crate::common::{Fixture, Seed, under};
+use symphony_board::people::{Holder, Power};
 use symphony_board::{NewLaunch, TaskStamp};
 
 fn stamp(f: &Fixture, slug: &str) -> TaskStamp {
@@ -11,27 +12,74 @@ fn stamp(f: &Fixture, slug: &str) -> TaskStamp {
         .expect("the task has a stamp")
 }
 
-on_both! {
-    fn a_slug_no_task_has_has_no_stamp(backend: Backend) {
-        let f = Fixture::on(backend, Seed::default());
-        f.task("sim/jump");
-        assert_eq!(f.store.task_stamp("sim/missing").unwrap(), None);
-    }
-
-    fn a_task_made_under_a_subtask_leaves_the_stamp_of_the_task_above_it(backend: Backend) {
-        let f = Fixture::on(backend, Seed::default());
-        f.task("a");
-        f.task_with(under("a/b", "a"));
-        let (top, middle) = (stamp(&f, "a"), stamp(&f, "a/b"));
-        f.task_with(under("a/b/c", "a/b"));
-        assert_eq!(stamp(&f, "a"), top, "only the tasks right under it");
-        assert_ne!(stamp(&f, "a/b"), middle);
-    }
+/// The stamp carries who decides on the board, so a reader of the `owner` stamp asks no more of
+/// the board while nothing changed: a change of who decides, by a person's own power or a
+/// group's, moves every task's stamp, and a change of who is on the board that gives no one
+/// decide moves it too, as the people read with it are another.
+#[test]
+fn a_tasks_stamp_names_who_decides_and_moves_when_that_changes() {
+    let f = Fixture::new(Seed::default());
+    f.task("sim/jump");
+    let by = f.session("worker");
+    let first = stamp(&f, "sim/jump");
+    assert!(
+        first.deciders().is_empty(),
+        "with nobody named, the owner alone"
+    );
+    f.store
+        .add_person("ana", &[], &[Power::Decide], &by)
+        .unwrap();
+    let ana = stamp(&f, "sim/jump");
+    assert_ne!(ana, first);
+    assert_eq!(ana.deciders(), ["ana"]);
+    f.store.add_group("staff", &[Power::Decide], &by).unwrap();
+    f.store
+        .add_person("bob", &["staff".into()], &[Power::Speak], &by)
+        .unwrap();
+    assert_eq!(
+        stamp(&f, "sim/jump").deciders(),
+        ["ana", "bob"],
+        "by bob's group"
+    );
+    f.store
+        .revoke(Holder::Person("ana"), &[Power::Decide], &by)
+        .unwrap();
+    let revoked = stamp(&f, "sim/jump");
+    assert_eq!(
+        revoked.deciders(),
+        ["bob"],
+        "a revoke holds at the next read"
+    );
+    f.store
+        .add_person("cleo", &[], &[Power::Speak], &by)
+        .unwrap();
+    let cleo = stamp(&f, "sim/jump");
+    assert_ne!(cleo, revoked);
+    assert_eq!(cleo.deciders(), ["bob"]);
+    assert_eq!(stamp(&f, "sim/jump"), cleo, "and it stands");
 }
 
-on_both! {
-fn a_tasks_stamp_stands_until_the_task_or_its_thread_changes(backend: Backend) {
-    let f = Fixture::on(backend, Seed::default());
+#[test]
+fn a_slug_no_task_has_has_no_stamp() {
+    let f = Fixture::new(Seed::default());
+    f.task("sim/jump");
+    assert_eq!(f.store.task_stamp("sim/missing").unwrap(), None);
+}
+
+#[test]
+fn a_task_made_under_a_subtask_leaves_the_stamp_of_the_task_above_it() {
+    let f = Fixture::new(Seed::default());
+    f.task("a");
+    f.task_with(under("a/b", "a"));
+    let (top, middle) = (stamp(&f, "a"), stamp(&f, "a/b"));
+    f.task_with(under("a/b/c", "a/b"));
+    assert_eq!(stamp(&f, "a"), top, "only the tasks right under it");
+    assert_ne!(stamp(&f, "a/b"), middle);
+}
+
+#[test]
+fn a_tasks_stamp_stands_until_the_task_or_its_thread_changes() {
+    let f = Fixture::new(Seed::default());
     f.task("sim/jump");
     f.task("sim/other");
     let worker = f.session("worker");
@@ -77,5 +125,4 @@ fn a_tasks_stamp_stands_until_the_task_or_its_thread_changes(backend: Backend) {
     moved("a branch recorded with no line");
     f.task_with(under("sim/jump/work", "sim/jump"));
     moved("a task made under it");
-}
 }

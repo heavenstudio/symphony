@@ -358,7 +358,7 @@ impl Receipt {
             Err(error) => return Err(unread(error.to_string())),
         };
         let receipt: Receipt =
-            serde_json::from_str(&text).map_err(|error| unread(error.to_string()))?;
+            serde_json::from_slice(text.as_bytes()).map_err(|error| unread(error.to_string()))?;
         if receipt.slug != slug {
             return Err(unread(format!("it names {}", receipt.slug)));
         }
@@ -765,7 +765,7 @@ impl Landing<'_> {
         let request = json!({
             "verb": "publish", "slug": slug, "by": self.actor, "head": tip,
             "branch": self.settings.default_branch, "title": journal.title,
-            "body": journal.body, "snapshot": snapshot,
+            "body": journal.body, "snapshot": snapshot, "pull": binding.pull,
         });
         let told = match self.ask("publish", &delivering(request, journal)) {
             Ok(answer) if state(&answer).0 == "published" => Ok(()),
@@ -941,10 +941,13 @@ impl Landing<'_> {
                 short(tip),
                 short(&snapshot.revision)
             ));
+            // The pull request the journal binds, or none: the program forgets one closed
+            // unmerged only once no land names it, as one names it until it reads it closed.
             let request = json!({
                 "verb": "publish", "slug": slug, "by": self.actor, "head": tip,
                 "branch": default, "title": journal.title, "body": journal.body,
                 "snapshot": snapshot,
+                "pull": journal.binding.as_ref().map(|binding| binding.pull),
             });
             let answer = (self.ask("publish", &delivering(request, &journal)))
                 .map_err(|why| self.refuse(Refusal::here(format!("nothing merged: {why}"))))?;

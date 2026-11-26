@@ -28,7 +28,7 @@ use crate::register::{
 };
 use crate::text::splitlines;
 
-pub(crate) use cards::compare_pictures;
+pub(crate) use cards::{BY_CLASS, compare_pictures};
 pub(crate) use links::{doc_name, doc_paths, find_docs};
 pub use media::{MOCKUP_NATIVE, MOCKUP_SANDBOX, is_mockup};
 
@@ -250,6 +250,18 @@ impl Ctx<'_> {
 static HEADING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?P<hashes>#{1,6})\s+(?P<title>.+?)\s*#*\s*$").expect("the heading pattern")
 });
+
+/// Each block of `text` ([`split_blocks`]) with its key, as its section is keyed ([`Section::key`]),
+/// with nothing rendered.
+pub fn keyed_blocks(text: &str) -> Vec<(String, Block)> {
+    let mut keys = SectionKeys::default();
+    (split_blocks(text).into_iter())
+        .map(|block| {
+            let key = keys.next(splitlines(&block.text).first().copied().unwrap_or(""));
+            (key, block)
+        })
+        .collect()
+}
 
 /// A block's key: the heading it sits under and its place there. A heading that repeats (each register
 /// group has its `### Cards`) is told apart by a count.

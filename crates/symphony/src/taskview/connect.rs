@@ -14,10 +14,8 @@ use symphony_board::lock::Recovered as _;
 
 /// How long the server waits on each board request: its board tick shares the data worker's thread
 /// with every document refresh, and a page gives up on an answer after 15 s (the client's
-/// `request.ts`). On PostgreSQL it bounds each write of a request and each read of its answer, and
-/// a request that met it is never sent again ([`symphony_board::pg::Client::waiting`]); on
-/// SurrealDB a read with no whole answer in that time goes once more
-/// ([`symphony_board::rpc::Kind`]), and so waits at most twice this.
+/// `request.ts`). It bounds each write of a request and each read of its answer, and a request that
+/// met it is never sent again ([`symphony_board::pg::Client::waiting`]).
 const BOARD_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// A page read's board failure: a board that took the request and answered too late is slow (504),
@@ -135,10 +133,8 @@ fn open(
     // A read-only web request is never a board session or a launcher.
     env.vars.remove("TASKS_SESSION");
     let reached = reach(&env, held(root).as_deref())?;
-    let client = match reached.database() {
-        symphony_board::Database::SurrealDb(client) => client.waiting(BOARD_WAIT).into(),
-        symphony_board::Database::PostgreSql(client) => client.waiting(BOARD_WAIT).into(),
-    };
+    let client = reached.database()?.into_postgresql();
+    let client = client.waiting(BOARD_WAIT).into();
     let how = symphony_board::Opening::read()
         .of(reached.project.as_deref())
         .live(reached.live);

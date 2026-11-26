@@ -174,7 +174,9 @@ impl Native {
         board: Option<&str>,
         vars: &[(&str, &std::path::Path)],
     ) -> Self {
-        // Board writes reach only the caller's owned scratch server, or a closed endpoint.
+        // Board writes reach only the caller's owned scratch server, or a socket folder nothing
+        // serves.
+        let closed = format!("postgresql:{}", root.join("artifacts/no-board").display());
         let log = std::fs::File::create(root.join("artifacts/server.log")).unwrap();
         let child = Command::new("bash")
             .args([
@@ -191,7 +193,7 @@ impl Native {
             .arg(&root)
             .args(["--port", "0", "--host", "127.0.0.1"])
             .env("SYMPHONY_UI_DIST", dist())
-            .env("TASKS_SERVER", board.unwrap_or("127.0.0.1:1"))
+            .env("TASKS_SERVER", board.unwrap_or(&closed))
             .env("TASKS_DATABASE", "browser_owner_controls")
             .env("TASKS_SWEEP", "off")
             .env("ASKS_DB", root.join("artifacts/asks.db"))
@@ -877,7 +879,7 @@ fn reconnect_pills_are_statuses_and_leave_document_reading_layout_unchanged() {
                 4183,
                 &json!({"version":4183,"changes":[{"region":"document","data":{"path":"docs/PROBE.md","removed":true}}]}).to_string(),
             );
-            assert!(browser.wait_for("document.querySelector('.page-notices .document-removed')?.textContent==='This document was removed. Your draft is kept on this device.'", SHOWN), "{path}: a live removal must display its alert");
+            assert!(browser.wait_for("document.querySelector('.page-notices .document-removed')?.textContent==='This document was removed; your draft is kept.'", SHOWN), "{path}: a live removal must display its alert");
             assert_notice_surface(&mut browser, ".page-notices .document-removed", "alert");
             assert_eq!(
                 browser.eval("scrollY"),

@@ -73,7 +73,7 @@ fn port(env: &Env) -> Result<u16, String> {
     let recorded = crate::git::common_dir(&env.cwd)
         .ok()
         .and_then(|common| std::fs::read_to_string(common.join(FOLDER).join(RECORD)).ok())
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|text| serde_json::from_slice::<Value>(text.as_bytes()).ok())
         .and_then(|record| record["port"].as_u64())
         .and_then(|port| u16::try_from(port).ok());
     Ok(recorded.unwrap_or(DEFAULT_PORT))

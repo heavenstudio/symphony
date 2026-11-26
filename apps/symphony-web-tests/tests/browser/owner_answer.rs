@@ -212,6 +212,82 @@ fn an_answer_whose_reply_comes_too_late_shows_on_its_own_tab_from_the_feed() {
     owner.call("Fetch.disable", json!({}));
 }
 
+/// A save the board's people refuse: the server's answer to a person who lacks the power the
+/// route needs is a 403 whose `error` says which (`apps/symphony-server/src/powers.rs`), and that
+/// answer reaches no route, so nothing is written. The page shows those words as the card's
+/// notice, keeps the form open on the person's words and their draft, and the card as it was.
+#[test]
+fn a_save_the_boards_people_refuse_shows_its_words_and_keeps_the_draft() {
+    let Some(mut owner) = chrome() else { return };
+    let site = Native::start_committed(
+        None,
+        "main",
+        &[("docs/DECISIONS.md", REGISTER), ("docs/NOTES.md", NOTES)],
+        None,
+    );
+    opened(&mut owner, &site.url("/docs/DECISIONS.md"), "alpha");
+    owner.call(
+        "Fetch.enable",
+        json!({"patterns": [holding("*/api/decision", "Request")]}),
+    );
+    answer(&mut owner, "alpha", "Approve", "Keep it");
+    let held = owner.wait_for_protocol_events("Fetch.requestPaused", 1, SHOWN);
+    assert_eq!(
+        held.len(),
+        1,
+        "the save is held before it reaches the server"
+    );
+    let refusal = json!({"error": "Forbidden: ana may not decide on this board"}).to_string();
+    let body = owner.eval(&format!("btoa({})", json!(refusal)));
+    owner.call(
+        "Fetch.fulfillRequest",
+        json!({"requestId": held[0]["requestId"], "responseCode": 403,
+               "responseHeaders": [{"name": "Content-Type", "value": "application/json"}],
+               "body": body}),
+    );
+    assert!(
+        decisions_end(&mut owner, &json!(["refused"])),
+        "{}",
+        around(&mut owner, "alpha")
+    );
+    let notice = within("alpha", ".editor > [role=alert]");
+    assert!(
+        owner.wait_for(&format!("document.querySelector({notice}) !== null"), SHOWN),
+        "{}",
+        around(&mut owner, "alpha")
+    );
+    let shown = editor(&mut owner, "alpha");
+    assert_eq!(
+        (
+            &shown["open"],
+            &shown["words"],
+            &shown["notice"],
+            &shown["status"]
+        ),
+        (
+            &json!(true),
+            &json!("Keep it"),
+            &json!("Forbidden: ana may not decide on this board"),
+            &Value::Null
+        ),
+        "{shown}"
+    );
+    let kept = shown["kept"].as_array().cloned().unwrap_or_default();
+    assert!(
+        kept.contains(&json!("Keep it")),
+        "the draft is kept: {shown}"
+    );
+    let pending = json!({"state":"pending","group":"Needs your decision","owner":[],"visit":true});
+    let unchanged = shows(&mut owner, "alpha", &pending);
+    assert!(unchanged.is_ok(), "{unchanged:?}");
+    assert_eq!(
+        std::fs::read_to_string(site.root().join("docs/DECISIONS.md")).unwrap(),
+        REGISTER,
+        "nothing is written"
+    );
+    owner.call("Fetch.disable", json!({}));
+}
+
 /// The second sending's words, which the server never writes: the first sending's tap holds alpha's
 /// answer, and every retry goes under it.
 const CHANGED: &str = "Keep it, and say why";

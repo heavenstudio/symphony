@@ -54,7 +54,7 @@ fn card(lines: &[&str]) -> Card {
 
 #[test]
 fn the_newest_verdict_is_the_latest_by_its_time_and_the_last_written_of_a_minute() {
-    let newest = |lines: &[&str]| newest(&card(lines)).and_then(|entry| entry.verdict);
+    let newest = |lines: &[&str]| newest(&card(lines), &[]).and_then(|said| said.entry.verdict);
     let head = "- [ ] **layout** — Wider?";
     assert_eq!(newest(&[head]), None);
     assert_eq!(
@@ -87,6 +87,85 @@ fn the_newest_verdict_is_the_latest_by_its_time_and_the_last_written_of_a_minute
         ])
         .as_deref(),
         Some("approved")
+    );
+    assert_eq!(
+        newest(&[head, "  [2026-11-20 05:00] ana · approved — yes"]),
+        None,
+        "a person's verdict a board named is no owner's"
+    );
+    assert_eq!(
+        newest(&[
+            head,
+            "  [2026-11-20 05:00] owner · approved — yes",
+            "  [2026-11-20 06:00] ana · rejected — no",
+        ])
+        .as_deref(),
+        Some("approved")
+    );
+}
+
+#[test]
+fn a_deciders_verdict_decides_a_card_as_the_owners_does_and_another_persons_does_not() {
+    let deciders = ["ana".to_string()];
+    let newest = |lines: &[&str]| {
+        let said = newest(&card(lines), &deciders)?;
+        Some((said.name, said.entry.verdict?))
+    };
+    let head = "- [ ] **layout** — Wider?";
+    assert_eq!(
+        newest(&[head, "  [2026-11-20 05:00] ana · approved — yes"]),
+        Some(("ana".into(), "approved".into()))
+    );
+    assert_eq!(
+        newest(&[
+            head,
+            "  [2026-11-20 05:00] ana · approved — yes",
+            "  [2026-11-20 06:00] owner · rejected — no",
+        ]),
+        Some(("owner".into(), "rejected".into()))
+    );
+    assert_eq!(
+        newest(&[
+            head,
+            "  [2026-11-20 05:00] owner · approved — yes",
+            "  [2026-11-20 06:00] bob · rejected — no",
+        ]),
+        Some(("owner".into(), "approved".into())),
+        "bob holds no decide: his verdict decides nothing"
+    );
+    assert_eq!(
+        newest(&[head, "  [2026-11-20 05:00] bob · approved — yes"]),
+        None
+    );
+}
+
+#[test]
+fn a_card_is_decided_when_the_newest_verdict_of_every_persons_is_an_approve() {
+    let decided = |lines: &[&str]| decided(&card(lines));
+    let head = "- [ ] **layout** — Wider?";
+    let owners = "  [2026-11-20 05:00] owner · approved — yes";
+    assert!(!decided(&[head]));
+    assert!(decided(&[head, owners]));
+    assert!(decided(&[
+        head,
+        "  [2026-11-20 05:00] ana · approved — yes"
+    ]));
+    assert!(decided(&[
+        head,
+        owners,
+        "  [2026-11-20 06:00] ana · approved — and yes"
+    ]));
+    for later in ["rejected", "question", "pending", "dismissed"] {
+        let hers = format!("  [2026-11-20 06:00] ana · {later} — on second thought");
+        assert!(!decided(&[head, owners, &hers]), "{later}");
+    }
+    assert!(
+        decided(&[
+            head,
+            owners,
+            "  [2026-11-20 06:00] agent · rejected — an agent's"
+        ]),
+        "an agent decides no card"
     );
 }
 
@@ -247,6 +326,12 @@ impl Repo {
     fn read(&self, tip: &str) -> Posted {
         read(&self.0, tip)
     }
+
+    /// [`read_by`] on a board where `deciders` hold decide.
+    fn read_by(&self, tip: &str, deciders: &[&str]) -> Approval {
+        let deciders: Vec<String> = deciders.iter().map(|name| name.to_string()).collect();
+        read_by(&self.0, tip, &deciders)
+    }
 }
 
 impl Drop for Repo {
@@ -394,6 +479,70 @@ fn a_reject_a_question_pending_dismissed_or_no_verdict_is_no_approve() {
         &format!("{APPROVED}  [2026-11-20 05:30] owner · rejected — on second thought\n"),
     );
     assert_eq!(repo.read(&tip), Posted::Nothing);
+}
+
+/// A person a board named approves as the owner does, and her verdict reads as hers on every
+/// other page, but the stamp is the owner's alone until the board gives her the decide power: her
+/// approve of a posted card does not meet it, the owner's does, her approve after it, committed
+/// alone, is a word on the card that leaves it standing, and her reject after it opens the card
+/// again, and the stamp with it.
+#[test]
+fn a_persons_approve_of_a_posted_card_is_no_owners_and_her_reject_after_the_owners_stops_it() {
+    const GROUP: &str = "Answered: approve again or comment";
+    let repo = Repo::new();
+    repo.posting(LAYOUT);
+    let hers = format!("{LAYOUT}  [2026-11-20 05:00] ana · approved — wider it is\n");
+    let tip = repo.saved(GROUP, &hers);
+    assert_eq!(repo.read(&tip), Posted::Nothing, "her approve alone");
+    let owners = format!("{hers}  [2026-11-20 05:10] owner · approved — wider\n");
+    let tip = repo.saved(GROUP, &owners);
+    assert_eq!(repo.read(&tip), approved(&["layout"]));
+    let again = format!("{owners}  [2026-11-20 05:20] ana · approved — still wider\n");
+    let tip = repo.saved(GROUP, &again);
+    assert_eq!(repo.read(&tip), approved(&["layout"]));
+    let rejected = format!("{again}  [2026-11-20 05:30] ana · rejected — on second thought\n");
+    let tip = repo.saved(GROUP, &rejected);
+    assert_eq!(repo.read(&tip), Posted::Nothing);
+}
+
+/// Her approve meets the stamp while the board gives her decide, named as hers, and the owner's
+/// later reject still stops it; the same lines on a board where she holds none are no approve, and
+/// the owner's approve of them is the owner's.
+#[test]
+fn a_deciders_approve_of_a_posted_card_meets_the_stamp_as_hers_and_only_while_she_decides() {
+    const GROUP: &str = "Answered: approve again or comment";
+    let repo = Repo::new();
+    repo.posting(LAYOUT);
+    let hers = format!("{LAYOUT}  [2026-11-20 05:00] ana · approved — wider it is\n");
+    let tip = repo.saved(GROUP, &hers);
+    let by = |posted: Posted, by: &str| Approval {
+        posted,
+        by: by.into(),
+    };
+    assert_eq!(
+        repo.read_by(&tip, &["ana"]),
+        by(approved(&["layout"]), "ana")
+    );
+    assert_eq!(repo.read_by(&tip, &["bob"]), by(Posted::Nothing, "owner"));
+    assert_eq!(repo.read_by(&tip, &[]).posted, repo.read(&tip));
+    let owners = format!("{hers}  [2026-11-20 05:10] owner · approved — wider\n");
+    let tip = repo.saved(GROUP, &owners);
+    assert_eq!(
+        repo.read_by(&tip, &["ana"]),
+        by(approved(&["layout"]), "owner")
+    );
+    let rejected = format!("{owners}  [2026-11-20 05:30] owner · rejected — on second thought\n");
+    let tip = repo.saved(GROUP, &rejected);
+    assert_eq!(repo.read_by(&tip, &["ana"]).posted, Posted::Nothing);
+    // A commit past her approve that changes more than the lines under the card.
+    let repo = Repo::new();
+    repo.posting(LAYOUT);
+    repo.saved(GROUP, &hers);
+    let later = repo.commit(&[("src/lib.rs", "pub fn three() {}\n")]);
+    assert_eq!(
+        repo.read_by(&later, &["ana"]),
+        by(changed(&["layout"], &later), "ana")
+    );
 }
 
 const COLOUR: &str = "- [ ] **colour** — Which colour?\n  \

@@ -43,6 +43,23 @@ impl Host {
             ],
         }
     }
+
+    /// [`Host::local`] on a board that holds `people`: `owner` granted as well to each of them
+    /// who holds decide there ([`crate::people::People::holding`]), as the person at the machine
+    /// holds it, so a custom workflow's owner edges admit them by its own admission.
+    pub fn local_with(people: &crate::people::People) -> Host {
+        Host::local_granting(&people.holding(crate::people::Power::Decide))
+    }
+
+    /// [`Host::local`] with `owner` granted as well to each person of `names`, as the person at
+    /// the machine holds it: a task's deciders ([`crate::Store::host_on`]).
+    pub fn local_granting(names: &[String]) -> Host {
+        let mut host = Host::local();
+        for name in names {
+            host.grants = host.grants.grant("owner", super::person(name));
+        }
+        host
+    }
 }
 
 /// Refused where `custom` commits an approval authority and names no project: an attestation

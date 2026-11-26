@@ -1,7 +1,7 @@
-//! `tasks-move`: the board's store moved to the other engine ([`server::Home::move_to`]), or a
-//! PostgreSQL snapshot put back over its board ([`server::Postgres::restore_over`]). A program
-//! of its own, as `tasks-copy` and `tasks-reclaim` are: the owner's to run, never a board
-//! command, so `tasks` links none of the copy it makes.
+//! `tasks-move`: a PostgreSQL snapshot put back over the board
+//! ([`server::Postgres::restore_over`]), or a move an earlier release's `tasks-move` left
+//! standing settled ([`server::Home::move_to`]). A program of its own, as `tasks-copy` is: the
+//! owner's to run, never a board command, so `tasks` links none of the copy it makes.
 
 use crate::cli::{Env, machine};
 use crate::server::{self, Engine, Home};
@@ -10,37 +10,34 @@ use std::path::Path;
 
 /// Its usage, said when its arguments are none of its forms.
 pub const MOVE_USAGE: &str = "usage: tasks-move [-h] [--version]
-                  (postgresql | surrealdb | --restore SNAPSHOT) [--as ACTOR]
+                  (--restore SNAPSHOT | postgresql | surrealdb) [--as ACTOR]
 ";
 
 /// Its `--help`.
 pub const MOVE_HELP: &str = "usage: tasks-move [-h] [--version]
-                  (postgresql | surrealdb | --restore SNAPSHOT) [--as ACTOR]
+                  (--restore SNAPSHOT | postgresql | surrealdb) [--as ACTOR]
 
-Move the store of the board in this checkout's git common dir to the other
-engine, or put a snapshot of its PostgreSQL back over it. Either holds the
-board meanwhile: a hold its caller set before (`just tasks database hold`) is
-used and left standing, otherwise one is set and released at the end.
+Put a snapshot of the PostgreSQL of the board in this checkout's git common
+dir back over it, or settle a move an earlier release's tasks-move left
+standing. Either holds the board meanwhile: a hold its caller set before
+(`just tasks database hold`) is used and left standing, otherwise one is set
+and released at the end.
 
-  tasks-move ENGINE --as ACTOR
-      Stop the board's server, keep a snapshot, read the board through a
-      server of the move's own, write it as an export, copy it into a new
-      store of ENGINE, and compare every row read back. Then switch the home
-      under a journal (symphony/tasks/move.json): the old store moved into
-      symphony/tasks/moved/, the new one in, the identity, the commit. A
-      failure before the commit leaves the board on the engine it was on;
-      after it the board is on ENGINE. A board at another schema than this
-      build's is refused. The databases the store holds beside the board's
-      own (scratch boards, `just tasks --database NAME`) are not moved: they
-      stay in the old store, kept whole, and the answer names them.
   tasks-move --restore SNAPSHOT --as ACTOR
       Put a snapshot of the board's PostgreSQL (`just tasks snapshot --list`,
-      by its name or path) back over the board it was taken from, under the
-      same journal: the cluster in place is moved into symphony/tasks/moved/.
+      by its name or path) back over the board it was taken from, under a
+      journal (symphony/tasks/move.json): the cluster in place moved into
+      symphony/tasks/moved/, the copy in, the commit. A failure before the
+      commit leaves the board on the cluster it had.
+  tasks-move ENGINE --as ACTOR
+      Settle a journal an earlier release's move left, finishing what
+      committed and undoing what did not. This build moves no board between
+      the engines: a board still on SurrealDB moves to PostgreSQL with an
+      earlier release's tasks-move (docs/operations/POSTGRESQL.md).
 
-Nothing is deleted but the move's own work folder. While the journal stands
-nothing starts or reads the store and the hold is not released: its holder's
-next tasks-move finishes what committed and undoes what did not.
+Nothing is deleted but the restore's own work folder. While the journal
+stands nothing starts or reads the store and the hold is not released: its
+holder's next tasks-move finishes what committed and undoes what did not.
 
 Afterwards the board holds a new recovery generation and is bound to none:
 `just tasks recovery rebind` binds it again
@@ -53,10 +50,6 @@ options:
   --version           say the version and exit
   --restore SNAPSHOT  a snapshot of this board's PostgreSQL to put back
   --as ACTOR          who holds the board for it (else TASKS_SESSION)
-
-environment:
-  SYMPHONY_SURREAL    the SurrealDB binary that serves the store, in place of
-                      the pinned one beside the common dir
 ";
 
 /// What it was asked.
@@ -99,7 +92,7 @@ pub fn move_main(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn 
             Some(engine) => Asked::Move(engine),
             None => return usage(err, "the engine is postgresql or surrealdb"),
         },
-        _ => return usage(err, "one of postgresql, surrealdb or --restore SNAPSHOT"),
+        _ => return usage(err, "one of --restore SNAPSHOT, postgresql or surrealdb"),
     };
     let Some(by) = actor.filter(|actor| !actor.trim().is_empty()) else {
         let _ = writeln!(
@@ -136,34 +129,17 @@ fn switched(asked: &Asked, home: &Home, env: &Env, by: &str) -> Result<String, S
             home.dir().display()
         ));
     }
-    let project = crate::project::find(&env.cwd, machine(env).as_deref())?;
-    let programs = server::postgres::discover_programs(&project.place.root)?;
-    let now = crate::store::now();
     let rebind = "It holds a new recovery generation and is bound to none: `just tasks recovery \
                   rebind` binds it again";
     match asked {
         Asked::Move(to) => {
-            let moved = (home.move_to(*to, &programs, by, now)).map_err(|why| why.to_string())?;
+            let moved = (home.move_to(*to, by)).map_err(|why| why.to_string())?;
             Ok(format!(
-                "the board is on {}{}. Its {} store is kept in {}{}{}{}. {rebind}. {}",
+                "the board is on {}: a move that had committed is finished. Its {} store is kept \
+                 in {}, with its export. {rebind}. {}",
                 moved.to,
-                if moved.finished {
-                    ": a move that had committed is finished".to_string()
-                } else {
-                    format!(", {} rows compared with what was read", moved.rows)
-                },
                 moved.from,
                 moved.aside.display(),
-                if moved.finished {
-                    ""
-                } else {
-                    ", with its export"
-                },
-                (moved.snapshot.as_ref()).map_or_else(String::new, |snapshot| format!(
-                    ", and its snapshot in {}",
-                    snapshot.display()
-                )),
-                left(&moved.left),
                 if moved.held {
                     "The board is still held, by the hold set before the move"
                 } else {
@@ -172,6 +148,8 @@ fn switched(asked: &Asked, home: &Home, env: &Env, by: &str) -> Result<String, S
             ))
         }
         Asked::Restore(snapshot) => {
+            let project = crate::project::find(&env.cwd, machine(env).as_deref())?;
+            let programs = server::postgres::discover_programs(&project.place.root)?;
             let pg = home.postgresql(&programs);
             let named = Path::new(snapshot);
             let path = if named.components().count() == 1 {
@@ -186,6 +164,7 @@ fn switched(asked: &Asked, home: &Home, env: &Env, by: &str) -> Result<String, S
             } else {
                 env.cwd.join(named)
             };
+            let now = crate::store::now();
             let aside = (pg.restore_over(&path, by, now)).map_err(|why| why.to_string())?;
             Ok(format!(
                 "the board's PostgreSQL is the snapshot {}. The cluster it replaced is kept in \
@@ -197,43 +176,10 @@ fn switched(asked: &Asked, home: &Home, env: &Env, by: &str) -> Result<String, S
     }
 }
 
-/// What a move's answer says of the databases the old store held beside the board's own,
-/// which it left there: nothing where there were none.
-fn left(databases: &[String]) -> String {
-    match databases {
-        [] => String::new(),
-        [one] => format!(
-            "; it keeps the database it held beside the board's, which was not moved: {one}"
-        ),
-        many => format!(
-            "; it keeps the {} databases it held beside the board's, which were not moved: {}",
-            many.len(),
-            many.join(", ")
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-
-    /// The databases a move left in the old store are named, each once and in the order the
-    /// store gave, and none says nothing.
-    #[test]
-    fn the_databases_left_in_the_kept_store_are_named() {
-        assert_eq!(left(&[]), "");
-        assert_eq!(
-            left(&["sf/vp3scratch".into()]),
-            "; it keeps the database it held beside the board's, which was not moved: \
-             sf/vp3scratch"
-        );
-        assert_eq!(
-            left(&["sf/a".into(), "sf/b".into(), "sf/c".into()]),
-            "; it keeps the 3 databases it held beside the board's, which were not moved: \
-             sf/a, sf/b, sf/c"
-        );
-    }
 
     fn ran(args: &[&str]) -> (i32, String, String) {
         let env = Env {
@@ -267,7 +213,7 @@ mod tests {
         let (code, out, _) = ran(&["--version"]);
         assert_eq!(code, 0);
         assert!(out.starts_with("tasks-move "), "{out}");
-        const BOTH: &str = "one of postgresql, surrealdb or --restore SNAPSHOT";
+        const BOTH: &str = "one of --restore SNAPSHOT, postgresql or surrealdb";
         for (args, said) in [
             (&[][..], BOTH),
             (&["oracle"], "the engine is postgresql or surrealdb"),
