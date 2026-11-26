@@ -890,9 +890,11 @@ impl Saves {
         // checkout it writes to: each one passed wrote into this file, from whichever page, and a
         // worktree's are main's once a sweep removed it, all it held landed
         // (`Store::held_landed`). Until then, or for a branch merged by hand whose worktree is
-        // never swept, the line a landed branch brought is no row of main's: a later pass of the
-        // same words onto main's card is marked without its own line, once too few. So is one in
-        // a landed branch reopened in a new worktree, whose rows went to main's with the old one.
+        // never swept, or one two worktrees held whose last left it unswept (deleted by hand and
+        // pruned, or switched to another branch), the line a landed branch brought is no row of
+        // main's: a later pass of the same words onto main's card is marked without its own line,
+        // once too few. So is one in a landed branch reopened in a new worktree, whose rows went
+        // to main's with the old one.
         //
         // Three cases are left, each needing a press whose words went in and whose mark was
         // refused, then another press of that comment; each leaves her words twice on one card:

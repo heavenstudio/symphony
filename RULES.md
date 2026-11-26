@@ -162,9 +162,8 @@ Shell scripts are read in review alone.
 
 In the board, `symphony` and the server a sort is `symphony_board::order`'s, and a collect into a
 `BTreeMap` or `BTreeSet` is `extend` on an empty one: std compiles its whole sort, which a B-tree's
-`collect` runs, again for each element type. The busy board paths (PULL, the staff pass, the
-sweeps) keep std's, which allocates nothing, as do the few sites `order`'s doc names, each under
-an `#[expect]`. `just lint-rs` refuses any other direct sort; a reviewer, a collect.
+`collect` runs, again for each element type. Only the sites `order`'s doc names keep std's, each
+under an `#[expect]`. `just lint-rs` refuses any other direct sort; a reviewer, a collect.
 
 ## Tests
 

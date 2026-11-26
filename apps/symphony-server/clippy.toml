@@ -77,32 +77,34 @@ reason = "a channel of the server's code is crate::wake's, of () alone; a test's
 # A sort of the server's code is `symphony_board::order`'s (crates/tasks/src/order.rs, RULES.md
 # `code/shared-sorter`): std's is compiled whole for each element type and comparison, about 4 KB
 # of a binary each, and the shared one once. Clippy refuses std's seven slice sorts, called as a
-# method, by path or as a function. A test sorts through the shared one too, and the build script,
-# which links no board and is in no binary, keeps std's under an `#[expect]` saying so.
+# method, by path or as a function. A test sorts through the shared one too, but where it measures
+# that one against std's. The build script, which links no board and is in no binary, keeps std's,
+# and so does tests/after_lifecycle/fixture.rs's `mod scratch`, symphony-chrome's harness file read
+# by path; each of these sites is under an `#[expect]` saying so.
 [[disallowed-methods]]
 path = "slice::sort"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's, the build script and a harness mod keep std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_by"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's, the build script and a harness mod keep std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_by_key"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's, the build script and a harness mod keep std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_by_cached_key"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's, the build script and a harness mod keep std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_unstable"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's, the build script and a harness mod keep std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_unstable_by"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's, the build script and a harness mod keep std's, under an #[expect] saying so"
 
 [[disallowed-methods]]
 path = "slice::sort_unstable_by_key"
-reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a busy board path keeps std's under an #[expect] naming it"
+reason = "RULES.md code/shared-sorter: sort through symphony_board::order (sort_by, sort_by_key), compiled once; a test holding it to std's, the build script and a harness mod keep std's, under an #[expect] saying so"

@@ -948,7 +948,7 @@ runs only what the record does not cover and reading cannot settle:
 A run the evidence claims and no record at the tip shows is asked for in a `changes`, as is a
 red one.
 
-- [ ] **reviewer-mutations** — Two of your rules disagree on whether a reviewer may break a task's code on purpose, on a scratch copy, to see that the task's new test then fails (a mutation). One reviewer did, and others have asked whether they may. A: no; a reviewer judges by reading whether a test can fail, and may still try a case it suspects the code gets wrong. B: yes, on a scratch copy that is never committed, its run not recorded against the task. Recommended: A. Approve and say A or B in the note, or comment. [[CHECKS#No second build in review]]
+- [x] **reviewer-mutations** — Two of your rules disagree on whether a reviewer may break a task's code on purpose, on a scratch copy, to see that the task's new test then fails (a mutation). One reviewer did, and others have asked whether they may. A: no; a reviewer judges by reading whether a test can fail, and may still try a case it suspects the code gets wrong. B: yes, on a scratch copy that is never committed, its run not recorded against the task. Recommended: A. Approve and say A or B in the note, or comment. [[CHECKS#No second build in review]]
   [2026-11-24 18:05] agent — Posted for the board task `docs/standing-guidance-budget-and-scratch-checks`.
 
     **The two rules.** RULES.md `workflow/tests-after` (2026-11-11): "no planted fault or reverted change to watch a test fail, whatever a brief asks; a reviewer may still probe the code with a case it suspects the code gets wrong". RULES.md `workflow/no-second-build-in-review` (2026-11-15) names "a mutation" among what a reviewer runs, and so does the list above: "a mutation, to see that a test the task adds can fail".
@@ -962,6 +962,7 @@ red one.
     **Meanwhile, under either:** a reviewer's run on a scratch copy, a mutation among them, runs unrecorded (`TASKS_RECORDER=off`), as the reviewer page now says, so it never takes a task's `tests` stamp.
 
     No earlier verdict decides it: no card in `docs/` speaks of mutations, planted faults or the order of tests and code.
+  [2026-11-26 08:10] owner · approved — B
 
 **The `tests` stamp reads the same record.** It is met by the newest recorded run of each build
 and test command the task ran at the tip, every one green and one test run among them
