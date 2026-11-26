@@ -862,12 +862,25 @@ const OVERPRINT: &str = "(() => { const met = []; const drawn = e => { const r =
 /// its words to fit, and is not counted.
 const CUT: &str = "[...document.querySelectorAll('.tl-lanes .tl-seg, .tl-lanes .tl-after, .tl-lanes .tl-g, .tl-lanes .tl-notkept .tl-fit')].filter(e => !e.closest('[data-lane=builds], [data-lane=tests]') || e.matches('.tl-notkept .tl-fit')).filter(e => e.getClientRects().length > 0 && e.textContent.trim() !== '' && e.scrollWidth > e.clientWidth + 1).map(e => e.textContent)";
 
+/// Each label after a bar that is drawn: its words, how far past its bar as drawn they start, and
+/// how wide they are a letter.
+const AFTER: &str = "[...document.querySelectorAll('.tl-lanes .tl-after')].filter(e => e.getClientRects().length > 0).map(e => { const r = document.createRange(); r.selectNodeContents(e); const words = r.getBoundingClientRect(), bar = e.previousElementSibling.getBoundingClientRect(); return [e.textContent, words.left - bar.right, words.width / [...e.textContent].length]; })";
+
+/// No word of the lanes is drawn over another or cut short, at any width, for the fixture, a week
+/// and the card's task. Each label after a bar starts its padding past the bar as drawn, which a
+/// round of a few minutes draws wider than its time, and its letters are no wider than the
+/// estimate weighs them (`LETTER_PX`, timeline-layout.ts); a label with no room is not drawn, as the
+/// card's reviewer's "changes" is not, 4 % of the track before the next round.
 #[test]
 fn no_word_of_the_lanes_is_drawn_over_another_at_any_width_for_the_fixture_or_a_week() {
-    for (name, timeline) in [
-        ("the fixture", fixture()),
-        ("a week", week()),
-        ("the card's task", revision_guards()),
+    for (name, timeline, labels) in [
+        ("the fixture", fixture(), &["changes", "approved"][..]),
+        ("a week", week(), &["changes"]),
+        (
+            "the card's task",
+            revision_guards(),
+            &["approved", "approved"],
+        ),
     ] {
         let site = if name == "the card's task" {
             guards_on(site())
@@ -876,16 +889,30 @@ fn no_word_of_the_lanes_is_drawn_over_another_at_any_width_for_the_fixture_or_a_
         };
         let Some(mut chrome) = chrome() else { return };
         open_drawn(&mut chrome, &site, 1280);
-        for width in [900, 1100, 1280, 1440, 1600] {
+        for width in [900, 960, 1100, 1280, 1440, 1600] {
             view(&mut chrome, width, false);
             assert_eq!(chrome.eval(OVERPRINT), json!([]), "{name} at {width} px");
-            // The card's task's reviewer has a verdict whose room the estimate (CHAR_PX) takes
-            // for wider than it is drawn: cut short, never over the next.
-            if name != "the card's task" {
-                assert_eq!(
-                    chrome.eval(CUT),
-                    json!([]),
-                    "{name} at {width} px: a word cut short"
+            assert_eq!(
+                chrome.eval(CUT),
+                json!([]),
+                "{name} at {width} px: a word cut short"
+            );
+            let after = chrome.eval(AFTER);
+            let drawn: Vec<&str> = (after.as_array().unwrap().iter())
+                .map(|label| label[0].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                drawn, labels,
+                "{name} at {width} px: the labels after a bar"
+            );
+            for label in after.as_array().unwrap() {
+                assert!(
+                    label[1].as_f64().unwrap() >= 5.5,
+                    "{name} at {width} px: a label's words start inside or at its bar: {label}"
+                );
+                assert!(
+                    label[2].as_f64().unwrap() <= 7.0,
+                    "{name} at {width} px: a label's letters wider than LETTER_PX: {label}"
                 );
             }
             assert_eq!(
@@ -1671,7 +1698,8 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
         }
     }
     // The card's example task, before (the committed client, main's build) and after (this
-    // build), on a phone and 1440 wide as the card's pictures are; after, a message selected.
+    // build), on a phone and 1440 wide as the card's pictures are, and 1600 wide, where its
+    // reviewer's label is weighed closest to its room; after, a message selected.
     let committed =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../symphony-server/client/public");
     let card = [
@@ -1680,6 +1708,10 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
             &["--size", "1440x1100", "--scheme", "light"][..],
         ),
         ("wide-dark", &["--size", "1440x1100", "--scheme", "dark"]),
+        (
+            "wide-1600-light",
+            &["--size", "1600x1100", "--scheme", "light"],
+        ),
     ];
     for (version, site) in [
         (

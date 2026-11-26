@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
 import { carried } from "./timeline-cost";
 import {
+  AFTER_PAD_PX,
   BAR_SPAN,
   BAR_WORDS_PX,
   barFit,
@@ -23,9 +24,11 @@ import {
   GAP_PX,
   gateChanges,
   gateTone,
+  insetCss,
   keptRow,
   keptTitle,
   type Lane,
+  LETTER_PX,
   LONGEST_WAIT,
   label,
   lanes,
@@ -54,6 +57,7 @@ import {
   runTitle,
   runWords,
   Scale,
+  SEG_MIN_PX,
   shortCommit,
   showAll,
   stageSeconds,
@@ -780,12 +784,61 @@ describe("a task's timeline laid out", () => {
     // A short word no narrower than the long one is never drawn beside it.
     expect(fitted("41 m", "41 m", 10)).toHaveLength(1);
     // The last label may run into the lanes' end margin.
-    const last = { room: 1, last: true };
-    expect(label("running 18 m", last)?.from).toBeNull();
+    const last = { room: 1, last: true, bar: 5 };
+    expect(label("approved", last)?.from).toBeNull();
     expect(roomCss(last)).toBe("calc(1.00% + var(--end))");
-    const between = { room: 1, last: false };
-    expect(label("running 18 m", between)).toBeNull();
+    const between = { room: 1, last: false, bar: 5 };
+    expect(label("approved", between)).toBeNull();
     expect(roomCss(between)).toBe("1.00%");
+  });
+
+  it("a label after a bar is weighed by its letters, its padding past the bar as drawn and its gap", () => {
+    expect([LETTER_PX, AFTER_PAD_PX, SEG_MIN_PX, GAP_PX]).toEqual([7, 6, 14, 4]);
+    // "changes" beside a bar no narrower than drawn: 7 × 7 + 6 + 4 = 59 px, of 10 % from a 590 px
+    // track, so from 600; "approved", 66 px, from 700. Weighed as other words (CHAR_PX, no
+    // padding), it would have shown from 500, and been cut.
+    const ten = { room: 10, last: false, bar: 5 };
+    expect(label("changes", ten)).toEqual({ text: "changes", from: 600, to: null });
+    expect(label("approved", ten)?.from).toBe(700);
+    expect(label("verdict", ten)?.from).toBe(600);
+    expect(widthFor("changes", 10, GAP_PX)).toBe(500);
+    // Ten letters take 80 px: exactly 20 % of 400 shows from 400, a hair less from 450, and 27 % of
+    // 300 at every width.
+    const tenLetters = "a".repeat(10);
+    expect(label(tenLetters, { room: 20, last: false, bar: 50 })?.from).toBe(400);
+    expect(label(tenLetters, { room: 19.99, last: false, bar: 50 })?.from).toBe(450);
+    expect(label(tenLetters, { room: 27, last: false, bar: 50 })?.from).toBeNull();
+    expect(label(tenLetters, { room: 26.6, last: false, bar: 50 })?.from).toBe(400);
+    // A bar narrower than its least drawn width pushes its label's words past it: a bar of no time
+    // is drawn 14 px wide, so 70 + 4 + 14 + 6 = 94 px, from 470, so 500. A bar of 2 % is 9 px at
+    // 450, its label 5 px further: 89 px of 90. At 400 it is 8 px: 90 px of 80.
+    expect(label(tenLetters, { room: 20, last: false, bar: 0 })?.from).toBe(500);
+    expect(label(tenLetters, { room: 20, last: false, bar: 2 })?.from).toBe(450);
+    // A bar 14 px wide at 300 already takes the label's padding alone at every width.
+    expect(label(tenLetters, { room: 20, last: false, bar: 14 / 3 })?.from).toBe(400);
+    // The last label takes the end margin too: twenty letters need 140 + 4 + 6 − 88 = 62 px, 5 % of
+    // 1240 px, so from 1250; of 2 %, wider than the widest track.
+    expect(label("a".repeat(20), { room: 5, last: true, bar: 5 })?.from).toBe(1250);
+    expect(label("a".repeat(20), { room: 2, last: true, bar: 5 })).toBeNull();
+    // The last label of none at all still shows, as does a verdict at the very end after a bar of
+    // no time: 56 + 4 + 20 = 80 px of the margin's 88. Ten letters there (94 px) have no room, and
+    // are never drawn.
+    expect(label("", { room: 0, last: true, bar: 0 })).toEqual({ text: "", from: null, to: null });
+    expect(label("approved", { room: 0, last: true, bar: 0 })?.from).toBeNull();
+    expect(label(tenLetters, { room: 0, last: true, bar: 0 })).toBeNull();
+    // No room, or none to weigh, before the next: never drawn.
+    expect(label("approved", { room: 0, last: false, bar: 5 })).toBeNull();
+    expect(label("approved", { room: -1, last: false, bar: 5 })).toBeNull();
+    expect(label("approved", { room: Number.NaN, last: false, bar: 5 })).toBeNull();
+    expect(label("approved", { room: 50, last: false, bar: Number.NaN })).toBeNull();
+    // An accented word is as wide as its letters, not its bytes.
+    expect(label("é".repeat(8), ten)).toEqual({
+      ...(label("e".repeat(8), ten) as Fit),
+      text: "é".repeat(8),
+    });
+    // Its padding for the style sheet: the least of it, or past the bar's least drawn width.
+    expect(insetCss({ room: 1, last: false, bar: 2 })).toBe("max(6px, calc(20px - 2.00%))");
+    expect(insetCss({ room: 1, last: true, bar: 0.125 })).toBe("max(6px, calc(20px - 0.12%))");
   });
 
   it("a word's room is weighed by its characters, and a room's width rounds a tie to even", () => {
@@ -811,14 +864,8 @@ describe("a task's timeline laid out", () => {
     expect(fitted("long", "", 10)).toEqual([{ text: "long", from: 400, to: null }]);
     expect(fitted("long", "", 20)).toEqual([{ text: "long", from: null, to: null }]);
     // Rust's `{:.2}`: a tie rounds to the even digit.
-    expect(roomCss({ room: 0.125, last: false })).toBe("0.12%");
-    expect(roomCss({ room: 0.375, last: true })).toBe("calc(0.38% + var(--end))");
-    // The last label of none at all still shows: it takes the end margin.
-    expect(label("", { room: 0, last: true })).toEqual({ text: "", from: null, to: null });
-    // Twenty characters past the end margin need 120 + 4 − 88 = 36 px: 5 % of 720 px, from 750;
-    // 2 % of 1800 px, wider than the widest track.
-    expect(label("a".repeat(20), { room: 5, last: true })?.from).toBe(750);
-    expect(label("a".repeat(20), { room: 2, last: true })).toBeNull();
+    expect(roomCss({ room: 0.125, last: false, bar: 1 })).toBe("0.12%");
+    expect(roomCss({ room: 0.375, last: true, bar: 1 })).toBe("calc(0.38% + var(--end))");
     expect(fitClass({ text: "x", from: null, to: 500 })).toBe("tl-fit tl-to-500");
     expect(WIDTHS).toEqual(Array.from({ length: 25 }, (_, at) => 400 + 50 * at));
   });
@@ -1348,7 +1395,9 @@ describe("a task's timeline laid out", () => {
         if (seg.after === null) continue;
         const [word, , room] = seg.after;
         const drawnWord = shown([word], px) !== "";
-        const wide = [...word.text].length * CHAR_PX + GAP_PX;
+        const bar = (room.bar / 100) * px;
+        const inset = Math.max(AFTER_PAD_PX, SEG_MIN_PX + AFTER_PAD_PX - bar);
+        const wide = [...word.text].length * LETTER_PX + inset + GAP_PX;
         expect(!drawnWord || wide <= (room.room / 100) * px + 0.5, `${px}`).toBe(true);
       }
     }

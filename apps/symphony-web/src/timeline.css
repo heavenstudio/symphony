@@ -387,11 +387,12 @@
   outline-offset: 2px;
   z-index: 1;
 }
+/* A word after a segment (a review's verdict): its inset from its bar as drawn and its room are
+   the layout's (insetCss, roomCss), which weighs it by them. */
 .tl-after {
   position: absolute;
   top: 5px;
   box-sizing: border-box;
-  padding-left: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -40,6 +40,7 @@ import {
   type Fit,
   failed,
   fitClass,
+  insetCss,
   type Lanes,
   LONGEST_WAIT,
   lanes as laneLayout,
@@ -439,6 +440,7 @@ function SegView({ seg, stop }: { seg: Seg; stop: object }) {
             "--c": `var(--${seg.after[1]})`,
             left: percent(right),
             maxWidth: roomCss(seg.after[2]),
+            paddingLeft: insetCss(seg.after[2]),
           })}
         >
           {seg.after[0].text}
