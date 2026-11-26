@@ -963,6 +963,7 @@ red one.
 
     No earlier verdict decides it: no card in `docs/` speaks of mutations, planted faults or the order of tests and code.
   [2026-11-26 08:10] owner · approved — B
+  [2026-11-26 08:16] agent — Done as you say, as the board task `docs/reviewer-mutations-allowed`: RULES.md `workflow/tests-after` now ends "a reviewer may still probe the code with a case it suspects the code gets wrong, or with a mutation on a scratch copy". Nothing else needed changing: `workflow/no-second-build-in-review`, the list above and the review skills already name a mutation, and the reviewer page here already runs one unrecorded (`TASKS_RECORDER=off`) in a worktree of its own. An executor still plants no fault.
 
 **The `tests` stamp reads the same record.** It is met by the newest recorded run of each build
 and test command the task ran at the tip, every one green and one test run among them

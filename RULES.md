@@ -172,7 +172,7 @@ under an `#[expect]`. `just lint-rs` refuses any other direct sort; a reviewer, 
 Changed behaviour gets tests, written with or after the code and run after it, and a branch
 shows them and their green run. No test-first order, no red run before the code and no planted
 fault or reverted change to watch a test fail, whatever a brief asks; a reviewer may still probe
-the code with a case it suspects the code gets wrong.
+the code with a case it suspects the code gets wrong, or with a mutation on a scratch copy.
 
 ### `tests/rerun-the-failure-alone`
 
