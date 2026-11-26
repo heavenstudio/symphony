@@ -245,7 +245,8 @@ impl Front {
     }
 
     /// The provider's way back: taken once, from the browser whose sign-in it is, its code
-    /// exchanged and its id token checked, and a session made; refused otherwise.
+    /// exchanged and its id token checked, and a session made in place of any the browser held;
+    /// refused otherwise.
     async fn callback(&self, request: &Request<Incoming>) -> Response<Body> {
         if request.method() != Method::GET {
             return not_allowed("GET");
