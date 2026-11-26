@@ -243,7 +243,7 @@ elsewhere:
 What stays as written elsewhere: the Settings page's control that makes a value the project's is
 one board's say, and the whole of it; a board's map of places is its project's.
 
-- [ ] **boards-per-project** — Today a project has one board because the board is kept in its repository. Before people, blueprints and the desktop app build on boards, this decides whether a project may hold several. A: several boards in one project; they share its documents, its project file, its guides and its address, and each has its own tasks, people and process. B: one board for each project; people with different powers over its parts are groups on that board, and a part that needs its own process, template or people is a project of its own. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/boards-and-projects#One board for each project]]
+- [x] **boards-per-project** — Today a project has one board because the board is kept in its repository. Before people, blueprints and the desktop app build on boards, this decides whether a project may hold several. A: several boards in one project; they share its documents, its project file, its guides and its address, and each has its own tasks, people and process. B: one board for each project; people with different powers over its parts are groups on that board, and a part that needs its own process, template or people is a project of its own. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/boards-and-projects#One board for each project]]
   [2026-11-23 12:45] agent — Posted for the board task `app/boards-and-projects`, from your rejection of the blueprints card on how a project records its blueprint (branch `app/blueprints`): "We need to decide upon if we are going to do multiple boards per project or multiple project entirely." A concept: nothing is built by this card.
 
     ![A second board: three shapes](boards-and-projects/shapes.svg)
@@ -272,6 +272,7 @@ one board's say, and the whole of it; a board's map of places is its project's.
     - Your question on the blueprints card is a question, and its rejection asks for this concept.
 
     None decides this.
+  [2026-11-26 08:13] owner · approved — B, but they may even reference the same base folder. They should have different settings including people, tasks, board, decision queue tho and they could use different folders.
 
 ### Projects sharing a repository
 
@@ -292,7 +293,7 @@ What building it takes, when a repository first needs it:
 - **Agents start in their project's folder**, so they read its guides and its board.
 - **The sweep and the branch scan** keep to the branches their own board names.
 
-- [ ] **projects-per-repository** — If each project has one board, a repository with two kinds of work (a game and its web service, say) needs two projects to give each its own board, template and people. This decides whether a repository may hold several projects. A: one project per repository, as today; a part that needs its own board moves to a repository of its own, and a second project file inside a repository is refused. B: several projects in one repository, each a folder with its own project file, documents, guides and board; they share the repository's history, branches and landing. Built when a repository first needs a second project. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/boards-and-projects#Projects sharing a repository]]
+- [x] **projects-per-repository** — If each project has one board, a repository with two kinds of work (a game and its web service, say) needs two projects to give each its own board, template and people. This decides whether a repository may hold several projects. A: one project per repository, as today; a part that needs its own board moves to a repository of its own, and a second project file inside a repository is refused. B: several projects in one repository, each a folder with its own project file, documents, guides and board; they share the repository's history, branches and landing. Built when a repository first needs a second project. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/boards-and-projects#Projects sharing a repository]]
   [2026-11-23 12:45] agent — Posted for the board task `app/boards-and-projects`. It matters only if **boards-per-project** is B, and is asked apart as its own choice. A concept: nothing is built by this card.
 
     **Base (today).** A project file in a subfolder already names a project of its own, with its own id and pages, but that project reaches the repository's one board: two projects silently on one board. Read in code, not tried.
@@ -313,6 +314,7 @@ What building it takes, when a repository first needs it:
     - **people-kept-where** (B) and **person-profile-where** (B) keep people with each board and profiles with the server, which holds under both options.
 
     None decides this.
+  [2026-11-26 08:12] owner · approved — B, but they may even use the same folders too. What generally could change is settings generally between the two
 
 ## What the three concepts would read
 
