@@ -12,7 +12,7 @@
 //! one on, is shown them all, and the server's reads keep them from a hosted visitor, who may pass
 //! none on (`crate::api`). The agents' queues, built from the documents alone, never list them.
 
-use super::Hub;
+use super::{Hub, Page};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use symphony_api::QueueHeld;
@@ -20,6 +20,14 @@ use symphony_board::held::OnDocument;
 use symphony_board::lock::Recovered as _;
 use symphony_board::people::People;
 use symphony_board::people::ownership::Map;
+
+/// The comments held on documents a refresh read before it locked the pages ([`Hub::held_seen`]).
+pub(super) struct HeldSeen {
+    /// The read of the board they came from.
+    read: Arc<Vec<OnDocument>>,
+    /// As the queue lists them.
+    rows: Vec<QueueHeld>,
+}
 
 /// The feed's change that says a comment held on a document moved, with nothing of it.
 fn moved() -> Value {
@@ -90,26 +98,49 @@ impl Hub {
     }
 
     /// The comments `held` on documents as the queue lists them, in their order, each document's
-    /// title read from main's checkout, a branch's as main's file names it.
+    /// title read from the file the project maps its route to (`Project::file`), the project read
+    /// once for the list: in the checkout of the page it was held on, a branch's worktree, or
+    /// main's once the sweep removed that worktree.
     fn held_rows(&self, held: &[OnDocument]) -> Vec<QueueHeld> {
+        let project = symphony::project::Project::of(&self.root);
         (held.iter())
             .map(|held| {
                 let place = &held.document;
+                let scope = place.scope.as_deref().unwrap_or_default();
+                let checkout = self.checkout(scope).unwrap_or_else(|| self.root.clone());
                 QueueHeld {
                     id: held.id,
                     href: page(held),
-                    doc_title: symphony::tree::title(&self.root.join(&place.path)),
+                    doc_title: symphony::tree::title(&checkout.join(project.file(&place.path))),
                     author: held.author.clone(),
                 }
             })
             .collect()
     }
 
-    /// The queue's list of the comments held on documents as the hub last read them: none where
-    /// they are unread.
-    pub(super) fn held_listed(&self) -> Option<Vec<QueueHeld>> {
-        let held = self.held.lock().recover().clone()?;
-        Some(self.held_rows(&held))
+    /// What a refresh of main's page reads of the comments held on documents before it locks the
+    /// pages: the list the hub last read, as the queue lists it, with the read it came from; none
+    /// where they are unread. The pages locked, [`Hub::held_kept`] says what the page takes.
+    pub(super) fn held_seen(&self) -> Option<HeldSeen> {
+        let read = self.held.lock().recover().clone()?;
+        let rows = self.held_rows(&read);
+        Some(HeldSeen { read, rows })
+    }
+
+    /// The queue's held comments a refresh puts on main's page, `page` as it stands, the pages
+    /// locked: those it `seen` while the hub still holds the read they came from. Else the page's
+    /// own: a read since moved them, and [`Hub::held_put`] put its list on the page already or puts
+    /// it on the one this refresh makes once the pages are free. None where neither is.
+    pub(super) fn held_kept(
+        &self,
+        seen: Option<HeldSeen>,
+        page: Option<&Page>,
+    ) -> Option<Vec<QueueHeld>> {
+        let now = self.held.lock().recover().clone();
+        match seen {
+            Some(seen) if now.is_some_and(|now| Arc::ptr_eq(&now, &seen.read)) => Some(seen.rows),
+            _ => page.map(|page| page.queue.held.clone()),
+        }
     }
 
     /// Who each of `held` waits on to pass it on, on the board's people and map as its last look

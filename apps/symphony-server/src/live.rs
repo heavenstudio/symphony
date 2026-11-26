@@ -1343,7 +1343,7 @@ impl Hub {
         // Who decides main's cards, read before the pages are locked: a branch's page takes main's.
         let deciders = scope.is_empty().then(|| self.deciders_of(&snapshot.queue));
         // The comments held on documents the hub last read, each document's title read again.
-        let held = scope.is_empty().then(|| self.held_listed()).flatten();
+        let held = scope.is_empty().then(|| self.held_seen()).flatten();
         let mut pages = self.pages.write().recover();
         let deciders = match deciders {
             Some(Ok(read)) => read,
@@ -1373,9 +1373,8 @@ impl Hub {
                 None => board.as_deref().map(taskview::counts),
             };
             // The documents hold none of them: the board's, as the hub last read them, or the
-            // page's own while they are unread.
-            let held = held.or_else(|| pages.get(scope).map(|page| page.queue.held.clone()));
-            if let Some(held) = held {
+            // page's own while they are unread or a read since moved them.
+            if let Some(held) = self.held_kept(held, pages.get(scope)) {
                 snapshot.board.counts.held = u32::try_from(held.len()).unwrap_or(u32::MAX);
                 snapshot.queue.held = held;
             }

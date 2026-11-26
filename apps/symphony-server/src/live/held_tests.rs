@@ -2,14 +2,17 @@
 //! naming ana (design) and bo (engineering), who may direct agents, and cy (design), who may not:
 //! what cy leaves on design's document is listed whole on main's page and a branch's and counted,
 //! read at the tick's first look and after a read that failed, and gone once passed on; a named
-//! reader's feed moves the counts of the one it waits on alone; and a board that names nobody
-//! reads and draws as before.
+//! reader's feed moves the counts of the one it waits on alone; each row is titled from the file
+//! its route is served from, in the checkout of the page it was held on; a refresh that read the
+//! list before a move keeps what the move put on the page; and a board that names nobody reads and
+//! draws as before.
 
 use super::super::Hub;
 use super::super::theirs::sent_to;
 use crate::testing::board::{Fixture, Seed};
 use crate::testing::{Tree, git, repository, repository_holding};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use symphony_api::QueueHeld;
 use symphony_board::held::{Block, Place};
 use symphony_board::lock::Recovered as _;
@@ -51,9 +54,16 @@ struct Held {
 
 impl Held {
     fn new(nobody: bool) -> Held {
+        Held::with(nobody, |_| {})
+    }
+
+    /// [`Held::new`], `more` written in main's checkout (its tree's `main/`) and committed before
+    /// the branch is made and the hub reads the project.
+    fn with(nobody: bool, more: impl FnOnce(&Tree)) -> Held {
         let tree = Tree::new();
         let root = repository_holding(&tree, "main", DESIGN, "# Palette\n\nWarm lamps.\n");
         tree.write(&format!("main/{ENGINEERING}"), "# Build\n");
+        more(&tree);
         git(&root, &["add", "."]);
         git(&root, &["commit", "-qm", "Engineering's document"]);
         let branch = tree.path("proposal");
@@ -90,9 +100,15 @@ impl Held {
 
     /// cy's question after the first paragraph of design's document: its number.
     fn hold(&self) -> i64 {
+        self.hold_on(DESIGN, None)
+    }
+
+    /// cy's question after the first paragraph of the document `route`, on the page of the
+    /// checkout `scope` (main's for none): its number.
+    fn hold_on(&self, route: &str, scope: Option<&str>) -> i64 {
         let place = Place {
-            path: DESIGN.into(),
-            scope: None,
+            path: route.into(),
+            scope: scope.map(Into::into),
             kind: "question".into(),
             card: None,
             block: Some(Block {
@@ -219,6 +235,92 @@ fn a_change_of_the_people_tells_the_queue_who_a_held_comment_waits_on_now() {
     assert!(bo.contains(r#""held":1"#), "his count moved: {bo}");
     let ana = q.sent("", before, Some("ana"));
     assert!(!ana.contains(r#""held":"#), "hers is none: {ana}");
+}
+
+#[test]
+fn each_row_is_titled_from_the_file_its_route_is_served_from_in_its_pages_checkout() {
+    // The project serves design's handbook at `/handbook/`: its route names no file of the checkout.
+    let q = Held::with(false, |tree| {
+        tree.write(
+            "main/docs/design/handbook/rules.md",
+            "# House rules\n\nWarm lamps.\n",
+        );
+        let toml = "[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"docs\"\n\n\
+                    [[entrypoints]]\nurl = \"/handbook/\"\nfolder = \"docs/design/handbook\"\n";
+        tree.write(&format!("main/{}", symphony::project::FILE), toml);
+    });
+    assert_eq!(symphony::project::Project::problem(&q.hub.root), None);
+    let handbook = q.hold_on("handbook/rules.md", None);
+    // A document the branch alone holds, held on the branch's page.
+    let lamps = "docs/design/lamps.md";
+    let worktree = q.hub.tree(BRANCH).unwrap();
+    std::fs::write(
+        worktree.join(lamps),
+        "# Lamps of the branch\n\nWarm lamps.\n",
+    )
+    .unwrap();
+    let branch = q.hold_on(lamps, Some(BRANCH));
+    // Held on a branch whose worktree is gone: main's file, where the sweep leaves it.
+    let gone = q.hold_on(DESIGN, Some("design~gone"));
+    q.hub.people_read(&q.f.store);
+    let titled = |id: i64, href: &str, title: &str| QueueHeld {
+        id,
+        href: href.into(),
+        doc_title: title.into(),
+        author: "cy".into(),
+    };
+    let rows = vec![
+        titled(
+            handbook,
+            &format!("/handbook/rules.md#held-{handbook}"),
+            "House rules",
+        ),
+        titled(
+            branch,
+            &format!("/@{BRANCH}/{lamps}#held-{branch}"),
+            "Lamps of the branch",
+        ),
+        titled(
+            gone,
+            &format!("/@design~gone/{DESIGN}#held-{gone}"),
+            "Palette",
+        ),
+    ];
+    assert_eq!(q.listed(""), (rows.clone(), 3));
+    assert_eq!(q.listed(BRANCH), (rows, 3));
+}
+
+#[test]
+fn a_refresh_that_read_the_list_before_a_move_keeps_what_the_move_put_on_the_page() {
+    let q = Held::new(false);
+    let id = q.hold();
+    q.hub.people_read(&q.f.store);
+    assert_eq!(q.listed(""), (vec![row(id)], 1));
+    // A refresh reads the list before it locks the pages; meanwhile it is passed on and read again.
+    let seen = q.hub.held_seen();
+    let ana = q.f.other().for_person("ana");
+    ana.pass_on_document(id, "ana").unwrap();
+    let read = q.f.store.held_on_documents().unwrap();
+    q.hub.held_put(Some(Arc::new(read)), true);
+    assert_eq!(q.listed(""), (Vec::new(), 0));
+    {
+        let pages = q.hub.pages.read().recover();
+        assert_eq!(q.hub.held_kept(seen, pages.get("")), Some(Vec::new()));
+    }
+    // With nothing moved between, a refresh puts on the page what it read, titles read again.
+    let again = q.hold();
+    q.hub
+        .held_put(Some(Arc::new(q.f.store.held_on_documents().unwrap())), true);
+    let seen = q.hub.held_seen();
+    assert_eq!(q.hub.held_kept(seen, None), Some(vec![row(again)]));
+    // Unread, the page keeps its own.
+    q.hub.held_put(None, true);
+    let pages = q.hub.pages.read().recover();
+    assert_eq!(
+        q.hub.held_kept(q.hub.held_seen(), pages.get("")),
+        Some(vec![row(again)])
+    );
+    assert_eq!(q.hub.held_kept(None, None), None);
 }
 
 #[test]
