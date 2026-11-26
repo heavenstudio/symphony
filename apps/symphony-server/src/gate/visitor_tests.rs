@@ -439,3 +439,71 @@ fn a_word_is_refused_where_no_key_is_set_where_the_file_does_not_read_and_by_ano
     let stale = service.signs(&SignIn::claims("google", "110248", -400, 300));
     assert_eq!(gate.signed(&stale, now), None, "stale");
 }
+
+#[test]
+fn a_file_that_does_not_read_is_logged_once_for_each_change_of_why_never_once_a_request() {
+    use crate::front::told;
+    use crate::testing::SignIn;
+    let service = SignIn::new(1);
+    let machine = crate::testing::Tree::new();
+    let gate = Judge::new(&[]).gate.with_machine(machine.path(""));
+    let word = service.word("google", "110248");
+    let file = machine.path(symphony::signed_in::FILE);
+    let requests = |count: usize| {
+        told::during(|| {
+            (0..count)
+                .map(|_| gate.signed(&word, SystemTime::now()))
+                .collect::<Vec<_>>()
+        })
+    };
+    let refused = |count: usize| {
+        let (visitors, lines) = requests(count);
+        assert_eq!(visitors, vec![None; count], "every one is refused");
+        lines
+    };
+    let named = |lines: &[String], rule: &str| {
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let prefix = format!("· no signed word is taken: {}: ", file.display());
+        assert!(lines[0].starts_with(&prefix), "{lines:?}");
+        assert!(lines[0].contains(rule), "{lines:?}");
+        assert!(!lines[0].contains(&word), "{lines:?}");
+    };
+
+    assert_eq!(refused(2), Vec::<String>::new(), "no file is no line");
+
+    machine.write(symphony::signed_in::FILE, "key = 7\n");
+    let first = refused(2);
+    named(&first, "string");
+    assert_eq!(
+        refused(3),
+        Vec::<String>::new(),
+        "the same refusal is said once"
+    );
+
+    let bad_key = format!("key = \"ed25519:00\"\norigin = \"{}\"\n", SignIn::ORIGIN);
+    machine.write(symphony::signed_in::FILE, &bad_key);
+    let changed = refused(2);
+    named(&changed, "ed25519");
+    assert_ne!(changed, first, "a file broken another way is said again");
+
+    service.named_in(&machine.path(""));
+    let (visitors, lines) = requests(2);
+    assert!(visitors.iter().all(Option::is_some), "{visitors:?}");
+    assert_eq!(
+        lines,
+        Vec::<String>::new(),
+        "a file that reads says nothing"
+    );
+
+    machine.write(symphony::signed_in::FILE, "key = 7\n");
+    assert_eq!(
+        refused(2),
+        first,
+        "the same breakage after a fix is said again"
+    );
+
+    std::fs::remove_file(&file).unwrap();
+    assert_eq!(refused(1), Vec::<String>::new(), "no file again");
+    machine.write(symphony::signed_in::FILE, "key = 7\n");
+    assert_eq!(refused(2), first, "and after a removal");
+}
