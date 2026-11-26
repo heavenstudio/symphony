@@ -50,6 +50,7 @@ mod group_decides;
 mod group_queues;
 mod header;
 mod held_on_documents;
+mod held_queue;
 mod held_words;
 mod html_documents;
 mod kept_pages;

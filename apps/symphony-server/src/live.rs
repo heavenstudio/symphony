@@ -206,6 +206,10 @@ pub(crate) struct Hub {
     /// pages read who decides their cards with ([`theirs`]) and the notices tell by
     /// ([`notices`]); none before the first.
     people: Mutex<theirs::Looked>,
+    /// The comments held on documents and not passed on, as the board last gave them, which the
+    /// queue lists to those who may pass them on ([`held`]); none until read, and again once a
+    /// read failed, so the next tick reads them.
+    held: Mutex<Option<Arc<Vec<symphony_board::held::OnDocument>>>>,
     /// The shared server's hourly roll-up of the project into its day files ([`reports::Rollup`]);
     /// none on a private server, which writes none.
     pub(crate) reports: Mutex<Option<reports::Rollup>>,
@@ -438,6 +442,7 @@ impl Hub {
             decided: Mutex::new(None),
             queue_asks: Mutex::default(),
             people: Mutex::default(),
+            held: Mutex::default(),
             reports: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
@@ -1337,6 +1342,8 @@ impl Hub {
         let rendered = self.render_again(root, scope, followed);
         // Who decides main's cards, read before the pages are locked: a branch's page takes main's.
         let deciders = scope.is_empty().then(|| self.deciders_of(&snapshot.queue));
+        // The comments held on documents the hub last read, each document's title read again.
+        let held = scope.is_empty().then(|| self.held_seen()).flatten();
         let mut pages = self.pages.write().recover();
         let deciders = match deciders {
             Some(Ok(read)) => read,
@@ -1365,6 +1372,12 @@ impl Hub {
                 Some(page) => page.board.counts.tasks.clone(),
                 None => board.as_deref().map(taskview::counts),
             };
+            // The documents hold none of them: the board's, as the hub last read them, or the
+            // page's own while they are unread or a read since moved them.
+            if let Some(held) = self.held_kept(held, pages.get(scope)) {
+                snapshot.board.counts.held = u32::try_from(held.len()).unwrap_or(u32::MAX);
+                snapshot.queue.held = held;
+            }
         } else if let Some(main) = pages.get("") {
             snapshot.board = main.board.clone();
             snapshot.queue = main.queue.clone();

@@ -641,7 +641,10 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
         | symphony_api::CARD_OWNERS_PATH
         | symphony_api::DOCUMENT_HELD_PATH
         | "/api/task-history" => board_read(shared, hub, &asked, &request).await,
-        _ => page_read(&hub, scope, path, named_reader(&request).as_deref()),
+        _ => {
+            let hosted = crate::hosted::admission(&request).is_some();
+            page_read(&hub, scope, path, named_reader(&request).as_deref(), hosted)
+        }
     }
 }
 
@@ -1036,17 +1039,33 @@ fn agents(hub: &Hub, hosted: bool, page: Option<(AgentsAsked, bool)>) -> Result<
 }
 
 /// A region the hub keeps of the page of the worktree `scope`, as its last read left it: what of
-/// it waits as `reader`, a person a board named, is shown it (`crate::live::theirs`), and whole to
+/// it waits as `reader`, a person a board named, is shown it (`crate::live::theirs`); whole to a
+/// `hosted` visitor but the comments held on documents, as they may pass none on; and whole to
 /// anyone else.
-fn page_read(hub: &Hub, scope: &str, path: &str, reader: Option<&str>) -> Response {
+fn page_read(hub: &Hub, scope: &str, path: &str, reader: Option<&str>, hosted: bool) -> Response {
     let pages = hub.pages.read().recover();
     let Some(page) = pages.get(scope) else {
         return error(StatusCode::NOT_FOUND, "this worktree was removed");
     };
-    let theirs = reader.map(|name| {
-        let deciders = page.deciders.as_deref();
-        crate::live::theirs::shown(&page.board, &page.queue, &page.pending, deciders, name)
-    });
+    let theirs = match reader {
+        Some(name) => {
+            let deciders = page.deciders.as_deref();
+            let shown = crate::live::theirs::shown;
+            Some(shown(
+                &page.board,
+                &page.queue,
+                &page.pending,
+                deciders,
+                name,
+            ))
+        }
+        None if hosted && !page.queue.held.is_empty() => Some(crate::live::theirs::unheld(
+            &page.board,
+            &page.queue,
+            &page.pending,
+        )),
+        None => None,
+    };
     let (board, queue, pending) = match &theirs {
         Some(shown) => (&shown.board, &shown.queue, &shown.pending),
         None => (&page.board, &page.queue, &page.pending),
