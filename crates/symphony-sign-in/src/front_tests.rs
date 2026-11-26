@@ -743,7 +743,8 @@ async fn the_visitors_own_page_says_whom_they_are_signed_in_as_and_offers_sign_o
 }
 
 /// Each page loads nothing and is framed by no site; it takes the visitor's scheme, and the one
-/// style it applies is the one its policy allows by digest, so a browser applies it.
+/// style it applies is the one its policy allows by digest, so a browser applies it. Its requests
+/// name its origin alone, so a browser's sign-out from it names the origin in its `Origin`.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_page_applies_its_one_style_by_its_digest_and_takes_the_visitors_scheme() {
     let through = Through::new().await;
@@ -773,6 +774,7 @@ async fn a_page_applies_its_one_style_by_its_digest_and_takes_the_visitors_schem
             "{html}"
         );
         assert_eq!(page.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        assert_eq!(page.headers()[header::REFERRER_POLICY], "strict-origin");
     }
 }
 

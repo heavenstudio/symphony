@@ -595,7 +595,8 @@ fn now() -> u64 {
         .map_or(0, |since| since.as_secs())
 }
 
-/// An answer of `status` with no body, kept out of every cache.
+/// An answer of `status` with no body, kept out of every cache, whose redirect names no page it
+/// came from.
 fn empty(status: StatusCode) -> Response<Body> {
     let mut response = Response::new(Empty::new().map_err(never).boxed_unsync());
     *response.status_mut() = status;
@@ -660,6 +661,10 @@ fn html(status: StatusCode, title: &str, body: &str) -> Response<Body> {
     insert(headers, header::CONTENT_TYPE, "text/html; charset=utf-8");
     insert(headers, header::CONTENT_SECURITY_POLICY, &POLICY);
     insert(headers, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
+    // A page's own requests name its origin and no path or query, as the refusal page's address
+    // holds a code; a browser names it in the sign-out's `Origin` too, which `no-referrer` makes
+    // `null`.
+    insert(headers, header::REFERRER_POLICY, "strict-origin");
     response
 }
 
