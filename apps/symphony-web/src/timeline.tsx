@@ -34,13 +34,12 @@ import type { Shown as Answer } from "./parts";
 import { Failure, said } from "./request";
 import STYLE from "./timeline.css?inline";
 import { carried, costFigure, readTaskTokens, tookTokens, totalWords } from "./timeline-cost";
-import { address, endpointLane, historyWords, messagesOf } from "./timeline-history";
+import { address, addressAt, endpointLane, historyWords, messagesOf } from "./timeline-history";
 import {
   type Bar,
   type Fit,
   failed,
   fitClass,
-  keptNote,
   type Lanes,
   LONGEST_WAIT,
   lanes as laneLayout,
@@ -367,7 +366,15 @@ function RowView({
   selection?: MessageSelection | undefined;
   wide: boolean;
 }) {
-  const kind = !row.sub ? "tl-row" : row.event ? "tl-row tl-sub tl-event" : "tl-row tl-sub";
+  const kind = !row.sub
+    ? "tl-row"
+    : row.message !== undefined
+      ? "tl-row tl-sub tl-event tl-message"
+      : row.kept
+        ? "tl-row tl-sub tl-event tl-kept"
+        : row.event
+          ? "tl-row tl-sub tl-event"
+          : "tl-row tl-sub";
   const told = isTold(row);
   return (
     <>
@@ -437,22 +444,12 @@ function SegView({ seg, stop }: { seg: Seg; stop: object }) {
           {seg.after[0].text}
         </span>
       )}
-      {seg.under && (
-        <span
-          className={`tl-under ${fitClass(seg.under[0])}`}
-          aria-hidden="true"
-          style={style({
-            "--row": String(seg.row),
-            left: percent(seg.left),
-            maxWidth: roomCss(seg.under[1]),
-          })}
-        >
-          {seg.under[0].text}
-        </span>
-      )}
     </>
   );
 }
+
+/** The lanes of runs, which the time no run is kept of is hatched over. */
+const RUNS = ["builds", "tests"];
 
 /** A drawn box, as `getBoundingClientRect` gives it. */
 interface Box {
@@ -462,36 +459,52 @@ interface Box {
   height: number;
 }
 
-/** A selected message's arrow in its layer: its line's x, and the y of its sender's and its
- * recipient's ends, from the layer's corner. */
+/** A selected message's marks in their layer: its tick's x; the y of its sender's line, where its
+ * tick is, and of its recipient's; and the y of the hours line's foot, where its guide starts;
+ * each from the layer's corner. */
 interface ArrowPlace {
   left: number;
   from: number;
   to: number;
+  top: number;
 }
 
+/** How far above a ring around a tick, in pixels, its guide stops: the ring's radius and a gap. */
+const RING_CLEAR = 11;
+
 /**
- * Where the selected message's arrow is drawn in `layer`: down through the middle of its mark
- * (`mark`, its sender's end), to the middle of its recipient's track (`recipient`), each as drawn,
- * so it meets the mark wherever the lanes put the tracks. None while either is not drawn.
+ * Where the selected message's marks are drawn in `layer`: through the middle of its tick (`mark`,
+ * on its sender's line), to the middle of its recipient's line (`rail`), each as drawn, so the
+ * arrow meets both marks wherever the lanes put them, and its guide down from the hours' foot
+ * (`hours`). None while the tick or the line is not drawn.
  */
 export function arrowPlace(
   layer: Box,
   mark: Box | undefined,
-  recipient: Box | undefined,
+  rail: Box | undefined,
+  hours: Box | undefined,
 ): ArrowPlace | null {
-  if (!mark || !recipient) return null;
+  if (!mark || !rail) return null;
   return {
     left: mark.left + mark.width / 2 - layer.left,
     from: mark.top + mark.height / 2 - layer.top,
-    to: recipient.top + recipient.height / 2 - layer.top,
+    to: rail.top + rail.height / 2 - layer.top,
+    top: hours === undefined ? 0 : hours.top + hours.height - layer.top,
   };
 }
 
+/**
+ * The selected message's arrow, from its tick straight to a ring on its recipient's line at the
+ * same instant, and a dashed guide from the hours line, where its address is said, down to it. A
+ * message whose two ends are one lane draws no arrow: a ring around its tick, so an arrow always
+ * joins two lanes.
+ */
 function AddressArrow({ selected, at }: { selected: TimelineMessage; at: number }) {
   const root = useRef<HTMLDivElement>(null);
   const [arrow, setArrow] = useState<ArrowPlace | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the mark moves with its time's place on the hours (`at`), which the effect reads from the page
+  const from = endpointLane(selected.from, selected.sender);
+  const to = endpointLane(selected.to, selected.recipient);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the tick moves with its time's place on the hours (`at`), which the effect reads from the page
   useLayoutEffect(() => {
     const layer = root.current;
     const lanes = layer?.closest(".tl-lanes");
@@ -506,31 +519,48 @@ function AddressArrow({ selected, at }: { selected: TimelineMessage; at: number 
           lanes
             .querySelector(`.tl-message-mark[data-message="${selected.id}"]`)
             ?.getBoundingClientRect(),
-          lanes
-            .querySelector(
-              `[data-lane="${endpointLane(selected.to, selected.recipient)}"] .tl-track`,
-            )
-            ?.getBoundingClientRect(),
+          lanes.querySelector(`[data-lane="${to}"] .tl-rail`)?.getBoundingClientRect(),
+          lanes.querySelector(".tl-axis")?.getBoundingClientRect(),
         ),
       );
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(lanes);
     return () => observer.disconnect();
-  }, [selected, at]);
+  }, [selected, at, to]);
+  const same = from === to;
+  const upper =
+    arrow === null ? 0 : same ? arrow.from - RING_CLEAR : Math.min(arrow.from, arrow.to);
   return (
     <div className="tl-address-track" aria-hidden="true" ref={root}>
       {arrow && (
-        <span
-          className={`tl-address-arrow ${arrow.to < arrow.from ? "tl-arrow-up" : ""}`}
-          data-from={endpointLane(selected.from, selected.sender)}
-          data-to={endpointLane(selected.to, selected.recipient)}
-          style={{
-            left: arrow.left,
-            top: Math.min(arrow.from, arrow.to),
-            height: Math.max(Math.abs(arrow.to - arrow.from), 12),
-          }}
-        />
+        <>
+          <span
+            className="tl-address-guide"
+            style={{ left: arrow.left, top: arrow.top, height: Math.max(upper - arrow.top, 0) }}
+          />
+          {same ? (
+            <span
+              className="tl-address-ring tl-ring-around"
+              data-at={from}
+              style={{ left: arrow.left, top: arrow.from }}
+            />
+          ) : (
+            <>
+              <span
+                className={`tl-address-arrow ${arrow.to < arrow.from ? "tl-arrow-up" : ""}`}
+                data-from={from}
+                data-to={to}
+                style={{
+                  left: arrow.left,
+                  top: Math.min(arrow.from, arrow.to),
+                  height: Math.abs(arrow.to - arrow.from),
+                }}
+              />
+              <span className="tl-address-ring" style={{ left: arrow.left, top: arrow.to }} />
+            </>
+          )}
+        </>
       )}
     </div>
   );
@@ -550,6 +580,7 @@ function LanesView({
   const scale = new Scale(timeline);
   const selected = selection?.messages.find((m) => m.id === selection.selected);
   const count = stops(lanes);
+  const notKept = lanes.notKept;
   let index = 0;
   const next = () => index++;
   const laneRows = lanes.lanes.map((lane) => (
@@ -557,7 +588,7 @@ function LanesView({
       key={lane.key}
       className="tl-lane"
       data-lane={lane.key}
-      data-dense={lane.dense ? "" : undefined}
+      data-rail={lane.rail ? "" : undefined}
       style={style({ "--rows": String(lane.rows) })}
     >
       <span className="tl-name">
@@ -565,6 +596,16 @@ function LanesView({
         {lane.who !== "" && <small>{lane.who}</small>}
       </span>
       <span className="tl-track">
+        {notKept && RUNS.includes(lane.key) && (
+          <span
+            className="tl-notkept"
+            aria-hidden="true"
+            title={notKept.title}
+            style={style({ left: percent(notKept.left), width: percent(notKept.width) })}
+          >
+            {notKept.label && <FitView fit={notKept.label} />}
+          </span>
+        )}
         {lane.segs.map((seg, place) => (
           <SegView
             // biome-ignore lint/suspicious/noArrayIndexKey: a lane's segments have no identity but their place
@@ -573,20 +614,22 @@ function LanesView({
             stop={seg.stop ? stopOf(next(), count, seg.title, at) : { "aria-hidden": "true" }}
           />
         ))}
-        {selection?.messages
-          .filter((m) => endpointLane(m.from, m.sender) === lane.key)
-          .map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              className="tl-message-mark"
-              data-message={m.id}
-              style={{ left: percent(scale.at(m.at)) }}
-              aria-label={`Message #${m.id}: ${address(m)}`}
-              aria-pressed={selection.selected === m.id}
-              onClick={() => selection.choose(m.id)}
-            />
-          ))}
+        {lane.rail && <span className="tl-rail" aria-hidden="true" />}
+        {lane.rail &&
+          selection?.messages
+            .filter((m) => endpointLane(m.from, m.sender) === lane.key)
+            .map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className="tl-message-mark"
+                data-message={m.id}
+                style={{ left: percent(scale.at(m.at)) }}
+                aria-label={`Message #${m.id}: ${address(m)}`}
+                aria-pressed={selection.selected === m.id}
+                onClick={() => selection.choose(m.id)}
+              />
+            ))}
       </span>
     </div>
   ));
@@ -632,6 +675,19 @@ function LanesView({
           {lanes.now && (
             <span className="tl-tick tl-nowtag" style={style({ left: percent(lanes.now.left) })}>
               {lanes.now.label}
+            </span>
+          )}
+          {selected && (
+            // Its address on the hours line, over the hours' words, kept inside the track: it
+            // moves left of its instant by as much of its width as its instant is of the hours.
+            <span
+              className="tl-address-said"
+              style={style({
+                left: percent(scale.at(selected.at)),
+                transform: `translateX(-${percent(scale.at(selected.at))})`,
+              })}
+            >
+              {addressAt(selected, scale.clock(selected.at))}
             </span>
           )}
         </span>
@@ -706,7 +762,6 @@ export function TimelineDrawn({
     ["Phases", placeTotals(timeline, "phase")],
     ["States", placeTotals(timeline, "state")],
   ] as const;
-  const note = keptNote(timeline);
   const steps = rowLayout(timeline, costs);
   const drawn = laneLayout(timeline, costs);
   const running = timeline.runs.some((run) => run.result === "running");
@@ -760,7 +815,6 @@ export function TimelineDrawn({
           ([name, spent]) =>
             spent !== null && <p key={name} className="tl-totals">{`${name}: ${spent}`}</p>,
         )}
-        {note !== null && <p className="tl-note">{note}</p>}
       </div>
       <div className="tl-body" id={BODY} ref={body}>
         <ol className="tl-list" aria-label="Steps">

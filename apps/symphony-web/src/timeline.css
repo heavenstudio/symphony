@@ -265,7 +265,8 @@
 }
 
 /* The wide lanes: a name column, then a track per lane over the same hours, the hours' lines and
-   now's behind them all. */
+   now's behind them all. The name column is var(--name) wide, padding and all, so every layer over
+   the tracks (the hours' lines, the selected message's arrow) starts where the tracks do. */
 .tl-lanes {
   --name: 9rem;
   --end: 5.5rem;
@@ -300,6 +301,7 @@
 }
 .tl-name {
   flex: 0 0 var(--name);
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -398,34 +400,65 @@
   font-weight: 600;
   line-height: 26px;
 }
+/* A runs lane: a row per runs that overlap, each run one 14 px bar at its recorded times, at least
+   2 px wide, its queue the lighter head of it, a 1 px edge of the card's colour keeping two bars
+   apart, its words inside it where it is wide enough, cut to fit. */
 .tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-track {
-  height: calc(var(--rows) * 42px + 4px);
+  height: calc(var(--rows) * 20px + 16px);
 }
 .tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg {
-  top: calc(var(--row) * 42px + 4px);
-  height: 20px;
+  top: calc(var(--row) * 20px + 11px);
+  height: 14px;
   padding: 0;
-  border-radius: 3px;
-}
-/* A lane of more rows than its runs' words are drawn for (timeline-layout.ts WORDED_ROWS) draws
-   them thin: each run's words are in its hover, its focus and the list. */
-.tl-lane[data-dense] .tl-track {
-  height: calc(var(--rows) * 12px + 4px);
-}
-.tl-lane[data-dense] .tl-seg {
-  top: calc(var(--row) * 12px + 4px);
-  height: 8px;
+  border: 0;
   border-radius: 2px;
+  box-shadow: 0 0 0 1px var(--card);
+  background: color-mix(in srgb, var(--c) 70%, transparent);
+  color: var(--card);
+  font-size: 10.5px;
+  line-height: 14px;
 }
-.tl-under {
+.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg > .tl-fit {
+  padding: 0 4px;
+}
+.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg.tl-waiting {
+  border: 1px dashed color-mix(in srgb, var(--c) 55%, transparent);
+  background: color-mix(in srgb, var(--c) 10%, transparent);
+  color: var(--foreground);
+  line-height: 12px;
+}
+.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg.tl-running {
+  background: var(--stripes);
+  color: var(--foreground);
+}
+/* Where the recorder keeps no runs: hatched, unknown time, not empty, its words where they fit. */
+.tl-notkept {
   position: absolute;
-  top: calc(var(--row) * 42px + 27px);
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-right: 1px dashed var(--muted-foreground);
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--muted-foreground) 22%, transparent) 0 2px,
+    transparent 2px 7px
+  );
+}
+.tl-notkept > .tl-fit {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  max-width: calc(100% - 12px);
+  box-sizing: border-box;
+  padding: 0 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transform: translateY(-50%);
+  background: var(--card);
   color: var(--muted-foreground);
   font-size: var(--fs-xs);
-  line-height: 1.2;
 }
 .tl-gates-head {
   border-bottom: 0;
@@ -847,14 +880,29 @@
   }
 }
 
-/* Message marks keep their exact x; a separate chooser retains colliding instants. A mark is
-   centred on its time by its margin, not a transform, which a press's shrink would replace
-   (styles/board.css), and is its own height over a button's least, so its dot sits on its lane's
-   middle, where an arrow meets a lane. */
+/* A lane a message starts or ends at carries a dotted line at its foot, under its bars: each
+   message a 2 x 8 tick on its sender's line at its exact x, in a press area of 24 px of its own; a
+   separate chooser keeps ticks at one pixel apart. A tick is centred on its time by its margin,
+   not a transform, which a press's shrink would replace (styles/board.css), and is its own height
+   over a button's least, so it sits on its line, where an arrow meets a lane. */
+.tl-lane[data-rail] .tl-track {
+  height: 44px;
+}
+.tl-lane[data-rail][data-lane="other"] .tl-track {
+  height: 22px;
+}
+.tl-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 35.5px;
+  height: 0;
+  border-top: 1px dotted color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+}
 .tl-message-mark {
   position: absolute;
   z-index: 2;
-  top: 6px;
+  top: 24px;
   width: 24px;
   height: 24px;
   min-height: 0;
@@ -865,21 +913,30 @@
   color: var(--foreground);
   cursor: pointer;
 }
+.tl-lane[data-lane="other"] .tl-rail {
+  top: 13.5px;
+}
+.tl-lane[data-lane="other"] .tl-message-mark {
+  top: 2px;
+}
 .tl-message-mark::before {
   content: "";
   display: block;
-  width: 6px;
-  height: 6px;
-  margin: auto;
-  border: 2px solid currentColor;
-  background: var(--card);
-  border-radius: 50%;
+  width: 2px;
+  height: 8px;
+  margin: 8px auto;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--muted-foreground) 85%, transparent);
 }
 .tl-message-mark[aria-pressed="true"]::before {
+  width: 9px;
+  height: 9px;
+  margin: 7.5px auto;
+  border-radius: 50%;
   background: var(--foreground);
+  box-shadow: 0 0 0 1.5px var(--card);
 }
-.tl-message-mark:focus-visible,
-.tl-message-row:focus-visible {
+.tl-message-mark:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
@@ -892,17 +949,19 @@
   pointer-events: none;
   z-index: 3;
 }
-/* Its left is its line's middle. */
+/* The selected message's arrow: its left is its line's middle, a border of the card's colour so it
+   reads across the bars it passes, ending at a ring on its recipient's line. */
 .tl-address-arrow {
   position: absolute;
   margin-left: -1px;
   border-left: 2px solid var(--foreground);
+  box-shadow: 0 0 0 2px var(--card);
 }
 .tl-address-arrow::after {
   content: "";
   position: absolute;
   left: -6px;
-  bottom: 0;
+  bottom: 3px;
   width: 8px;
   height: 8px;
   border-bottom: 2px solid var(--foreground);
@@ -910,22 +969,106 @@
   transform: rotate(45deg);
 }
 .tl-address-arrow.tl-arrow-up::after {
-  top: 0;
+  top: 3px;
   bottom: auto;
   transform: rotate(225deg);
 }
+/* Borders of whole pixels, as a screen draws a fraction of one as less: a ring's middle is its
+   place only where its margin is half of all it is drawn. */
+.tl-address-ring {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  margin: -4.5px 0 0 -4.5px;
+  border: 2px solid var(--foreground);
+  border-radius: 50%;
+  background: var(--card);
+}
+.tl-address-ring.tl-ring-around {
+  width: 16px;
+  height: 16px;
+  margin: -9px 0 0 -9px;
+  border-width: 1px;
+  background: transparent;
+}
+.tl-address-guide {
+  position: absolute;
+  border-left: 1px dashed var(--foreground);
+  opacity: 0.55;
+}
+/* The selected message's address and time on the hours line, over the hours' words. */
+.tl-address-said {
+  position: absolute;
+  top: 0;
+  z-index: 4;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: var(--fs-xs);
+  line-height: 18px;
+  white-space: nowrap;
+}
+/* A phone's message: one line of 28 px, its time, its diamond and its words level, in the muted
+   colour. Its button is the whole row, out over the row's padding, so a press anywhere on it, its
+   time and its diamond included, is the button's, also while a press shrinks it about its middle
+   (styles/board.css); the time and the diamond, drawn over it, let a press through. */
+.tl-message {
+  padding-top: 5px;
+  padding-bottom: 5px;
+  line-height: 18px;
+}
+.tl-message .tl-at {
+  top: 5px;
+  line-height: 18px;
+}
+.tl-message .tl-mark {
+  top: 14px;
+}
+.tl-message .tl-at,
+.tl-message .tl-mark {
+  pointer-events: none;
+}
 .tl-message-row {
+  grid-column: 1 / -1;
+  min-height: 0;
+  margin: -5px 0 -5px calc(-1 * (var(--rail) + 28px));
+  padding: 5px 0 5px calc(var(--rail) + 28px);
   text-align: left;
   border: 0;
+  border-radius: 6px;
   background: transparent;
-  padding: 0;
   font: inherit;
-  color: inherit;
+  color: var(--muted-foreground);
   cursor: pointer;
 }
+.tl-message-row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
 .tl-message-row[aria-pressed="true"] {
+  color: var(--foreground);
   font-weight: 700;
   text-decoration: underline;
+}
+/* The row from which builds and tests are kept: its mark the hatch of the time before it. */
+.tl-kept .tl-label {
+  color: var(--muted-foreground);
+}
+.tl-kept .tl-mark {
+  width: 14px;
+  height: 10px;
+  margin: -5px 0 0 -7px;
+  box-sizing: border-box;
+  border: 1px dashed var(--muted-foreground);
+  border-radius: 0;
+  transform: none;
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--muted-foreground) 45%, transparent) 0 2px,
+    transparent 2px 5px
+  );
 }
 .tl-message-panel {
   padding-top: var(--sp-3);

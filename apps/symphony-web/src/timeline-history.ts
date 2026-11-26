@@ -73,6 +73,14 @@ export function address(message: TimelineMessage): string {
   return `${message.sender} → ${message.recipient ?? "Everyone on task"}`;
 }
 
+/** A selected message as the hours line says it at its instant, `clock`: its number, its two ends,
+ * its time and, for a verdict, that it is one: "#15396 · gilded-gecko-838 → @executor · 11:31 ·
+ * verdict". */
+export function addressAt(message: TimelineMessage, clock: string): string {
+  const kind = message.kind === "verdict" ? " · verdict" : "";
+  return `#${message.id} · ${address(message)} · ${clock}${kind}`;
+}
+
 /** Only a unique known role gets a role lane; ambiguity stays on Other. */
 export function endpointLane(endpoint: MessageEndpoint, recorded: string | null): string {
   if (recorded !== null && ["@orchestrator", "@executor", "@reviewer"].includes(recorded)) {

@@ -28,7 +28,7 @@ import {
   watchCrossings,
 } from "./timeline";
 import { readTaskTokens, totalWords } from "./timeline-cost";
-import { failed, lanes, nextRead, readTimeline, stops, WORDED_ROWS } from "./timeline-layout";
+import { failed, lanes, nextRead, readTimeline, stops } from "./timeline-layout";
 import { NOT_IN_TIME } from "./trouble";
 import type { TaskTimeline, TaskTokens } from "./wire";
 
@@ -155,8 +155,9 @@ describe("the timeline drawn", () => {
     for (const lane of ["stage", "executor", "reviewer", "builds", "tests"]) {
       expect(drawn).toContain(`data-lane="${lane}"`);
     }
-    expect(drawn).toContain("<b>Builds</b><small>studio</small>");
-    expect(drawn).toContain("<b>Tests</b><small>studio</small>");
+    // Each runs lane's name says its counts.
+    expect(drawn).toContain("<b>Builds</b><small>1 run · 0 red</small>");
+    expect(drawn).toContain("<b>Tests</b><small>4 runs · 0 red</small>");
     expect(count(drawn, 'class="tl-lane tl-gate"')).toBe(4);
     // What runs now: striped in the list and in its lane, and the legend says so.
     expect(count(drawn, "tl-work tl-running")).toBe(1);
@@ -271,7 +272,11 @@ describe("the timeline drawn", () => {
     expect(drawn).toContain(
       'class="tl-after tl-fit" aria-hidden="true" style="--c:var(--dislike);left:',
     );
-    expect(drawn).toContain('class="tl-under tl-fit tl-from-');
+    // A run's words inside its bar, at the widths where it is wide enough.
+    expect(drawn).toMatch(
+      /class="tl-seg" style="--c:var\(--like\);--row:0;left:[0-9.]+%;width:[0-9.]+%" title="Test, just verify · waited 6 m · ran 24 m[^"]*"[^>]*><span class="tl-fit tl-from-[0-9]+">verify · 24 m<\/span><\/span>/,
+    );
+    expect(drawn).not.toContain("tl-under");
     expect(drawn).toContain("max-width:calc(");
     expect(drawn).toContain(
       '<li><span class="tl-key tl-key-work"></span>worked or ran</li><li><span class="tl-key tl-key-wait"></span>queued or waiting</li><li><span class="tl-key tl-key-running"></span>running now</li><li class="tl-wide"><span class="tl-key tl-g tl-g-met"></span>gate met</li>',
@@ -326,13 +331,12 @@ describe("the timeline drawn", () => {
     expect(tests).not.toContain('data-lane="builds"');
   });
 
-  it("a lane of more rows than WORDED_ROWS is marked for its thin rows, and no other lane", () => {
-    expect(html(pictures())).not.toContain("data-dense");
+  it("runs that overlap take a row each, and a lane with no message has no line", () => {
     // The fixture's verify, run again a minute apart from 10:52, each going on until the last has
     // begun: each takes a row of its own.
     const verify = pictures().runs[1];
     if (verify === undefined) throw new Error("the fixture has no verify");
-    const again = Array.from({ length: WORDED_ROWS + 1 }, (_, at) => ({
+    const again = Array.from({ length: 7 }, (_, at) => ({
       ...verify,
       queued: verify.queued + at * 60,
       started: verify.queued + at * 60 + 1,
@@ -342,11 +346,11 @@ describe("the timeline drawn", () => {
       ...pictures(),
       runs: [pictures().runs[0], ...again] as (typeof verify)[],
     });
-    expect(drawn).toContain(
-      `<div class="tl-lane" data-lane="tests" data-dense="" style="--rows:${WORDED_ROWS + 1}">`,
-    );
+    expect(drawn).toContain('<div class="tl-lane" data-lane="tests" style="--rows:7">');
     expect(drawn).toContain('<div class="tl-lane" data-lane="builds" style="--rows:1">');
-    expect(count(drawn, "data-dense")).toBe(1);
+    expect(drawn).not.toContain("data-rail");
+    expect(drawn).not.toContain("tl-rail");
+    expect(drawn).not.toContain("tl-notkept");
   });
 
   it("offers all of a clipped list, the latest again once shown, and the focused part's detail", () => {
@@ -358,11 +362,21 @@ describe("the timeline drawn", () => {
     );
     expect(clipped.startsWith('<div class="tl-drawn tl-clipped">')).toBe(true);
     expect(clipped).toContain(
-      '<button class="dx-button tl-more" data-style="outline" data-size="default" type="button" aria-expanded="false">Show all 13 steps</button>',
+      '<button class="dx-button tl-more" data-style="outline" data-size="default" type="button" aria-expanded="false">Show all 14 steps</button>',
     );
+    // The time no run is kept of is a row at its end in the list, and hatched over the runs
+    // lanes, in place of a sentence over them.
+    expect(clipped).not.toContain("no longer kept");
     expect(clipped).toContain(
-      '<p class="tl-note">Builds and tests before 11-11 10:25 are no longer kept.</p>',
+      '<li class="tl-row tl-sub tl-event tl-kept" style="--c:var(--muted-foreground)" title="Builds and tests before 11-11 10:25 are not kept"><span class="tl-at">10:25</span><span class="tl-mark" aria-hidden="true"></span><span class="tl-label">Builds and tests kept from here on</span></li>',
     );
+    expect(
+      count(
+        clipped,
+        '<span class="tl-notkept" aria-hidden="true" title="Builds and tests before 11-11 10:25 are not kept" style="left:0.53%;width:21.84%"><span class="tl-fit',
+      ),
+    ).toBe(2);
+    expect(clipped).toContain(">not kept before 11-11 10:25</span>");
     expect(clipped).toContain('id="tl-stop-3" tabindex="0"');
     expect(clipped).toContain('id="tl-stop-0" tabindex="-1"');
     const all = renderToStaticMarkup(

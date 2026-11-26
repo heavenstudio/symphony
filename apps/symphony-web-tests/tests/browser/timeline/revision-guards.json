@@ -1,0 +1,3724 @@
+{
+ "slug": "tools/workflow-revision-guards",
+ "now": 1795146335.7,
+ "zone": [
+  {
+   "from": 1795046965.4,
+   "seconds": 3600
+  }
+ ],
+ "every": 60,
+ "runs_from": 1795082998.2,
+ "created": 1795046965.4,
+ "closed": 1795145576.0,
+ "first_claimed": 1795072112.5,
+ "bounces": 4,
+ "stages": [
+  {
+   "status": "ready",
+   "from": 1795046965.4,
+   "to": 1795072112.5,
+   "by": null
+  },
+  {
+   "status": "in_progress",
+   "from": 1795072112.5,
+   "to": 1795083775.8,
+   "by": null
+  },
+  {
+   "status": "review",
+   "from": 1795083775.8,
+   "to": 1795084284.5,
+   "by": null,
+   "round": 1
+  },
+  {
+   "status": "in_progress",
+   "from": 1795084284.5,
+   "to": 1795086628.6,
+   "by": null
+  },
+  {
+   "status": "review",
+   "from": 1795086628.6,
+   "to": 1795086861.8,
+   "by": null,
+   "round": 2
+  },
+  {
+   "status": "done",
+   "from": 1795086861.8,
+   "to": 1795132641.4,
+   "by": null
+  },
+  {
+   "status": "review",
+   "from": 1795132641.4,
+   "to": 1795134886.9,
+   "by": null,
+   "round": 3
+  },
+  {
+   "status": "in_progress",
+   "from": 1795134886.9,
+   "to": 1795139051.0,
+   "by": null
+  },
+  {
+   "status": "review",
+   "from": 1795139051.0,
+   "to": 1795139175.7,
+   "by": null,
+   "round": 4
+  },
+  {
+   "status": "in_progress",
+   "from": 1795139175.7,
+   "to": 1795143034.0,
+   "by": null
+  },
+  {
+   "status": "review",
+   "from": 1795143034.0,
+   "to": 1795143318.2,
+   "by": null,
+   "round": 5
+  },
+  {
+   "status": "in_progress",
+   "from": 1795143318.2,
+   "to": 1795145545.4,
+   "by": null
+  },
+  {
+   "status": "review",
+   "from": 1795145545.4,
+   "to": 1795145576.0,
+   "by": null,
+   "round": 6
+  },
+  {
+   "status": "done",
+   "from": 1795145576.0,
+   "to": null,
+   "by": null
+  }
+ ],
+ "claims": [
+  {
+   "by": "keen-swift-85",
+   "from": 1795072112.5,
+   "to": 1795083775.8
+  },
+  {
+   "by": "keen-swift-85",
+   "from": 1795084284.5,
+   "to": 1795086628.6
+  },
+  {
+   "by": "keen-swift-85",
+   "from": 1795134886.9,
+   "to": 1795139051.0
+  },
+  {
+   "by": "keen-swift-85",
+   "from": 1795139175.7,
+   "to": 1795143034.0
+  },
+  {
+   "by": "keen-swift-85",
+   "from": 1795143318.2,
+   "to": 1795145545.4
+  }
+ ],
+ "rounds": [
+  {
+   "round": 1,
+   "from": 1795083775.8,
+   "taken": 1795083828.1,
+   "to": 1795084284.5,
+   "by": "gilded-gecko-838",
+   "verdict": "changes"
+  },
+  {
+   "round": 2,
+   "from": 1795086628.6,
+   "taken": 1795086628.6,
+   "to": 1795086861.8,
+   "by": "gilded-gecko-838",
+   "verdict": "approved"
+  },
+  {
+   "round": 3,
+   "from": 1795132641.4,
+   "taken": 1795132641.4,
+   "to": 1795134886.9,
+   "by": "gilded-gecko-838",
+   "verdict": "changes"
+  },
+  {
+   "round": 4,
+   "from": 1795139051.0,
+   "taken": 1795139051.0,
+   "to": 1795139175.7,
+   "by": "gilded-gecko-838",
+   "verdict": "changes"
+  },
+  {
+   "round": 5,
+   "from": 1795143034.0,
+   "taken": 1795143034.0,
+   "to": 1795143318.2,
+   "by": "gilded-gecko-838",
+   "verdict": "changes"
+  },
+  {
+   "round": 6,
+   "from": 1795145545.4,
+   "taken": 1795145545.4,
+   "to": 1795145576.0,
+   "by": "gilded-gecko-838",
+   "verdict": "approved"
+  }
+ ],
+ "runs": [
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::guard_tests",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795082998.2,
+   "started": 1795082998.2,
+   "ended": 1795083032.0,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083052.3,
+   "started": 1795083052.3,
+   "ended": 1795083078.8,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::guard",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083115.1,
+   "started": 1795083115.2,
+   "ended": 1795083148.1,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy -p symphony-board --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083156.9,
+   "started": 1795083157.0,
+   "ended": 1795083176.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test store",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083181.9,
+   "started": 1795083181.9,
+   "ended": 1795083515.9,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --lib",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083182.0,
+   "started": 1795083182.1,
+   "ended": 1795083264.9,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083271.9,
+   "started": 1795083272.0,
+   "ended": 1795083273.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083273.9,
+   "started": 1795083274.0,
+   "ended": 1795083286.4,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test workflow --test project",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083286.9,
+   "started": 1795083287.0,
+   "ended": 1795083340.5,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --lib save::",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083340.7,
+   "started": 1795083340.9,
+   "ended": 1795083374.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083374.5,
+   "started": 1795083374.6,
+   "ended": 1795083388.9,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "just lint-rs",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083396.8,
+   "started": 1795083396.9,
+   "ended": 1795083507.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just symphony-cli docs-audit --check",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083507.9,
+   "started": 1795083507.9,
+   "ended": 1795083518.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just symphony-cli status --lint",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083518.5,
+   "started": 1795083518.5,
+   "ended": 1795083518.8,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "just size-check",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795083532.6,
+   "started": 1795083532.7,
+   "ended": 1795083729.0,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::guard_tests",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084436.0,
+   "started": 1795084436.0,
+   "ended": 1795084470.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084512.3,
+   "started": 1795084512.4,
+   "ended": 1795084541.3,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy -p symphony-api --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084567.0,
+   "started": 1795084567.0,
+   "ended": 1795084570.6,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy -p symphony-api --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084577.4,
+   "started": 1795084577.5,
+   "ended": 1795084580.2,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::guard::tests::a_payload_naming",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084597.6,
+   "started": 1795084597.6,
+   "ended": 1795084626.8,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::guard::tests::a_guard_is_met_only",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084649.5,
+   "started": 1795084649.6,
+   "ended": 1795084673.8,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::guard::tests::a_guard_is_met_only",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084683.4,
+   "started": 1795084683.4,
+   "ended": 1795084706.5,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::guard_tests::an_edge_two",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084731.1,
+   "started": 1795084731.2,
+   "ended": 1795084758.8,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::guard_tests",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084802.6,
+   "started": 1795084802.6,
+   "ended": 1795084842.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::guard_tests::two_first",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084850.0,
+   "started": 1795084850.1,
+   "ended": 1795084880.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::guard_tests::two_first",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084880.8,
+   "started": 1795084880.8,
+   "ended": 1795084884.5,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::guard_tests::a_first_observation",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795084936.7,
+   "started": 1795084936.8,
+   "ended": 1795084994.2,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::guard_tests::a_first_observation",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085013.7,
+   "started": 1795085013.7,
+   "ended": 1795085045.9,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::guard_tests::a_first_observation",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085052.0,
+   "started": 1795085052.1,
+   "ended": 1795085089.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085169.6,
+   "started": 1795085169.7,
+   "ended": 1795085197.0,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085205.0,
+   "started": 1795085205.0,
+   "ended": 1795085214.1,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test cli api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085214.2,
+   "started": 1795085214.2,
+   "ended": 1795085220.2,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085266.4,
+   "started": 1795085266.5,
+   "ended": 1795085303.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::guard_tests::a_workflow_committing",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085318.3,
+   "started": 1795085318.3,
+   "ended": 1795085360.7,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy -p symphony-board -p symphony-api --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085370.1,
+   "started": 1795085370.2,
+   "ended": 1795085398.9,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy -p symphony-board -p symphony-api --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085412.1,
+   "started": 1795085412.1,
+   "ended": 1795085426.0,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::guard_tests",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085426.1,
+   "started": 1795085426.1,
+   "ended": 1795085464.1,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --lib",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085481.6,
+   "started": 1795085481.7,
+   "ended": 1795085520.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085481.7,
+   "started": 1795085481.8,
+   "ended": 1795085498.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085498.4,
+   "started": 1795085498.4,
+   "ended": 1795085529.4,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085529.5,
+   "started": 1795085529.5,
+   "ended": 1795085535.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test store",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085542.2,
+   "started": 1795085542.2,
+   "ended": 1795085936.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085542.2,
+   "started": 1795085542.3,
+   "ended": 1795085594.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test project",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085594.7,
+   "started": 1795085594.8,
+   "ended": 1795085605.9,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "just lint-rs",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085609.1,
+   "started": 1795085609.2,
+   "ended": 1795085822.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just symphony-cli docs-audit --check",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085829.3,
+   "started": 1795085829.5,
+   "ended": 1795085842.9,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just symphony-cli status --lint",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085843.0,
+   "started": 1795085843.2,
+   "ended": 1795085843.9,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "just size-check",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795085844.3,
+   "started": 1795085844.5,
+   "ended": 1795086602.6,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build -p symphony-board --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133003.7,
+   "started": 1795133003.9,
+   "ended": 1795133011.9,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build -p symphony-board --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133039.3,
+   "started": 1795133039.5,
+   "ended": 1795133070.2,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build -p symphony-board --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133086.5,
+   "started": 1795133086.8,
+   "ended": 1795133124.8,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build -p symphony-board -p symphony-app -p symphony-api --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133142.0,
+   "started": 1795133142.3,
+   "ended": 1795133237.6,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build -p symphony-board -p symphony-app -p symphony-api --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133245.5,
+   "started": 1795133245.8,
+   "ended": 1795133307.9,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133315.8,
+   "started": 1795133316.0,
+   "ended": 1795133502.3,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133522.5,
+   "started": 1795133522.7,
+   "ended": 1795133644.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133685.0,
+   "started": 1795133685.2,
+   "ended": 1795133702.9,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133709.9,
+   "started": 1795133710.0,
+   "ended": 1795133759.4,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133764.7,
+   "started": 1795133765.0,
+   "ended": 1795133812.7,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133824.6,
+   "started": 1795133824.7,
+   "ended": 1795133864.8,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133894.1,
+   "started": 1795133894.3,
+   "ended": 1795133929.6,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133940.0,
+   "started": 1795133940.1,
+   "ended": 1795133968.1,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795133973.2,
+   "started": 1795133973.4,
+   "ended": 1795134013.2,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test store catalogue",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134023.4,
+   "started": 1795134023.5,
+   "ended": 1795134083.8,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test store schema",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134093.4,
+   "started": 1795134093.5,
+   "ended": 1795134126.3,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134157.4,
+   "started": 1795134157.6,
+   "ended": 1795134306.1,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134309.6,
+   "started": 1795134309.8,
+   "ended": 1795134441.4,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134445.0,
+   "started": 1795134445.3,
+   "ended": 1795134475.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test cli api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134475.8,
+   "started": 1795134476.3,
+   "ended": 1795134498.1,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test store",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134526.2,
+   "started": 1795134526.4,
+   "ended": 1795135101.9,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --lib",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134526.7,
+   "started": 1795134526.8,
+   "ended": 1795134721.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134721.4,
+   "started": 1795134721.7,
+   "ended": 1795134730.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134730.3,
+   "started": 1795134730.6,
+   "ended": 1795134751.9,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134751.9,
+   "started": 1795134752.1,
+   "ended": 1795134788.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134792.7,
+   "started": 1795134792.8,
+   "ended": 1795134889.9,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test project",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134889.9,
+   "started": 1795134890.1,
+   "ended": 1795134903.8,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-server --lib workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795134903.9,
+   "started": 1795134904.0,
+   "ended": 1795135054.8,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test store raw_fence",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795135137.1,
+   "started": 1795135137.3,
+   "ended": 1795135138.3,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build -p symphony-board --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795135282.4,
+   "started": 1795135282.5,
+   "ended": 1795135384.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::guard::tests::a_guard_met_stands",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795135405.3,
+   "started": 1795135405.5,
+   "ended": 1795135479.8,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::effects::tests::a_decision_revoked",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795135532.9,
+   "started": 1795135533.0,
+   "ended": 1795135586.2,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib store::admission::effects::tests::a_decision_revoked",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795135594.0,
+   "started": 1795135594.1,
+   "ended": 1795135642.4,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test sweep a_decision_revoked",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795135679.2,
+   "started": 1795135679.3,
+   "ended": 1795135762.0,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test sweep a_decision_revoked",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795135769.8,
+   "started": 1795135770.0,
+   "ended": 1795135903.7,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795135962.6,
+   "started": 1795135962.8,
+   "ended": 1795136073.8,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795136088.8,
+   "started": 1795136088.9,
+   "ended": 1795136171.5,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795136172.6,
+   "started": 1795136172.8,
+   "ended": 1795136767.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test sweep land",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795136766.4,
+   "started": 1795136766.6,
+   "ended": 1795137196.4,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test store",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137207.2,
+   "started": 1795137207.3,
+   "ended": 1795137646.3,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --lib",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137207.3,
+   "started": 1795137207.4,
+   "ended": 1795137207.5,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test sweep land",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137207.6,
+   "started": 1795137207.7,
+   "ended": 1795137207.8,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137207.9,
+   "started": 1795137207.9,
+   "ended": 1795137208.0,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137208.1,
+   "started": 1795137208.2,
+   "ended": 1795137208.2,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137208.3,
+   "started": 1795137208.4,
+   "ended": 1795137208.5,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137208.5,
+   "started": 1795137208.6,
+   "ended": 1795137208.7,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test project",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137208.7,
+   "started": 1795137208.8,
+   "ended": 1795137208.9,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-server --lib workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137209.0,
+   "started": 1795137209.1,
+   "ended": 1795137209.2,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just symphony-cli docs-audit --check",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137211.5,
+   "started": 1795137211.6,
+   "ended": 1795137266.5,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just symphony-cli status --lint",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137266.5,
+   "started": 1795137266.6,
+   "ended": 1795137267.0,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137273.4,
+   "started": 1795137273.5,
+   "ended": 1795137276.2,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --lib",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137286.5,
+   "started": 1795137286.6,
+   "ended": 1795137405.9,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137406.0,
+   "started": 1795137406.2,
+   "ended": 1795137412.4,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137412.5,
+   "started": 1795137412.6,
+   "ended": 1795137426.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137426.4,
+   "started": 1795137426.5,
+   "ended": 1795137432.4,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test project",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137432.4,
+   "started": 1795137432.5,
+   "ended": 1795137443.4,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-server --lib workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137443.5,
+   "started": 1795137443.6,
+   "ended": 1795137519.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test sweep land",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137519.7,
+   "started": 1795137519.8,
+   "ended": 1795137685.3,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "just lint-rs",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137692.7,
+   "started": 1795137692.8,
+   "ended": 1795137949.2,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "just size-check",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795137949.9,
+   "started": 1795137950.3,
+   "ended": 1795138699.8,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795139210.9,
+   "started": 1795139211.0,
+   "ended": 1795139386.1,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795139711.1,
+   "started": 1795139711.2,
+   "ended": 1795139765.5,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795139787.1,
+   "started": 1795139787.4,
+   "ended": 1795140039.3,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795140051.8,
+   "started": 1795140051.9,
+   "ended": 1795140074.4,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795140097.8,
+   "started": 1795140097.9,
+   "ended": 1795140123.4,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795140136.1,
+   "started": 1795140136.3,
+   "ended": 1795140176.8,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795140183.0,
+   "started": 1795140183.4,
+   "ended": 1795140247.0,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795140273.0,
+   "started": 1795140273.4,
+   "ended": 1795140554.2,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib workflow::",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795140567.1,
+   "started": 1795140567.2,
+   "ended": 1795140877.2,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- the_board_takes_no_guarded",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795140937.9,
+   "started": 1795140938.0,
+   "ended": 1795140952.1,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- the_board_takes_no_guarded",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795140963.9,
+   "started": 1795140964.2,
+   "ended": 1795140996.5,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- the_board_takes_no_guarded",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141017.5,
+   "started": 1795141017.6,
+   "ended": 1795141018.2,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- the_board_takes_no_guarded",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141029.6,
+   "started": 1795141029.7,
+   "ended": 1795141062.7,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build -p symphony-board --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141194.3,
+   "started": 1795141194.7,
+   "ended": 1795141258.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- workflow::guard::tests::the_entry",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141280.4,
+   "started": 1795141280.5,
+   "ended": 1795141317.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141365.2,
+   "started": 1795141365.3,
+   "ended": 1795141395.2,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141424.0,
+   "started": 1795141424.1,
+   "ended": 1795141439.8,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141443.2,
+   "started": 1795141443.4,
+   "ended": 1795141480.6,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141490.0,
+   "started": 1795141490.1,
+   "ended": 1795141527.0,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141547.5,
+   "started": 1795141547.6,
+   "ended": 1795141583.8,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141593.3,
+   "started": 1795141593.3,
+   "ended": 1795141626.7,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_from_a_guarded",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141648.5,
+   "started": 1795141648.5,
+   "ended": 1795141681.7,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141713.6,
+   "started": 1795141713.6,
+   "ended": 1795141750.5,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141762.3,
+   "started": 1795141762.4,
+   "ended": 1795141775.1,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- store::admission::effects workflow::guard",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141775.2,
+   "started": 1795141775.2,
+   "ended": 1795141809.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --lib",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141831.5,
+   "started": 1795141831.6,
+   "ended": 1795141850.7,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141831.6,
+   "started": 1795141831.7,
+   "ended": 1795141851.0,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795141882.6,
+   "started": 1795141882.6,
+   "ended": 1795142014.5,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142017.5,
+   "started": 1795142017.6,
+   "ended": 1795142065.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --test cli api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142065.7,
+   "started": 1795142065.8,
+   "ended": 1795142104.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --lib",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142115.7,
+   "started": 1795142115.8,
+   "ended": 1795142193.9,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142115.9,
+   "started": 1795142115.9,
+   "ended": 1795142158.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142158.7,
+   "started": 1795142158.8,
+   "ended": 1795142167.0,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test launch attempts",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142167.1,
+   "started": 1795142167.2,
+   "ended": 1795142175.2,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142175.2,
+   "started": 1795142175.3,
+   "ended": 1795142186.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142186.4,
+   "started": 1795142186.4,
+   "ended": 1795142215.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test store",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142194.0,
+   "started": 1795142194.0,
+   "ended": 1795142574.5,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test project",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142215.6,
+   "started": 1795142215.7,
+   "ended": 1795142228.9,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --lib project",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142228.9,
+   "started": 1795142229.0,
+   "ended": 1795142251.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-server --lib workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142251.3,
+   "started": 1795142251.4,
+   "ended": 1795142321.0,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test sweep land",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142321.0,
+   "started": 1795142321.5,
+   "ended": 1795142493.0,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "just lint-rs",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142582.0,
+   "started": 1795142582.1,
+   "ended": 1795142749.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just symphony-cli docs-audit --check",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142749.7,
+   "started": 1795142749.8,
+   "ended": 1795142760.2,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just symphony-cli status --lint",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142760.2,
+   "started": 1795142760.3,
+   "ended": 1795142760.7,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "just size-check",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795142760.9,
+   "started": 1795142761.0,
+   "ended": 1795142995.4,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build -p symphony-board",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795143369.5,
+   "started": 1795143369.6,
+   "ended": 1795143401.4,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo build -p symphony-board --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795143416.0,
+   "started": 1795143416.1,
+   "ended": 1795143470.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- a_resume_",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795143501.3,
+   "started": 1795143501.5,
+   "ended": 1795143518.0,
+   "result": "red"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- a_resume_",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795143523.6,
+   "started": 1795143523.6,
+   "ended": 1795143571.0,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- store::admission::effects::tests::a_task_brought",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795143592.7,
+   "started": 1795143592.7,
+   "ended": 1795143636.5,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- store::admission::effects::tests::a_task_brought a_resume_returns",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795143641.9,
+   "started": 1795143642.0,
+   "ended": 1795143681.7,
+   "result": "red"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795143703.1,
+   "started": 1795143703.2,
+   "ended": 1795143771.7,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "cargo test -p symphony-board --lib -- workflow:: store::admission",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795143771.7,
+   "started": 1795143771.8,
+   "ended": 1795143921.2,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "cargo clippy --workspace --all-targets",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795143933.6,
+   "started": 1795143933.7,
+   "ended": 1795143953.0,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --lib",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795143968.0,
+   "started": 1795143968.2,
+   "ended": 1795144098.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795143968.4,
+   "started": 1795143968.5,
+   "ended": 1795144087.4,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test cli api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795144087.4,
+   "started": 1795144087.5,
+   "ended": 1795144096.9,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test launch attempts",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795144096.9,
+   "started": 1795144097.0,
+   "ended": 1795144104.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test store",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795144098.6,
+   "started": 1795144098.7,
+   "ended": 1795144879.3,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-api",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795144104.6,
+   "started": 1795144104.7,
+   "ended": 1795144111.8,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795144111.8,
+   "started": 1795144111.9,
+   "ended": 1795144143.8,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --test project",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795144143.9,
+   "started": 1795144144.0,
+   "ended": 1795144155.4,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-app --lib project",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795144155.5,
+   "started": 1795144155.7,
+   "ended": 1795144181.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-server --lib workflow",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795144181.6,
+   "started": 1795144181.7,
+   "ended": 1795144274.4,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just test-rs -p symphony-board --test sweep land",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795144274.5,
+   "started": 1795144274.6,
+   "ended": 1795144663.3,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "just lint-rs",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795144886.5,
+   "started": 1795144886.6,
+   "ended": 1795145046.2,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just symphony-cli docs-audit --check",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795145046.2,
+   "started": 1795145046.4,
+   "ended": 1795145065.6,
+   "result": "green"
+  },
+  {
+   "phase": "test",
+   "label": "just symphony-cli status --lint",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795145065.6,
+   "started": 1795145065.8,
+   "ended": 1795145066.3,
+   "result": "green"
+  },
+  {
+   "phase": "build",
+   "label": "just size-check",
+   "by": "keen-swift-85",
+   "commit": null,
+   "host": "",
+   "queued": 1795145066.9,
+   "started": 1795145067.1,
+   "ended": 1795145510.9,
+   "result": "green"
+  }
+ ],
+ "gates": [
+  {
+   "name": "review",
+   "states": [
+    {
+     "state": "missing",
+     "from": 1795083775.8,
+     "by": null,
+     "detail": ""
+    },
+    {
+     "state": "missing",
+     "from": 1795084284.5,
+     "by": null,
+     "detail": ""
+    },
+    {
+     "state": "met",
+     "from": 1795086861.8,
+     "by": null,
+     "detail": ""
+    },
+    {
+     "state": "missing",
+     "from": 1795134886.9,
+     "by": null,
+     "detail": ""
+    },
+    {
+     "state": "missing",
+     "from": 1795139175.7,
+     "by": null,
+     "detail": ""
+    },
+    {
+     "state": "missing",
+     "from": 1795143318.2,
+     "by": null,
+     "detail": ""
+    },
+    {
+     "state": "met",
+     "from": 1795145576.0,
+     "by": null,
+     "detail": ""
+    }
+   ]
+  },
+  {
+   "name": "tests",
+   "states": [
+    {
+     "state": "met",
+     "from": 1795145510.9,
+     "by": null,
+     "detail": ""
+    }
+   ]
+  }
+ ],
+ "history": {
+  "sources": [
+   {
+    "slug": "tools/workflow-revision-guards",
+    "state": "complete",
+    "first_id": 15091,
+    "last_id": 17313,
+    "before": null
+   }
+  ],
+  "sources_complete": true,
+  "roles": [
+   {
+    "role": "executor",
+    "by": "keen-swift-85",
+    "source": "tools/workflow-revision-guards",
+    "from": 1795072112.5,
+    "from_id": 15000,
+    "to": 1795086861.8,
+    "to_id": 15000,
+    "uncertain": false
+   },
+   {
+    "role": "reviewer",
+    "by": "gilded-gecko-838",
+    "source": "tools/workflow-revision-guards",
+    "from": 1795083828.1,
+    "from_id": 15001,
+    "to": 1795086861.8,
+    "to_id": 15001,
+    "uncertain": false
+   },
+   {
+    "role": "reviewer",
+    "by": "gilded-gecko-838",
+    "source": "tools/workflow-revision-guards",
+    "from": 1795132641.4,
+    "from_id": 15002,
+    "to": 1795145576.0,
+    "to_id": 15002,
+    "uncertain": false
+   },
+   {
+    "role": "executor",
+    "by": "keen-swift-85",
+    "source": "tools/workflow-revision-guards",
+    "from": 1795132641.4,
+    "from_id": 15003,
+    "to": 1795145576.0,
+    "to_id": 15003,
+    "uncertain": false
+   },
+   {
+    "role": "orchestrator",
+    "by": "coral-badger-11",
+    "source": "tools/workflow-revision-guards",
+    "from": 1795046966.0,
+    "from_id": 15004,
+    "to": 1795047018.6,
+    "to_id": 15004,
+    "uncertain": false
+   },
+   {
+    "role": "orchestrator",
+    "by": "hazel-merlin-755",
+    "source": "tools/workflow-revision-guards",
+    "from": 1795047018.6,
+    "from_id": 15005,
+    "to": 1795048258.6,
+    "to_id": 15005,
+    "uncertain": false
+   },
+   {
+    "role": "orchestrator",
+    "by": "coral-badger-11",
+    "source": "tools/workflow-revision-guards",
+    "from": 1795048258.6,
+    "from_id": 15006,
+    "to": 1795086861.8,
+    "to_id": 15006,
+    "uncertain": false
+   },
+   {
+    "role": "orchestrator",
+    "by": "coral-badger-11",
+    "source": "tools/workflow-revision-guards",
+    "from": 1795132641.4,
+    "from_id": 15007,
+    "to": 1795145576.0,
+    "to_id": 15007,
+    "uncertain": false
+   }
+  ],
+  "messages": [
+   {
+    "id": 15091,
+    "at": 1795071852.1,
+    "sender": "hazel-merlin-755",
+    "recipient": "coral-badger-11",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15103,
+    "at": 1795072093.1,
+    "sender": "coral-badger-11",
+    "recipient": null,
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "everyone",
+     "candidates": []
+    },
+    "after_close": false
+   },
+   {
+    "id": 15115,
+    "at": 1795072117.5,
+    "sender": "coral-badger-11",
+    "recipient": "hazel-merlin-755",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": false
+   },
+   {
+    "id": 15134,
+    "at": 1795072406.0,
+    "sender": "lunar-heron-49",
+    "recipient": "keen-swift-85",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15137,
+    "at": 1795072452.3,
+    "sender": "keen-swift-85",
+    "recipient": "@orchestrator",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15140,
+    "at": 1795072496.1,
+    "sender": "coral-badger-11",
+    "recipient": "@executor",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15163,
+    "at": 1795072790.2,
+    "sender": "coral-badger-11",
+    "recipient": "@executor",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15171,
+    "at": 1795072861.4,
+    "sender": "coral-badger-11",
+    "recipient": "@executor",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15205,
+    "at": 1795073941.2,
+    "sender": "keen-swift-85",
+    "recipient": "coral-badger-11",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15249,
+    "at": 1795075951.1,
+    "sender": "keen-swift-85",
+    "recipient": "lunar-heron-49",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": false
+   },
+   {
+    "id": 15250,
+    "at": 1795075959.7,
+    "sender": "keen-swift-85",
+    "recipient": "amber-hare-271",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": false
+   },
+   {
+    "id": 15254,
+    "at": 1795076179.3,
+    "sender": "lunar-heron-49",
+    "recipient": "keen-swift-85",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15256,
+    "at": 1795076707.6,
+    "sender": "keen-swift-85",
+    "recipient": "lunar-heron-49",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": false
+   },
+   {
+    "id": 15257,
+    "at": 1795076713.1,
+    "sender": "keen-swift-85",
+    "recipient": "amber-hare-271",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": false
+   },
+   {
+    "id": 15265,
+    "at": 1795078032.2,
+    "sender": "keen-swift-85",
+    "recipient": "coral-badger-11",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15266,
+    "at": 1795078045.7,
+    "sender": "coral-badger-11",
+    "recipient": "@executor",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15267,
+    "at": 1795078226.8,
+    "sender": "keen-swift-85",
+    "recipient": "lucid-badger-8",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": false
+   },
+   {
+    "id": 15275,
+    "at": 1795080910.6,
+    "sender": "lucid-badger-8",
+    "recipient": "keen-swift-85",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15322,
+    "at": 1795082181.7,
+    "sender": "keen-swift-85",
+    "recipient": "lucid-badger-8",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": false
+   },
+   {
+    "id": 15354,
+    "at": 1795082818.7,
+    "sender": "keen-swift-85",
+    "recipient": "coral-badger-11",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15356,
+    "at": 1795082832.2,
+    "sender": "lunar-heron-49",
+    "recipient": "keen-swift-85",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15386,
+    "at": 1795083533.1,
+    "sender": "keen-swift-85",
+    "recipient": "lunar-heron-49",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": false
+   },
+   {
+    "id": 15387,
+    "at": 1795083772.5,
+    "sender": "keen-swift-85",
+    "recipient": null,
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "everyone",
+     "candidates": []
+    },
+    "after_close": false
+   },
+   {
+    "id": 15389,
+    "at": 1795083781.6,
+    "sender": "keen-swift-85",
+    "recipient": "coral-badger-11",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15393,
+    "at": 1795083834.8,
+    "sender": "coral-badger-11",
+    "recipient": "@reviewer",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15396,
+    "at": 1795084284.5,
+    "sender": "gilded-gecko-838",
+    "recipient": "@executor",
+    "kind": "verdict",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15415,
+    "at": 1795086623.2,
+    "sender": "keen-swift-85",
+    "recipient": "gilded-gecko-838",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15417,
+    "at": 1795086633.1,
+    "sender": "keen-swift-85",
+    "recipient": "@orchestrator",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15420,
+    "at": 1795086777.1,
+    "sender": "coral-badger-11",
+    "recipient": "@reviewer",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 15425,
+    "at": 1795086861.8,
+    "sender": "gilded-gecko-838",
+    "recipient": null,
+    "kind": "verdict",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "everyone",
+     "candidates": []
+    },
+    "after_close": true
+   },
+   {
+    "id": 15537,
+    "at": 1795089636.8,
+    "sender": "lucid-badger-8",
+    "recipient": "keen-swift-85",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": true
+   },
+   {
+    "id": 15538,
+    "at": 1795089637.9,
+    "sender": "board",
+    "recipient": "@orchestrator",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": true
+   },
+   {
+    "id": 15557,
+    "at": 1795089906.2,
+    "sender": "lunar-heron-49",
+    "recipient": "keen-swift-85",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": true
+   },
+   {
+    "id": 15558,
+    "at": 1795089908.8,
+    "sender": "board",
+    "recipient": "@orchestrator",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": true
+   },
+   {
+    "id": 15617,
+    "at": 1795092833.2,
+    "sender": "lucid-badger-8",
+    "recipient": "keen-swift-85",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": true
+   },
+   {
+    "id": 15618,
+    "at": 1795092834.3,
+    "sender": "board",
+    "recipient": "@orchestrator",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": true
+   },
+   {
+    "id": 15656,
+    "at": 1795093228.0,
+    "sender": "hazel-lark-531",
+    "recipient": "@executor",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": true
+   },
+   {
+    "id": 15657,
+    "at": 1795093234.0,
+    "sender": "board",
+    "recipient": "@orchestrator",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": true
+   },
+   {
+    "id": 15667,
+    "at": 1795093298.9,
+    "sender": "russet-egret-885",
+    "recipient": "@executor",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": true
+   },
+   {
+    "id": 15668,
+    "at": 1795093304.8,
+    "sender": "board",
+    "recipient": "@orchestrator",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": true
+   },
+   {
+    "id": 15673,
+    "at": 1795093322.0,
+    "sender": "coral-badger-11",
+    "recipient": "@executor",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": true
+   },
+   {
+    "id": 15676,
+    "at": 1795093393.2,
+    "sender": "keen-swift-85",
+    "recipient": "hazel-lark-531",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "outside",
+     "candidates": []
+    },
+    "after_close": true
+   },
+   {
+    "id": 15678,
+    "at": 1795093413.1,
+    "sender": "keen-swift-85",
+    "recipient": "@orchestrator",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": true
+   },
+   {
+    "id": 16769,
+    "at": 1795132649.5,
+    "sender": "board",
+    "recipient": "@executor",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 16770,
+    "at": 1795132668.7,
+    "sender": "board",
+    "recipient": "@reviewer",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 16771,
+    "at": 1795132686.7,
+    "sender": "keen-swift-85",
+    "recipient": "@orchestrator",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 16772,
+    "at": 1795132691.4,
+    "sender": "coral-badger-11",
+    "recipient": "@executor",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 16899,
+    "at": 1795134652.5,
+    "sender": "board",
+    "recipient": "@orchestrator",
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 16901,
+    "at": 1795134886.9,
+    "sender": "gilded-gecko-838",
+    "recipient": "@executor",
+    "kind": "verdict",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 16902,
+    "at": 1795134904.5,
+    "sender": "coral-badger-11",
+    "recipient": "@executor",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 16971,
+    "at": 1795136801.8,
+    "sender": "keen-swift-85",
+    "recipient": "@orchestrator",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 17040,
+    "at": 1795139048.0,
+    "sender": "keen-swift-85",
+    "recipient": "gilded-gecko-838",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 17045,
+    "at": 1795139106.1,
+    "sender": "coral-badger-11",
+    "recipient": "@executor",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "orchestrator",
+       "by": "coral-badger-11",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 17062,
+    "at": 1795139175.7,
+    "sender": "gilded-gecko-838",
+    "recipient": "@executor",
+    "kind": "verdict",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 17181,
+    "at": 1795143023.0,
+    "sender": "keen-swift-85",
+    "recipient": "@reviewer",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 17191,
+    "at": 1795143318.2,
+    "sender": "gilded-gecko-838",
+    "recipient": "@executor",
+    "kind": "verdict",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 17299,
+    "at": 1795145533.4,
+    "sender": "keen-swift-85",
+    "recipient": "@reviewer",
+    "kind": "msg",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "executor",
+       "by": "keen-swift-85",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "after_close": false
+   },
+   {
+    "id": 17303,
+    "at": 1795145576.0,
+    "sender": "gilded-gecko-838",
+    "recipient": null,
+    "kind": "verdict",
+    "from": {
+     "state": "known",
+     "candidates": [
+      {
+       "role": "reviewer",
+       "by": "gilded-gecko-838",
+       "source": "tools/workflow-revision-guards"
+      }
+     ]
+    },
+    "to": {
+     "state": "everyone",
+     "candidates": []
+    },
+    "after_close": true
+   },
+   {
+    "id": 17311,
+    "at": 1795145680.4,
+    "sender": "coral-badger-11",
+    "recipient": null,
+    "kind": "msg",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "everyone",
+     "candidates": []
+    },
+    "after_close": true
+   },
+   {
+    "id": 17313,
+    "at": 1795145695.6,
+    "sender": "coral-badger-11",
+    "recipient": null,
+    "kind": "verdict",
+    "from": {
+     "state": "outside",
+     "candidates": []
+    },
+    "to": {
+     "state": "everyone",
+     "candidates": []
+    },
+    "after_close": true
+   }
+  ]
+ }
+}
