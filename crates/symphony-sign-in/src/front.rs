@@ -25,6 +25,8 @@ use crate::google::{self, Provider};
 use crate::kept::{FLOW_SECONDS, Kept, SESSION_SECONDS};
 use crate::settings::{self, Key, Settings};
 use crate::word::{self, Who};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt as _, Empty, Full, StreamBody};
 use hyper::body::{Bytes, Incoming};
@@ -32,11 +34,12 @@ use hyper::header::{self, HeaderMap, HeaderName, HeaderValue};
 use hyper::upgrade::OnUpgrade;
 use hyper::{Method, Request, Response, StatusCode, Uri, Version};
 use hyper_util::rt::TokioIo;
+use sha2::{Digest as _, Sha256};
 use std::convert::Infallible;
 use std::fmt;
 use std::io::Write;
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::Instant;
@@ -626,22 +629,36 @@ fn not_allowed(allow: &str) -> Response<Body> {
     response
 }
 
+/// The pages' one style: the system's font, and a button a finger can press. The page takes the
+/// visitor's light or dark scheme from its `color-scheme`.
+const STYLE: &str = "body{margin:0;padding:24px 16px;font:16px/1.5 system-ui,sans-serif}\
+                     code{overflow-wrap:anywhere}\
+                     button{min-height:44px;padding:0 20px;font:inherit}";
+
+/// The pages' policy: they load nothing and are framed by no site, and the one style they apply
+/// is [`STYLE`], allowed by its digest.
+static POLICY: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "default-src 'none'; style-src 'sha256-{}'; form-action 'self'; frame-ancestors 'none'; \
+         base-uri 'none'",
+        STANDARD.encode(Sha256::digest(STYLE.as_bytes()))
+    )
+});
+
 /// One of the service's pages: `title`, and `body`, HTML that loads nothing, framed by no site.
 fn html(status: StatusCode, title: &str, body: &str) -> Response<Body> {
     let mut response = empty(status);
     *response.body_mut() = Full::new(Bytes::from(format!(
         "<!doctype html>\n<html lang=\"en\">\n<meta charset=\"utf-8\">\n\
-         <meta name=\"viewport\" content=\"width=device-width\">\n<title>{title}</title>\n{body}\n"
+         <meta name=\"viewport\" content=\"width=device-width\">\n\
+         <meta name=\"color-scheme\" content=\"light dark\">\n<title>{title}</title>\n\
+         <style>{STYLE}</style>\n{body}\n"
     )))
     .map_err(never)
     .boxed_unsync();
     let headers = response.headers_mut();
     insert(headers, header::CONTENT_TYPE, "text/html; charset=utf-8");
-    insert(
-        headers,
-        header::CONTENT_SECURITY_POLICY,
-        "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-    );
+    insert(headers, header::CONTENT_SECURITY_POLICY, &POLICY);
     insert(headers, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
     response
 }

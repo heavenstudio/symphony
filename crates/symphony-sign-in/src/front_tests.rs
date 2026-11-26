@@ -726,12 +726,6 @@ async fn the_visitors_own_page_says_whom_they_are_signed_in_as_and_offers_sign_o
         ),
         "{html}"
     );
-    assert!(
-        page.headers()[header::CONTENT_SECURITY_POLICY]
-            .to_str()
-            .unwrap()
-            .contains("default-src 'none'")
-    );
     assert_eq!(page.headers()[header::CACHE_CONTROL], "no-store");
     let unsigned = through.get(PREFIX, &[("sec-fetch-mode", "navigate")]).await;
     assert_eq!(unsigned.status(), StatusCode::FOUND);
@@ -746,6 +740,40 @@ async fn the_visitors_own_page_says_whom_they_are_signed_in_as_and_offers_sign_o
         assert_eq!(post.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
     }
     assert!(through.server.heard().is_empty());
+}
+
+/// Each page loads nothing and is framed by no site; it takes the visitor's scheme, and the one
+/// style it applies is the one its policy allows by digest, so a browser applies it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_applies_its_one_style_by_its_digest_and_takes_the_visitors_scheme() {
+    let through = Through::new().await;
+    let cookie = through.sign_in("/").await;
+    let signed_in = through.get(PREFIX, &[("cookie", cookie.as_str())]).await;
+    let refused = through.back("state=forged&code=x", None).await;
+    for page in [signed_in, refused] {
+        let html = body(&page);
+        let policy = page.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .to_string();
+        let (_, style) = html.split_once("<style>").unwrap();
+        let (style, _) = style.split_once("</style>").unwrap();
+        let digest = STANDARD.encode(Sha256::digest(style.as_bytes()));
+        assert_eq!(
+            policy,
+            format!(
+                "default-src 'none'; style-src 'sha256-{digest}'; form-action 'self'; \
+                 frame-ancestors 'none'; base-uri 'none'"
+            )
+        );
+        assert_eq!(html.matches("<style>").count(), 1, "{html}");
+        assert!(html.contains("min-height:44px"), "{html}");
+        assert!(
+            html.contains(r#"<meta name="color-scheme" content="light dark">"#),
+            "{html}"
+        );
+        assert_eq!(page.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    }
 }
 
 /// Where a visitor comes back to is the path they asked for, on the origin, whatever a request's
