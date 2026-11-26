@@ -6,6 +6,7 @@ import { carried } from "./timeline-cost";
 import { BAND_SHARE } from "./timeline-cut";
 import {
   AFTER_PAD_PX,
+  advance,
   BAR_SPAN,
   BAR_WORDS_PX,
   barFit,
@@ -16,6 +17,7 @@ import {
   clockOf,
   date,
   dateOf,
+  END_PX,
   everySeconds,
   type Fit,
   failed,
@@ -30,7 +32,6 @@ import {
   keptTitle,
   type Lane,
   type Lanes,
-  LETTER_PX,
   LONGEST_WAIT,
   label,
   lanes,
@@ -476,9 +477,9 @@ describe("a task's timeline laid out", () => {
     const hatch = lanes(rotated).notKept;
     expect(hatch?.left).toBeCloseTo((2 / 380) * 100, 10);
     expect(hatch?.width).toBeCloseTo((86 / 380) * 100, 10);
-    // 27 characters weighed letter by letter and their padding, 177 px, in 23% of the track: from
-    // 800 px.
-    expect(hatch?.label).toEqual({ text: "not kept before 11-11 10:28", from: 800, to: null });
+    // 27 characters weighed letter by letter and their padding, 189 px, in 23% of the track: from
+    // 850 px.
+    expect(hatch?.label).toEqual({ text: "not kept before 11-11 10:28", from: 850, to: null });
     expect(hatch?.title).toBe("Builds and tests before 11-11 10:28 are not kept");
     // Too narrow for its words: a hatch alone.
     expect(lanes({ ...pictures(), runs_from: at(4) }).notKept?.label).toBeNull();
@@ -783,14 +784,15 @@ describe("a task's timeline laid out", () => {
     expect(widthFor("ready 41 m", 0.5, PAD_PX)).toBeUndefined();
     expect(widthFor("", 50, PAD_PX)).toBeUndefined();
     expect(widthFor("41 m", 0, PAD_PX)).toBeUndefined();
-    // The long words where they fit, the short below that, nothing below the short's own.
+    // The long words where they fit, the short below that, nothing below the short's own: in a
+    // segment, inside its padding and border, "ready 41 m" needs 80.9 px, 10 % of 809.
     const fits = fitted("ready 41 m", "41 m", 10);
     expect(shown(fits, 1280)).toBe("ready 41 m");
-    expect(shown(fits, 800)).toBe("ready 41 m");
-    expect(shown(fits, 750)).toBe("41 m");
+    expect(shown(fits, 850)).toBe("ready 41 m");
+    expect(shown(fits, 800)).toBe("41 m");
     expect(shown(fits, 450)).toBe("41 m");
     expect(shown(fits, 400)).toBe("");
-    expect(fitClass(fits[1] as Fit)).toBe("tl-fit tl-from-450 tl-to-800");
+    expect(fitClass(fits[1] as Fit)).toBe("tl-fit tl-from-450 tl-to-850");
     // A short word no narrower than the long one is never drawn beside it.
     expect(fitted("41 m", "41 m", 10)).toHaveLength(1);
     // The last label may run into the lanes' end margin.
@@ -802,37 +804,39 @@ describe("a task's timeline laid out", () => {
     expect(roomCss(between)).toBe("1.00%");
   });
 
-  it("a label after a bar is weighed by its letters, its padding past the bar as drawn and its gap", () => {
-    expect([LETTER_PX, AFTER_PAD_PX, SEG_MIN_PX, GAP_PX]).toEqual([7, 6, 14, 4]);
-    // "changes" beside a bar no narrower than drawn: 7 × 7 + 6 + 4 = 59 px, of 10 % from a 590 px
-    // track, so from 600; "approved", 66 px, from 700. Weighed as a segment's words (textPx, 49 px,
-    // no padding), it would have shown from 550, and been cut.
+  it("a label after a bar is weighed by its words, its padding past the bar as drawn and its gap", () => {
+    expect([AFTER_PAD_PX, SEG_MIN_PX, GAP_PX]).toEqual([6, 14, 4]);
+    // "changes" beside a bar no narrower than drawn: 50.5 + 6 + 4 = 60.5 px, of 10 % from a 605 px
+    // track, so from 650; "approved", 66.6 px, from 700; "verdict", 52.2 px, from 550. Weighed
+    // without its padding (widthFor), "changes" would have shown from 550, and been cut.
     const ten = { room: 10, last: false, bar: 5 };
-    expect(label("changes", ten)).toEqual({ text: "changes", from: 600, to: null });
+    expect(label("changes", ten)).toEqual({ text: "changes", from: 650, to: null });
     expect(label("approved", ten)?.from).toBe(700);
-    expect(label("verdict", ten)?.from).toBe(600);
+    expect(label("verdict", ten)?.from).toBe(550);
     expect(widthFor("changes", 10, GAP_PX)).toBe(550);
-    // Ten letters take 80 px: exactly 20 % of 400 shows from 400, a hair less from 450, and 27 % of
-    // 300 at every width.
+    // Ten letters, their padding and their gap take 79.7 px: that share of 400 shows from 400, a
+    // hair less from 450, and that share of 300 at every width.
     const tenLetters = "a".repeat(10);
-    expect(label(tenLetters, { room: 20, last: false, bar: 50 })?.from).toBe(400);
-    expect(label(tenLetters, { room: 19.99, last: false, bar: 50 })?.from).toBe(450);
-    expect(label(tenLetters, { room: 27, last: false, bar: 50 })?.from).toBeNull();
-    expect(label(tenLetters, { room: 26.6, last: false, bar: 50 })?.from).toBe(400);
+    const share = (track: number) => ((textPx(tenLetters) + AFTER_PAD_PX + GAP_PX) * 100) / track;
+    expect(textPx(tenLetters) + AFTER_PAD_PX + GAP_PX).toBeCloseTo(79.74, 9);
+    expect(label(tenLetters, { room: share(400), last: false, bar: 50 })?.from).toBe(400);
+    expect(label(tenLetters, { room: share(400) - 0.01, last: false, bar: 50 })?.from).toBe(450);
+    expect(label(tenLetters, { room: share(300), last: false, bar: 50 })?.from).toBeNull();
+    expect(label(tenLetters, { room: share(300) - 0.01, last: false, bar: 50 })?.from).toBe(400);
     // A bar narrower than its least drawn width pushes its label's words past it: a bar of no time
-    // is drawn 14 px wide, so 70 + 4 + 14 + 6 = 94 px, from 470, so 500. A bar of 2 % is 9 px at
-    // 450, its label 5 px further: 85 px of 90. At 400 it is 8 px, 6 further: 86 px of 80.
+    // is drawn 14 px wide, so 69.7 + 4 + 14 + 6 = 93.7 px, from 469, so 500. A bar of 2 % is 9 px
+    // at 450, its label 5 px further: 84.7 px of 90. At 400 it is 8 px, 6 further: 85.7 px of 80.
     expect(label(tenLetters, { room: 20, last: false, bar: 0 })?.from).toBe(500);
     expect(label(tenLetters, { room: 20, last: false, bar: 2 })?.from).toBe(450);
     // A bar 14 px wide at 300 already takes the label's padding alone at every width.
     expect(label(tenLetters, { room: 20, last: false, bar: 14 / 3 })?.from).toBe(400);
-    // The last label takes the end margin too: twenty letters need 140 + 4 + 6 − 88 = 62 px, 5 % of
-    // 1240 px, so from 1250; of 2 %, wider than the widest track.
+    // The last label takes the end margin too: twenty letters need 139 + 4 + 6 − 88 = 61 px, 5 % of
+    // 1220 px, so from 1250; of 2 %, wider than the widest track.
     expect(label("a".repeat(20), { room: 5, last: true, bar: 5 })?.from).toBe(1250);
     expect(label("a".repeat(20), { room: 2, last: true, bar: 5 })).toBeNull();
     // The last label of none at all still shows, as does a verdict at the very end after a bar of
-    // no time: 56 + 4 + 20 = 80 px of the margin's 88. Ten letters there (94 px) have no room, and
-    // are never drawn.
+    // no time: 56.6 + 4 + 20 = 80.6 px of the margin's 88. Ten letters there (93.7 px) have no
+    // room, and are never drawn.
     expect(label("", { room: 0, last: true, bar: 0 })).toEqual({ text: "", from: null, to: null });
     expect(label("approved", { room: 0, last: true, bar: 0 })?.from).toBeNull();
     expect(label(tenLetters, { room: 0, last: true, bar: 0 })).toBeNull();
@@ -864,27 +868,29 @@ describe("a task's timeline laid out", () => {
     // One far enough before it never comes within 3 px of its words on a 300 px track: 10 px.
     expect(past(at(10, 0.1), at(10 + 10 / 3, 5))).toBeUndefined();
     expect(past(at(10, 0.1), at(10 + 10 / 3 - 0.01, 5))?.toFixed(2)).toBe("3.32");
-    // "1 h 4 m" weighs 41.9 px, 55.9 with its padding and border: of 5 %, from 1150 alone; past a
-    // segment 0.1 % before it, which takes 10 px less 0.1 % more, from 1300; one 4 % before it,
+    // "1 h 4 m" weighs 44.1 px, 58.1 with its padding and border: of 5 %, from 1200 alone; past a
+    // segment 0.1 % before it, which takes 10 px less 0.1 % more, from 1350; one 4 % before it,
     // never near, changes nothing.
-    expect(fittedFirst(["1 h 4 m"], 5)).toEqual([{ text: "1 h 4 m", from: 1150, to: null }]);
-    expect(fittedFirst(["1 h 4 m"], 5, 0.1)).toEqual([{ text: "1 h 4 m", from: 1300, to: null }]);
+    expect(fittedFirst(["1 h 4 m"], 5)).toEqual([{ text: "1 h 4 m", from: 1200, to: null }]);
+    expect(fittedFirst(["1 h 4 m"], 5, 0.1)).toEqual([{ text: "1 h 4 m", from: 1350, to: null }]);
     expect(fittedFirst(["1 h 4 m"], 5, 4)).toEqual(fittedFirst(["1 h 4 m"], 5));
-    expect(fitted("1 h 4 m", "", 4, 0.2)).toEqual([{ text: "1 h 4 m", from: 1600, to: null }]);
+    expect(fitted("1 h 4 m", "", 4.1, 0.2)).toEqual([{ text: "1 h 4 m", from: 1600, to: null }]);
     // Where that leaves too little room on every track, it gives way.
-    expect(fittedFirst(["1 h 4 m"], 3.6)).toEqual([{ text: "1 h 4 m", from: 1600, to: null }]);
-    expect(fittedFirst(["1 h 4 m"], 3.6, 0.1)).toEqual([]);
+    expect(fittedFirst(["1 h 4 m"], 3.7)).toEqual([{ text: "1 h 4 m", from: 1600, to: null }]);
+    expect(fittedFirst(["1 h 4 m"], 3.7, 0.1)).toEqual([]);
   });
 
   it("a word's room is weighed by its characters, and a room's width rounds a tie to even", () => {
-    // Each character by its own advance in the lanes' type, Helvetica Bold's at 12 px, and half a
-    // pixel for the browser's rounding: "39 m" is 6.67 + 6.67 + 3.33 + 10.67, as Chrome draws it.
-    expect(textPx("39 m")).toBeCloseTo(27.348 + 0.5, 9);
+    // Each character by the widest face's advance in the lanes' type at 12 px, and half a pixel for
+    // the browser's rounding: "39 m" is the system face's "3" and "9", its space at weight 400 and
+    // Segoe UI's bold "m", 7.86 + 8.02 + 3.38 + 11.00.
+    expect(textPx("39 m")).toBeCloseTo((655 + 668 + 282 + 917) * 0.012 + 0.5, 9);
     expect(textPx("")).toBe(0.5);
     // A wide letter and a narrow one; a capital; a word's middle dot.
-    expect([textPx("m"), textPx("i"), textPx("W"), textPx("·")].map((px) => px - 0.5)).toEqual([
-      10.668, 3.336, 11.328, 3.336,
-    ]);
+    const px = [textPx("m"), textPx("i"), textPx("W"), textPx("·")].map((one) => one - 0.5);
+    for (const [at, one] of [11.004, 3.42, 12.06, 4.008].entries()) {
+      expect(px[at]).toBeCloseTo(one, 9);
+    }
     // An accented letter weighs its letter; one the table has not, the whole size.
     expect(textPx("é")).toBe(textPx("e"));
     expect(textPx("→")).toBe(12.5);
@@ -894,22 +900,22 @@ describe("a task's timeline laid out", () => {
     // An accented word is as wide as its letters, not its bytes.
     expect(widthFor("é".repeat(8), 10, PAD_PX)).toBe(widthFor("e".repeat(8), 10, PAD_PX));
     // A short word that fits where the long one never does shows wherever it fits.
-    // "2 m" weighs 21.2 px, 35.2 px with its padding and its border: 3 % of a 1,173 px track.
+    // "2 m" weighs 22.4 px, 36.4 px with its padding and its border: 3 % of a 1,215 px track.
     expect(fitted("a very long word for one segment", "2 m", 3)).toEqual([
-      { text: "2 m", from: 1200, to: null },
+      { text: "2 m", from: 1250, to: null },
     ]);
     // A short word that fits only where the long one does is left out.
     expect(fitted("ab", "a", 0.5)).toEqual([]);
-    // "abc" needs 35.2 px of 3.2 %, a 1,100 px track: from 1100; "ab" 28.5 px, from 900 to there.
+    // "abc" needs 36 px of 3.2 %, a 1,126 px track: from 1150; "ab" 29.1 px, from 950 to there.
     expect(fitted("abc", "ab", 3.2)).toEqual([
-      { text: "abc", from: 1100, to: null },
-      { text: "ab", from: 900, to: 1100 },
+      { text: "abc", from: 1150, to: null },
+      { text: "ab", from: 950, to: 1150 },
     ]);
     // A segment's words keep clear of its padding and its 1 px border either side.
     expect(SEG_MIN_PX).toBe(PAD_PX + 2);
-    // No short word: the long one alone, from where it fits (39.8 px of 10 %, 398 px) or at every
-    // width (of 20 %, 199 px, below the narrowest track).
-    expect(fitted("long", "", 10)).toEqual([{ text: "long", from: 400, to: null }]);
+    // No short word: the long one alone, from where it fits (40.2 px of 10 %, 402 px) or at every
+    // width (of 20 %, 201 px, below the narrowest track).
+    expect(fitted("long", "", 10)).toEqual([{ text: "long", from: 450, to: null }]);
     expect(fitted("long", "", 20)).toEqual([{ text: "long", from: null, to: null }]);
     // Rust's `{:.2}`: a tie rounds to the even digit.
     expect(roomCss({ room: 0.125, last: false, bar: 1 })).toBe("0.12%");
@@ -952,18 +958,21 @@ describe("a task's timeline laid out", () => {
       "28 m",
       "waiting to land 1 h 15 m",
     ]);
-    // At the narrowest the lanes are drawn (a 900 px page), the shorter words.
+    // At the narrowest the lanes are drawn (a 900 px page), the shorter words; the 28 minutes'
+    // segment holds "28 m" as Helvetica draws it but not as the system face does, and says none.
     expect(texts("stage", 600)).toEqual([
       "41 m",
       "in progress 1 h 52 m",
       "52 m",
       "1 h 10 m",
-      "28 m",
+      "",
       "1 h 15 m",
     ]);
     expect(lane("stage")?.segs[5]?.look).toBe("waiting");
     expect(texts("executor", 950)).toEqual(["claimed 1 h 52 m", "1 h 10 m"]);
-    expect(texts("reviewer", 950)).toEqual(["", "round 1", "", "round 2"]);
+    // "round 2", past its four minutes' wait, has 46 px there: each face draws it within that
+    // (the system face 45.3 px), but weighed a letter at a time at its widest face's it is 46.2.
+    expect(texts("reviewer", 950)).toEqual(["", "round 1", "", ""]);
     expect(texts("reviewer", 600)).toEqual(["", "", "", ""]);
     expect(
       lane("reviewer")
@@ -1445,8 +1454,9 @@ describe("a task's timeline laid out", () => {
         const drawnWord = shown([word], px) !== "";
         const bar = (room.bar / 100) * px;
         const inset = Math.max(AFTER_PAD_PX, SEG_MIN_PX + AFTER_PAD_PX - bar);
-        const wide = [...word.text].length * LETTER_PX + inset + GAP_PX;
-        expect(!drawnWord || wide <= (room.room / 100) * px + 0.5, `${px}`).toBe(true);
+        const wide = textPx(word.text) + inset + GAP_PX;
+        const end = room.last ? END_PX : 0;
+        expect(!drawnWord || wide <= (room.room / 100) * px + end, `${px}`).toBe(true);
       }
     }
     // Each stage's word only where it fits: two-minute reviews say nothing, six hours of work say
@@ -2062,23 +2072,23 @@ describe("each stage's cost after its time", () => {
 
   it("tries three widths, longest first: its word, time and cost; its time and cost; its time", () => {
     const all = ["in progress 3 h 14 m $30.75", "3 h 14 m $30.75", "3 h 14 m"];
-    // 27, 15 and 8 characters: 171, 103 and 63 px weighed letter by letter with their padding and
+    // 27, 15 and 8 characters: 183, 112 and 66 px weighed letter by letter with their padding and
     // border, of 12 % of the track.
     const fits = fittedFirst(all, 12);
     expect(fits).toEqual([
-      { text: all[0], from: 1450, to: null },
-      { text: all[1], from: 900, to: 1450 },
-      { text: all[2], from: 550, to: 900 },
+      { text: all[0], from: 1550, to: null },
+      { text: all[1], from: 950, to: 1550 },
+      { text: all[2], from: 550, to: 950 },
     ]);
     expect(shown(fits, 1600)).toBe(all[0]);
     expect(shown(fits, 1400)).toBe(all[1]);
     expect(shown(fits, 800)).toBe(all[2]);
     expect(shown(fits, 450)).toBe("");
-    // Room for the longest at every width: it alone.
-    expect(fittedFirst(all, 60)).toEqual([{ text: all[0], from: null, to: null }]);
+    // Room for the longest at every width, 183 px of 300: it alone.
+    expect(fittedFirst(all, 61)).toEqual([{ text: all[0], from: null, to: null }]);
     // Room for its time and not its cost: the time, as with no cost.
-    expect(fittedFirst(all, 4)).toEqual([{ text: all[2], from: 1600, to: null }]);
-    expect(fittedFirst(all, 4)).toEqual(fitted("in progress 3 h 14 m", "3 h 14 m", 4));
+    expect(fittedFirst(all, 4.2)).toEqual([{ text: all[2], from: 1600, to: null }]);
+    expect(fittedFirst(all, 4.2)).toEqual(fitted("in progress 3 h 14 m", "3 h 14 m", 4.2));
     // No room for any, and none to try.
     expect(fittedFirst(all, 1)).toEqual([]);
     expect(fittedFirst([], 50)).toEqual([]);
@@ -2092,16 +2102,18 @@ describe("each stage's cost after its time", () => {
     const stage = (timeline: TaskTimeline, with_: Costs | undefined) =>
       lanes(timeline, with_).lanes.find((lane) => lane.key === "stage") as Lane;
     const texts = (px: number) => stage(pictures(), costs()).segs.map((seg) => shown(seg.text, px));
+    // The second review's 28 m are 118 px of a 1600 px track: room for its time and cost (84 px),
+    // not with its word (127 px).
     expect(texts(1600)).toEqual([
       "ready 41 m",
       "in progress 1 h 52 m $30.75",
       "review 52 m $3.78",
       "in progress 1 h 10 m $7.03",
-      "review 28 m $0.64",
+      "28 m $0.64",
       "waiting to land 1 h 15 m",
     ]);
-    // The second review's 28 m are 70 px of a 950 px track: room for its time (38 px) and not for
-    // its time and cost (74 px), so it shows its time, as with no cost.
+    // Of a 950 px track they are 70 px: room for its time (44.6 px) and not for its time and cost,
+    // so it shows its time, as with no cost.
     expect(texts(950)).toEqual([
       "ready 41 m",
       "in progress 1 h 52 m $30.75",
@@ -2111,7 +2123,7 @@ describe("each stage's cost after its time", () => {
       "waiting to land 1 h 15 m",
     ]);
     // Narrower, a stretch drops its word before its cost; the second review, 37 px, has no room
-    // for its time's 38.
+    // for its time's 44.6.
     expect(texts(500)).toEqual(["41 m", "1 h 52 m $30.75", "52 m", "1 h 10 m", "", "1 h 15 m"]);
     // Its words always say it: whose calls, when they ran, how many, and that it is an estimate.
     const titles = stage(pictures(), costs()).segs.map((seg) => seg.title);
@@ -2377,8 +2389,9 @@ describe("a quiet stretch skipped", () => {
   it("draws every segment's words whole, and clear of a few minutes' segment before it", () => {
     const drawn = lanes(guards(), undefined, null, CUT);
     const segs = (key: string) => drawn.lanes.find((lane) => lane.key === key)?.segs ?? [];
-    // The track at 900, 1280, 1440 and 1600 wide, and the widest a word is weighed at.
-    for (const px of [555, 935, 1095, 1255, 1600]) {
+    // The track at 900, 1280, 1440 and 1600 wide (the page draws it no wider), and wider: 1255, and
+    // the widest a word is weighed at.
+    for (const px of [555, 935, 1095, 1158, 1255, 1600]) {
       for (const key of ["stage", "orchestrator", "executor", "reviewer"]) {
         for (const seg of segs(key)) {
           const words = shown(seg.text, px);
@@ -2394,7 +2407,9 @@ describe("a quiet stretch skipped", () => {
       }
     }
     // The review of two minutes at 02:44 on 11-20, drawn at its least width, and the hour after
-    // it, whose words keep past it: at 1440 wide its "1 h 4 m" is drawn clear of it.
+    // it, whose words keep past it: at 1440 wide its "1 h 4 m" (44.1 px) gives way, as the track
+    // it is weighed at, 1050, leaves it 43.3 past the review; at 1600 wide (a 1,158 px track) it is
+    // drawn clear of it.
     const stage = segs("stage");
     const after = stage.findIndex((seg) => seg.title.startsWith("in progress 1 h 4 m"));
     const review = stage[after - 1] as Seg;
@@ -2403,12 +2418,14 @@ describe("a quiet stretch skipped", () => {
       (review.width * 1095) / 100 < SEG_MIN_PX,
     ]).toEqual([true, true]);
     expect(stage[after]?.inset).toBeCloseTo(review.width, 9);
-    expect(shown(stage[after]?.text ?? [], 1095)).toBe("1 h 4 m");
-    // The 39 minutes before the band, in its stage and its claim, give way at 1440 wide, where
-    // "39 m" whole needs 41.8 px; at 1600 wide they are said.
+    expect([1095, 1158].map((px) => shown(stage[after]?.text ?? [], px))).toEqual(["", "1 h 4 m"]);
+    // The 39 minutes before the band, in its stage and its claim, give way at 1440 and 1600 wide,
+    // where "39 m" whole needs 44.8 px, which the system face draws 30 px wide; on a track of 1,200,
+    // wider than the page draws, they are said.
     const late = (key: string) => segs(key).find((seg) => seg.title.includes("39 m")) as Seg;
-    expect([1095, 1255].map((px) => shown(late("stage").text, px))).toEqual(["", "39 m"]);
-    expect([1095, 1255].map((px) => shown(late("executor").text, px))).toEqual(["", "39 m"]);
+    for (const key of ["stage", "executor"]) {
+      expect([1095, 1158, 1200].map((px) => shown(late(key).text, px))).toEqual(["", "", "39 m"]);
+    }
   });
 
   it("is a row of a phone's list after the rows of the instant it begins at", () => {
@@ -2478,10 +2495,12 @@ describe("a quiet stretch skipped", () => {
       ["03:00", undefined],
       ["06:00", undefined],
       ["09:00", undefined],
-      // 15 px of 12:00, 39 of the length and a gap, 58 px over 13.6% of the track: from 427 px.
+      // Half of 12:00's 36.3 px in tabular figures, half of the length's 77.4 with its padding,
+      // and a gap: 60.9 px over 13.6% of the track, from 448 px.
       ["12:00", 450],
-      // The day's 78 px after the band's middle, 15 of 03:00 and a gap, over 13.5%: from 718 px.
-      ["03:00", 750],
+      // The day's 80.7 px after the band's middle, half of 03:00's 36.4 and a gap, over 13.5%:
+      // from 762 px.
+      ["03:00", 800],
     ]);
     // On the true clock the same hours mark the midnight by its date.
     expect(lanes(timeline).ticks.map((tick) => tick.label)).toContain("11-20");
@@ -2563,12 +2582,353 @@ describe("a quiet stretch skipped", () => {
     };
     const [first, second, third] = lanes(timeline, undefined, null, three).breaks;
     expect(first?.length).toEqual({ text: "+3 h", from: null, to: null });
-    // 18 px of "+3 h", 35.5 of "+6 h 44 m" and a gap, over 5.0% of the track: from 1,150.4 px.
-    expect(second?.length).toEqual({ text: "+6 h 44 m", from: 1200, to: null });
-    // Its day's 74.5 px past its middle, 21.5 of "+10 m" and a gap, over 6.7%: from 1,493 px.
-    expect(second?.day).toEqual({ text: "11-20", from: 1500, to: null });
-    // The third's length gives way to the second's alone: 61 px over 6.7%, from 910 px.
+    // 17.8 px of "+3 h", 34.9 of "+6 h 44 m" and a gap, over 5.0% of the track: from 1,134 px.
+    expect(second?.length).toEqual({ text: "+6 h 44 m", from: 1150, to: null });
+    // Its day's 76.8 px past its middle, 23.6 of "+10 m" and a gap, over 6.7%: from 1,559 px.
+    expect(second?.day).toEqual({ text: "11-20", from: 1600, to: null });
+    // The third's length gives way to the second's alone: 62.5 px over 6.7%, from 933 px.
     expect(third?.length).toEqual({ text: "+10 m", from: 950, to: null });
     expect(third?.day).toBeNull();
+  });
+});
+
+describe("the lanes' weights", () => {
+  // How each face the page's sans-serif names (`--font-sans`) draws each character of the lanes'
+  // small type at 12 px, in thousandths of its size rounded up, from " " to "~" and then "·",
+  // measured once in the engines that draw them, each character as a hundred copies with kerning
+  // and ligatures off, at both weights the lanes set words in. -apple-system in WebKit (a
+  // WKWebView, the engine of Safari and the Mac app), which draws it as the system's face, its
+  // tabular figures too; Helvetica and Arial in headless Chrome, each face pinned. Segoe UI is on no
+  // Mac and is not free to fetch: its figures are Selawik's, Microsoft's open replacement made to
+  // Segoe UI's metrics (release 1.01), loaded as a web font in Chrome: its semibold for 600, its
+  // bold as that one's bound (Selawik's match was made for its regular and bold, before its
+  // semibold), its regular for 400. They are the design's advances: how Windows hints Segoe UI at
+  // 12 px is not measured here.
+  const FACES: Record<string, string> = {
+    "system 600":
+      "266 342 539 658 658 999 734 331 414 414 481 658 331 481 331 325 667 496 630 655 673 649 668 593 676 668 331 331 658 658 658 543 924 713 682 733 741 614 590 756 770 302 581 693 586 896 760 782 661 782 681 663 652 753 706 996 713 691 671 414 325 414 658 613 500 577 639 579 639 591 393 634 618 274 274 582 281 912 613 611 635 635 417 553 397 613 570 823 562 580 558 414 286 414 658 331",
+    "system 400":
+      "282 312 478 630 630 926 712 297 382 382 472 630 297 472 297 305 630 464 604 627 644 619 637 570 639 637 297 297 630 630 630 513 918 674 658 716 727 596 573 747 743 268 539 659 568 875 743 772 636 772 654 638 634 738 674 968 679 656 662 382 305 382 630 584 500 552 615 560 615 572 362 610 589 248 247 543 253 871 584 591 611 610 381 524 364 584 542 775 525 543 540 382 259 382 630 297",
+    "Helvetica 600":
+      "278 334 475 557 557 890 723 238 334 334 390 584 278 334 278 278 557 557 557 557 557 557 557 557 557 557 334 334 584 584 584 611 976 723 723 723 723 667 611 778 723 278 557 723 611 834 723 778 667 778 723 667 611 723 667 944 667 667 611 334 278 334 584 557 334 557 611 557 611 557 334 611 611 278 278 557 278 890 611 611 611 611 390 557 334 611 557 778 557 557 500 390 280 390 584 278",
+    "Helvetica 400":
+      "278 278 355 557 557 890 667 191 334 334 390 584 278 334 278 278 557 557 557 557 557 557 557 557 557 557 278 278 584 584 584 557 1016 667 667 723 723 667 611 778 723 278 500 667 557 834 723 778 667 778 723 667 611 723 667 944 667 667 611 278 278 278 470 557 334 557 557 500 557 557 278 557 557 223 223 500 223 834 557 557 557 557 334 500 278 557 500 723 500 500 500 334 260 334 584 278",
+    "Arial 600":
+      "278 334 475 557 557 890 723 238 334 334 390 584 278 334 278 278 557 557 557 557 557 557 557 557 557 557 334 334 584 584 584 611 976 723 723 723 723 667 611 778 723 278 557 723 611 834 723 778 667 778 723 667 611 723 667 944 667 667 611 334 278 334 584 557 334 557 611 557 611 557 334 611 611 278 278 557 278 890 611 611 611 611 390 557 334 611 557 778 557 557 500 390 280 390 584 334",
+    "Arial 400":
+      "278 278 355 557 557 890 667 191 334 334 390 584 278 334 278 278 557 557 557 557 557 557 557 557 557 557 278 278 584 584 584 557 1016 667 667 723 723 667 611 778 723 278 500 667 557 834 723 778 667 778 723 667 611 723 667 944 667 667 611 278 278 278 470 557 334 557 557 500 557 557 278 557 557 223 223 500 223 834 557 557 557 557 334 500 278 557 500 723 500 500 500 334 260 334 584 334",
+    "Segoe UI 600":
+      "276 313 460 592 563 852 834 272 347 347 443 700 253 403 253 426 563 563 563 563 563 563 563 563 563 563 253 253 700 700 700 442 955 684 619 623 726 524 510 703 748 300 417 626 498 938 776 757 597 757 635 551 566 711 652 982 634 589 595 347 417 347 700 416 299 529 610 475 609 536 360 609 590 271 271 539 271 898 592 604 610 609 382 435 373 592 522 773 522 521 471 347 298 347 700 253",
+    "Segoe UI bold":
+      "276 328 494 593 576 868 850 293 370 370 456 708 272 405 272 444 576 576 576 576 576 576 576 576 576 576 272 272 708 708 708 438 955 704 642 625 738 533 521 711 767 317 446 649 512 958 791 759 615 759 653 561 586 724 667 1005 656 607 607 370 437 370 708 416 314 539 621 480 620 542 384 620 603 285 285 560 285 917 605 612 621 620 398 440 390 605 542 798 553 539 480 370 327 370 708 272",
+    "Segoe UI 400":
+      "274 285 393 591 540 819 801 230 302 302 417 685 217 400 217 390 540 540 540 540 540 540 540 540 540 540 217 217 685 685 685 449 956 646 574 620 702 506 489 687 710 267 357 581 471 898 749 754 561 754 599 532 524 688 622 935 590 553 571 302 379 302 685 416 269 509 588 462 589 523 313 589 566 243 243 498 243 862 566 586 588 589 348 425 339 566 480 723 459 484 453 302 240 302 685 217",
+  };
+  const OTHERS: Record<string, string> = {
+    "system 600": "905 931 896 613 658",
+    "system 400": "805 906 875 584 630",
+    "Helvetica 600": "1000 1000 1000 557 584",
+    "Helvetica 400": "1000 1000 1000 557 584",
+    "Arial 600": "1000 1000 1000 557 584",
+    "Arial 400": "1000 1000 1000 557 584",
+    "Segoe UI 600": "853 1000 1000 500 700",
+    "Segoe UI bold": "913 1000 1000 500 708",
+    "Segoe UI 400": "733 1000 1000 500 685",
+  };
+  const DRAWN: Record<string, Record<string, number>> = {
+    system: {
+      missing: 43.15,
+      held: 24.33,
+      waived: 39.21,
+      met: 21.66,
+      unknown: 50.68,
+      "not kept before 11-19 14:03": 155.3,
+      "39 m": 29.99,
+      "1 h 4 m": 41.94,
+      "28 m": 29.8,
+      "52 m": 29.47,
+      "11 h 11 m": 51.72,
+      "ready 6 h 59 m": 88.4,
+      "review 52 m": 71.44,
+      "in progress 1 h 11 m $12.40": 159.5,
+      "waiting to land 2 d 3 h $0.84+": 175.94,
+      "claim 41 m": 62.66,
+      "round 2": 45.3,
+      "coral-badger-11": 94.46,
+      "cobalt-merlin-810": 107.44,
+      approved: 55.43,
+      changes: 49.96,
+      verdict: 41.25,
+      unpriced: 52.32,
+      "+10 h 54 m (tabular)": 67.38,
+      "+2 d 3 h (tabular)": 48.32,
+      "+1 h 11 m (tabular)": 59.49,
+      "11-20 (tabular)": 37.33,
+      "09:02 (tabular)": 33.8,
+      "11-10 (tabular)": 35.91,
+      "23:59 (tabular)": 33.8,
+      "11-11 (tabular)": 35.91,
+      "17:47 (tabular)": 33.8,
+    },
+    Helvetica: {
+      missing: 40.69,
+      held: 22.69,
+      waived: 37.36,
+      met: 20.02,
+      unknown: 48.05,
+      "not kept before 11-19 14:03": 146.57,
+      "39 m": 27.36,
+      "1 h 4 m": 41.36,
+      "28 m": 27.36,
+      "52 m": 27.36,
+      "11 h 11 m": 53.4,
+      "ready 6 h 59 m": 83.4,
+      "review 52 m": 68.05,
+      "in progress 1 h 11 m $12.40": 156.1,
+      "waiting to land 2 d 3 h $0.84+": 165.72,
+      "claim 41 m": 61.38,
+      "round 2": 44.0,
+      "coral-badger-11": 89.38,
+      "cobalt-merlin-810": 99.38,
+      approved: 54.02,
+      changes: 48.69,
+      verdict: 39.36,
+      unpriced: 50.68,
+      "+10 h 54 m (tabular)": 61.72,
+      "+2 d 3 h (tabular)": 45.04,
+      "+1 h 11 m (tabular)": 54.38,
+      "11-20 (tabular)": 30.05,
+      "09:02 (tabular)": 30.04,
+      "11-10 (tabular)": 29.82,
+      "23:59 (tabular)": 30.04,
+      "11-11 (tabular)": 28.93,
+      "17:47 (tabular)": 30.04,
+    },
+    Arial: {
+      missing: 40.69,
+      held: 22.69,
+      waived: 37.36,
+      met: 20.02,
+      unknown: 48.05,
+      "not kept before 11-19 14:03": 146.57,
+      "39 m": 27.36,
+      "1 h 4 m": 41.36,
+      "28 m": 27.36,
+      "52 m": 27.36,
+      "11 h 11 m": 53.38,
+      "ready 6 h 59 m": 83.4,
+      "review 52 m": 68.05,
+      "in progress 1 h 11 m $12.40": 156.1,
+      "waiting to land 2 d 3 h $0.84+": 165.72,
+      "claim 41 m": 61.38,
+      "round 2": 44.0,
+      "coral-badger-11": 89.38,
+      "cobalt-merlin-810": 99.38,
+      approved: 54.02,
+      changes: 48.69,
+      verdict: 39.36,
+      unpriced: 50.68,
+      "+10 h 54 m (tabular)": 61.72,
+      "+2 d 3 h (tabular)": 45.04,
+      "+1 h 11 m (tabular)": 54.38,
+      "11-20 (tabular)": 30.04,
+      "09:02 (tabular)": 30.04,
+      "11-10 (tabular)": 29.82,
+      "23:59 (tabular)": 30.04,
+      "11-11 (tabular)": 28.93,
+      "17:47 (tabular)": 30.04,
+    },
+    "Segoe UI 600": {
+      missing: 42.1,
+      held: 24.05,
+      waived: 38.85,
+      met: 21.68,
+      unknown: 51.38,
+      "not kept before 11-19 14:03": 154.91,
+      "39 m": 27.6,
+      "1 h 4 m": 41.29,
+      "28 m": 27.6,
+      "52 m": 27.6,
+      "11 h 11 m": 54.8,
+      "ready 6 h 59 m": 82.24,
+      "review 52 m": 67.08,
+      "in progress 1 h 11 m $12.40": 152.97,
+      "waiting to land 2 d 3 h $0.84+": 166.16,
+      "claim 41 m": 60.19,
+      "round 2": 43.4,
+      "coral-badger-11": 89.54,
+      "cobalt-merlin-810": 99.6,
+      approved: 52.77,
+      changes: 45.16,
+      verdict: 37.97,
+      unpriced: 48.75,
+      "+10 h 54 m (tabular)": 63.19,
+      "+2 d 3 h (tabular)": 46.21,
+      "+1 h 11 m (tabular)": 56.44,
+      "11-20 (tabular)": 31.86,
+      "09:02 (tabular)": 30.07,
+      "11-10 (tabular)": 31.86,
+      "23:59 (tabular)": 30.07,
+      "11-11 (tabular)": 31.86,
+      "17:47 (tabular)": 30.07,
+    },
+    "Segoe UI bold": {
+      missing: 43.07,
+      held: 24.57,
+      waived: 39.88,
+      met: 22.16,
+      unknown: 52.66,
+      "not kept before 11-19 14:03": 158.29,
+      "39 m": 28.11,
+      "1 h 4 m": 41.96,
+      "28 m": 28.11,
+      "52 m": 28.11,
+      "11 h 11 m": 55.77,
+      "ready 6 h 59 m": 83.79,
+      "review 52 m": 68.68,
+      "in progress 1 h 11 m $12.40": 156.04,
+      "waiting to land 2 d 3 h $0.84+": 169.75,
+      "claim 41 m": 61.46,
+      "round 2": 44.29,
+      "coral-badger-11": 91.29,
+      "cobalt-merlin-810": 101.83,
+      approved: 53.9,
+      changes: 45.91,
+      verdict: 39.05,
+      unpriced: 49.83,
+      "+10 h 54 m (tabular)": 64.25,
+      "+2 d 3 h (tabular)": 46.88,
+      "+1 h 11 m (tabular)": 57.35,
+      "11-20 (tabular)": 32.47,
+      "09:02 (tabular)": 30.88,
+      "11-10 (tabular)": 32.47,
+      "23:59 (tabular)": 30.88,
+      "11-11 (tabular)": 32.47,
+      "17:47 (tabular)": 30.88,
+    },
+    "Segoe UI 400": {
+      missing: 40.21,
+      held: 23.05,
+      waived: 36.79,
+      met: 20.69,
+      unknown: 48.85,
+      "not kept before 11-19 14:03": 148.13,
+      "39 m": 26.57,
+      "1 h 4 m": 39.94,
+      "28 m": 26.57,
+      "52 m": 26.57,
+      "11 h 11 m": 52.88,
+      "ready 6 h 59 m": 79.11,
+      "review 52 m": 63.91,
+      "in progress 1 h 11 m $12.40": 146.86,
+      "waiting to land 2 d 3 h $0.84+": 158.99,
+      "claim 41 m": 57.66,
+      "round 2": 41.61,
+      "coral-badger-11": 86.05,
+      "cobalt-merlin-810": 95.11,
+      approved: 50.52,
+      changes: 43.68,
+      verdict: 35.79,
+      unpriced: 46.61,
+      "+10 h 54 m (tabular)": 61.08,
+      "+2 d 3 h (tabular)": 44.88,
+      "+1 h 11 m (tabular)": 54.61,
+      "11-20 (tabular)": 30.69,
+      "09:02 (tabular)": 28.49,
+      "11-10 (tabular)": 30.69,
+      "23:59 (tabular)": 28.49,
+      "11-11 (tabular)": 30.69,
+      "17:47 (tabular)": 28.49,
+    },
+  };
+  /** The system face's tabular figures, as wide as each other, in thousandths of 12 px. */
+  const TABULAR: Record<string, number> = { "system 600": 658, "system 400": 630 };
+  /** The characters FACES weighs, in its order, and the ones OTHERS does. */
+  const CHARS = [...Array.from({ length: 95 }, (_, at) => String.fromCharCode(32 + at)), "·"];
+  const OTHER_CHARS = [..."…→—–×"];
+  const figures = (row: string | undefined) => (row ?? "").split(" ").map(Number);
+  const DIGIT = /^[0-9]$/;
+
+  it("weighs each character at the widest face's advance, and no wider", () => {
+    expect(Object.values(FACES).map((row) => figures(row).length)).toEqual(
+      Object.keys(FACES).map(() => CHARS.length),
+    );
+    CHARS.forEach((char, at) => {
+      const widest = Math.max(...Object.values(FACES).map((row) => figures(row)[at] as number));
+      expect(advance(char), char).toBe(widest);
+    });
+    // In tabular figures a digit weighs the widest of those where they are wider, and nothing
+    // else changes.
+    for (const char of CHARS) {
+      const tabular = DIGIT.test(char) ? Math.max(advance(char), ...Object.values(TABULAR)) : null;
+      expect(advance(char, true), char).toBe(tabular ?? advance(char));
+    }
+    expect([advance("1"), advance("1", true), advance("8"), advance("8", true)]).toEqual([
+      576, 658, 676, 676,
+    ]);
+  });
+
+  it("weighs any other character at the whole size, which no face draws wider", () => {
+    for (const [face, row] of Object.entries(OTHERS)) {
+      figures(row).forEach((one, at) => {
+        const char = OTHER_CHARS[at] as string;
+        expect(one, `${face}: ${char}`).toBeLessThanOrEqual(advance(char));
+      });
+    }
+    expect([...OTHER_CHARS, "\u0007", "😀", "中"].map((char) => advance(char))).toEqual(
+      Array(OTHER_CHARS.length + 3).fill(1000),
+    );
+    // An accented letter weighs its letter, in either figures.
+    expect([advance("é"), advance("Å"), advance("é", true)]).toEqual([
+      advance("e"),
+      advance("A"),
+      advance("e"),
+    ]);
+  });
+
+  it("lets a word through only where each face draws it whole", () => {
+    // A few thousand words of the table's characters, drawn from a seeded sequence: each face's
+    // advances, its tabular figures where the words are set in them, never weigh more than the
+    // estimate less its half pixel for the browser's rounding.
+    let seed = 1;
+    const next = () => {
+      seed = (seed * 48_271) % 2_147_483_647;
+      return seed;
+    };
+    for (let count = 0; count < 2000; count += 1) {
+      const length = 1 + (next() % 30);
+      const word = Array.from({ length }, () => CHARS[next() % CHARS.length]).join("");
+      for (const [face, row] of Object.entries(FACES)) {
+        const own = figures(row);
+        const drawn = (tabular: boolean) =>
+          ([...word].reduce((sum, char) => {
+            const one = own[CHARS.indexOf(char)] as number;
+            return sum + (tabular && DIGIT.test(char) ? (TABULAR[face] ?? one) : one);
+          }, 0) *
+            12) /
+          1000;
+        expect(drawn(false), `${face}: ${word}`).toBeLessThanOrEqual(textPx(word) - 0.5 + 1e-9);
+        expect(drawn(true), `${face}: ${word}`).toBeLessThanOrEqual(
+          textPx(word, true) - 0.5 + 1e-9,
+        );
+      }
+    }
+    // The lanes' own words as each face draws them, kerned, never wider either.
+    for (const [face, words] of Object.entries(DRAWN)) {
+      for (const [key, px] of Object.entries(words)) {
+        const tabular = key.endsWith(" (tabular)");
+        const word = tabular ? key.slice(0, -" (tabular)".length) : key;
+        expect(px, `${face}: ${word}`).toBeLessThanOrEqual(textPx(word, tabular) - 0.5);
+      }
+    }
+  });
+
+  it("weighs a verdict after its bar by the same table as a segment's words", () => {
+    // A verdict after a wide bar: its words, its inset and its gap from the next, of 10 %.
+    const room = { room: 10, last: false, bar: 50 };
+    for (const word of ["approved", "changes", "verdict"]) {
+      const from = WIDTHS.find((px) => textPx(word) + AFTER_PAD_PX + GAP_PX <= px / 10);
+      expect(label(word, room)?.from, word).toBe(from);
+    }
   });
 });

@@ -77,11 +77,13 @@ import {
 } from "./timeline-layout";
 import { MessagePanel, type MessageSelection, type ThreadAccess } from "./timeline-messages";
 import {
+  type Heard,
   LANES_ID,
   type LanesHandlers,
   type Navigation,
   OverviewStrip,
   type QuietSwitch,
+  sayAgain,
   useNavigation,
   ZoomBar,
 } from "./timeline-navigate";
@@ -944,7 +946,7 @@ export interface Zoom {
   quiet?: readonly Quiet[] | undefined;
   skipping?: Skipping | undefined;
   skip?: ((skipping: Skipping) => void) | undefined;
-  said?: string | undefined;
+  said?: Heard | undefined;
   say?: ((said: string) => void) | undefined;
 }
 
@@ -1177,7 +1179,7 @@ export function TimelineView({
   const [selected, setSelected] = useState<number | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [skipping, setSkipping] = useState<Skipping>(SKIPPING);
-  const [heard, setHeard] = useState("");
+  const [heard, setHeard] = useState<Heard>();
   const [loading, setLoading] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -1325,7 +1327,7 @@ export function TimelineView({
           skipping,
           skip: setSkipping,
           said: heard,
-          say: setHeard,
+          say: (text) => setHeard((last) => sayAgain(last, text)),
         }}
       />
       {panel && details ? createPortal(panel, details) : panel}

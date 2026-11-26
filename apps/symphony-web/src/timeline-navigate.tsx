@@ -15,7 +15,8 @@
 // - While the lanes or the overview's window have the focus, + and − zoom and 0 shows the whole
 //   task.
 // - The range shown is said to assistive technology after a press or a key alone, never at each
-//   step of a wheel, a drag or a pinch (`Navigation.said`).
+//   step of a wheel, a drag or a pinch, and said again where it is the one said last
+//   (`Navigation.said`).
 
 import {
   type CSSProperties,
@@ -58,6 +59,18 @@ export const LANES_ID = "tl-lanes";
 /** How far, in pixels, a mouse moves across the tracks before it drags rather than clicks. */
 const DRAG_PX = 4;
 
+/** The range last said to assistive technology, and how many have been said: the readout draws
+ * each anew (`ZoomBar`), so a range equal to the one before it is said again. */
+export interface Heard {
+  text: string;
+  times: number;
+}
+
+/** `text` said after `last`: one more said, so it is said again where it is `last`'s. */
+export function sayAgain(last: Heard | undefined, text: string): Heard {
+  return { text, times: (last?.times ?? 0) + 1 };
+}
+
 /** The view the lanes show and how to change it: the whole hours, the view (none for the whole
  * task), the quiet stretches skipped (`cut`), and `set`, which takes the next view (none for the
  * whole task) and, for a press or a key (`say`), says its range to assistive technology, where
@@ -66,7 +79,7 @@ export interface Navigation {
   whole: View;
   view: View | null;
   cut?: Cut | null | undefined;
-  said?: string | undefined;
+  said?: Heard | undefined;
   set: (view: View | null, say?: boolean) => void;
 }
 
@@ -229,7 +242,7 @@ export function ZoomBar({
       </span>
       <span className="tl-range">{readout(timeline, view, cut)}</span>
       <span className="tl-said" aria-live="polite">
-        {nav.said}
+        {nav.said && <span key={nav.said.times}>{nav.said.text}</span>}
       </span>
       {quiet && (
         <Button

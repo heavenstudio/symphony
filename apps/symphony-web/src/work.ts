@@ -346,8 +346,3 @@ export function samePhases(a: Phase[], b: Phase[]): boolean {
   };
   return a.length === b.length && a.every((phase, at) => face(phase) === face(b[at] as Phase));
 }
-
-/** What the phase chips on `slug`'s card read, in their order: its height is reserved from them. */
-export function phaseLabels(work: MachineWork, slug: string, connected: boolean): string[] {
-  return shownPhases(work, slug, connected).map(phaseLabel);
-}

@@ -873,25 +873,27 @@ const CUT: &str = "[...document.querySelectorAll('.tl-lanes .tl-seg, .tl-lanes .
 const COVERED: &str = "(() => { const met = []; for (const track of document.querySelectorAll('.tl-lanes .tl-track')) { if (track.closest('[data-lane=builds], [data-lane=tests]')) continue; const segs = [...track.querySelectorAll('.tl-seg')].filter(e => e.getClientRects().length > 0); for (const e of track.querySelectorAll('.tl-seg, .tl-after')) { if (e.getClientRects().length === 0 || e.innerText.trim() === '') continue; const words = document.createRange(); words.selectNodeContents(e); const w = words.getBoundingClientRect(); for (const seg of segs) { if (seg === e) continue; const b = seg.getBoundingClientRect(); if (b.left < w.right - 0.5 && w.left < b.right - 0.5 && b.top < w.bottom - 0.5 && w.top < b.bottom - 0.5) met.push([e.innerText.trim(), seg.title]); } } } return met; })()";
 
 /// Each label after a bar that is drawn: its words, how far past its bar as drawn they start, and
-/// how wide they are a letter.
-const AFTER: &str = "[...document.querySelectorAll('.tl-lanes .tl-after')].filter(e => e.getClientRects().length > 0).map(e => { const r = document.createRange(); r.selectNodeContents(e); const words = r.getBoundingClientRect(), bar = e.previousElementSibling.getBoundingClientRect(); return [e.textContent, words.left - bar.right, words.width / [...e.textContent].length]; })";
+/// how far before the next segment of its track they end (null where none follows them).
+const AFTER: &str = "[...document.querySelectorAll('.tl-lanes .tl-after')].filter(e => e.getClientRects().length > 0).map(e => { const r = document.createRange(); r.selectNodeContents(e); const words = r.getBoundingClientRect(), bar = e.previousElementSibling.getBoundingClientRect(); const next = [...e.parentElement.querySelectorAll('.tl-seg')].map(s => s.getBoundingClientRect().left).filter(left => left >= words.left); return [e.textContent, words.left - bar.right, next.length === 0 ? null : Math.min(...next) - words.right]; })";
 
 /// No word of the lanes is drawn over another, under another segment or cut short, at any width,
 /// for the fixture, a week and the card's task. Each label after a bar starts its padding past the bar as drawn, which a
-/// round of a few minutes draws wider than its time, and its letters are no wider than the
-/// estimate weighs them (`LETTER_PX`, timeline-layout.ts); a label with no room is not drawn, as the
-/// card's reviewer's "changes" is not, 4 % of the track before the next round.
+/// round of a few minutes draws wider than its time, and ends its gap (`GAP_PX`, timeline-layout.ts)
+/// or more before the next segment, as its words are weighed at the widest face's advances
+/// (`textPx`); a label with no room is not drawn, as the card's reviewer's "changes" is not, 4 % of
+/// the track before the next round.
 #[test]
 fn no_word_of_the_lanes_is_drawn_over_another_at_any_width_for_the_fixture_or_a_week() {
     // The labels after a bar at each width: the fixture's and a week's at every one, the card's
     // task's as its quiet stretch skipped gives its work the width, each verdict from the width its
-    // room holds it before the next round or the band (a 555 px track at 900 wide, 1,095 at 1440).
+    // room holds it before the next round or the band (a 555 px track at 900 wide, 935 at 1280,
+    // 1,095 at 1440, 1,158 at 1600): the first "changes" from a 950 px track, the second from 1,200,
+    // wider than the page draws.
     let card = |width: u32| -> &'static [&'static str] {
         match width {
             ..1100 => &["approved"],
-            1100..1280 => &["approved", "approved"],
-            1280..1600 => &["approved", "changes", "approved"],
-            _ => &["approved", "changes", "changes", "approved"],
+            1100..1440 => &["approved", "approved"],
+            _ => &["approved", "changes", "approved"],
         }
     };
     let fixed = |labels: &'static [&'static str]| move |_: u32| labels;
@@ -940,8 +942,8 @@ fn no_word_of_the_lanes_is_drawn_over_another_at_any_width_for_the_fixture_or_a_
                     "{name} at {width} px: a label's words start inside or at its bar: {label}"
                 );
                 assert!(
-                    label[2].as_f64().unwrap() <= 7.0,
-                    "{name} at {width} px: a label's letters wider than LETTER_PX: {label}"
+                    label[2].as_f64().is_none_or(|gap| gap >= 4.0),
+                    "{name} at {width} px: a label's words within its gap of the next: {label}"
                 );
             }
             assert_eq!(
