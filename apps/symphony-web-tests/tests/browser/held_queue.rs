@@ -110,7 +110,8 @@ fn open(chrome: &mut Chrome, site: &Site, path: &str, ready: &str) {
 }
 
 /// The queue as drawn: its groups in their order, each held comment's link, title and author and
-/// the buttons by it, and whether the page stays within the screen's width.
+/// the buttons by it, how many it keeps for the next visit's outline, and whether the page stays
+/// within the screen's width.
 fn queue(chrome: &mut Chrome) -> Value {
     chrome.reveal("#agent");
     chrome.eval(
@@ -123,6 +124,8 @@ fn queue(chrome: &mut Chrome) -> Value {
             }),
             buttons: document.querySelectorAll('#held button').length,
             heading: document.querySelector('#held h2')?.textContent ?? null,
+            kept: Object.entries(localStorage)
+                .filter(([key]) => key.endsWith('queue-held-rows')).map(([, kept]) => kept),
             within: document.documentElement.scrollWidth <= innerWidth,
         }))()"#,
     )
@@ -174,6 +177,7 @@ fn the_held_comments_are_listed_and_counted_for_the_reader_they_wait_on_and_for_
                         ],
                         "buttons": 0,
                         "heading": "Held comments (2)",
+                        "kept": ["2"],
                         "within": true,
                     }),
                     "{reader}, {width}: the queue"
@@ -182,7 +186,7 @@ fn the_held_comments_are_listed_and_counted_for_the_reader_they_wait_on_and_for_
                 assert_eq!(
                     drawn,
                     json!({"groups": ["you", "spot", "agent"], "held": [], "buttons": 0,
-                           "heading": null, "within": true}),
+                           "heading": null, "kept": [], "within": true}),
                     "{reader}, {width}: the queue"
                 );
                 let text = chrome.eval("document.body.innerText").to_string();
