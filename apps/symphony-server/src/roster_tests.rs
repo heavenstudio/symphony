@@ -106,3 +106,56 @@ fn the_roster_of_a_machine_asks_the_board_at_the_root_it_is_given() {
     assert!(roster(&nowhere, &login("ana@example.com")).is_none());
     assert!(roster(&nowhere, &Visitor::Node("ci".into())).is_none());
 }
+
+fn signed(service: &str, subject: &str) -> Visitor {
+    Visitor::Signed(symphony::signed_in::SignedIn {
+        service: service.into(),
+        subject: subject.into(),
+        display: Some("whoever the service says".into()),
+        origin: "https://board.example.com".into(),
+    })
+}
+
+#[test]
+fn a_signed_visitor_is_the_profile_holding_its_services_sign_in_and_only_that_one() {
+    let machine = Machine::with_ana("signed");
+    Profiles::change(&machine.0, |profiles| {
+        profiles.people[0].signins.push(Signin {
+            service: "google".into(),
+            subject: "110248495921238986420".into(),
+        });
+        Ok(())
+    })
+    .unwrap();
+    let root = Path::new("/a/project");
+    let ana = member(
+        &machine.0,
+        root,
+        &signed("google", "110248495921238986420"),
+        holding(&[Power::Speak]),
+    )
+    .expect("on the board");
+    assert_eq!(ana.name(), "ana");
+    assert_eq!(ana.sender.display, "Ana Lima", "as her profile shows her");
+    assert_eq!(ana.principal, symphony_board::workflow::person("ana"));
+    for (service, subject) in [
+        ("github", "110248495921238986420"),
+        ("google", "ana@example.com"),
+        ("google", "999"),
+    ] {
+        let nobody = member(
+            &machine.0,
+            root,
+            &signed(service, subject),
+            holding(&[Power::Decide]),
+        );
+        assert!(nobody.is_none(), "{service}:{subject}");
+    }
+    let held = member(
+        &machine.0,
+        root,
+        &signed("google", "110248495921238986420"),
+        holding(&[]),
+    );
+    assert!(held.is_none(), "on no board that gives her no power");
+}

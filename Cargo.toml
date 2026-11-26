@@ -59,6 +59,8 @@ opt-level = 3
 # the newest compatible release Cargo.lock has resolved; `--locked` keeps every build on the lockfile.
 # A new crate here is a dependency the owner's ask has to cover (AGENTS.md, "Boundaries").
 [workspace.dependencies]
+# The signed word's three parts (crates/symphony/src/signed_in.rs): base64url, the version axum links already.
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 comrak = { version = "0.57", default-features = false }
 fancy-regex = "0.19"
 # The JSON Schema check of the settings files (draft 2020-12): a maintained validator, not our own

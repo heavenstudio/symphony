@@ -30,6 +30,10 @@ Setting the Symphony up and running it: a first project, the commands, the proje
 - [WhatsApp notices](NOTICE_WHATSAPP.md) — `symphony-notice-whatsapp`, the notice plugin that
   sends a person's notice by WhatsApp: what Meta must give and approve first, the person's
   agreement and the cost, its folder, settings and token, and what its exit says.
+- [Signing in through a service in front](SIGNED_IN.md) — the signed header a sign-in service in
+  front of the server sends to say who a request is from: which services fit, the key and origin
+  in the machine folder, the header's format and how to sign one, who it makes a request, and what
+  is refused.
 - [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
   public repository into a private copy with its ancestry kept, the export of selected reusable
   changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.

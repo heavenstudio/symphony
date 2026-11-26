@@ -111,6 +111,10 @@ none of the repositories around this one: its board runs on the machine's Postgr
 - [WhatsApp notices](operations/NOTICE_WHATSAPP.md) — `symphony-notice-whatsapp`, the notice
   plugin that sends a person's notice by WhatsApp: what Meta must give and approve first, the
   person's agreement and the cost, its folder, settings and token, and what its exit says.
+- [Signing in through a service in front](operations/SIGNED_IN.md) — the signed header a sign-in
+  service in front of the server sends to say who a request is from: which services fit, the key
+  and origin in the machine folder, the header's format and how to sign one, who it makes a
+  request, and what is refused.
 - [Operating the board](operations/BOARD_OPERATIONS.md) — the board's store and the schema
   contract between its builds, which build moves a live board, who writes it, its server,
   snapshots and holds, what the command may write, stuck servers, a board that went back or was

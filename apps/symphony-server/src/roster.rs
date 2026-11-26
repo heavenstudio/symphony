@@ -1,13 +1,14 @@
 //! A board's word on a visitor who is not the person at the machine ([`crate::gate::Roster`]),
 //! from what the machine and the board keep (docs/product/analysis/users-and-identity.md, "Where
-//! people are kept"): the machine's profile whose sign-in is the visitor's login
-//! ([`symphony_board::people::Profiles::signed_in`]), and that board's row of the person, who is
+//! people are kept"): the machine's profile whose sign-in is the visitor's (`tailscale:LOGIN` for a
+//! Tailscale login, `SERVICE:SUBJECT` for a signed word's service and subject,
+//! [`symphony_board::people::Profiles::signed_in`]), and that board's row of the person, who is
 //! on it while they hold a power there ([`symphony_board::people::People::powers_of`]). They then
 //! write as their short name, shown as their profile shows them, their git handles theirs, a
 //! person the board named ([`symphony_board::workflow::person`]).
 //!
 //! It is read on each request a visitor sends, so a person added, removed or given a power is
-//! seen at their next. A tagged node, a login no profile signs in, a profile no row of the board
+//! seen at their next. A tagged node, a sign-in no profile holds, a profile no row of the board
 //! names or names with no power, and a board or a profile that cannot be read are none: on that
 //! board the visitor is nobody, and its project is one the server does not hold. A failed read is
 //! said in the server's log by the board's folder alone, never by the visitor's login.
@@ -51,8 +52,10 @@ fn member(
     visitor: &Visitor,
     people: impl FnOnce(&Path) -> Result<symphony_board::people::People, String>,
 ) -> Option<Actor> {
-    let Visitor::Login(login) = visitor else {
-        return None;
+    let (service, subject) = match visitor {
+        Visitor::Login(login) => (TAILSCALE, login.name.as_str()),
+        Visitor::Signed(signed) => (signed.service.as_str(), signed.subject.as_str()),
+        Visitor::Machine | Visitor::Node(_) => return None,
     };
     let profiles = match Profiles::read(machine) {
         Ok(profiles) => profiles,
@@ -63,7 +66,7 @@ fn member(
             return None;
         }
     };
-    let profile = profiles.signed_in(TAILSCALE, &login.name)?;
+    let profile = profiles.signed_in(service, subject)?;
     let held = match people(root) {
         Ok(people) => people.powers_of(&profile.name),
         Err(why) => {

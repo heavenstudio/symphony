@@ -20,6 +20,12 @@
 //! own tailnet addresses are known from that answer too. On a machine that is itself tagged, which
 //! is under no login, no node but this machine's own is its person.
 //!
+//! A request that carries a sign-in service's signed word ([`symphony::signed_in`]) is judged by
+//! that word alone, whatever its address ([`Gate::signed`]): the person it names, as the key and
+//! the origin of the machine folder's `sign-in.toml` verify it, and never the person at the
+//! machine; refused when it does not verify, and wherever no key is set, so a proxy on this
+//! machine whose key is gone refuses its visitors rather than making them this machine's person.
+//!
 //! What a visitor reaches is each board's word ([`Gate::member`], the roster): the actor their
 //! writes there take, or none for a board that has not added them, which is then to them a project
 //! the server does not hold. The person at the machine is on every board, as the gate's person
@@ -31,7 +37,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
+use symphony::signed_in::{Settings, SignedIn};
 use symphony_board::lock::Recovered as _;
 use symphony_plugin::Actor;
 
@@ -65,6 +72,20 @@ pub enum Visitor {
     /// A node under no login, by its name: a tagged node, or one whose answer names no user.
     /// Nobody's.
     Node(String),
+    /// The person a sign-in service in front of the server names in its signed word, verified
+    /// ([`Gate::signed`]): that service's subject's person.
+    Signed(SignedIn),
+}
+
+impl Visitor {
+    /// The origin a signed visitor's word was made for, which their requests may name in their
+    /// Host and Origin; none for any other visitor.
+    pub fn origin(&self) -> Option<&str> {
+        match self {
+            Visitor::Signed(signed) => Some(&signed.origin),
+            _ => None,
+        }
+    }
 }
 
 /// A Tailscale login, as a whois answer's `UserProfile` names it.
@@ -238,6 +259,25 @@ impl Gate {
             Some(machine) => gate.with_machine(machine),
             None => gate,
         }
+    }
+
+    /// Who a request carrying the signed word `token` is from, as the key and origin the machine
+    /// folder's `sign-in.toml` names verify it at `now` ([`symphony::signed_in::verify`]): the
+    /// person its service names. None when it does not verify, and when no key is set: a gate with
+    /// no machine folder, a folder with no file, or a file that does not read, said in the server's
+    /// log by its path and rule. The word, the key and the claims are never said.
+    pub fn signed(&self, token: &str, now: SystemTime) -> Option<Visitor> {
+        let settings = match self.machine.as_deref().map(Settings::read) {
+            Some(Ok(Some(settings))) => settings,
+            None | Some(Ok(None)) => return None,
+            Some(Err(why)) => {
+                eprintln!("· no signed word is taken: {why}");
+                return None;
+            }
+        };
+        symphony::signed_in::verify(token, &settings, now)
+            .ok()
+            .map(Visitor::Signed)
     }
 
     /// Host validation for the routes served here. A loopback client can still be a browser

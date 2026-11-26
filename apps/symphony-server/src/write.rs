@@ -318,10 +318,10 @@ async fn json_body(body: Body) -> Result<Value, (StatusCode, String)> {
     }
 }
 
-/// Whether a write names this app in its Host, and a browser's write also in its Origin; when it
-/// does not, why, as its log line says. The headers are read before the check waits, so the
-/// request body is not held across it, and every write, an upload too, is checked before its
-/// body is read.
+/// Whether a write names this app in its Host, and a browser's write also in its Origin, or, for a
+/// signed visitor, the origin their word was made for ([`crate::front::own_origin`]); when it does
+/// not, why, as its log line says. The headers are read before the check waits, so the request
+/// body is not held across it, and every write, an upload too, is checked before its body is read.
 fn allowed(
     shared: &Arc<Shared>,
     request: &Request,
@@ -336,15 +336,19 @@ fn allowed(
         .headers()
         .get(header::ORIGIN)
         .map(|v| v.to_str().unwrap_or("").to_string());
+    let signed = crate::front::Admitted::origin(request.extensions());
     let check = shared.clone();
     async move {
         crate::spawn::blocking(move || {
-            if !check.allows_host(&host) {
+            let named = signed
+                .as_deref()
+                .is_some_and(|signed| crate::front::names_origin(signed, &host));
+            if !named && !check.allows_host(&host) {
                 return Err(HOST_REFUSED);
             }
             if origin
                 .as_deref()
-                .is_some_and(|o| !o.eq_ignore_ascii_case(&format!("http://{host}")))
+                .is_some_and(|o| !crate::front::own_origin(o, &host, signed.as_deref()))
             {
                 return Err(ORIGIN_REFUSED);
             }
