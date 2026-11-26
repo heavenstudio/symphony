@@ -55,22 +55,12 @@ import { fixed, plural, twoDigits } from "./words";
  * after it. */
 export const BAR_SPAN = 72;
 
-/**
- * A character of the lanes' small type, about, in pixels, where an hour's label is centred on its
- * line (a segment's words are weighed letter by letter, `textPx`); then the padding a segment's
- * words take beside them, and the gap a label keeps from the next.
- */
-export const CHAR_PX = 6;
+/** The padding a segment's words take beside them, and the gap a label keeps from the next; every
+ * word of the lanes is weighed letter by letter (`textPx`). */
 export const PAD_PX = 12;
 export const GAP_PX = 4;
 /** The lanes' margin after the track's end (`--end`, 5.5rem), which the last label may take. */
 export const END_PX = 88;
-/**
- * A letter of a verdict's word after its bar, at most, in pixels: a word of letters alone runs
- * wider than CHAR_PX, which the segments' words of digits and spaces keep. The timeline's browser
- * test measures every verdict word it draws against it.
- */
-export const LETTER_PX = 7;
 /** The inset a label's words keep from its bar (`insetCss`). */
 export const AFTER_PAD_PX = 6;
 /** A segment's least drawn width, however short its time: its padding and its 1 px border on each
@@ -81,36 +71,42 @@ export const SEG_MIN_PX = PAD_PX + 2;
 const XS_PX = 12;
 
 /**
- * Each character's advance in the lanes' small type, in thousandths of its size: Helvetica Bold's,
- * Arial Bold's the same, as Chrome draws the page's sans-serif at weight 600 where the system's own
- * face is not used. A character not here weighs the whole size; one with an accent, its letter.
+ * Each character's advance in the lanes' small type from " " to "~", in thousandths of its size:
+ * the widest of the faces the page's sans-serif names (`--font-sans`: -apple-system, which Safari
+ * and the Mac app draw as the system's face, "Segoe UI", Helvetica and Arial) as each draws it at
+ * 12 px, at either weight the lanes set words in (400 and 600), rounded up. Each face's figures,
+ * and how they were measured, are timeline-layout.test.ts's, which holds this table to them.
  */
-const ADVANCE: ReadonlyMap<string, number> = new Map(
-  Object.entries({
-    278: " ,./Iijl\\'·",
-    333: "!()-:;[]`ft|",
-    389: "r*{}",
-    474: '"',
-    500: "z",
-    556: "0123456789#$_acekJsvxy",
-    584: "+<=>^~",
-    611: "?bdghnopquFLTZ",
-    667: "EPSVXY",
-    722: "&ABCDHKNRU",
-    778: "GOQw",
-    833: "M",
-    889: "%m",
-    944: "W",
-    975: "@",
-  }).flatMap(([advance, chars]) => [...chars].map((char) => [char, Number(advance)] as const)),
-);
+const ADVANCE: readonly number[] = [
+  282, 342, 539, 658, 658, 999, 850, 331, 414, 414, 481, 708, 331, 481, 331, 444, 667, 576, 630,
+  655, 673, 649, 668, 593, 676, 668, 334, 334, 708, 708, 708, 611, 1016, 723, 723, 733, 741, 667,
+  611, 778, 770, 317, 581, 723, 611, 958, 791, 782, 667, 782, 723, 667, 652, 753, 706, 1005, 713,
+  691, 671, 414, 437, 414, 708, 613, 500, 577, 639, 579, 639, 591, 393, 634, 618, 285, 285, 582,
+  285, 917, 613, 612, 635, 635, 417, 557, 397, 613, 570, 823, 562, 580, 558, 414, 327, 414, 708,
+];
+/** A middle dot's advance, as ADVANCE weighs a character. */
+const MIDDLE_DOT = 334;
+/** The widest of the faces' tabular figures, which the system's face draws wider than its own "1",
+ * "2", "3", "5" and "7" (`font-variant-numeric: tabular-nums`, the hours' and a band's words). */
+const TABULAR = 658;
 
-/** How wide `text` is drawn in the lanes' small type, in pixels: its characters' advances
- * (`ADVANCE`) and half a pixel for the browser's rounding of them, so never under it. A word the
- * estimate lets through is drawn whole. */
-export function textPx(text: string): number {
+/** `char`'s advance in the lanes' small type, in thousandths of its size (`ADVANCE`), a digit's in
+ * tabular figures where `tabular` says so: one with an accent weighs its letter, a middle dot as
+ * MIDDLE_DOT, and any other the whole size, which no face draws wider. */
+export function advance(char: string, tabular = false): number {
+  const letter = char.normalize("NFD")[0] ?? char;
+  if (letter === "·") return MIDDLE_DOT;
+  const own = ADVANCE[letter.charCodeAt(0) - 32] ?? 1000;
+  return tabular && letter >= "0" && letter <= "9" ? Math.max(own, TABULAR) : own;
+}
+
+/** How wide `text` is drawn in the lanes' small type, in pixels, its digits in tabular figures
+ * where `tabular` says so: its characters' advances (`advance`) and half a pixel for the browser's
+ * rounding of them, so never under it. A word the estimate lets through is drawn whole in each face
+ * the stack names. */
+export function textPx(text: string, tabular = false): number {
   let advances = 0;
-  for (const char of text) advances += ADVANCE.get(char.normalize("NFD")[0] ?? char) ?? 1000;
+  for (const char of text) advances += advance(char, tabular);
   return (advances * XS_PX) / 1000 + 0.5;
 }
 
@@ -1103,16 +1099,16 @@ function insetOf(before: number | undefined): { inset?: number } {
 }
 
 /**
- * `text` as a label beside a segment, in `room`: from the first of WIDTHS at which its letters,
- * its inset (`insetCss`) and its gap from the next fit there, at every width when 300 holds them,
- * and never when 1600 does not. Its inset narrows as the track widens, so where it fits once, it
- * fits on every wider track.
+ * `text` as a label beside a segment, in `room`: from the first of WIDTHS at which its words
+ * (`textPx`), its inset (`insetCss`) and its gap from the next fit there, at every width when 300
+ * holds them, and never when 1600 does not. Its inset narrows as the track widens, so where it fits
+ * once, it fits on every wider track.
  */
 export function label(text: string, room: Room): Fit | null {
-  const letters = [...text].length * LETTER_PX + GAP_PX;
+  const wide = textPx(text) + GAP_PX;
   const fits = (track: number) => {
     const inset = Math.max(AFTER_PAD_PX, SEG_MIN_PX + AFTER_PAD_PX - (room.bar * track) / 100);
-    return letters + inset <= (room.room * track) / 100 + (room.last ? END_PX : 0);
+    return wide + inset <= (room.room * track) / 100 + (room.last ? END_PX : 0);
   };
   if (fits((WIDTHS[0] as number) - 100)) return { text, from: null, to: null };
   const from = WIDTHS.find(fits);
@@ -1326,7 +1322,7 @@ function breaksOf(
       status: "",
     };
     const text = `+${took(skip.to - skip.from)}`;
-    const half = ([...text].length * LETTER_PX + BREAK_PAD_PX) / 2;
+    const half = (textPx(text, true) + BREAK_PAD_PX) / 2;
     const centre = placed.left + placed.width / 2;
     const length = centred(centre, 2 * half);
     const lengthFrom = apartFrom(length, lengths);
@@ -1338,7 +1334,7 @@ function breaksOf(
         ? {
             at: centre,
             before: -half,
-            after: half + DAY_AFTER_PX + [...dayText].length * LETTER_PX,
+            after: half + DAY_AFTER_PX + textPx(dayText, true),
           }
         : null,
     );
@@ -1363,7 +1359,7 @@ function breaksOf(
   });
   const words = [...lengths, ...days.filter((day): day is Said => day !== null)];
   const cleared = ticks.flatMap((tick): Tick[] => {
-    const from = apartFrom(centred(tick.left, [...tick.label].length * CHAR_PX), words);
+    const from = apartFrom(centred(tick.left, textPx(tick.label, true)), words);
     if (from === undefined) return [];
     return [from === null ? tick : { ...tick, wide: from }];
   });

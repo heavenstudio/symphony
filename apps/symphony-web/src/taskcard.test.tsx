@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
+  linkName,
   markTasksReady,
   Roles,
   sameCard,
@@ -120,5 +121,14 @@ describe("the page's mark of a drawn card", () => {
     markTasksReady();
     expect(mark.mock.calls.filter(([name]) => name === "tasks-ready")).toHaveLength(1);
     mark.mockRestore();
+  });
+});
+
+describe("a linked document's chip", () => {
+  it("names it by the last part of its path", () => {
+    expect(linkName("docs/analysis/x.md#part")).toBe("x.md#part");
+    expect(linkName("README.md")).toBe("README.md");
+    expect(linkName("docs/")).toBe("");
+    expect(linkName("")).toBe("");
   });
 });

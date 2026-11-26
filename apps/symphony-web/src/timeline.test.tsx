@@ -31,7 +31,15 @@ import {
 import { readTaskTokens, totalWords } from "./timeline-cost";
 import { BAND_SHARE } from "./timeline-cut";
 import { failed, lanes, nextRead, readTimeline, stops, type View } from "./timeline-layout";
-import { handoff, keyView, OverviewStrip, quietCount, ZoomBar } from "./timeline-navigate";
+import {
+  type Heard,
+  handoff,
+  keyView,
+  OverviewStrip,
+  quietCount,
+  sayAgain,
+  ZoomBar,
+} from "./timeline-navigate";
 import { quietStretches, SKIPPING, type Skipping } from "./timeline-quiet";
 import { LEAST_SHOWN, leastShown, wholeOf } from "./timeline-zoom";
 import { NOT_IN_TIME } from "./trouble";
@@ -1139,6 +1147,28 @@ describe("the timeline zoomed", () => {
     set.mockClear();
     press(buttons(null)[2], pressed(false).event);
     expect(set.mock.calls).toEqual([[{ from: nine(95), to: nine(285) }, true]]);
+  });
+
+  it("says a range again where it is the one said before it", () => {
+    const first = sayAgain(undefined, "11-11 12:00 → 11-11 13:00 · 1 h of 6 h 20 m");
+    const again = sayAgain(first, first.text);
+    expect([first, again]).toEqual([
+      { text: first.text, times: 1 },
+      { text: first.text, times: 2 },
+    ]);
+    expect(sayAgain(again, "11-11 09:00 → 11-11 15:20 · 6 h 20 m").times).toBe(3);
+    /** What the readout's live region holds once `said` is said. */
+    const region = (said?: Heard) =>
+      elements(
+        ZoomBar({ timeline: pictures(), nav: { whole: WHOLE, view: NOON, set: vi.fn(), said } }),
+        (one) => one.props.className === "tl-said",
+      )[0]?.props.children as ReactElement<Props> | undefined;
+    // Nothing said yet: the region is empty.
+    expect(region()).toBeFalsy();
+    // Each range said is drawn anew, the same words under a key of its own, so a reader hears it.
+    const [once, twice] = [region(first), region(again)];
+    expect([once?.key, once?.props.children]).toEqual(["1", first.text]);
+    expect([twice?.key, twice?.props.children]).toEqual(["2", first.text]);
   });
 
   /** A press's event on a toolbar button with the focus or not, and the buttons it focused. */
