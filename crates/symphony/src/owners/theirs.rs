@@ -4,7 +4,8 @@
 //! notices read it ([`super::waiting`]), so a card's queues and its notices name the same people.
 //! The queue's cards and its spot-checks, the board's first cards and its counts, and the pending
 //! list are each said to them filtered; the agent queue, the activity and the documents are read
-//! by everyone, and stay whole.
+//! by everyone, and stay whole. Of the comments held on documents the queue lists, a reader is
+//! shown those that wait on them to pass on, as the notices tell them ([`Deciders::passing`]).
 //!
 //! The person at the machine decides every thing, and is shown every card as before: nothing here
 //! is asked for them. A reader the board names is shown no card where its deciders were never read
@@ -24,6 +25,8 @@ pub struct Deciders {
     /// The board's people revision and its map's, as they were read.
     pub revision: (i64, i64),
     cards: BTreeMap<(String, String), Vec<String>>,
+    /// Who each comment held on a document waits on to pass it on, by its number.
+    held: BTreeMap<i64, Vec<String>>,
 }
 
 impl Deciders {
@@ -42,7 +45,26 @@ impl Deciders {
         Deciders {
             revision: (people.revision, map.revision),
             cards,
+            held: BTreeMap::new(),
         }
+    }
+
+    /// These deciders, with `held` saying who each comment held on a document waits on to pass it
+    /// on, by its number, in place of what they said: the people its notice tells.
+    #[must_use]
+    pub fn passing(self, held: impl IntoIterator<Item = (i64, Vec<String>)>) -> Deciders {
+        let mut passing = BTreeMap::new();
+        passing.extend(held);
+        Deciders {
+            held: passing,
+            ..self
+        }
+    }
+
+    /// Whether the comment held on a document `id` waits on `name` to pass it on: not for one
+    /// these deciders were not told of.
+    pub fn passes(&self, id: i64, name: &str) -> bool {
+        (self.held.get(&id)).is_some_and(|names| names.iter().any(|passer| passer == name))
     }
 
     /// Whether `name` decides the card `slug` of the queue's document `doc`: not for a card these
@@ -74,9 +96,14 @@ fn decides(deciders: Option<&Deciders>, doc: &str, slug: &str, name: &str) -> bo
 }
 
 /// `queue` as `name` is shown it: its waiting cards and its spot-checks theirs alone, in its
-/// order; the cards waiting on an agent whole.
+/// order, and the comments held on documents that wait on them to pass on; the cards waiting on
+/// an agent whole.
 pub fn queue(queue: &Queue, deciders: Option<&Deciders>, name: &str) -> Queue {
     Queue {
+        held: (queue.held.iter())
+            .filter(|held| deciders.is_some_and(|deciders| deciders.passes(held.id, name)))
+            .cloned()
+            .collect(),
         waiting: (queue.waiting.iter())
             .filter(|card| decides(deciders, &card.doc, &card.slug, name))
             .cloned()
@@ -92,7 +119,8 @@ pub fn queue(queue: &Queue, deciders: Option<&Deciders>, name: &str) -> Queue {
 
 /// `board` as the reader shown `theirs` (their [`queue`]) is shown it: its first cards
 /// [`symphony_api::BOARD_CARDS`] of theirs, the cards waiting on them and their documents, their
-/// spot-checks and the decisions waiting counted from theirs; the rest whole.
+/// spot-checks, the held comments they may pass on and the decisions waiting counted from theirs;
+/// the rest whole.
 pub fn board(board: &Board, theirs: &Queue) -> Board {
     let mut shown = board.clone();
     shown.next = (theirs.waiting.iter())
@@ -104,6 +132,7 @@ pub fn board(board: &Board, theirs: &Queue) -> Board {
     docs.extend((theirs.waiting.iter()).map(|card| document_path(&card.doc)));
     shown.counts.docs_waiting = count(docs.len());
     shown.counts.spot_check = count(theirs.spot_check.len());
+    shown.counts.held = count(theirs.held.len());
     shown.progress.decisions_waiting = shown.counts.waiting;
     shown
 }

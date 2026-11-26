@@ -1,5 +1,5 @@
 use super::*;
-use symphony_api::{Card, Counts, PendingItem, Progress, QueueItem, TaskCounts};
+use symphony_api::{Card, Counts, PendingItem, Progress, QueueHeld, QueueItem, TaskCounts};
 use symphony_board::people::ownership::{Did, Line};
 use symphony_board::people::{Group, Member, Power};
 
@@ -53,6 +53,7 @@ fn deciders(cards: &[(&str, &str, &[&str])]) -> Deciders {
                 ((doc.to_string(), slug.to_string()), names)
             })
             .collect(),
+        held: BTreeMap::new(),
     }
 }
 
@@ -118,6 +119,7 @@ fn queue_of() -> Queue {
         spot_check: vec![item(DESIGN, "s"), item(ENGINEERING, "t")],
         agent: vec![item(ENGINEERING, "asked")],
         branches: Vec::new(),
+        held: Vec::new(),
     }
 }
 
@@ -243,6 +245,7 @@ fn a_board_is_shown_its_reader_their_first_cards_and_their_counts_and_the_rest_w
             spot_check: 2,
             answered_today: 4,
             tasks: Some(tasks.clone()),
+            held: 0,
         },
         progress: Progress {
             regions: Vec::new(),
@@ -341,4 +344,72 @@ fn the_pending_list_keeps_its_readers_cards_and_a_branchs_document_only_for_thei
     let unread = super::pending(&pending, None, "ana");
     assert!(unread.items.is_empty());
     assert_eq!(unread.docs, [DESIGN, ENGINEERING, "docs/README.md"]);
+}
+
+/// The comment `id` held on `doc` by `author`, as the queue lists it.
+fn held(id: i64, doc: &str, author: &str) -> QueueHeld {
+    QueueHeld {
+        id,
+        href: format!("/{doc}#held-{id}"),
+        doc_title: "Doc".into(),
+        author: author.into(),
+    }
+}
+
+#[test]
+fn a_held_comment_is_shown_and_counted_to_those_it_waits_on_alone() {
+    let mut queue = queue_of();
+    queue.held = vec![
+        held(4, DESIGN, "cy"),
+        held(5, PROPOSAL, "cy"),
+        held(6, ENGINEERING, "ana"),
+        // One the deciders were never told of waits on nobody here.
+        held(9, DESIGN, "cy"),
+    ];
+    let deciders = of_queue().passing([
+        (4, vec!["ana".to_string()]),
+        (5, vec!["ana".to_string(), "bo".to_string()]),
+        (6, vec!["bo".to_string()]),
+    ]);
+    let ids = |queue: &Queue| queue.held.iter().map(|held| held.id).collect::<Vec<_>>();
+    let whole = Board {
+        version: 1,
+        build: String::new(),
+        ping_ms: 0,
+        next: Vec::new(),
+        counts: Counts {
+            held: 4,
+            ..Counts::default()
+        },
+        progress: Progress::default(),
+    };
+    for (name, shown) in [("ana", &[4, 5][..]), ("bo", &[5, 6]), ("cy", &[])] {
+        let theirs = super::queue(&queue, Some(&deciders), name);
+        assert_eq!(ids(&theirs), shown, "{name}, in the queue's order");
+        assert_eq!(
+            board(&whole, &theirs).counts.held as usize,
+            shown.len(),
+            "{name}"
+        );
+    }
+    // Its author is never among those told, and a board whose deciders were never read shows
+    // nobody any.
+    assert!(ids(&super::queue(&queue, None, "ana")).is_empty());
+    assert!(!deciders.passes(9, "ana"));
+    assert!(deciders.passes(5, "bo"));
+    // Who decides a card is unchanged by who passes a comment.
+    assert_eq!(
+        slugs(&super::queue(&queue, Some(&deciders), "ana").waiting),
+        slugs(&super::queue(&queue_of(), Some(&of_queue()), "ana").waiting)
+    );
+}
+
+#[test]
+fn passing_says_anew_who_each_held_comment_waits_on() {
+    let first = of_queue().passing([(4, vec!["ana".to_string()])]);
+    let again = first.clone().passing([(5, vec!["bo".to_string()])]);
+    assert!(!again.passes(4, "ana"), "what it said before is replaced");
+    assert!(again.passes(5, "bo"));
+    assert_ne!(first, again, "two readings told apart");
+    assert_eq!(again.clone().passing([]), of_queue(), "none told: as read");
 }

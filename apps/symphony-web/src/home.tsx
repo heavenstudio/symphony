@@ -1,5 +1,7 @@
 // Home (`/`): the greeting and the page links, the next card with its pictures and the four after
-// it, the counts, and the progress the project's plugins add with the design documents'. The board
+// it, the counts, and the progress the project's plugins add with the design documents'. The
+// comments held on documents that wait on the reader to pass them on are counted under the greeting,
+// leading to their group of the queue. The board
 // it draws is kept current by the feed (home-board.ts); each region draws again only when the event
 // changed its own part of the board. The Dioxus client's view.rs, drawn alike.
 
@@ -47,6 +49,16 @@ export function lead(waiting: number, docs: number): string {
   return `${waiting} ${waits} on you across ${docs} ${plural(docs, "document")}.`;
 }
 
+/** The held comments that wait on the reader, `held` of them, leading to their group of the queue. */
+export function HeldLine({ held }: { held: number }) {
+  return (
+    <>
+      <a href={href("/queue#held")}>{`${held} held ${plural(held, "comment")}`}</a>
+      {" to pass on."}
+    </>
+  );
+}
+
 /** `part` of `whole` in percent; 0 of nothing. */
 function percent(part: number, whole: number): number {
   return whole === 0 ? 0 : (100 * part) / whole;
@@ -82,13 +94,22 @@ export function BoardView({
   view?: ProjectView;
 }) {
   const counts = board.counts;
+  const held = counts.held ?? 0;
   const [first, ...rest] = board.next;
   return (
     <div className="dash">
       <div className="dash-head page-head">
         <div>
           <h1>{greeting(now)}</h1>
-          <p className="head-state">{lead(counts.waiting, counts.docs_waiting)}</p>
+          <p className="head-state">
+            {(counts.waiting > 0 || held === 0) && lead(counts.waiting, counts.docs_waiting)}
+            {held > 0 && (
+              <>
+                {counts.waiting > 0 && " "}
+                <HeldLine held={held} />
+              </>
+            )}
+          </p>
         </div>
         <p className="dash-links">
           <a className="pill" href={href("/queue")}>
@@ -117,7 +138,13 @@ export function BoardView({
         </p>
       </div>
       <div className="dash-top">
-        <Hero card={first} waiting={counts.waiting} spot={counts.spot_check} now={now} />
+        <Hero
+          card={first}
+          waiting={counts.waiting}
+          spot={counts.spot_check}
+          held={held}
+          now={now}
+        />
         {rest.length > 0 && <NextList cards={rest} waiting={counts.waiting} />}
       </div>
       <Tiles counts={counts} />
@@ -128,16 +155,21 @@ export function BoardView({
   );
 }
 
-/** The next card, with a link straight to it; or the quiet of an empty queue. */
+/**
+ * The next card, with a link straight to it; or the quiet of an empty queue, which says no card
+ * waits where `held` comments do.
+ */
 const Hero = memo(function Hero({
   card,
   waiting,
   spot,
+  held,
   now,
 }: {
   card: Card | undefined;
   waiting: number;
   spot: number;
+  held: number;
   now: number;
 }) {
   if (card === undefined) {
@@ -145,7 +177,9 @@ const Hero = memo(function Hero({
       <section className="hero card empty">
         <div className="hero-text">
           <p className="eyebrow">Next up</p>
-          <h2 className="hero-title">Nothing waits on you. ✦</h2>
+          <h2 className="hero-title">
+            {held > 0 ? "No card waits on you." : "Nothing waits on you. ✦"}
+          </h2>
           {spot > 0 && (
             <p className="hero-summary">
               <a href={href("/queue#spot")}>{`${spot} auto-approved ${plural(spot, "card")}`}</a>

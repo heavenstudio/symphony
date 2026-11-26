@@ -51,7 +51,8 @@ pub(crate) struct Waits {
     /// The board's first cards, counts and progress: its version, build and ping left out, as
     /// they say nothing of what waits.
     board: Arc<Board>,
-    /// The queue's waiting cards and spot-checks; what waits on an agent is read by everyone.
+    /// The queue's waiting cards, spot-checks and held comments; what waits on an agent is read
+    /// by everyone.
     queue: Arc<Queue>,
     pending: Arc<Pending>,
     deciders: Option<Arc<Deciders>>,
@@ -76,7 +77,8 @@ impl Waits {
             && self.board.progress == page.board.progress)
             .then(|| Arc::clone(&self.board));
         let queue = (self.queue.waiting == page.queue.waiting
-            && self.queue.spot_check == page.queue.spot_check)
+            && self.queue.spot_check == page.queue.spot_check
+            && self.queue.held == page.queue.held)
             .then(|| Arc::clone(&self.queue));
         let pending = (*self.pending == page.pending).then(|| Arc::clone(&self.pending));
         if board.is_some() && queue.is_some() && pending.is_some() && self.deciders == page.deciders
@@ -104,13 +106,14 @@ fn board_part(page: &Page) -> Arc<Board> {
     })
 }
 
-/// `page`'s waiting cards and spot-checks as [`Waits`] holds them, made anew.
+/// `page`'s waiting cards, spot-checks and held comments as [`Waits`] holds them, made anew.
 fn queue_part(page: &Page) -> Arc<Queue> {
     #[cfg(test)]
     counted::part();
     Arc::new(Queue {
         waiting: page.queue.waiting.clone(),
         spot_check: page.queue.spot_check.clone(),
+        held: page.queue.held.clone(),
         ..Queue::default()
     })
 }
@@ -142,6 +145,21 @@ pub(crate) fn shown(
         board: theirs::board(board, &queue),
         pending: theirs::pending(pending, deciders, name),
         queue,
+    }
+}
+
+/// What a reader who may pass no held comment on, a hosted visitor, is shown of `board`, `queue`
+/// and `pending`: each whole, with no comment held on a document listed or counted.
+pub(crate) fn unheld(board: &Board, queue: &Queue, pending: &Pending) -> Shown {
+    let mut board = board.clone();
+    board.counts.held = 0;
+    Shown {
+        board,
+        queue: Queue {
+            held: Vec::new(),
+            ..queue.clone()
+        },
+        pending: pending.clone(),
     }
 }
 
@@ -278,9 +296,10 @@ impl Hub {
         }
     }
 
-    /// Who decides each card `queue` holds as waiting, on the board's people and map as its last
-    /// look read them ([`Hub::people_read`]): none on a board that names nobody; `Err` before its
-    /// first look, when a page keeps the ones it had. Reads no board, only the documents.
+    /// Who decides each card `queue` holds as waiting, and who each comment held on a document
+    /// waits on to pass it on, on the board's people and map as its last look read them
+    /// ([`Hub::people_read`]): none on a board that names nobody; `Err` before its first look,
+    /// when a page keeps the ones it had. Reads no board, only the documents.
     pub(super) fn deciders_of(&self, queue: &Queue) -> Result<Option<Arc<Deciders>>, ()> {
         let read = self.people.lock().recover().read.clone().ok_or(())?;
         let (people, map) = &*read;
@@ -288,9 +307,13 @@ impl Hub {
             return Ok(None);
         }
         let cards = theirs::cards(queue);
-        Ok(Some(Arc::new(Deciders::read(
-            people, map, &self.root, &cards,
-        ))))
+        Ok(Some(Arc::new(self.deciders_read(people, map, &cards))))
+    }
+
+    /// Who decides each of `cards` on `people` and `map`, and who each comment held on a document
+    /// the hub last read waits on to pass it on.
+    fn deciders_read(&self, people: &People, map: &Map, cards: &[(String, String)]) -> Deciders {
+        Deciders::read(people, map, &self.root, cards).passing(self.held_passing_on(people, map))
     }
 
     /// Main's page's board, at its version, as `reader`, a person a board named, is shown it, and
@@ -331,6 +354,8 @@ impl Hub {
             read: Some(Arc::clone(&read)),
             failed: None,
         };
+        // Who each waits on is told by this look.
+        self.held_read(store);
         let (people, map) = &*read;
         let revision = (!people.members.is_empty()).then_some((people.revision, map.revision));
         let cards = {
@@ -343,7 +368,9 @@ impl Hub {
             }
             theirs::cards(&main.queue)
         };
-        let deciders = revision.map(|_| Arc::new(Deciders::read(people, map, &self.root, &cards)));
+        let deciders = revision.map(|_| Arc::new(self.deciders_read(people, map, &cards)));
+        // Who a held comment waits on may have moved: the queue reads them again.
+        let held = self.holds_held();
         let mut pages = self.pages.write().recover();
         // Main's cards moved meanwhile: the refresh that moved them read their deciders.
         if pages
@@ -354,7 +381,12 @@ impl Hub {
         }
         for page in pages.values_mut() {
             page.deciders = deciders.clone();
-            self.publish(page, Vec::new());
+            let changes = if held {
+                vec![json!({"region": "held", "data": {}})]
+            } else {
+                Vec::new()
+            };
+            self.publish(page, changes);
         }
     }
 

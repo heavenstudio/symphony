@@ -11,6 +11,7 @@ import {
   chooseTopic,
   chosenTopic,
   counts,
+  HeldGroup,
   keepRows,
   minutes,
   QueueGroup,
@@ -24,7 +25,7 @@ import {
 import { TaskTag } from "./task-tag";
 import { asking, CASES, memoryStorage, reply, server } from "./testing";
 import { AtOnce } from "./viewport";
-import type { Card, QueueItem } from "./wire";
+import type { Card, QueueHeld, QueueItem } from "./wire";
 
 /** A card of `doc`, its slug `slug`. */
 function card(doc: string, slug = "s"): Card {
@@ -178,7 +179,16 @@ describe("the queue read", () => {
     expect(queue?.agent[0]?.branch).toBe("app/lamps");
     expect(queue?.agent.map((one) => one.ask?.holder ?? null)).toEqual([null, null, "umber-stoat"]);
     expect(queue?.agent[1]?.ask).toEqual({ id: 3, asked: 1000 });
+    expect(queue?.held).toEqual([
+      {
+        id: 4,
+        href: "/@proposal~lamps/docs/lamps/LAMPS.md#held-4",
+        doc_title: "Lamps",
+        author: "ana",
+      },
+    ]);
     expect(readQueue(CASES.samples.emptyQueue)).toEqual(CASES.samples.emptyQueue);
+    expect(readQueue(CASES.samples.emptyQueue)?.held).toBeUndefined();
   });
 
   it("takes a field it does not draw as the server sends it, or without it", () => {
@@ -230,6 +240,17 @@ describe("the queue read", () => {
         agent: [],
       },
     ],
+    ...[
+      ["held comments that are no list", { id: 1 }],
+      ["held comments that are null", null],
+      ["a held comment numbered by a word", [{ id: "1", href: "", doc_title: "", author: "" }]],
+      ["a held comment numbered by a fraction", [{ id: 1.5, href: "", doc_title: "", author: "" }]],
+      ["a held comment without its author", [{ id: 1, href: "", doc_title: "" }]],
+      ["a held comment whose link is no text", [{ id: 1, href: 2, doc_title: "", author: "" }]],
+    ].map(([name, held]): [unknown, unknown] => [
+      name,
+      { waiting: [], spot_check: [], agent: [], held },
+    ]),
   ])("is none for %s", (_, value) => {
     expect(readQueue(value)).toBeNull();
   });
@@ -311,6 +332,7 @@ describe("the feed's events", () => {
     "spot-check-order",
     "agent-queue",
     "agent-queue-order",
+    "held",
   ])("move the queue with %s", (region) => {
     expect(changed({ changes: [{ region: "docs" }, { region }] })).toBe(true);
   });
@@ -322,6 +344,28 @@ describe("the feed's events", () => {
     ["nothing", undefined],
   ])("leave it with %s", (_, delta) => {
     expect(changed(delta)).toBe(false);
+  });
+});
+
+/** The comment `id` held on `doc` by `author`, as the queue lists it. */
+function held(id: number, doc = "docs/A.md", author = "ana"): QueueHeld {
+  return { id, href: `/${doc}#held-${id}`, doc_title: "A", author };
+}
+
+describe("the held comments", () => {
+  it("lead each to its box on its document's page, under its project, saying who wrote it", () => {
+    const markup = renderToStaticMarkup(
+      <AtOnce.Provider value={true}>
+        <HeldGroup items={[held(4), held(9, "@x~y/docs/B.md", "cy")]} />
+      </AtOnce.Provider>,
+    );
+    expect(markup).toContain('<section id="held" class="card queue-group">');
+    expect(markup).toContain("<h2>Held comments (2)</h2>");
+    expect(markup).toMatch(
+      /<li data-held="4">.*?<div class="queue-row"><div><a href="\/docs\/A\.md#held-4">A<\/a><p class="muted">ana<\/p><\/div><\/div>/,
+    );
+    expect(markup).toContain('<a href="/@x~y/docs/B.md#held-9">A</a><p class="muted">cy</p>');
+    expect(markup).not.toContain("button");
   });
 });
 
@@ -424,6 +468,18 @@ describe("the queue's page", () => {
     expect(markup.match(/class="ghost-rank"/g)).toHaveLength(12);
     expect(markup.match(/class="ghost-row"/g)).toHaveLength(12 + 1);
     expect(markup.match(/class="ghost-none"/g)).toHaveLength(1);
+  });
+
+  it("reserves the held comments' group after what waits on the owner where it listed some", () => {
+    localStorage.setItem("queue-rows", "1 0 0");
+    localStorage.setItem("queue-held-rows", "2");
+    const markup = renderToStaticMarkup(<QueuePage scope="" refreshed={0} />);
+    const groups = [...markup.matchAll(/class="card ghost-group" data-for="(\w+)"/g)];
+    expect(groups.map((group) => group[1])).toEqual(["you", "held", "spot", "agent"]);
+    expect(markup.match(/class="ghost-row"/g)).toHaveLength(1 + 2);
+    localStorage.setItem("queue-held-rows", "0");
+    const none = renderToStaticMarkup(<QueuePage scope="" refreshed={0} />);
+    expect(none).not.toContain('data-for="held"');
   });
 
   it("leads home under its checkout", () => {

@@ -24,7 +24,9 @@ the project's progress.
 
 **Good morning** until noon, **Good afternoon** until six, **Good evening** after, by the clock of
 the device it is read on. Under it, *5 cards wait on you across 3 documents.*, or *Your queue is
-empty.*
+empty.*, and while comments held on documents wait on the reader to pass them on, *2 held comments
+to pass on.*, its first words a link to their group of [the queue](QUEUE.md#what-it-shows); with no
+card waiting, that alone.
 
 Beside it, the links: **Full queue**, **All docs**, a link to each page the project adds of its
 own, **Decision register** where the project has one, and **How review works** where it has a
@@ -98,6 +100,7 @@ at noon.
 | Loading, first visit | grey lines that stand in for the page, which a screen reader reads as *Loading the board…* |
 | Loading, a later visit | at once, home as this device last held it, with *Shown from this device, saved 14:32. Checking for changes…* until the server answers |
 | Nothing waits on the owner | **Next up** and *Nothing waits on you. ✦*, then, while any are auto-approved, *2 auto-approved cards to spot-check.*, its first words a link to them; no **Then** |
+| No card waits, a held comment does | the same, its title *No card waits on you.* |
 | One card waiting | **Next up · 1 of 1**, and no **Then** |
 | No task board | the counts of tasks and agents say **–** |
 | The first read fails | **The board could not be loaded**, why, *Trying again…* and **Retry**; the page tries again by itself |

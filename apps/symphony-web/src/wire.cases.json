@@ -2821,7 +2821,15 @@
           "ask": { "id": 3, "asked": 1000, "holder": "umber-stoat", "held": 1120 }
         }
       ],
-      "branches": []
+      "branches": [],
+      "held": [
+        {
+          "id": 4,
+          "href": "/@proposal~lamps/docs/lamps/LAMPS.md#held-4",
+          "doc_title": "Lamps",
+          "author": "ana"
+        }
+      ]
     },
     "emptyQueue": { "waiting": [], "spot_check": [], "agent": [], "branches": [] },
     "board": {

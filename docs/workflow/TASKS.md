@@ -2583,7 +2583,12 @@ and asks, as a card's note is; on a task she may not decide it is held.
   where it counts says them). Those who may pass it on, of its card's or its document's group
   else of the board, are told a `held` notice linking
   `DOC#held-N`, none of its words; a look whose read of them fails says so once and tells the
-  rest, cards and lines and the notices due, and what was told of them stands. The
+  rest, cards and lines and the notices due, and what was told of them stands. The same people,
+  and the person at the machine, find it in [the review queue](../product/QUEUE.md) until it is
+  passed on, its document's title leading to `DOC#held-N` and her name, none of its words and no
+  Pass on, and counted on Home: one predicate, the notice runner's, says whom it waits on. Nobody
+  else's queue, count or feed says it is there, a hosted visitor's none, and an agent's queue
+  (`just symphony-status --open`, the triage queue) reads the documents alone. The
   note beside a verdict is no message: one who may decide a card writes it with the verdict.
 - **A build and a board a step apart** follow [the additive step rule](RELEASES.md): a build
   without the step never reads or writes the table, so it serves no agent the words, the board's
