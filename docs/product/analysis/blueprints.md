@@ -19,8 +19,11 @@ card at the section that argues it, a few at a time.
   assistant.
 - **Updates.** A new version [reaches a project that follows by itself](#how-a-new-version-arrives):
   a task the Symphony files, landed once the project's own checks pass, with no reviewer.
-- **Waiting on another concept.** [What the project holds of its blueprint](#what-the-project-holds-of-its-blueprint)
-  is decided once it is settled whether a project may hold several boards.
+- **One for each project.** A project has one board
+  ([boards and projects](boards-and-projects.md#one-board-for-each-project)), and a part that
+  needs a template of its own is a project of its own, so a project has one blueprint and one
+  record of it. [What that record holds](#what-the-project-holds-of-its-blueprint) is asked again
+  on that ground.
 
 How facts are marked: a fact about the code names the file it was read in; "read 2026-11-20" is
 this machine that day, the other registered projects' checkouts read in place and changed in
@@ -201,11 +204,14 @@ project knows its blueprint and what it left.
   manual says its support for submodules in several checkouts of one repository is incomplete and
   advises against it. The checkout holds the blueprint twice.
 
-**Not decided here.** Today a project has one board and one project file. Whether a project may
-hold several boards, each of which could start from a blueprint of its own, or whether each such
-board is a project entirely, is a concept of its own (the board task `app/boards-and-projects`).
-How a blueprint is recorded in a project is decided after it, and has no card until then. Nothing
-else in this concept waits on it.
+**One record for each project.** A project has one board, and a part of the work that needs a
+template of its own is a project of its own, in the same repository or another
+([boards and projects](boards-and-projects.md#one-board-for-each-project)). So a project has one
+blueprint and one record of it, never one for each board. Two projects of one repository over
+folders of their own each keep theirs in their own folder. Two projects over the same folders
+share the blueprint's files; where each keeps its record and which blueprint writes those files
+wait until a repository first needs such projects
+([its later rounds](boards-and-projects.md#later-rounds)).
 
 - [-] **blueprint-in-project** — You asked whether a blueprint could be added to a project as a Git submodule inside its repository. Either way the blueprint's files are copied to where they are read (the skills folder, the project file at the root), since each reader looks in a fixed place. The choice is how the project remembers its blueprint. A: a record alone. One committed file names the blueprint's address, its version and what it put; Symphony fetches the blueprint when it needs to compare or update. B: a submodule as well, inside the project's repository, at the version taken. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/blueprints#What the project holds of its blueprint]]
   [2026-11-23 11:23] agent — Posted for the board task `app/blueprints`, from your note on **blueprint-home**: "Could use submodules to add it to a symphony project (inside the project repo?)".
@@ -223,6 +229,29 @@ else in this concept waits on it.
   [2026-11-23 12:23] agent — Under A the record is one for each board, not one for the project. Each board's record sits beside that board's settings and names its blueprint's address, its version and what that blueprint put. So each board follows, or leaves, its own blueprint, and each blueprint's new version arrives as its own task on the board it belongs to. Some places belong to the repository and not to a board: the skills folder, the justfile, the rules at the root. Two blueprints write there side by side, each under its own name, and taking a second blueprint that would write over what the first put is refused. A submodule would not change this: there would be one for each blueprint, their files would still be copied into the same shared places, and every task's worktree would fetch all of them. One caution: today a project has one board and one project file, so several boards in one project is a design of its own that this assumes. The card's options stand as written, reading A as one record for each board; the section above the card now says this.
   [2026-11-23 12:26] owner · rejected — We need to decide upon if we are going to do multiple boards per project or multiple project entirely. This requires some proper reasoning and proposal before this question here can be answered.
   [2026-11-23 12:27] agent — This question waits. Whether a project may hold several boards, or each is a project entirely, is now a concept of its own with its own reasoning and proposal: the board task app/boards-and-projects. How a blueprint is recorded in a project is asked again after that is decided, as a new card. The section above this card says so, and its paragraph on several boards is taken back to what is known today: a project has one board.
+  [2026-11-26 08:34] agent — It is decided. On **boards-per-project** you approved "B, but they may even reference the same base folder. They should have different settings including people, tasks, board, decision queue tho and they could use different folders." A project has one board, and a part with a template of its own is a project of its own, so the record is one for each project, never one for each board. That answers your question here, and not the choice between A and B, so it is asked again on the new card **blueprint-record** below, its options written for one record per project.
+
+- [ ] **blueprint-record** — How a project remembers the blueprint it follows. A project now has one board and one blueprint, so this is one record for the project; it asks again what **blueprint-in-project** asked. Either way the blueprint's files are copied to where they are read (the skills folder, the project file at the root). A: a record alone. One committed file in the project names the blueprint's address, its version and what it put; Symphony fetches the blueprint when it compares or updates. B: a submodule as well, the blueprint's repository inside the project's at the version taken, beside that record. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/blueprints#What the project holds of its blueprint]]
+  [2026-11-26 08:34] agent — Posted for the board task `docs/boards-question-settled`. It asks again **blueprint-in-project**, which you rejected until boards were decided: "We need to decide upon if we are going to do multiple boards per project or multiple project entirely." A concept: nothing is built by this card.
+
+    **Base.** Nothing is built. A blueprint is a Git repository of its own, as you approved on **blueprint-home**.
+
+    **What the boards decision settles.** One board for each project (**boards-per-project**, B), and a part with a template of its own is a project of its own. So a project has one blueprint and one record of it, not the record for each board that the earlier answer described. A repository may hold several projects (**projects-per-repository**, B); over folders of their own, each keeps its record in its folder.
+
+    **A, a record alone.** One committed file names the address, the version and what the blueprint put. Symphony needs the network, or a copy it fetched before, to compare with the blueprint or to hand an agent what changed.
+
+    **B, a submodule as well.** Git records the version, and the untouched blueprint is in the checkout to compare with. Every clone and every task's worktree fetches and checks out the submodule, and Symphony makes a worktree for each task; Git's own manual says its support for submodules in several checkouts of one repository is incomplete and advises against it. The checkout holds the blueprint twice, and a repository with two projects holds two submodules.
+
+    **Why A.** B's gain is convenience for Symphony; its cost falls on every task of every project.
+
+    **Not asked here.** Two projects over the same folders share the blueprint's files. Where each keeps its record, and which blueprint writes those files, wait until a repository needs such projects (the later rounds of [boards and projects](boards-and-projects.md#later-rounds)).
+
+    **Earlier verdicts checked.**
+    - **boards-per-project** (B) and **projects-per-repository** (B) make the record one for each project. They do not say what it holds.
+    - **blueprint-home** (B) decides that a blueprint is its own repository and is fetched, not how the project holds it.
+    - **blueprint-in-project** was rejected for the boards question, not for A or B.
+
+    None decides this.
 
 ## Where blueprints live
 
