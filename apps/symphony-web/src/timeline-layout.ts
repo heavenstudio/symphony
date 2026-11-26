@@ -6,9 +6,14 @@
 //   stage they happened in, each build and test named by its command; the verdict after a review's
 //   bar, and a striped bar for what runs now.
 // - Wide, lanes over the same hours (`lanes`): the stage, the executor, the reviewer, the builds
-//   and the tests, each a lane of its own (a row each for runs that overlap or meet, so no two are
-//   drawn as one bar, thin past WORDED_ROWS), and a thin row per gate, its state drawn by a pattern
-//   of its own as well as a colour, with a line at now.
+//   and the tests, each a lane of its own, and a thin row per gate, its state drawn by a pattern of
+//   its own as well as a colour, with a line at now. A run takes the first row of its lane free
+//   when it is queued, so only runs that overlap open another (`runRows`), each one bar at its
+//   recorded times, its queue the lighter head of it, its distinguishing words (`runWords`) and its
+//   length inside it once it is BAR_WORDS_PX wide; a runs lane's name says its counts, and where
+//   the recorder keeps no runs (before `runs_from`) the lanes are hatched (`NotKept`). With
+//   messages, each role's lane and the board's and others' carry a line at their foot (`rail`),
+//   on which timeline.tsx draws each message as a tick at its sender's lane.
 //
 // A run's words for a pointer resting on it and for its focus (`runTitle`) name its command, its
 // wait to start and its run time, each apart.
@@ -64,21 +69,20 @@ export const END_PX = 88;
  */
 export const WIDTHS: readonly number[] = Array.from({ length: 25 }, (_, at) => 400 + at * 50);
 
-/** How near, in percent of the hours drawn, a run may begin to the end of the one before it in a
- * row: nearer, the two would read as one bar (a segment is drawn 2 px wide at the least), so it
- * takes a row of its own. */
-export const RUN_GAP = 0.5;
-
-/** The most rows a lane of runs draws with each run's words under its bar. A lane that needs more
- * (a burst of runs on a timeline of days, where each is a sliver) draws its rows thin and no words
- * under them: each run's words are in its hover, its focus and its row in the list. */
-export const WORDED_ROWS = 6;
+/** How wide a run's bar is, in pixels, before its words go inside it, cut to fit; narrower, they
+ * are in its hover, its focus and its row in the list. */
+export const BAR_WORDS_PX = 30;
+/** The room the not-kept hatch's words take beside them: their inset and their padding. */
+const NOT_KEPT_PAD_PX = 22;
 
 /** The hours between the wide view's ticks: the first that draws no more than eight. */
 const TICK_HOURS = [1, 2, 3, 4, 6, 8, 12, 24, 72, 168];
 
 /** Statuses a task ends in: an instant on the timeline, with no time of its own. */
 const CLOSED = ["done", "cancelled"];
+
+/** The lanes a message starts or ends at (timeline-history.ts `endpointLane`). */
+const RAILS = ["orchestrator", "executor", "reviewer", "other"];
 
 /** The review gate's name (`symphony_api::gates::REVIEW`): its rounds say its changes. */
 const REVIEW = "review";
@@ -373,13 +377,18 @@ export function totals(timeline: TaskTimeline): [string, string | null] {
   return [first, machine];
 }
 
-/** What the timeline cannot show: the runs the recorder's rotated history let go, before
- * `runs_from`. */
-export function keptNote(timeline: TaskTimeline): string | null {
+/** When the recorder's rotated history begins, `runs_from`, as a time says it: "11-19 11:09";
+ * none where it keeps every run of the task. */
+function keptFrom(timeline: TaskTimeline): string | null {
   const from = timeline.runs_from ?? null;
-  return from === null
-    ? null
-    : `Builds and tests before ${dateOf(timeline, from)} ${clockOf(timeline, from)} are no longer kept.`;
+  return from === null ? null : `${dateOf(timeline, from)} ${clockOf(timeline, from)}`;
+}
+
+/** What the timeline cannot show: the runs the recorder's rotated history let go, before
+ * `runs_from`, said by the hatch's hover wide and the kept row's on a phone. */
+export function keptTitle(timeline: TaskTimeline): string | null {
+  const from = keptFrom(timeline);
+  return from === null ? null : `Builds and tests before ${from} are not kept`;
 }
 
 // The phone's list.
@@ -419,6 +428,30 @@ export interface Row {
   /** The whole of it, for a pointer resting on the row. */
   title: string;
   message?: number;
+  /** The row at `runs_from`, from which the recorder keeps every build and test. */
+  kept?: true;
+}
+
+/** The phone's row at `runs_from`, from which the builds and tests are kept: none where they all
+ * are. */
+export function keptRow(timeline: TaskTimeline): Row | null {
+  const from = timeline.runs_from ?? null;
+  const title = keptTitle(timeline);
+  if (from === null || title === null) return null;
+  return {
+    start: from,
+    day: null,
+    at: clockOf(timeline, from),
+    sub: true,
+    event: true,
+    tone: "muted-foreground",
+    label: "Builds and tests kept from here on",
+    took: null,
+    bar: null,
+    word: null,
+    title,
+    kept: true,
+  };
 }
 
 /** Who held the executor role while `stage` went on: the first claim over it. */
@@ -785,7 +818,10 @@ export function rows(timeline: TaskTimeline, costs?: Costs): Row[] {
     ...places.map((stretch) => stretch.to - stretch.from),
   ].reduce((most, seconds) => Math.max(most, seconds), 60);
   const share: Share = (seconds) => (nonNegative(seconds) / longest) * BAR_SPAN;
+  const kept = keptRow(timeline);
+  // The kept row first, so a run queued at its instant goes after it (the sort is stable).
   const under = [
+    ...(kept === null ? [] : [kept]),
     ...timeline.runs.map((run) => runRow(run, timeline, share)),
     ...places.map((stretch) => placeRow(stretch, timeline, share)),
     ...gateChanges(timeline),
@@ -887,9 +923,22 @@ export function fitClass(fit: Fit): string {
  */
 export function widthFor(text: string, room: number, pad: number): number | null | undefined {
   if (text === "" || room <= 0) return undefined;
-  const needed = (([...text].length * CHAR_PX + pad) * 100) / room;
+  return fromWidth((([...text].length * CHAR_PX + pad) * 100) / room);
+}
+
+/** The first of WIDTHS at which a track is `needed` pixels wide or more: null where 300 is,
+ * undefined where 1600 is not. */
+function fromWidth(needed: number): number | null | undefined {
   if (needed <= (WIDTHS[0] as number) - 100) return null;
   return WIDTHS.find((width) => width >= needed);
+}
+
+/** `text` inside a run's bar `room` percent of the track wide: from the first of WIDTHS at which
+ * the bar is BAR_WORDS_PX wide, cut to fit there; none where it never is. */
+export function barFit(text: string, room: number): Fit[] {
+  if (text === "" || !(room > 0)) return [];
+  const from = fromWidth((BAR_WORDS_PX * 100) / room);
+  return from === undefined ? [] : [{ text, from, to: null }];
 }
 
 /** Room a label beside a segment has: `room` percent of the track before the next, and the lanes'
@@ -948,9 +997,7 @@ export interface Seg {
   /** A word right after it (a review's verdict) and its tone, where there is room before the
    * next, and that room in percent: it is cut short there, never drawn over the next. */
   after: [Fit, string, Room] | null;
-  /** A label under it (a run's), where there is room before the next in its row, and that room. */
-  under: [Fit, Room] | null;
-  /** The row of its lane it is drawn in (runs that overlap or meet take a row each). */
+  /** The row of its lane it is drawn in (runs that overlap take a row each). */
   row: number;
   /** All of it, for a pointer resting on it and for assistive technology. */
   title: string;
@@ -960,16 +1007,26 @@ export interface Seg {
   stop: boolean;
 }
 
-/** A lane of the wide view: its key (its row's `data-lane`), its name, who worked in it, how many
- * rows its segments take, and its segments. */
+/** A lane of the wide view: its key (its row's `data-lane`), its name, who worked in it (a runs
+ * lane: its counts), how many rows its segments take, and its segments. */
 export interface Lane {
   key: string;
   name: string;
   who: string;
   rows: number;
-  /** Its rows are more than [`WORDED_ROWS`]: drawn thin, with no words under its runs. */
-  dense: boolean;
+  /** A line at its foot that messages are drawn on, as ticks at their sender's lane: each role's
+   * lane and the board's and others', on a timeline with messages. */
+  rail: boolean;
   segs: Seg[];
+}
+
+/** Where the recorder keeps no runs of the task: from its making to `runs_from`, in percent of
+ * the hours drawn, over the builds' and the tests' lanes; its words where they fit. */
+export interface NotKept {
+  left: number;
+  width: number;
+  label: Fit | null;
+  title: string;
 }
 
 /** A gate's state over the hours it held, placed in percent of the hours drawn. */
@@ -994,12 +1051,14 @@ export interface Tick {
   label: string;
 }
 
-/** The wide view: the hours, a line at now while the task is open, the lanes and the gates' rows. */
+/** The wide view: the hours, a line at now while the task is open, the lanes, the gates' rows, and
+ * the time no run is kept of, where some is. */
 export interface Lanes {
   ticks: Tick[];
   now: Tick | null;
   lanes: Lane[];
   gates: GateRow[];
+  notKept: NotKept | null;
 }
 
 /** How many parts of the lanes a keyboard stops at: each step's segment, then each gate's state. */
@@ -1080,19 +1139,15 @@ function eachOnce(names: string[]): string {
   return seen.join(", ");
 }
 
-/** A run's name under its bar, its lane saying whether it is a build or a test: its command's first
- * word ("verify" for `just verify`, "lint-rs" for `just lint-rs`), or "running" while it runs;
- * then its result, unless it went green. */
-export function short(run: Run): string {
-  let name: string;
-  if (run.result === "running") name = "running";
-  else {
-    const recipe = run.label.startsWith("just ") ? run.label.slice("just ".length) : run.label;
-    name = words(recipe)[0] ?? recipe;
-  }
-  return run.result === "green" || run.result === "running"
-    ? name
-    : `${name} ${resultWord(run.result)}`;
+/**
+ * A run's distinguishing words, said inside its bar, its lane saying whether it is a build or a
+ * test: its command without `just`, its flags or a `--`, the values and the test filter kept
+ * ("test-rs symphony-board store" for `just test-rs -p symphony-board --test store`); the command
+ * whole where nothing else is left.
+ */
+export function runWords(run: Run): string {
+  const kept = words(run.label).filter((word) => word !== "just" && !word.startsWith("-"));
+  return kept.length === 0 ? trimmed(run.label) : kept.join(" ");
 }
 
 /** The stage lane: each stretch the task held a status, the wait to land drawn as waiting; a close
@@ -1117,7 +1172,6 @@ function stageSegs(timeline: TaskTimeline, scale: Scale, costs?: Costs): Seg[] {
       // Its word, its time and its cost; else its time and its cost; else its time alone.
       text: fittedFirst([`${word} ${length}${spent}`, `${length}${spent}`, length], width),
       after: null,
-      under: null,
       row: 0,
       title: `${word} ${length}${spent}, from ${scale.clock(stage.from)} to ${scale.clock(to)}${cost.words}`,
       stop: true,
@@ -1140,7 +1194,6 @@ function placeSegs(timeline: TaskTimeline, scale: Scale, key: "phase" | "state")
         look: "solid",
         text: fitted(`${stretch.label} ${length}`, length, width),
         after: null,
-        under: null,
         row: 0,
         title: stretchTitle(stretch, length, (at) => scale.clock(at)),
         stop: true,
@@ -1165,7 +1218,6 @@ function claimSegs(timeline: TaskTimeline, scale: Scale, one: boolean): Seg[] {
       look: "solid",
       text: fitted(long, length, width),
       after: null,
-      under: null,
       row: 0,
       title: `${claim.by} held it ${length}, from ${scale.clock(claim.from)} to ${scale.clock(to)}`,
       stop: true,
@@ -1207,7 +1259,6 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
         look: "waiting",
         text: taken === null ? fitted(name, "", waiting) : [],
         after: taken === null ? after : null,
-        under: null,
         row: 0,
         title,
         stop: taken === null,
@@ -1222,7 +1273,6 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
         look: "solid",
         text: fitted(name, "", width),
         after,
-        under: null,
         row: 0,
         title,
         stop: true,
@@ -1233,15 +1283,15 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
 }
 
 /**
- * The rows of a lane of runs: each run in the first row where the run before it ended `gap`
- * seconds or more before its queue, else a row of its own, so runs that overlap or meet take a row
- * each, as many as they need, and no two are drawn as one bar. Each run's row, and how many rows
- * there are.
+ * The rows of a lane of runs: each run in the first row free when it is queued (the run before it
+ * there ended by then), else a row of its own, so only runs that overlap take a row each, as many
+ * as they need, and runs one after another share one. A run holds its row from its queue to its
+ * end, one going on to `now`. Each run's row, and how many rows there are.
  */
-export function runRows(runs: Run[], now: number, gap = 0): [number[], number] {
+export function runRows(runs: Run[], now: number): [number[], number] {
   const ends: number[] = [];
   const placed = runs.map((run) => {
-    let row = ends.findIndex((free) => free + gap <= run.queued);
+    let row = ends.findIndex((free) => free <= run.queued);
     if (row < 0) {
       ends.push(Number.NEGATIVE_INFINITY);
       row = ends.length - 1;
@@ -1252,61 +1302,74 @@ export function runRows(runs: Run[], now: number, gap = 0): [number[], number] {
   return [placed, Math.max(ends.length, 1)];
 }
 
-/** A lane of `runs`, the builds' or the tests': each run's queue, drawn as waiting with its name
- * under it where there is room before the next in its row, then its run in its result's tone,
- * striped while it runs. Its segments, how many rows they take, and whether they are more than
- * [`WORDED_ROWS`], each run's name then left to its hover, its focus and the list. */
-function runSegs(runs: Run[], scale: Scale): [Seg[], number, boolean] {
+/** A lane of `runs`, the builds' or the tests': each run one bar in its row, its queue drawn as
+ * waiting at its head, then its run in its result's tone, striped while it runs; its words inside
+ * the part the keyboard stops at, where that part is wide enough. Its segments, and how many rows
+ * they take. */
+function runSegs(runs: Run[], scale: Scale): [Seg[], number] {
   const now = scale.now;
-  const [placed, count] = runRows(runs, now, (scale.span * RUN_GAP) / 100);
-  const dense = count > WORDED_ROWS;
+  const [placed, count] = runRows(runs, now);
   const segs: Seg[] = [];
   runs.forEach((run, index) => {
     const row = placed[index] as number;
     const began = run.started ?? null;
     const started = began ?? run.ended ?? now;
-    let next: Run | undefined;
-    for (let later = index + 1; later < runs.length; later += 1) {
-      if (placed[later] === row) {
-        next = runs[later];
-        break;
-      }
-    }
-    const room: Room = {
-      room: (next === undefined ? 100 : scale.at(next.queued)) - scale.at(run.queued),
-      last: next === undefined,
-    };
     const length = lasted(began === null ? waited(run, now) : ran(run, now));
+    const said = `${runWords(run)} · ${length}`;
     const title = runTitle(run, now);
-    const under = dense ? null : label(`${short(run)} ${length}`, room);
+    const queue = scale.width(run.queued, started);
     segs.push({
       left: scale.at(run.queued),
-      width: scale.width(run.queued, started),
+      width: queue,
       tone: "primary",
       look: "waiting",
-      text: [],
+      text: began === null ? barFit(said, queue) : [],
       after: null,
-      under: under === null ? null : [under, room],
       row,
       title,
       stop: began === null,
     });
     if (began !== null) {
+      const width = scale.width(began, run.ended ?? now);
       segs.push({
         left: scale.at(began),
-        width: scale.width(began, run.ended ?? now),
+        width,
         tone: resultTone(run.result),
         look: run.result === "running" ? "running" : "solid",
-        text: [],
+        text: barFit(said, width),
         after: null,
-        under: null,
         row,
         title,
         stop: true,
       });
     }
   });
-  return [segs, count, dense];
+  return [segs, count];
+}
+
+/** A runs lane's counts, which its name says at any zoom: "42 runs · 12 red". */
+export function runCounts(runs: Run[]): string {
+  const red = runs.filter((run) => run.result === "red").length;
+  return `${runs.length} ${plural(runs.length, "run")} · ${red} red`;
+}
+
+/** The time no run is kept of: from the task's making to `runs_from`, where the recorder's history
+ * begins after it; none where it keeps them all, or where the task has no runs lane. */
+function notKept(timeline: TaskTimeline, scale: Scale): NotKept | null {
+  const from = timeline.runs_from ?? null;
+  const title = keptTitle(timeline);
+  const said = keptFrom(timeline);
+  if (from === null || title === null || said === null || timeline.runs.length === 0) return null;
+  const width = scale.width(timeline.created, from);
+  if (!(width > 0)) return null;
+  const text = `not kept before ${said}`;
+  const at = widthFor(text, width, NOT_KEPT_PAD_PX);
+  return {
+    left: scale.at(timeline.created),
+    width,
+    label: at === undefined ? null : { text, from: at, to: null },
+    title,
+  };
 }
 
 /** Each gate's thin row: each state from when it was taken to the next, the last to the end, its
@@ -1352,7 +1415,7 @@ export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
       name: "Stage",
       who: "",
       rows: 1,
-      dense: false,
+      rail: false,
       segs: stageSegs(timeline, scale, costs),
     },
   ];
@@ -1366,7 +1429,7 @@ export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
         name,
         who: "",
         rows: 1,
-        dense: false,
+        rail: false,
         segs: placeSegs(timeline, scale, key),
       });
     }
@@ -1385,7 +1448,6 @@ export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
         look: "waiting",
         text: fitted(role.by, "", width),
         after: null,
-        under: null,
         row: 0,
         title: `${role.by} held orchestrator from ${role.from} to ${role.to ?? "open"}; source ${role.source}${role.uncertain ? "; uncertain boundaries" : ""}; not continuous work or connection`,
         stop: true,
@@ -1396,7 +1458,7 @@ export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
       name: "Orchestrator",
       who: "recorded role holds",
       rows: 1,
-      dense: false,
+      rail: false,
       segs,
     });
   }
@@ -1406,7 +1468,7 @@ export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
       name: "Executor",
       who: executors,
       rows: 1,
-      dense: false,
+      rail: false,
       segs: claimSegs(timeline, scale, one),
     });
   }
@@ -1416,7 +1478,7 @@ export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
       name: "Reviewer",
       who: reviewers,
       rows: 1,
-      dense: false,
+      rail: false,
       segs: roundSegs(timeline, scale),
     });
   }
@@ -1437,19 +1499,15 @@ export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
           name,
           who: "holder unknown",
           rows: 1,
-          dense: false,
+          rail: false,
           segs: [],
         });
       }
     }
-    drawn.push({
-      key: "other",
-      name: "Other / task messages",
-      who: "outside, everyone or unknown",
-      rows: 1,
-      dense: false,
-      segs: [],
-    });
+    drawn.push({ key: "other", name: "Board & others", who: "", rows: 1, rail: false, segs: [] });
+    // Every lane a message can start or end at carries the line its ticks and arrows are drawn
+    // on, whether or not one starts there.
+    for (const lane of drawn) lane.rail = RAILS.includes(lane.key);
   }
   const builds = timeline.runs.filter((run) => run.phase === "build");
   const tests = timeline.runs.filter((run) => run.phase !== "build");
@@ -1458,15 +1516,15 @@ export function lanes(timeline: TaskTimeline, costs?: Costs): Lanes {
     ["tests", "Tests", tests],
   ] as const) {
     if (runs.length === 0) continue;
-    const [segs, count, dense] = runSegs(runs, scale);
-    const who = eachOnce(runs.map((run) => run.host ?? ""));
-    drawn.push({ key, name, who, rows: count, dense, segs });
+    const [segs, count] = runSegs(runs, scale);
+    drawn.push({ key, name, who: runCounts(runs), rows: count, rail: false, segs });
   }
   return {
     ticks: scale.ticks(open),
     now: open ? { left: scale.at(scale.now), label: `now ${scale.clock(scale.now)}` } : null,
     lanes: drawn,
     gates: gateRows(timeline, scale),
+    notKept: notKept(timeline, scale),
   };
 }
 

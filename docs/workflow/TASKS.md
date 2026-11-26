@@ -3732,7 +3732,9 @@ so each time reads on the server's local clock as it then stood, the thread's.
   say). None until the recorder keeps one for the task: the page then draws no
   builds or tests at all, and no machine time. Where the recorder's history no
   longer reaches back to the task's start, `runs_from` says since when it keeps
-  every run, and the page says so.
+  every run: wide, the time before it is hatched over the builds' and the tests'
+  lanes, "not kept before 11-19 11:09" where the words fit, and on a phone it is a
+  row at that time, "Builds and tests kept from here on".
 - **gates**: each gate's states from the [gates](#gates) answer, its past and its
   current, a lane each by name; a state taken before the task was made counts from
   its creation, and the review gate's from the task's first move to review. A stamp
@@ -3759,14 +3761,24 @@ stage with its start, its label, its length and a bar as long, the wait in it dr
 lighter; under each stage the builds, tests and gate changes that began in it (the
 review gate's are its rounds), a build or test named by its command, the machine's by
 what it ran and its commit; the verdict after a review's bar, and a striped bar for a
-run going on now; a stage left within half a minute has no row. From 900 px wide it
-draws lanes over the same hours: the stage, the executor, the reviewer, the builds and
-the tests, each a lane of its own (a row each for runs that overlap, or where one is
-queued so soon after another's end, half a percent of the hours drawn, that the two
-would read as one bar: no two runs are drawn as one; a lane that needs more than six
-rows, a burst of runs on a timeline of days, draws them thin with no words under them),
-and a thin row per gate, each state by its pattern as well as its colour (met solid,
-missing dotted, waived dashed, held double), with a line at now. A word in the lanes is drawn only where it fits; every
+run going on now; a stage left within half a minute has no row. A message is one line of
+28 px, its time, its diamond and who sent it to whom level, the whole row the press that
+picks it. From 900 px wide it
+draws lanes over the same hours: the stage, the orchestrator, the executor, the reviewer, the builds and
+the tests, each a lane of its own, and a thin row per gate, each state by its pattern as well as its colour (met solid,
+missing dotted, waived dashed, held double), with a line at now; the hour lines start
+where the tracks do. A run goes in the first row of its lane free when it is queued, so
+runs one after another share a row however near, and only runs that overlap take another
+(`runRows`). Each run is one 14 px bar at its recorded times, its wait the lighter dashed
+head of it, edged in the card's colour so two that meet stay two, with its distinguishing
+words (its command without `just` and its flags) and its length inside it once it is
+30 px wide, cut to fit; a runs lane's name says how many ran and how many went red ("42
+runs · 12 red"). Each message is a 2 × 8 tick on a dotted line at the foot of its sender's
+lane, under the bars, in a press area of 24 px; a message from or to no one role holder (the
+board, the owner, everyone) is on the 22 px line of **Board & others**. The selected message
+is a filled dot with one arrow from it to a ring on its addressed lane's line, its address
+and time on the hours line over a dashed guide down to it; one whose two ends are one lane
+is a ring around its dot, with no arrow. A word in the lanes is drawn only where it fits; every
 part of them is said to assistive technology and reached by the arrow keys, and the
 list stays for assistive technology beside them. A run's words name its command, its
 wait to start and its run time apart (to the second under a minute), how it ended, its
