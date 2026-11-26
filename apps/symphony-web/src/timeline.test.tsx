@@ -29,7 +29,7 @@ import {
 } from "./timeline";
 import { readTaskTokens, totalWords } from "./timeline-cost";
 import { failed, lanes, nextRead, readTimeline, stops, type View } from "./timeline-layout";
-import { keyView, leastShown, OverviewStrip, ZoomBar } from "./timeline-navigate";
+import { handoff, keyView, leastShown, OverviewStrip, ZoomBar } from "./timeline-navigate";
 import { LEAST_SHOWN, wholeOf } from "./timeline-zoom";
 import { NOT_IN_TIME } from "./trouble";
 import type { TaskTimeline, TaskTokens, TimelineMessage } from "./wire";
@@ -96,10 +96,10 @@ function elements(
 type Props = Record<string, unknown> & { children?: ReactNode };
 
 /** Press `element` as a click would: its handler, which it must have. */
-function press(element: ReactElement<Props> | undefined): void {
+function press(element: ReactElement<Props> | undefined, event?: unknown): void {
   const onClick = element?.props.onClick;
   if (typeof onClick !== "function") throw new Error("nothing to press");
-  onClick();
+  onClick(event);
 }
 
 /** The page's document: shown or hidden, its events, no element of the project's. */
@@ -1123,9 +1123,9 @@ describe("the timeline zoomed", () => {
         ["Whole task", "−", "+"].includes(one.props.children as string),
       );
     const [whole, out, inward] = buttons(NOON);
-    press(whole);
-    press(out);
-    press(inward);
+    press(whole, pressed(false).event);
+    press(out, pressed(false).event);
+    press(inward, pressed(false).event);
     expect(set.mock.calls).toEqual([
       [null],
       [{ from: nine(150), to: nine(270) }],
@@ -1133,8 +1133,56 @@ describe("the timeline zoomed", () => {
     ]);
     // From the whole task, + zooms to its middle half.
     set.mockClear();
-    press(buttons(null)[2]);
+    press(buttons(null)[2], pressed(false).event);
     expect(set.mock.calls).toEqual([[{ from: nine(95), to: nine(285) }]]);
+  });
+
+  /** A press's event on a toolbar button with the focus or not, and the buttons it focused. */
+  function pressed(focused: boolean) {
+    const focus: string[] = [];
+    const button: { ownerDocument: { activeElement: unknown }; parentElement: unknown } = {
+      ownerDocument: { activeElement: null },
+      parentElement: {
+        querySelector: (selector: string) => ({ focus: () => focus.push(selector) }),
+      },
+    };
+    if (focused) button.ownerDocument.activeElement = button;
+    return { event: { currentTarget: button }, focus };
+  }
+
+  it("hands the focus on from a button that hides itself to the one that now acts", () => {
+    const set = vi.fn();
+    const buttons = (view: View | null) =>
+      elements(ZoomBar({ timeline: pictures(), nav: { whole: WHOLE, view, set } }), (one) =>
+        ["Whole task", "−", "+"].includes(one.props.children as string),
+      );
+    /** The buttons the press of the `at`th button with the focus, on `view`, focused. */
+    const focused = (view: View, at: number) => {
+      const click = pressed(true);
+      press(buttons(view)[at], click.event);
+      return click.focus;
+    };
+    const ZOOM_IN = ['[aria-label="Zoom in"]'];
+    // Whole task always ends on the whole task: to +.
+    expect(focused(NOON, 0)).toEqual(ZOOM_IN);
+    // − to the whole task: to +; short of it, it stays.
+    expect(focused({ from: nine(90), to: nine(290) }, 1)).toEqual(ZOOM_IN);
+    expect(focused(NOON, 1)).toEqual([]);
+    // + to the least: to −; short of it, it stays.
+    expect(focused({ from: nine(180), to: nine(188) }, 2)).toEqual(['[aria-label="Zoom out"]']);
+    expect(focused(NOON, 2)).toEqual([]);
+    // A press with the focus elsewhere (a mouse's, where it takes none) moves no focus.
+    const elsewhere = pressed(false);
+    press(buttons(NOON)[0], elsewhere.event);
+    expect(elsewhere.focus).toEqual([]);
+    expect(set).toHaveBeenCalledTimes(6);
+    expect([
+      handoff("whole", null),
+      handoff("out", null),
+      handoff("out", NOON),
+      handoff("in", { from: 0, to: LEAST_SHOWN }),
+      handoff("in", NOON),
+    ]).toEqual(["in", "in", null, "out", null]);
   });
 
   it("+ and − zoom and 0 shows the whole task; a modifier's key is the browser's", () => {

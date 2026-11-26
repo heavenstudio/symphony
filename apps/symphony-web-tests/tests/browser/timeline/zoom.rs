@@ -202,6 +202,51 @@ fn the_toolbar_zooms_in_and_out_and_whole_task_returns_with_a_true_readout() {
     assert_eq!(chrome.eval(buttons), whole);
 }
 
+/// A toolbar button pressed by the keyboard that cannot act once it has (Whole task, − to the whole
+/// task, + to the least) hands the focus to the button that now acts, never to the page.
+#[test]
+fn a_toolbar_button_that_hides_itself_hands_the_focus_on() {
+    let site = guards_on(site());
+    let Some(mut chrome) = chrome() else { return };
+    opened(&mut chrome, &site);
+    let focused =
+        "document.activeElement.getAttribute('aria-label') ?? document.activeElement.textContent";
+    let enter = |chrome: &mut crate::chrome::Chrome, what: &str| {
+        let before = chrome.eval(RANGE);
+        components::key(chrome, "Enter", "Enter", 13);
+        readout(chrome, what, &format!("said !== {before}"))
+    };
+    // + by the keyboard: it still acts, and keeps the focus.
+    chrome.eval("document.querySelector(\".tl-zoom button[aria-label='Zoom in']\").focus()");
+    enter(&mut chrome, "+");
+    assert_eq!(chrome.eval(focused), json!("Zoom in"));
+    // Whole task: to +.
+    chrome.eval("document.querySelector('.tl-zoom-group button:first-child').focus()");
+    let said = enter(&mut chrome, "Whole task");
+    assert_eq!(said, WHOLE);
+    assert_eq!(chrome.eval(focused), json!("Zoom in"));
+    // − back to the whole task: to +.
+    enter(&mut chrome, "+ again");
+    chrome.eval("document.querySelector(\".tl-zoom button[aria-label='Zoom out']\").focus()");
+    let said = enter(&mut chrome, "−");
+    assert_eq!(said, WHOLE);
+    assert_eq!(chrome.eval(focused), json!("Zoom in"));
+    // + to the least, five minutes: to −.
+    let mut said = String::new();
+    for _ in 0..12 {
+        said = enter(&mut chrome, "+ to the least");
+        if said.contains(" · 5 m of ") {
+            break;
+        }
+        assert_eq!(chrome.eval(focused), json!("Zoom in"), "{said}");
+    }
+    assert!(said.contains(" · 5 m of "), "{said}");
+    assert_eq!(chrome.eval(focused), json!("Zoom out"));
+    // From there the keys go on zooming: − with the focus where it was handed.
+    let out = enter(&mut chrome, "− from the least");
+    assert!(out.contains(" · 10 m of "), "{out}");
+}
+
 /// ⌘/Ctrl + wheel zooms about the pointer, the instant under it staying there; Shift + wheel and
 /// a sideways wheel move while zoomed; a plain wheel scrolls the page and leaves the view.
 #[test]

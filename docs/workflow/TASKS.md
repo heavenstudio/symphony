@@ -3795,8 +3795,9 @@ arithmetic, and `timeline-navigate.tsx`, in the timeline's chunk), as
 opens on the whole task, and a task no longer than five minutes, the least a zoom shows, draws
 as before, with nothing to zoom. A line above the lanes holds **Whole task**, **−** and **+**,
 each drawn only where it can act, its place kept so that nothing on the line moves (on the whole
-task + alone, at five minutes no +), and the hours shown with their length, "11-19 10:53 →
-11-19 12:01 · 1 h 8 m of 1 d 3 h" zoomed. Zoomed, every lane is drawn over the hours shown, its words fitted to them and
+task + alone, at five minutes no +), a button that stops acting as it is pressed handing the focus
+to the one that now acts, and the hours shown with their length, "11-19 10:53 → 11-19 12:01 ·
+1 h 8 m of 1 d 3 h" zoomed. Zoomed, every lane is drawn over the hours shown, its words fitted to them and
 its hours marked down to the minute; a part outside them is not drawn but keeps its place among
 the arrow keys' stops, and one the keys step to, or a message chosen in the message list, comes
 into view at the same zoom. ⌘ or Ctrl with a wheel, as a trackpad's pinch sends it, zooms about

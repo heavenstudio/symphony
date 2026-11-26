@@ -118,16 +118,50 @@ function zoomKey(event: KeyboardEvent<HTMLElement>, nav: Navigation): boolean {
  * disabled, so no key or press reaches it. */
 const idle = (cannot: boolean) => ({ disabled: cannot, className: cannot ? "tl-idle" : undefined });
 
+/** The toolbar's buttons, by what they do: Whole task, − and +. */
+export type ZoomButton = "whole" | "out" | "in";
+
+/**
+ * Where the focus goes once `pressed` has set the view `next`: none where it can still act there;
+ * else to the button that now acts, + once the whole task shows (Whole task, or − pressed until
+ * it), − at the least. A button that hides itself with the focus would leave it to the page.
+ */
+export function handoff(pressed: ZoomButton, next: View | null): "in" | "out" | null {
+  if (pressed === "in") return leastShown(next) ? "out" : null;
+  return next === null ? "in" : null;
+}
+
+/** The labels the focus finds the buttons it moves to by. */
+const LABELS = { in: "Zoom in", out: "Zoom out" } as const;
+
 /** The toolbar line: Whole task, − and +, each drawn only where it can act, its place kept so that
  * nothing on the line moves under the pointer (on the whole task + alone, which the readout says
  * is the whole), and the range shown. */
 export function ZoomBar({ timeline, nav }: { timeline: TaskTimeline; nav: Navigation }) {
   const { view, whole, set } = nav;
+  /** A press of `button`, which sets `next`, the focus handed on where it would hide. */
+  const press = (button: ZoomButton, next: () => View | null) => {
+    return (event: MouseEvent<HTMLButtonElement>) => {
+      const view = next();
+      const pressed = event.currentTarget;
+      const to = pressed.ownerDocument.activeElement === pressed ? handoff(button, view) : null;
+      if (to !== null) {
+        const label = LABELS[to];
+        pressed.parentElement?.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.focus();
+      }
+      set(view);
+    };
+  };
   return (
     <div className="tl-zoom">
       {/* biome-ignore lint/a11y/useSemanticElements: a group of the view's buttons, no form's fieldset */}
       <span className="tl-zoom-group" role="group" aria-label="Zoom">
-        <Button type="button" size="sm" {...idle(view === null)} onClick={() => set(null)}>
+        <Button
+          type="button"
+          size="sm"
+          {...idle(view === null)}
+          onClick={press("whole", () => null)}
+        >
           Whole task
         </Button>
         <Button
@@ -136,7 +170,7 @@ export function ZoomBar({ timeline, nav }: { timeline: TaskTimeline; nav: Naviga
           aria-label="Zoom out"
           title="Zoom out"
           {...idle(view === null)}
-          onClick={() => set(zoomed(view, whole, false))}
+          onClick={press("out", () => zoomed(view, whole, false))}
         >
           −
         </Button>
@@ -146,7 +180,7 @@ export function ZoomBar({ timeline, nav }: { timeline: TaskTimeline; nav: Naviga
           aria-label="Zoom in"
           title="Zoom in"
           {...idle(leastShown(view))}
-          onClick={() => set(zoomed(view, whole, true))}
+          onClick={press("in", () => zoomed(view, whole, true))}
         >
           +
         </Button>
