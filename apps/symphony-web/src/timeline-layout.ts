@@ -117,13 +117,21 @@ export const TRACKS: readonly number[] = [935, 1095, 1158];
 /**
  * The track widths a word's room is weighed at, in pixels, ascending: every 50 from 400 to 1600,
  * and TRACKS, so a word whose room holds it at a common page's track shows there rather than from
- * the next 50. A word shows from the first of them its room holds it at (`tl-from-W`, `tl-to-W`
- * in the style sheet: two container queries a width), at every width when 300 does, and never
- * when 1600 does not.
+ * the next 50. A word shows from the first of them its room holds it at (`tl-from-W`, `tl-to-W`:
+ * WIDTH_RULES), at every width when 300 does, and never when 1600 does not.
  */
 export const WIDTHS: readonly number[] = Array.from({ length: 25 }, (_, at) => 400 + at * 50)
   .concat(TRACKS)
   .sort((a, b) => a - b);
+
+/** The style sheet's two container queries a width of WIDTHS, written once here from them, which
+ * timeline.tsx puts in the page after timeline.css: a `tl-from-W` hidden below W, a `tl-to-W` from
+ * W, the track's width being the container's (`.tl-track`, `.tl-hours`, `.tl-breaks`). */
+export const WIDTH_RULES = WIDTHS.map(
+  (width) =>
+    `@container (width<=${width - 0.5}px){.tl-from-${width}{display:none}}` +
+    `@container (width>=${width}px){.tl-to-${width}{display:none}}`,
+).join("");
 
 /** How wide a run's bar is, in pixels, before its words go inside it, cut to fit; narrower, they
  * are in its hover, its focus and its row in the list. */

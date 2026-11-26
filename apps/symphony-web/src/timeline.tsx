@@ -74,6 +74,7 @@ import {
   totalParts,
   totals,
   type View,
+  WIDTH_RULES,
 } from "./timeline-layout";
 import { MessagePanel, type MessageSelection, type ThreadAccess } from "./timeline-messages";
 import {
@@ -118,12 +119,14 @@ export const NOT_A_TIMELINE = "the server's answer is not a timeline";
 /** What a read says where the server has no timeline for the task: nothing tries it again. */
 export const NO_TIMELINE = "the board has no timeline for this task";
 
-/** Put the timeline's style sheet in the page once: no first visit carries it. */
+/** Put the timeline's style sheet in the page once, its width steps (WIDTH_RULES) in the same
+ * element after it, before the timeline's first paint (a layout effect): no first visit carries
+ * it. */
 export function putStyle(): void {
   if (document.getElementById(STYLE_ID)) return;
   const element = document.createElement("style");
   element.id = STYLE_ID;
-  element.textContent = STYLE;
+  element.textContent = STYLE + WIDTH_RULES;
   // Before the project's theme, as the shell links a kind's sheets: the theme's rules win.
   document.head.insertBefore(element, document.head.querySelector("[data-symphony-theme]"));
 }
