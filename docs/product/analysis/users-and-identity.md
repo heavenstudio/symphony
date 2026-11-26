@@ -196,7 +196,8 @@ core, since the core then runs and waits on nothing.
 - **It hands the Symphony signed data**: who the person is (the service's name and its subject
   for them, and a display name), which server the data was made for, and until when it holds. A
   signed header on each request is the form the hosted design already read
-  ([hosted ingress](../../operations/analysis/hosted-ingress.md#identity-and-the-trusted-proxy-boundary)).
+  ([hosted ingress](../../operations/analysis/hosted-ingress.md#identity-and-the-trusted-proxy-boundary)),
+  and the form it takes is [SIGNED_IN](../../operations/SIGNED_IN.md).
 - **The core verifies and nothing more.** The signature, against a key the server's own settings
   name; that the data is fresh; that it was made for this server. Unsigned, stale or made for
   another server, the request is refused. The core draws no sign-in page and holds no password
@@ -268,8 +269,12 @@ The core's check, and a sign-in service of its own
 ![B: and a sign-in service of its own](users-and-identity/sign-in-b.svg)
 
 - **The check and the format come first.** The core verifies a signed header, and a document
-  says what the header holds and how it is signed. A hosted board behind a company's OAuth 2
-  proxy needs nothing more, and is the first thing that works.
+  says what the header holds and how it is signed ([SIGNED_IN](../../operations/SIGNED_IN.md)). A
+  hosted board behind a company's OAuth 2 proxy that signs that header, such as a forward-auth
+  service minting it, needs nothing more, and is the first thing that works. A proxy that signs
+  an assertion of its own, with keys it publishes at a URL, is not taken as it comes, as the core
+  fetches no key: a signer of the header goes between them
+  ([which services fit](../../operations/SIGNED_IN.md#which-services-fit)).
 - **Then a sign-in service of the Symphony's.** A separate program, outside the core, that
   stands in front of the server, does OAuth 2 with Google or GitHub, keeps the client secret and
   the session, and signs the same header. It works once a client id is set.
@@ -1433,7 +1438,11 @@ people on a board there are two kinds:
   execution design already keeps such a pair, as the acting principal and the initiator.
 
 On one machine with one person every agent is both at once: started by them, on their machine,
-directed by them. Nothing changes there.
+directed by them. Nothing changes there. A board that names others keeps it so while every agent
+reaches it from its machine ([its card](#machine-agents-whose), A): each session there is both,
+and anyone the board lets direct agents reaches any of them. The first personal agent that is not
+shared too, others' words to it reaching its person, is one on another machine, [a later
+round's](#later-rounds).
 
 - [x] **machine-agents-whose** — On a board that names other people, every agent on it still runs on your machine, on your credits: each is yours, and those holding a task's role are the board's shared agents too. What is left is whose words reach your agents there. A: every session on your machine is both, so anyone the board lets direct agents reaches any of them, as today. B: only a session holding a role on a task (its orchestrator, executor or reviewer) is shared; any other session is yours alone, and someone else's words to it come to you, not to the agent. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Agents beside people]]
   [2026-11-24 21:45] agent — Posted for the board task `app/personal-agents`, step 5's last part. A concept: nothing is built by this card.
@@ -1576,21 +1585,26 @@ Each step can ship alone, and a machine with one person sees none of them.
    how many are held; passed on with one press or `just tasks pass`, under both names, as an ask;
    and direct agents given and taken as any power
    ([TASKS](../../workflow/TASKS.md#words-held-for-people)). On a document, such a person's
-   callout or card message held the same way, reaching no clone, no ask and no agent, drawn where
-   it was left on the document's page and told to those who may pass it on, and passed on with one
-   press under both names, as an ask, after its block found again, else at the end of its section
+   callout or card message held the same way, reaching no clone, no ask and no agent, an agent told
+   nothing of it ([its card](#held-on-document-agent-told)), drawn where it was left on the
+   document's page, told to those who may pass it on and listed for them and the person at the
+   machine in the review queue's group of held comments until it is passed on, an agent's queue
+   listing none ([its card](#held-on-document-waits-where)), and passed on with one press under
+   both names, as an ask, after its block found again, else at the end of its section
    ([its card](#held-callout-block-changed)), or refused with nothing written where it stands twice,
-   which [its card](#held-callout-block-twice) asks of the owner;
+   which [its card](#held-callout-block-twice) asks of the owner
+   ([TASKS](../../workflow/TASKS.md#words-held-for-people), [QUEUE](../QUEUE.md#what-it-shows));
    and the note beside a verdict written with it, by one who may decide and not direct agents.
-   Not yet: a held ask, which [its card](#held-ask) asks of the owner, while the document's page
-   draws its questions' Ask and Follow up for those who may ask alone; and the two cards above on
-   what an agent is told of a document's held comments and where they wait.
+   Their ask stays refused, never held ([its card](#held-ask), A): such a person asks about a place
+   in a document by leaving a held question there, and the document's page draws its questions'
+   Ask and Follow up for those who may ask alone ([TASKS](../../workflow/TASKS.md#people)).
    Personal agents, as far as any agent reaches a board: every session that reaches one runs on
    its machine, under its account and on its credits, since the board's commands write its
    database there and none reaches a hosted board yet
    ([POSTGRESQL](../../operations/POSTGRESQL.md#a-hosted-board)). So each is the person at the
-   machine's personal agent, and a shared agent too where it holds a task's role, and it stands
-   where they stand, each part held by a test:
+   machine's personal agent and the board's shared agent too, which anyone the board lets direct
+   agents reaches, as today ([its card](#machine-agents-whose), A, with nothing to build), and it
+   stands where they stand, each part held by a test:
    - its words are never held, and a pass of held words by it is theirs
      (`crates/tasks/tests/store/held_words.rs`:
      `who_may_direct_agents_writes_as_the_owner_does_and_only_a_persons_words_are_held`,
@@ -1606,12 +1620,10 @@ Each step can ship alone, and a machine with one person sees none of them.
      `whoever_orchestrates_orchestrated_or_filed_the_task_is_refused_its_review_at_once`,
      `a_session_that_executed_the_task_gives_it_no_verdict_whatever_role_it_holds_now`).
 
-   Two things wait. On a board that names others, which of the machine's sessions are its
-   person's alone, whose words no one else's reach, is [an open card](#machine-agents-whose).
-   Another person's personal agent needs an agent on another machine to reach a board and prove
-   its handle and whose it is, a [later round's](#later-rounds), after step 7's agent
-   credentials: until then no record ties a session to a person, as one claimed by hand would say
-   what no session on the machine is.
+   One thing waits. Another person's personal agent, which only its person directs, needs an
+   agent on another machine to reach a board and prove its handle and whose it is, a [later
+   round's](#later-rounds), after step 7's agent credentials: until then no record ties a session
+   to a person, as one claimed by hand would say what no session on the machine is.
 
 - [x] **held-ask** — A person who may speak and may not direct agents is refused an ask about a document, its follow-up and the `+` sheet's chat, since asking is directing an agent. They can already leave a held question after any block, which an agent answers once someone passes it on. Should their ask also be held and passed on like a comment? A: no, it stays refused. B: held, drawn in the asks panel, and passed on as an ask under both names. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#The way from one owner]]
   [2026-11-25 08:39] agent — Posted for the board task `app/held-asks-on-documents`, a question your A on **words-without-agent-reach** leaves open for asks. Nothing that depends on it is built. Under either answer the document's page draws Ask and Follow up only for someone who may ask.
@@ -1639,6 +1651,12 @@ Each step can ship alone, and a machine with one person sees none of them.
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
    saves through the same writes as local ones. Then the Symphony's own sign-in service, a
    separate program in front.
+   Built: the signed header's format and the core's check of it, the key and the origin named in
+   the machine folder's `sign-in.toml`, and the gate's read of it before any route, on the one
+   server and a server of its own, the person it names found by their profile's sign-in and held
+   to each board's powers as any named person; where no key is set, a header is refused
+   ([SIGNED_IN](../../operations/SIGNED_IN.md)). Not yet: hosted saves through the same writes,
+   and the Symphony's own sign-in service.
 7. **Shared agents' hosts**, then a board's agent credentials.
 
 With nobody named on a board, the person at the machine holds every power there and is its

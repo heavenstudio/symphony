@@ -465,8 +465,9 @@ async fn judge(
     if crate::hosted::admission(&request).is_none()
         && request.extensions().get::<Admitted>().is_none()
     {
-        let Some(admitted) = admitted(&shared, peer.ip()).await else {
-            return peer_refused();
+        let admitted = match admitted(&shared, peer.ip(), request.headers()).await {
+            Ok(admitted) => admitted,
+            Err(refused) => return *refused,
         };
         request.extensions_mut().insert(admitted);
     }
@@ -515,6 +516,9 @@ pub(crate) struct Admitted {
     /// Whether the visitor is the person at the machine, to whom alone what is the machine's is
     /// said ([`crate::gate::Visitor::Machine`]).
     pub machine: bool,
+    /// The origin a signed visitor's word was made for, which their Host and Origin may name
+    /// ([`crate::gate::Visitor::origin`]); none for any other visitor.
+    pub origin: Option<String>,
 }
 
 impl Admitted {
@@ -523,7 +527,14 @@ impl Admitted {
         Admitted {
             actor,
             machine: *visitor == crate::gate::Visitor::Machine,
+            origin: visitor.origin().map(str::to_string),
         }
+    }
+
+    /// The origin the signed word of a request whose extensions are `extensions` was made for:
+    /// none for a request with no signed word, and one handed to a route past every gate.
+    pub(crate) fn origin(extensions: &axum::http::Extensions) -> Option<String> {
+        (extensions.get::<Admitted>()).and_then(|admitted| admitted.origin.clone())
     }
 
     /// Who a request whose extensions are `extensions` was let in as: the actor a gate put on it,
@@ -547,9 +558,38 @@ impl Admitted {
     }
 }
 
-/// Who a request from `ip` is from as `shared`'s gate judges it ([`Gate::visitor`], asked on the
-/// blocking pool, as it may wait on `tailscale`); none when it may not be answered. Loopback is
-/// the person at the machine at once. A gate that panics refuses.
+/// Who a request from `ip` with the headers `headers` is from as `shared`'s gate judges it: by its
+/// signed word alone when it carries one ([`Gate::signed`], at this server's clock, asked on the
+/// blocking pool as it reads the machine folder), whatever its address; else by its address
+/// ([`visitor`]). A word that does not verify is refused as [`sign_in_refused`], and an address the
+/// gate refuses as [`peer_refused`], the answer boxed as a response is large to carry in a
+/// `Result`; a gate that panics refuses.
+pub(crate) async fn judged(
+    shared: &Arc<Shared>,
+    ip: IpAddr,
+    headers: &HeaderMap,
+) -> Result<crate::gate::Visitor, Box<Response>> {
+    let refused = |answer: fn() -> Response| move || Box::new(answer());
+    let values: Vec<&[u8]> = (headers.get_all(symphony::signed_in::HEADER).iter())
+        .map(axum::http::HeaderValue::as_bytes)
+        .collect();
+    match symphony::signed_in::carried(&values) {
+        None => visitor(shared, ip).await.ok_or_else(refused(peer_refused)),
+        Some(Err(_)) => Err(Box::new(sign_in_refused())),
+        Some(Ok(token)) => {
+            let (shared, token) = (shared.clone(), token.to_string());
+            crate::spawn::blocking(move || shared.gate.signed(&token, SystemTime::now()))
+                .await
+                .ok()
+                .flatten()
+                .ok_or_else(refused(sign_in_refused))
+        }
+    }
+}
+
+/// Who a request from `ip` is from as `shared`'s gate judges it by its address
+/// ([`Gate::visitor`], asked on the blocking pool, as it may wait on `tailscale`); none when it
+/// may not be answered. Loopback is the person at the machine at once. A gate that panics refuses.
 pub(crate) async fn visitor(shared: &Arc<Shared>, ip: IpAddr) -> Option<crate::gate::Visitor> {
     if ip.is_loopback() {
         return Some(crate::gate::Visitor::Machine);
@@ -561,12 +601,48 @@ pub(crate) async fn visitor(shared: &Arc<Shared>, ip: IpAddr) -> Option<crate::g
         .flatten()
 }
 
-/// Who a request from `ip` is let in to `shared`'s board as ([`visitor`], then
-/// [`Gate::member`]); none when the gate refuses it or the board has not added its visitor.
-pub(crate) async fn admitted(shared: &Arc<Shared>, ip: IpAddr) -> Option<Admitted> {
-    let visitor = visitor(shared, ip).await?;
-    let actor = shared.gate.member(&shared.root, &visitor)?;
-    Some(Admitted::of(&visitor, actor))
+/// Who a request from `ip` with the headers `headers` is let in to `shared`'s board as
+/// ([`judged`], then [`Gate::member`]); refused when the gate refuses it, and as the gate refuses
+/// when the board has not added its visitor.
+pub(crate) async fn admitted(
+    shared: &Arc<Shared>,
+    ip: IpAddr,
+    headers: &HeaderMap,
+) -> Result<Admitted, Box<Response>> {
+    let visitor = judged(shared, ip, headers).await?;
+    let actor =
+        (shared.gate.member(&shared.root, &visitor)).ok_or_else(|| Box::new(peer_refused()))?;
+    Ok(Admitted::of(&visitor, actor))
+}
+
+/// What a request whose signed word does not verify is answered, whatever the reason: it says
+/// nothing of why.
+pub(crate) fn sign_in_refused() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        "Forbidden: this request's signed sign-in is not taken\n",
+    )
+        .into_response()
+}
+
+/// Whether the Host header `host` names `origin`'s host and port, as a signed visitor's request may
+/// ([`crate::gate::Visitor::origin`]).
+pub(crate) fn names_origin(origin: &str, host: &str) -> bool {
+    (origin.split_once("://")).is_some_and(|(_, authority)| authority.eq_ignore_ascii_case(host))
+}
+
+/// Whether a browser's Origin header `origin` is this server's own page for a request whose Host is
+/// `host`: `http://` and that Host, or the origin its signed word was made for, `signed`. A signed
+/// request whose Host names that origin has that origin alone for its own page: `http://` and the
+/// service's host is another site's.
+pub(crate) fn own_origin(origin: &str, host: &str, signed: Option<&str>) -> bool {
+    match signed {
+        Some(signed) if names_origin(signed, host) => origin.eq_ignore_ascii_case(signed),
+        _ => {
+            (!host.is_empty() && origin.eq_ignore_ascii_case(&format!("http://{host}")))
+                || signed.is_some_and(|signed| origin.eq_ignore_ascii_case(signed))
+        }
+    }
 }
 
 /// What a request the gate refuses is answered ([`visitor`], [`admitted`]).
@@ -1716,6 +1792,9 @@ mod tests;
 
 #[cfg(test)]
 mod sweep_tests;
+
+#[cfg(test)]
+mod signed_tests;
 
 #[cfg(test)]
 mod head_tests;

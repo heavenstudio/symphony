@@ -411,3 +411,184 @@ async fn the_list_counts_a_visitor_the_cards_they_decide_and_the_machine_every_c
     let page = String::from_utf8(page).unwrap();
     assert!(page.contains("2 decision cards waiting on you"), "{page}");
 }
+
+/// A gate holding the sign-in service's key in the machine folder `keys` and asking `roster` of
+/// anyone but the machine.
+fn signed_gate(keys: &crate::testing::Tree, roster: Roster) -> Gate {
+    crate::testing::SignIn::new(1).named_in(&keys.path(""));
+    gate(nobody())
+        .with_machine(keys.path(""))
+        .with_roster(roster)
+}
+
+/// A roster on which the board of the project folder `id` has added the person Google signs in as
+/// `ana-sub`, as Ana, and no board anyone else.
+fn signed_ana_on(id: &'static str) -> Roster {
+    Arc::new(move |root: &Path, visitor: &Visitor| {
+        let her = matches!(visitor, Visitor::Signed(signed)
+            if signed.service == "google" && signed.subject == "ana-sub");
+        (her && root.ends_with(id)).then(ana)
+    })
+}
+
+/// What `projects`' server answers a GET of `path` from `client`, naming `host`, with the word
+/// `word` when one is given: status and body.
+async fn signed_get(
+    projects: &Arc<Projects>,
+    client: &str,
+    host: &str,
+    path: &str,
+    words: &[&str],
+) -> (StatusCode, String) {
+    let mut request = Request::get(path).header(header::HOST, host);
+    for word in words {
+        request = request.header(symphony::signed_in::HEADER, *word);
+    }
+    let response = router(projects.clone())
+        .layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()))
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, String::from_utf8_lossy(&body).into_owned())
+}
+
+/// Through the one server, a signed visitor reaches the board that added them under the service's
+/// name, from outside the tailnet, and no other: the list names that board alone, and nothing of
+/// the machine's own. A word naming nobody is answered as for a project the server does not hold,
+/// and one that does not verify is refused before any route.
+#[tokio::test]
+async fn a_signed_visitor_reaches_the_board_that_added_them_and_no_other_through_the_one_server() {
+    use crate::testing::SignIn;
+    let keys = crate::testing::Tree::new();
+    let machine = Machine::with_gate(signed_gate(&keys, signed_ana_on("beta")));
+    let service = SignIn::new(1);
+    // Each request carries a word made just before it, so none goes stale however slow the run.
+    let ana_word = || service.word("google", "ana-sub");
+    const AWAY: &str = "10.0.0.5:1";
+    let (status, body) = signed_get(
+        &machine.projects,
+        AWAY,
+        SignIn::HOST,
+        "/beta/docs/README.md",
+        &[ana_word().as_str()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = signed_get(
+        &machine.projects,
+        AWAY,
+        SignIn::HOST,
+        "/api/projects",
+        &[ana_word().as_str()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let list: symphony_api::ProjectList = serde_json::from_str(&body).unwrap();
+    let ids: Vec<_> = (list.projects.iter())
+        .map(|listed| listed.id.as_str())
+        .collect();
+    assert_eq!(ids, ["beta"]);
+    assert_eq!(list.installation, None, "the machine's own is not hers");
+    let (status, body) = signed_get(
+        &machine.projects,
+        AWAY,
+        SignIn::HOST,
+        "/alpha/docs/README.md",
+        &[ana_word().as_str()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, _) = signed_get(
+        &machine.projects,
+        AWAY,
+        SignIn::HOST,
+        symphony_api::FRONT_PATH,
+        &[ana_word().as_str()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let nobody = service.word("google", "bob-sub");
+    let (status, body) = signed_get(
+        &machine.projects,
+        AWAY,
+        SignIn::HOST,
+        "/api/projects",
+        &[&nobody],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let list: symphony_api::ProjectList = serde_json::from_str(&body).unwrap();
+    assert!(list.projects.is_empty(), "{list:?}");
+
+    for words in [
+        vec![SignIn::new(2).word("google", "ana-sub")],
+        vec![ana_word(), ana_word()],
+    ] {
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
+        for client in [AWAY, "127.0.0.1:1"] {
+            let (status, body) = signed_get(
+                &machine.projects,
+                client,
+                SignIn::HOST,
+                "/beta/docs/README.md",
+                &words,
+            )
+            .await;
+            assert_eq!(
+                (status, body.as_str()),
+                (
+                    StatusCode::FORBIDDEN,
+                    "Forbidden: this request's signed sign-in is not taken\n"
+                ),
+                "{client}"
+            );
+        }
+    }
+}
+
+/// The one server's own Host check takes the service's name from a signed request alone.
+#[tokio::test]
+async fn the_one_server_takes_the_services_name_in_a_host_from_a_signed_request_alone() {
+    use crate::testing::SignIn;
+    let keys = crate::testing::Tree::new();
+    let machine = Machine::with_gate(signed_gate(&keys, signed_ana_on("beta")));
+    let (status, body) = signed_get(
+        &machine.projects,
+        "127.0.0.1:1",
+        SignIn::HOST,
+        "/api/projects",
+        &[],
+    )
+    .await;
+    assert_eq!(
+        (status, body.as_str()),
+        (
+            StatusCode::FORBIDDEN,
+            "Forbidden: the Host header does not name this machine\n"
+        )
+    );
+    let word = SignIn::new(1).word("google", "ana-sub");
+    let (status, body) = signed_get(
+        &machine.projects,
+        "127.0.0.1:1",
+        "other.example.com",
+        "/api/projects",
+        &[&word],
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let (status, body) = signed_get(
+        &machine.projects,
+        "127.0.0.1:1",
+        SignIn::HOST,
+        "/api/projects",
+        &[&word],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}

@@ -2401,7 +2401,9 @@ it on every board, named or not, and they keep every power
   change and the profile's write, so of two adds of one sign-in at once the second is refused, with
   nothing written.
 - **Who reaches a board.** A visitor under another Tailscale login is the profile holding that
-  `tailscale` sign-in, on each board that gives its short name a power, as that name
+  `tailscale` sign-in, and a request a sign-in service in front signs is the profile holding its
+  `SERVICE:SUBJECT` sign-in ([SIGNED_IN](../operations/SIGNED_IN.md)), each on every board that
+  gives its short name a power, as that name
   ([the server guide](../../apps/symphony-server/README.md#who-a-request-is-from)).
 - **What each write needs**, read from the board as the write arrives, so a revoke holds from the
   next one: a card's verdict and its note, Later, a task's priority, field, cancel and action (the

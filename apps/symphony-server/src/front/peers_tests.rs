@@ -103,8 +103,9 @@ async fn a_server_of_its_own_admits_its_boards_people_alone() {
     let shared = Shared::new(1, 1, Path::new("/nowhere"), None, gate);
     let local = symphony_board::workflow::local_actor();
     let judged = async |shared: &Arc<Shared>, ip: &str| {
-        admitted(shared, ip.parse().unwrap())
+        admitted(shared, ip.parse().unwrap(), &axum::http::HeaderMap::new())
             .await
+            .ok()
             .map(|admitted| (admitted.actor, admitted.machine))
     };
     for ip in ["127.0.0.1", "::ffff:127.0.0.1", PEER] {

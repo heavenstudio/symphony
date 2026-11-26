@@ -60,6 +60,10 @@ symphony-notice = { path = "../../crates/symphony-notice" }
 test-time = { path = "../../crates/test-time" }
 # A paused runtime clock, so a drain's elapsed-time promise is read on time the test moves.
 tokio = { version = "1", features = ["test-util"] }
+# A sign-in service's stand-in signs the words the gate's tests send (`src/testing.rs`): the
+# signature and the base64url the server verifies them with.
+ed25519-dalek = { version = "3", default-features = false }
+base64.workspace = true
 # A WebSocket's client, for the feed on one (`src/api/feed_socket.rs`, tests/after_http.rs): the
 # version and features axum's `ws` builds already.
 tungstenite = "0.29"

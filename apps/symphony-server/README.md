@@ -31,6 +31,15 @@ node it is, and the gate keeps who the request is from:
   is a sign-in, `tailscale:LOGIN`, of at most one profile in the machine's `people.json`, and a
   board that gives that profile's short name a power has added them. They see nothing else.
 - **Nobody**: a tagged node, or one whose answer names no user.
+- **A person a sign-in service names**: a request carrying a `Symphony-Signed-In` header is judged
+  by it alone, whatever its address ([SIGNED_IN](../../docs/operations/SIGNED_IN.md)). The header is
+  verified against the key and the origin the machine folder's `sign-in.toml` names
+  (`symphony::signed_in`, on each request that carries one). Its service and subject are then a
+  sign-in, `SERVICE:SUBJECT`, of at most one profile, found as a login's is. Such a request may name
+  that origin in its Host, and a browser's write or socket must name it in its Origin. It is never
+  the person at the machine, and Go to session shows no pane here for it. A header that does not
+  verify, and any header where no key is set, is answered 403 before any route, with one body that
+  says nothing of why.
 
 A status call that gives no answer keeps the login it last gave, as it keeps the names. Until one
 has answered, only loopback is the person at the machine: this machine's own tailnet addresses are
@@ -113,7 +122,9 @@ machine folder: `~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_H
 elsewhere, `SYMPHONY_MACHINE_DIR` when set (every test sets a temporary one). The registry
 beside them (`projects.json`) holds each project's root, id and `symphony.toml`; the people's
 profiles (`people.json`, with its lock `people.lock`, both mode 600: they hold sign-ins and
-contact details) are there, which `just tasks-people` writes; and the
+contact details) are there, which `just tasks-people` writes; the sign-in service's key and the
+origin it signs for (`sign-in.toml`, [SIGNED_IN](../../docs/operations/SIGNED_IN.md)), when one
+stands in front; and the
 releases installed on the machine are there too (`releases/NAME/`, with the `current` link); `symphony
 project add [DIR]` writes it, and every start runs it. The build and client stay in the
 starter's install folder (`--install`, `symphony/server/` in its git common dir), where a record

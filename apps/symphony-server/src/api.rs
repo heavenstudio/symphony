@@ -277,8 +277,11 @@ async fn admit(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_string();
+    let signed = crate::front::Admitted::origin(request.extensions())
+        .is_some_and(|origin| crate::front::names_origin(&origin, &host));
     let check = shared.clone();
     let allowed = asked.hosted
+        || signed
         || crate::spawn::blocking(move || check.allows_host(&host))
             .await
             .unwrap_or(false);

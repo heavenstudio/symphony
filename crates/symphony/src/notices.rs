@@ -102,31 +102,15 @@ impl Programs {
                 return Ok(Programs::default());
             }
             Err(error) => return Err(format!("{}: {error}", folder.display())),
-            Ok(meta) if meta.file_type().is_symlink() => return Err(linked(&folder, "folder")),
-            Ok(meta) => kept(&folder, &meta, "folder", fs::Metadata::is_dir)?,
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(linked(&folder, "folder", RUN_FROM));
+            }
+            Ok(meta) => kept(&folder, &meta, "folder", fs::Metadata::is_dir, RUN_FROM)?,
         }
         let path = folder.join(PROGRAMS);
-        // Opened without following a link, and what is checked is the opened file's own, so nothing
-        // swapped in between the check and the read is read.
-        let file = match (fs::OpenOptions::new().read(true))
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(&path)
-        {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(Programs::default());
-            }
-            Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
-                return Err(linked(&path, "file"));
-            }
-            Err(error) => return Err(format!("{}: {error}", path.display())),
-            Ok(file) => file,
+        let Some(text) = kept_text(&path, RUN_FROM)? else {
+            return Ok(Programs::default());
         };
-        let meta = file
-            .metadata()
-            .map_err(|error| format!("{}: {error}", path.display()))?;
-        kept(&path, &meta, "file", fs::Metadata::is_file)?;
-        let text =
-            io::read_to_string(file).map_err(|error| format!("{}: {error}", path.display()))?;
         Programs::parse(&text).map_err(|why| format!("{}: {why}", path.display()))
     }
 
@@ -332,21 +316,55 @@ fn is_way(text: &str) -> bool {
         && (text.bytes()).all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-/// What a link at `path` in the place of a `what` is said as.
-fn linked(path: &Path, what: &str) -> String {
+/// What a refusal of the programs' folder or file says follows from it.
+const RUN_FROM: &str = "no program is run from it";
+
+/// The text of the file at `path`, a machine folder's setting that decides what the server runs
+/// or whom it lets in: none where there is no file. It is opened without following a link, and
+/// what is checked is the opened file's own, so nothing swapped in between the check and the read
+/// is read.
+///
+/// # Errors
+///
+/// It is a link, not a file, another account's, or another account may write it, each said with
+/// `refusing`, what follows (`no program is run from it`); or it does not open or read.
+pub(crate) fn kept_text(path: &Path, refusing: &str) -> Result<Option<String>, String> {
+    let file = match (fs::OpenOptions::new().read(true))
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+            return Err(linked(path, "file", refusing));
+        }
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+        Ok(file) => file,
+    };
+    let meta = file
+        .metadata()
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    kept(path, &meta, "file", fs::Metadata::is_file, refusing)?;
+    io::read_to_string(file)
+        .map(Some)
+        .map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// What a link at `path` in the place of a `what` is said as, with `refusing`, what follows.
+fn linked(path: &Path, what: &str, refusing: &str) -> String {
     format!(
-        "{} is a link, so no program is run from it: keep the {what} itself there",
+        "{} is a link, so {refusing}: keep the {what} itself there",
         path.display()
     )
 }
 
 /// Whether `meta`, of `path`, is a `what` (`is` says) that this account owns and no other account
-/// may write.
+/// may write; refused with `refusing`, what follows.
 fn kept(
     path: &Path,
     meta: &fs::Metadata,
     what: &str,
     is: fn(&fs::Metadata) -> bool,
+    refusing: &str,
 ) -> Result<(), String> {
     let shown = path.display();
     if !is(meta) {
@@ -354,13 +372,13 @@ fn kept(
     }
     if meta.uid() != effective_uid() {
         return Err(format!(
-            "{shown} is another account's, so no program is run from it: keep a {what} of the \
-             account the server runs as"
+            "{shown} is another account's, so {refusing}: keep a {what} of the account the server \
+             runs as"
         ));
     }
     if meta.permissions().mode() & 0o022 != 0 {
         return Err(format!(
-            "{shown} may be written by another account, so no program is run from it: chmod go-w it"
+            "{shown} may be written by another account, so {refusing}: chmod go-w it"
         ));
     }
     Ok(())
