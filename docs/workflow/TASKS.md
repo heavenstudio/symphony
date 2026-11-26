@@ -3790,8 +3790,8 @@ a box that clips, the rows under it where they were. The pictures it follows are
 `docs/product/analysis/reports-timeline-wide.svg`.
 
 The lanes zoom into a part of the hours and move along them (`timeline-zoom.ts`, the
-arithmetic, and `timeline-navigate.tsx`, in the timeline's chunk), as the card
-`timeline-navigation` in `docs/design/analysis/timeline-navigation.md` approved. Each visit
+arithmetic, and `timeline-navigate.tsx`, in the timeline's chunk), as
+[the timeline's analysis](../design/analysis/timeline-navigation.md) draws it. Each visit
 opens on the whole task, and a task no longer than five minutes, the least a zoom shows, draws
 as before, with nothing to zoom. A line above the lanes holds **Whole task**, pressed while the
 whole task is shown, **−** and **+**, each disabled where it cannot act (− on the whole task, +
@@ -3809,6 +3809,13 @@ moves while zoomed, the page still scrolling up and down under it. With the focu
 task's stages and runs with the window shown, which a drag moves, a drag of its edge resizes,
 and its arrow keys, Page Up, Page Down, Home and End move. The height the box keeps for the next
 visit is the whole task's. A phone's list is not zoomed.
+
+- [ ] **timeline-zoom-limits** — The zoom line above a task's wide timeline always draws Whole task, − and +, as the mockup does, and the mockup leaves open how a button looks where it cannot act. As built, each such button is greyed out and takes no press: − and Whole task on the whole task (Whole task is also shown pressed then), and + once five minutes are shown, the least a zoom shows. That is how Previous message and Next message look at their ends. A: greyed out where they cannot act, as built; the buttons never move. B: − and + left out where they cannot act, so the line's buttons move up when one goes, and a second press where + was can land on −. Recommended: A. Approve and say A or B in the note, or comment.
+  [2026-11-26 16:18] agent — Posted for the board task `app/timeline-zoom`, at 1440 wide, the whole task: A as built, − and Whole task greyed out; B drawn on that page by hand, not built, − left out. ![The zoom line on the whole task, option A](../design/analysis/timeline-navigation/zoom-limits-whole.webp) ![The zoom line on the whole task, option B](../design/analysis/timeline-navigation/zoom-limits-hidden.webp)
+  [2026-11-26 16:18] agent — Under A, zoomed to five minutes, + greyed out: ![The zoom line at five minutes, as built](../design/analysis/timeline-navigation/zoom-limits-least.webp)
+
+- [ ] **timeline-drag-band** — A mouse dragged across the hours of a task's wide timeline zooms to the hours dragged, and the mockup leaves open what the drag shows while the button is held. As built, a band in the accent colour, faint with a solid edge at each end, covers the hours dragged across every lane, the bars showing through it, and goes when the button is let go. Approve, or comment.
+  [2026-11-26 16:18] agent — Posted for the board task `app/timeline-zoom`, at 1440 wide, a drag held from 08:00 to 12:30. ![A drag held across the hours, light](../design/analysis/timeline-navigation/drag-band.webp) ![A drag held across the hours, dark](../design/analysis/timeline-navigation/drag-band-dark.webp)
 
 - [-] **timeline-burst-drawing** — A burst of runs, dozens of tests minutes apart in a task that lasted days, makes the task's wide timeline 12 px taller per run, with no limit: tools/board-token-usage's is 911 px tall, and its Tests lane is 37 thin rows that read as a dashed line, with no words. How should a lane draw a burst, every run kept its own and reachable? A: as it is, a thin row per run, the box growing. B: the same rows, the lane scrolling in a box of its own past 256 px, the height of six rows with words. C: each burst one mark that says how many runs and how many went red ("37 tests · 4 red"), opened in place to its runs by a click, a tap or Enter; on a phone, one row of the list the same way. Recommended: C. Approve and say A, B or C in the note, or comment. [[TASKS#The timeline]]
   [2026-11-17 00:43] agent — Posted for the board task `app/timeline-burst-drawing-card`, from the review of `app/timeline-builds-and-tests-apart`. tools/board-token-usage at 1280 wide, on a private server of main's build (the shared server runs a release from before builds and tests had lanes of their own): A as it is, then B and C drawn on that page by hand, not built. ![The burst wide, option A](../design/analysis/timeline-burst/a-wide.webp) ![The burst wide, option B](../design/analysis/timeline-burst/b-wide.webp) ![The burst wide, option C](../design/analysis/timeline-burst/c-wide.webp)

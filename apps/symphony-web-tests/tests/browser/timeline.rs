@@ -1768,6 +1768,35 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
             ],
             out.join(format!("timeline-guards-after-zoomed-{name}.png")),
         );
+        // The first review zoomed in once more, to the least, five minutes, where + cannot act.
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--eval",
+                &format!("{review}.dispatchEvent(new MouseEvent('dblclick', {{bubbles: true}}))"),
+                "--wait-for",
+                ".tl-overview",
+                "--click",
+                ".tl-zoom button[aria-label='Zoom in']",
+                "--wait-for",
+                ".tl-zoom button[aria-label='Zoom in']:disabled",
+            ],
+            out.join(format!("timeline-guards-after-least-{name}.png")),
+        );
+        // A mouse held mid-drag across the hours from 08:00 to 12:30, its band drawn: the
+        // pointer's events sent to the lanes, which capture none of a pointer the page made.
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--eval",
+                "(() => { Element.prototype.setPointerCapture = () => {}; const h = document.querySelector('.tl-lanes .tl-hours').getBoundingClientRect(), s = document.querySelector('.tl-lane[data-lane=stage] .tl-track').getBoundingClientRect(), lanes = document.querySelector('.tl-lanes'); const fire = (type, f) => lanes.dispatchEvent(new PointerEvent(type, {bubbles: true, clientX: h.left + f * h.width, clientY: s.top + s.height / 2, pointerType: 'mouse', button: 0, buttons: 1, pointerId: 1})); fire('pointerdown', 7 / 27.58); fire('pointermove', 9 / 27.58); fire('pointermove', 11.5 / 27.58); })()",
+                "--wait-for",
+                ".tl-band",
+            ],
+            out.join(format!("timeline-guards-after-band-{name}.png")),
+        );
     }
     let site = served(&fixture());
     site.drop_route(symphony_api::TASK_TIMELINE_PATH, true);

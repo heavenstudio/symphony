@@ -63,6 +63,13 @@ fn desktop_tab_traversal_skips_phone_message_controls_and_restores_them_when_nar
     );
     assert_eq!(page.eval("document.querySelector('.tl-list').textContent.includes('first-orchestrator → @executor')"), json!(true));
     page.eval("(() => { const start = document.createElement('button'); start.id='timeline-tab-start'; start.textContent='Start'; document.getElementById('timeline').prepend(start); start.focus(); })()");
+    // The zoom line first, on the whole task its + alone (Whole task and − cannot act), then the
+    // lanes.
+    components::key(&mut page, "Tab", "Tab", 9);
+    assert_eq!(
+        page.eval("document.activeElement.getAttribute('aria-label')"),
+        json!("Zoom in")
+    );
     components::key(&mut page, "Tab", "Tab", 9);
     assert_eq!(page.eval("document.activeElement.id"), json!("tl-stop-0"));
     let marks = page
