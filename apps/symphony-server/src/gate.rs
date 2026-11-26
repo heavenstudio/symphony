@@ -111,6 +111,9 @@ pub struct Gate {
     machine: Option<PathBuf>,
     seen: Mutex<HashMap<IpAddr, Kept<Option<Peer>>>>,
     own: Mutex<Kept<Own>>,
+    /// Why the machine folder's `sign-in.toml` did not read, as the log last said it: none while
+    /// it reads, or holds none ([`Gate::signed`]).
+    said: Mutex<Option<String>>,
 }
 
 /// A node of this tailnet, as a whois answer names it.
@@ -187,6 +190,7 @@ impl Gate {
             machine: None,
             seen: Mutex::new(HashMap::new()),
             own: Mutex::new(Kept::default()),
+            said: Mutex::new(None),
         }
     }
 
@@ -265,19 +269,29 @@ impl Gate {
     /// folder's `sign-in.toml` names verify it at `now` ([`symphony::signed_in::verify`]): the
     /// person its service names. None when it does not verify, and when no key is set: a gate with
     /// no machine folder, a folder with no file, or a file that does not read, said in the server's
-    /// log by its path and rule. The word, the key and the claims are never said.
+    /// log by its path and rule once for each change of why ([`Gate::say_unread`]), not on each
+    /// request. The word, the key and the claims are never said.
     pub fn signed(&self, token: &str, now: SystemTime) -> Option<Visitor> {
-        let settings = match self.machine.as_deref().map(Settings::read) {
-            Some(Ok(Some(settings))) => settings,
-            None | Some(Ok(None)) => return None,
-            Some(Err(why)) => {
-                eprintln!("· no signed word is taken: {why}");
-                return None;
-            }
-        };
+        let read = Settings::read(self.machine.as_deref()?);
+        self.say_unread(read.as_ref().err().map(String::as_str));
+        let settings = read.ok().flatten()?;
         symphony::signed_in::verify(token, &settings, now)
             .ok()
             .map(Visitor::Signed)
+    }
+
+    /// Say on the server's log why `sign-in.toml` does not read, once while that stays the same;
+    /// `None`, a file that reads or holds none, forgets it, so the same refusal after it is said
+    /// again.
+    fn say_unread(&self, why: Option<&str>) {
+        let mut said = self.said.lock().recover();
+        if said.as_deref() == why {
+            return;
+        }
+        if let Some(why) = why {
+            crate::front::tell(format_args!("· no signed word is taken: {why}"));
+        }
+        *said = why.map(str::to_owned);
     }
 
     /// Host validation for the routes served here. A loopback client can still be a browser

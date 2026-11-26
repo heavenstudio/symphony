@@ -60,7 +60,8 @@ project's `symphony.toml` never names the key.
 
 The file is read on each request that carries the header. A key changed or removed holds from the
 next request, with no restart. A file that does not read is said in the server's log by its path
-and the rule it breaks, never a value. Until it reads, every signed request is refused.
+and the rule it breaks, never a value, once for each change of that, not on each request. Until it
+reads, every signed request is refused.
 
 A key pair, with OpenSSL 3 or later:
 
