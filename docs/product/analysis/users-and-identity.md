@@ -530,8 +530,9 @@ What a person may do is kept with the board, and in no repository
   board, beside its tasks: in the git common dir's database on a machine, in the hosted
   database on a hosted board. An admin of the board changes them from a People page or a
   command, and the board keeps each change in a log.
-- **Two boards differ.** A person can decide on one board and only read another, of the same
-  project or not.
+- **Two boards differ.** A person can decide on one board and only read another. A project has
+  one board ([boards and projects](boards-and-projects.md#one-board-for-each-project)), so two
+  boards are two projects', even two of one repository over the same folders.
 - **A clone holds nobody's sign-in.** A service's subject for a person never leaves the board.
 - **The short name is the part that is in git.** It is written where the record is: on a card's
   line and in a comment, which are files, and on a thread. So it outlives the board's row for
@@ -731,8 +732,8 @@ The place it is in, unless a name is written on it
 
 What follows:
 
-- **The map is the board's own**, as its groups are, so two boards of one project can send the
-  same folder to different groups. Its admins keep it ([below](#who-changes-settings)).
+- **The map is the board's own**, as its groups are, and maps its project's places. Its admins
+  keep it ([below](#who-changes-settings)).
 - **A name written on a card is in the file**, so a group's name is public as a person's is. A
   board with no group of that name treats the card as unnamed and falls back to the map.
 - **An agent posting a card writes nothing** in the usual case, and names a group only when the
@@ -1054,8 +1055,9 @@ What follows:
 - **A preference spends someone's credits.** A costlier model for the board's shared agents runs
   on their host's credits. What a host may limit is a [later round's](#later-rounds).
 - **Making a value the project's reaches beyond the board.** It changes the committed file every
-  clone and every board of the project reads. With one board for a project, that board's say is
-  the whole of it; several boards for one project is a concept of its own.
+  clone of the project reads. A project has one board
+  ([boards and projects](boards-and-projects.md#one-board-for-each-project)), so that board's say
+  is the whole of it.
 
 - [r] **settings-who-changes** — Today you change every setting the Settings page offers. Its concept, now on main, keeps a change in the board's store, where it holds at once, and a control beside it makes the value the project's, a commit. It left to this concept who may do that once there are several people. A: the group the Settings page maps to; the page is a place like a folder of documents, so any member of its group changes a stored value and makes it the project's, and no power is added. B: the board's admins, as with who is on the board. C: a power of its own, to configure, given apart from deciding. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who changes settings]]
   [2026-11-22 20:13] agent — Posted for the board task `app/users-and-identity`, the question the settings concept (`app/settings-page`) left to this one. A concept: nothing is built by this card.
@@ -1632,6 +1634,3 @@ Not carded yet.
 - Shared agents: whose machine and credits host them, what a host may limit, and how an agent on
   another machine proves to a board its handle and, for a personal agent, whose it is.
 - Removing a person: their open asks, their unanswered cards, their agents' sessions.
-- Several boards for one project: nothing proposed here ties people to a project, and what else
-  a second board needs, among it who makes a value the project's for every board, is a concept
-  of its own.
