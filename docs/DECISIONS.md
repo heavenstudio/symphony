@@ -22,6 +22,7 @@ A document's first card adds its line here.
 - [The board at a glance](product/analysis/board-design.md)
 - [The board's cutover to PostgreSQL, and the way back](operations/analysis/board-pg-cutover.md)
 - [The board's store, measured before it moves](operations/analysis/board-store-baseline.md)
+- [Boards and projects](product/analysis/boards-and-projects.md)
 - [Where decision cards live](workflow/analysis/cards-in-their-documents.md)
 - [The client cache](engineering/analysis/client-cache.md)
 - [Dioxus or JSX for the client](engineering/analysis/client-framework-comparison.md)
