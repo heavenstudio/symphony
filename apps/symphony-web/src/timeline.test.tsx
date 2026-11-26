@@ -271,8 +271,9 @@ describe("the timeline drawn", () => {
     expect(drawn).toContain(
       '<div class="tl-lane tl-gates-head"><span class="tl-name"><b>Gates</b></span></div><div class="tl-lane tl-gate" data-gate="certificate"><span class="tl-name">certificate</span>',
     );
+    // A verdict starts past its bar as drawn, and shows where its letters fit.
     expect(drawn).toContain(
-      'class="tl-after tl-fit" aria-hidden="true" style="--c:var(--dislike);left:',
+      '<span class="tl-after tl-fit tl-from-400" aria-hidden="true" style="--c:var(--dislike);left:54.47%;max-width:18.42%;padding-left:max(6px, calc(20px - 8.95%))">changes</span>',
     );
     // A run's words inside its bar, at the widths where it is wide enough.
     expect(drawn).toMatch(

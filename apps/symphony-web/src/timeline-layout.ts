@@ -63,6 +63,17 @@ export const PAD_PX = 12;
 export const GAP_PX = 4;
 /** The lanes' margin after the track's end (`--end`, 5.5rem), which the last label may take. */
 export const END_PX = 88;
+/**
+ * A letter of a verdict's word after its bar, at most, in pixels: a word of letters alone runs
+ * wider than CHAR_PX, which the segments' words of digits and spaces keep. The timeline's browser
+ * test measures every verdict word it draws against it.
+ */
+export const LETTER_PX = 7;
+/** The inset a label's words keep from its bar (`insetCss`). */
+export const AFTER_PAD_PX = 6;
+/** A segment's least drawn width, however short its time: its padding and its 1 px border on each
+ * side (`.tl-seg`). A label after it starts past it as drawn. */
+export const SEG_MIN_PX = PAD_PX + 2;
 
 /**
  * The track widths a word's room is weighed at, in pixels, every 50 from 400 to 1600: a word shows
@@ -946,10 +957,12 @@ export function barFit(text: string, room: number): Fit[] {
 }
 
 /** Room a label beside a segment has: `room` percent of the track before the next, and the lanes'
- * end margin past the track's end when nothing follows it (`last`). */
+ * end margin past the track's end when nothing follows it (`last`); `bar`, the segment's own width
+ * in percent, which the label starts past as drawn. */
 export interface Room {
   room: number;
   last: boolean;
+  bar: number;
 }
 
 /** A room's width, for the label's `max-width`: past it a label is cut short, never drawn over the
@@ -958,11 +971,26 @@ export function roomCss(room: Room): string {
   return room.last ? `calc(${fixed(room.room, 2)}% + var(--end))` : `${fixed(room.room, 2)}%`;
 }
 
-/** `text` as a label beside a segment, in `room`. */
+/** A label's inset, for its `padding-left`: AFTER_PAD_PX past its bar as drawn, which is
+ * SEG_MIN_PX wide where its time is narrower. */
+export function insetCss(room: Room): string {
+  return `max(${AFTER_PAD_PX}px, calc(${SEG_MIN_PX + AFTER_PAD_PX}px - ${fixed(room.bar, 2)}%))`;
+}
+
+/**
+ * `text` as a label beside a segment, in `room`: from the first of WIDTHS at which its letters,
+ * its inset (`insetCss`) and its gap from the next fit there, at every width when 300 holds them,
+ * and never when 1600 does not. Its inset narrows as the track widens, so where it fits once, it
+ * fits on every wider track.
+ */
 export function label(text: string, room: Room): Fit | null {
-  const pad = GAP_PX - (room.last ? END_PX : 0);
-  if (room.last && [...text].length * CHAR_PX + pad <= 0) return { text, from: null, to: null };
-  const from = widthFor(text, room.room, pad);
+  const letters = [...text].length * LETTER_PX + GAP_PX;
+  const fits = (track: number) => {
+    const inset = Math.max(AFTER_PAD_PX, SEG_MIN_PX + AFTER_PAD_PX - (room.bar * track) / 100);
+    return letters + inset <= (room.room * track) / 100 + (room.last ? END_PX : 0);
+  };
+  if (fits((WIDTHS[0] as number) - 100)) return { text, from: null, to: null };
+  const from = WIDTHS.find(fits);
   return from === undefined ? null : { text, from, to: null };
 }
 
@@ -1294,9 +1322,12 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
     const takenAt = round.taken ?? null;
     const taken = takenAt === null ? null : clamp(takenAt, round.from, to);
     const next = timeline.rounds[index + 1];
+    const waiting = scale.width(round.from, taken ?? to);
+    const width = taken === null ? 0 : scale.width(taken, to);
     const room: Room = {
       room: (next === undefined ? 100 : scale.at(next.from)) - scale.at(to),
       last: next === undefined,
+      bar: taken === null ? waiting : width,
     };
     const verdict = round.verdict ?? null;
     // Said after its round's end, and only where that end is in the hours shown.
@@ -1313,10 +1344,8 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
         ? `${name}: waited ${wait} for a reviewer${said}`
         : `${name}: waited ${wait} for a reviewer, then ${by} took ${took(to - taken)}${said}`;
     if (scale.spans(round.from, taken ?? to) || taken === null) {
-      const placed = scale.place(round.from, taken ?? to);
-      const waiting = placed.width;
       segs.push({
-        ...placed,
+        ...scale.place(round.from, taken ?? to),
         tone: "question",
         look: "waiting",
         text: taken === null ? fitted(name, "", waiting) : [],
@@ -1327,10 +1356,8 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
       });
     }
     if (taken !== null) {
-      const placed = scale.place(taken, to);
-      const width = placed.width;
       segs.push({
-        ...placed,
+        ...scale.place(taken, to),
         tone: "question",
         look: "solid",
         text: fitted(name, "", width),
