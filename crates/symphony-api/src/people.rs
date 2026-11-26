@@ -58,7 +58,7 @@ pub struct PeoplePage {
     pub signins: Vec<String>,
     /// Whether a signing service's words are read here, the machine folder's `sign-in.toml`
     /// setting its key: an add and a profile then take a sign-in of the service a word names,
-    /// which the key does not say (docs/operations/SIGNED_IN.md).
+    /// which the key does not say (`docs/operations/SIGNED_IN.md`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub signed_words: bool,
 }
