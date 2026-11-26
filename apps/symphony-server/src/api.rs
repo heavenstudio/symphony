@@ -887,7 +887,7 @@ async fn board_read(
             // A hosted visitor reads them and passes none on, as it saves nothing here.
             symphony_api::DOCUMENT_HELD_PATH => {
                 let passes = !hosted && passes(&store, asker.1, &asker.0);
-                document_held(&store, &scope, &rel, passes).map(|held| no_store(Json(held)))
+                document_held(&store, &root, &scope, &rel, passes).map(|held| no_store(Json(held)))
             }
             "/api/task-page" => store.get(&slug).map_err(task_failure).and_then(|record| {
                 let owner = symphony::owners::task(&store, &record, &asker.0, asker.1)
@@ -944,31 +944,30 @@ fn may_ask(shared: &Shared, hub: &Hub, request: &Request) -> bool {
 }
 
 /// The comments held for people on the document `rel` of the checkout `scope` (empty: the
-/// project's own), not passed on yet, oldest first, and whether the one reading may pass them on
-/// (`passes`): what its page draws ([`symphony_api::DocumentHeld`]).
+/// project's own) at `root`, not passed on yet, oldest first, each where its pass would write it
+/// now ([`symphony::save::drawn_held`]), against the document as its page shows it, read where a
+/// callout is held; and whether the one reading may pass them on (`passes`): what its page draws
+/// ([`symphony_api::DocumentHeld`]).
 fn document_held(
     store: &symphony_board::Store,
+    root: &std::path::Path,
     scope: &str,
     rel: &str,
     passes: bool,
 ) -> Result<symphony_api::DocumentHeld, Failed> {
-    let scope = Some(scope).filter(|scope| !scope.is_empty());
-    let held = store.held_on_document(rel.trim_start_matches('/'), scope);
+    let rel = rel.trim_start_matches('/');
+    let held = store.held_on_document(rel, Some(scope).filter(|scope| !scope.is_empty()));
     let held = held.map_err(|e| unavailable(&e.to_string(), ""))?;
-    let held = (held.into_iter())
+    let held: Vec<_> = (held.into_iter())
         .filter(|held| held.passed.is_none())
-        .map(|held| {
-            let block = held.document.block;
-            symphony_api::HeldComment {
-                id: held.id,
-                author: held.author,
-                kind: held.document.kind,
-                text: held.text,
-                card: held.document.card,
-                key: block.as_ref().map(|block| block.key.clone()),
-                line: block.map(|block| block.line),
-            }
-        })
+        .collect();
+    // A document that cannot be read draws each where it was left.
+    let text = (held.iter().any(|held| held.document.block.is_some()))
+        .then(|| symphony::docview::source(root, rel, scope).ok())
+        .flatten()
+        .map(|(_, text, _)| text);
+    let held = (held.into_iter())
+        .map(|held| symphony::save::drawn_held(text.as_deref(), held))
         .collect();
     Ok(symphony_api::DocumentHeld { held, passes })
 }

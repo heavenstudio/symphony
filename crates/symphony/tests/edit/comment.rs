@@ -173,3 +173,22 @@ fn a_comment_between_two_adjacent_inline_cards_is_taken() {
         "- [ ] **one** — First.\n\n> [!comment] why?\n\n- [ ] **two** — Second.\n"
     );
 }
+
+#[test]
+fn where_a_comment_is_refused_is_what_inserting_one_answers_on_every_line() {
+    let lines = |text: &'static str| text.lines().collect::<Vec<&str>>();
+    for text in [REGISTER, INLINE, "a\n"] {
+        let shown = lines(text);
+        let last = i64::try_from(shown.len()).unwrap();
+        let mut taken = 0;
+        for line in -1..=last + 1 {
+            let refused = symphony::edit::comment_refused_after(&shown, line).map(|e| e.0);
+            let inserted = insert_comment(text, line, "comment", "why?", "").err();
+            assert_eq!(refused, inserted.map(|e| e.0), "{text:?} after line {line}");
+            taken += usize::from(refused.is_none());
+        }
+        assert!(taken > 0, "{text:?} takes a comment somewhere");
+    }
+    let outside = symphony::edit::comment_refused_after(&lines("a\n"), -1).unwrap();
+    assert_eq!(outside.0, "line -1 is outside the document (1 lines)");
+}

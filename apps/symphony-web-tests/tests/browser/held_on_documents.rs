@@ -4,8 +4,10 @@
 //! held the page reads its held comments again and draws each where it was left, a callout under
 //! its section and a card's message in its card, its author's name, kind, the state `held` and its
 //! words, with no Pass on. For one who may pass them on, Pass on posts the pass once, and the page's
-//! next read leaves the comment out. On a desk and a phone, each is drawn within the screen's
-//! width. The document is the card probe's.
+//! next read leaves the comment out. A callout whose paragraph changed while the page held it is
+//! read again as the page's copy moves and drawn where the server says its pass writes it now, at
+//! the end of its section, and passed on there. On a desk and a phone, each is drawn within the
+//! screen's width. The document is the card probe's.
 //!
 //! With `SYMPHONY_HELD_SHOTS` naming a folder, the page is saved there at each width and in each
 //! scheme, held for ana and offered to a passer: a reader who is not the person at the machine
@@ -19,6 +21,13 @@ const WORDS: &str = "Too many lamps\nShow the thirty that matter.";
 /// ana's question held after the probe's paragraph, and her message held on its card `alpha`.
 fn callout() -> Value {
     json!({"id": 4, "author": "ana", "kind": "question", "text": WORDS, "key": "intro", "line": 3})
+}
+
+/// ana's question once the paragraph it was left after changed: at the end of its section, after
+/// the last block under the probe's one heading, its decision callout.
+fn at_its_sections_end() -> Value {
+    json!({"id": 4, "author": "ana", "kind": "question", "text": WORDS, "key": "decision",
+        "line": 15})
 }
 
 fn message() -> Value {
@@ -181,6 +190,65 @@ fn pass_on_posts_once_and_the_next_read_leaves_the_comment_out() {
         page.eval("document.querySelector('#held-4 button').click()");
         let left = shown(&mut page, 1);
         assert_eq!(left[0]["id"], "held-5", "{width}: {left}");
+        assert_eq!(
+            site.posts(),
+            [(
+                symphony_api::DOCUMENT_PASS_ROUTE.to_string(),
+                json!({"id": 4})
+            )]
+        );
+    }
+}
+
+#[test]
+fn a_comment_whose_paragraph_changed_is_drawn_at_its_sections_end_and_passed_on_there() {
+    for (width, height, mobile) in SCREENS {
+        let site = served(&[callout()], true);
+        let Some(mut page) = chrome() else { return };
+        page.viewport(width, height, mobile);
+        page.open(&site.url(PAGE));
+        assert_eq!(shown(&mut page, 1)[0]["under"], "intro", "{width}");
+        // Its paragraph's words change: the server says its pass writes it at its section's end,
+        // and the page holding it reads that as its copy moves.
+        holding(&site, &[at_its_sections_end()], true);
+        test_time::until_true("the page's feed following the intro", super::STALL, || {
+            site.following("intro")
+        })
+        .expect("the page's feed never followed the intro");
+        let intro = json!({"start": 3, "end": 3, "key": "intro", "hash": "intro-changed",
+            "part": 1, "blocks": [{"type": "paragraph",
+                "spans": [{"type": "text", "text": "The catalogue holds 140 lamps."}]}]});
+        let change = json!({"version": 8, "changes": [{"region": "document",
+            "data": {"path": "docs/PROBE.md", "sections": [intro]}}]});
+        site.push(8, &change.to_string());
+        page.reveal("[data-doc-key=\"decision\"]");
+        assert!(
+            page.wait_for(
+                "document.querySelector('[data-doc-key=\"decision\"] #held-4') !== null",
+                SHOWN
+            ),
+            "{width}: never drawn at its section's end: {}",
+            drawn(&mut page)
+        );
+        page.frames_with_fonts();
+        assert_eq!(
+            drawn(&mut page),
+            json!([{"id": "held-4", "under": "decision", "author": "ana", "kind": "question",
+                "mark": "held", "words": WORDS, "buttons": ["Pass on"], "within": true}]),
+            "{width}"
+        );
+        shot(&mut page, "document-held-changed", width);
+        // Passed on there, the server holds nothing more.
+        holding(&site, &[], true);
+        page.eval("document.querySelector('#held-4 button').click()");
+        assert!(
+            page.wait_for(
+                "document.querySelectorAll('.held-comment').length === 0",
+                SHOWN
+            ),
+            "{width}: still drawn once passed: {}",
+            drawn(&mut page)
+        );
         assert_eq!(
             site.posts(),
             [(

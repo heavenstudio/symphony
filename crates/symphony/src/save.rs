@@ -29,6 +29,7 @@ mod quick;
 mod quick_task;
 mod settings;
 pub use failure::{Failure, Refused};
+pub use held::drawn_held;
 
 #[cfg(test)]
 mod actor_tests;
