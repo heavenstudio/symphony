@@ -114,21 +114,20 @@ function zoomKey(event: KeyboardEvent<HTMLElement>, nav: Navigation): boolean {
   return taken(event, keyView(event.key, modified, nav.view, nav.whole), nav.set);
 }
 
-/** The toolbar line: Whole task (pressed while it is shown), − and +, each disabled where it
- * cannot act, as the message list's Previous and Next are at their ends, and the range shown. */
+/** A button of the toolbar's that cannot act: not drawn, its place kept (`.tl-idle`), and
+ * disabled, so no key or press reaches it. */
+const idle = (cannot: boolean) => ({ disabled: cannot, className: cannot ? "tl-idle" : undefined });
+
+/** The toolbar line: Whole task, − and +, each drawn only where it can act, its place kept so that
+ * nothing on the line moves under the pointer (on the whole task + alone, which the readout says
+ * is the whole), and the range shown. */
 export function ZoomBar({ timeline, nav }: { timeline: TaskTimeline; nav: Navigation }) {
   const { view, whole, set } = nav;
   return (
     <div className="tl-zoom">
       {/* biome-ignore lint/a11y/useSemanticElements: a group of the view's buttons, no form's fieldset */}
       <span className="tl-zoom-group" role="group" aria-label="Zoom">
-        <Button
-          type="button"
-          size="sm"
-          aria-pressed={view === null}
-          disabled={view === null}
-          onClick={() => set(null)}
-        >
+        <Button type="button" size="sm" {...idle(view === null)} onClick={() => set(null)}>
           Whole task
         </Button>
         <Button
@@ -136,7 +135,7 @@ export function ZoomBar({ timeline, nav }: { timeline: TaskTimeline; nav: Naviga
           size="sm"
           aria-label="Zoom out"
           title="Zoom out"
-          disabled={view === null}
+          {...idle(view === null)}
           onClick={() => set(zoomed(view, whole, false))}
         >
           −
@@ -146,7 +145,7 @@ export function ZoomBar({ timeline, nav }: { timeline: TaskTimeline; nav: Naviga
           size="sm"
           aria-label="Zoom in"
           title="Zoom in"
-          disabled={leastShown(view)}
+          {...idle(leastShown(view))}
           onClick={() => set(zoomed(view, whole, true))}
         >
           +
@@ -399,6 +398,8 @@ export function useNavigation(
         return;
       }
       swallow.current = false;
+      press.current = null;
+      setBand(null);
       if (event.button !== 0) return;
       const from = fractionAt(lanes.current, event.clientX);
       if (from === null || from < 0 || from > 1) return;
@@ -411,6 +412,13 @@ export function useNavigation(
       }
       const held = press.current;
       if (held === null || held.id !== event.pointerId) return;
+      // A press let go outside the lanes before it dragged (the pointer is captured only once it
+      // drags) ends with the button found up.
+      if ((event.buttons & 1) === 0) {
+        press.current = null;
+        setBand(null);
+        return;
+      }
       if (!held.dragging) {
         if (Math.abs(event.clientX - held.x) < DRAG_PX) return;
         held.dragging = true;

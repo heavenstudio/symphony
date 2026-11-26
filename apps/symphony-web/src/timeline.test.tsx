@@ -1055,8 +1055,10 @@ describe("the timeline zoomed", () => {
 
   it("opens on the whole task: a toolbar line above the lanes, and no overview", () => {
     const drawn = draw(pictures(), { view: null });
+    // Whole task and − cannot act there: not drawn, their places kept, + alone where it is when
+    // zoomed.
     expect(drawn).toContain(
-      '<div class="tl-zoom"><span class="tl-zoom-group" role="group" aria-label="Zoom"><button class="dx-button" data-style="outline" data-size="sm" type="button" aria-pressed="true" disabled="">Whole task</button><button class="dx-button" data-style="outline" data-size="sm" type="button" aria-label="Zoom out" title="Zoom out" disabled="">−</button><button class="dx-button" data-style="outline" data-size="sm" type="button" aria-label="Zoom in" title="Zoom in">+</button></span><span class="tl-range" aria-live="polite">11-11 09:00 → 11-11 15:20 · 6 h 20 m</span></div>',
+      '<div class="tl-zoom"><span class="tl-zoom-group" role="group" aria-label="Zoom"><button class="dx-button tl-idle" data-style="outline" data-size="sm" type="button" disabled="">Whole task</button><button class="dx-button tl-idle" data-style="outline" data-size="sm" type="button" aria-label="Zoom out" title="Zoom out" disabled="">−</button><button class="dx-button" data-style="outline" data-size="sm" type="button" aria-label="Zoom in" title="Zoom in">+</button></span><span class="tl-range" aria-live="polite">11-11 09:00 → 11-11 15:20 · 6 h 20 m</span></div>',
     );
     expect(drawn).toContain(
       '<div class="tl-lanes tl-zoomable" id="tl-lanes" role="group" aria-label="Lanes">',
@@ -1077,8 +1079,9 @@ describe("the timeline zoomed", () => {
     expect(drawn).toContain(
       '<span class="tl-range" aria-live="polite">11-11 12:00 → 11-11 13:00 · 1 h of 6 h 20 m</span>',
     );
-    expect(drawn).toContain('aria-pressed="false">Whole task</button>');
+    expect(drawn).toContain('type="button">Whole task</button>');
     expect(drawn).not.toContain("disabled");
+    expect(drawn).not.toContain("tl-idle");
     expect(drawn).toContain('<div class="tl-overview">');
     expect(drawn).toContain(
       'class="tl-ov-window" role="scrollbar" tabindex="0" aria-label="Hours shown" aria-controls="tl-lanes" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="47" aria-valuetext="11-11 12:00 → 11-11 13:00 · 1 h of 6 h 20 m" style="left:47.37%;width:15.79%"',
@@ -1099,9 +1102,12 @@ describe("the timeline zoomed", () => {
     expect(drawn).not.toContain("tl-now");
   });
 
-  it("at a zoom's least, + cannot zoom further", () => {
+  it("at a zoom's least, + cannot zoom further and is not drawn, its place kept", () => {
     const least = draw(pictures(), { view: { from: nine(180), to: nine(180) + LEAST_SHOWN } });
-    expect(least).toContain('aria-label="Zoom in" title="Zoom in" disabled="">+</button>');
+    expect(least).toContain(
+      '<button class="dx-button tl-idle" data-style="outline" data-size="sm" type="button" aria-label="Zoom in" title="Zoom in" disabled="">+</button>',
+    );
+    expect(count(least, "tl-idle")).toBe(1);
     expect(least).toContain("· 5 m of 6 h 20 m");
     expect([leastShown(null), leastShown(NOON), leastShown({ from: 0, to: LEAST_SHOWN })]).toEqual([
       false,

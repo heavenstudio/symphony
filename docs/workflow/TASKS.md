@@ -3793,10 +3793,10 @@ The lanes zoom into a part of the hours and move along them (`timeline-zoom.ts`,
 arithmetic, and `timeline-navigate.tsx`, in the timeline's chunk), as
 [the timeline's analysis](../design/analysis/timeline-navigation.md) draws it. Each visit
 opens on the whole task, and a task no longer than five minutes, the least a zoom shows, draws
-as before, with nothing to zoom. A line above the lanes holds **Whole task**, pressed while the
-whole task is shown, **−** and **+**, each disabled where it cannot act (− on the whole task, +
-at five minutes), and the hours shown with their length, "11-19 10:53 → 11-19 12:01 · 1 h 8 m of
-1 d 3 h" zoomed. Zoomed, every lane is drawn over the hours shown, its words fitted to them and
+as before, with nothing to zoom. A line above the lanes holds **Whole task**, **−** and **+**,
+each drawn only where it can act, its place kept so that nothing on the line moves (on the whole
+task + alone, at five minutes no +), and the hours shown with their length, "11-19 10:53 →
+11-19 12:01 · 1 h 8 m of 1 d 3 h" zoomed. Zoomed, every lane is drawn over the hours shown, its words fitted to them and
 its hours marked down to the minute; a part outside them is not drawn but keeps its place among
 the arrow keys' stops, and one the keys step to, or a message chosen in the message list, comes
 into view at the same zoom. ⌘ or Ctrl with a wheel, as a trackpad's pinch sends it, zooms about
@@ -3809,10 +3809,6 @@ moves while zoomed, the page still scrolling up and down under it. With the focu
 task's stages and runs with the window shown, which a drag moves, a drag of its edge resizes,
 and its arrow keys, Page Up, Page Down, Home and End move. The height the box keeps for the next
 visit is the whole task's. A phone's list is not zoomed.
-
-- [ ] **timeline-zoom-limits** — The zoom line above a task's wide timeline always draws Whole task, − and +, as the mockup does, and the mockup leaves open how a button looks where it cannot act. As built, each such button is greyed out and takes no press: − and Whole task on the whole task (Whole task is also shown pressed then), and + once five minutes are shown, the least a zoom shows. That is how Previous message and Next message look at their ends. A: greyed out where they cannot act, as built; the buttons never move. B: − and + left out where they cannot act, so the line's buttons move up when one goes, and a second press where + was can land on −. Recommended: A. Approve and say A or B in the note, or comment.
-  [2026-11-26 16:18] agent — Posted for the board task `app/timeline-zoom`, at 1440 wide, the whole task: A as built, − and Whole task greyed out; B drawn on that page by hand, not built, − left out. ![The zoom line on the whole task, option A](../design/analysis/timeline-navigation/zoom-limits-whole.webp) ![The zoom line on the whole task, option B](../design/analysis/timeline-navigation/zoom-limits-hidden.webp)
-  [2026-11-26 16:18] agent — Under A, zoomed to five minutes, + greyed out: ![The zoom line at five minutes, as built](../design/analysis/timeline-navigation/zoom-limits-least.webp)
 
 - [ ] **timeline-drag-band** — A mouse dragged across the hours of a task's wide timeline zooms to the hours dragged, and the mockup leaves open what the drag shows while the button is held. As built, a band in the accent colour, faint with a solid edge at each end, covers the hours dragged across every lane, the bars showing through it, and goes when the button is let go. Approve, or comment.
   [2026-11-26 16:18] agent — Posted for the board task `app/timeline-zoom`, at 1440 wide, a drag held from 08:00 to 12:30. ![A drag held across the hours, light](../design/analysis/timeline-navigation/drag-band.webp) ![A drag held across the hours, dark](../design/analysis/timeline-navigation/drag-band-dark.webp)

@@ -127,14 +127,25 @@ fn the_toolbar_zooms_in_and_out_and_whole_task_returns_with_a_true_readout() {
     let Some(mut chrome) = chrome() else { return };
     opened(&mut chrome, &site);
     readout(&mut chrome, "opened", &format!("said === {}", json!(WHOLE)));
-    let buttons = "[...document.querySelectorAll('.tl-zoom-group button')].map(b => [b.textContent, b.getAttribute('aria-label'), b.disabled, b.getAttribute('aria-pressed')])";
+    // Each button, whether it is drawn and takes the focus, and where it is: on the whole task
+    // Whole task and − cannot act, so are not drawn, their places kept.
+    let buttons = "[...document.querySelectorAll('.tl-zoom-group button')].map(b => { b.focus(); return [b.textContent, b.getAttribute('aria-label'), getComputedStyle(b).visibility === 'visible', document.activeElement === b, Math.round(b.getBoundingClientRect().left)]; })";
+    let whole = chrome.eval(buttons);
+    let shown = |buttons: &Value| -> Vec<Value> {
+        buttons
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| json!([b[0], b[1], b[2], b[3]]))
+            .collect()
+    };
     assert_eq!(
-        chrome.eval(buttons),
-        json!([
-            ["Whole task", null, true, "true"],
-            ["−", "Zoom out", true, null],
-            ["+", "Zoom in", false, null]
-        ])
+        shown(&whole),
+        [
+            json!(["Whole task", null, false, false]),
+            json!(["−", "Zoom out", false, false]),
+            json!(["+", "Zoom in", true, true])
+        ]
     );
     assert!(!drawn(&mut chrome, ".tl-overview"));
     // The toolbar line sits above the lanes, inside the box.
@@ -143,6 +154,24 @@ fn the_toolbar_zooms_in_and_out_and_whole_task_returns_with_a_true_readout() {
     tap(&mut chrome, ".tl-zoom button[aria-label='Zoom in']");
     let half = readout(&mut chrome, "zoomed in", "said.includes(' of 1 d 3 h')");
     assert_eq!(minutes(&half), 827, "{half}");
+    // Zoomed, all three are drawn, and none moved: + is where it was pressed.
+    let zoomed = chrome.eval(buttons);
+    assert_eq!(
+        shown(&zoomed),
+        [
+            json!(["Whole task", null, true, true]),
+            json!(["−", "Zoom out", true, true]),
+            json!(["+", "Zoom in", true, true])
+        ]
+    );
+    for (now, then) in zoomed
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(whole.as_array().unwrap())
+    {
+        assert_eq!(now[4], then[4], "{now} moved");
+    }
     assert_eq!(
         chrome.eval("document.getElementById('quick-open').getAttribute('aria-expanded')"),
         json!("false"),
@@ -170,10 +199,7 @@ fn the_toolbar_zooms_in_and_out_and_whole_task_returns_with_a_true_readout() {
         &format!("said === {}", json!(WHOLE)),
     );
     assert!(!drawn(&mut chrome, ".tl-overview"));
-    assert_eq!(
-        chrome.eval(buttons)[0],
-        json!(["Whole task", null, true, "true"])
-    );
+    assert_eq!(chrome.eval(buttons), whole);
 }
 
 /// ⌘/Ctrl + wheel zooms about the pointer, the instant under it staying there; Shift + wheel and
@@ -286,6 +312,27 @@ fn a_drag_across_the_hours_zooms_to_them_and_its_release_picks_nothing() {
     assert_eq!(
         chrome.eval("document.querySelectorAll('.tl-message-mark[aria-pressed=true]').length"),
         json!(1)
+    );
+    assert_eq!(chrome.eval(RANGE), json!(dragged));
+    // A press let go below the lanes before it dragged leaves nothing held: back over the lanes
+    // with no button down, further across than a drag needs, the pointer draws no band. The
+    // lanes' places again, the overview now above them.
+    let places = chrome.eval(PLACES);
+    let x = places["left"].as_f64().unwrap() + places["width"].as_f64().unwrap() / 2.0;
+    let y = places["y"].as_f64().unwrap();
+    mouse(&mut chrome, "mousePressed", x, y, 1);
+    mouse(&mut chrome, "mouseMoved", x + 1.0, y + 500.0, 0);
+    mouse(&mut chrome, "mouseReleased", x + 1.0, y + 500.0, 1);
+    for dx in [50.0, 150.0] {
+        chrome.call(
+            "Input.dispatchMouseEvent",
+            json!({"type": "mouseMoved", "x": x + dx, "y": y, "buttons": 0}),
+        );
+    }
+    chrome.frames();
+    assert_eq!(
+        chrome.eval("document.querySelector('.tl-band') === null"),
+        json!(true)
     );
     assert_eq!(chrome.eval(RANGE), json!(dragged));
 }

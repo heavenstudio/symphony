@@ -2196,6 +2196,16 @@ describe("a part of the hours shown", () => {
     expect(labels(hour)).toEqual(["11:10", "11:20", "11:30", "11:40", "11:50", "12:00", "12:10"]);
     const first = new Scale(pictures(), hour).ticks(false)[0];
     expect(first?.left).toBeCloseTo(((nine(130) - hour.from) / (hour.to - hour.from)) * 100, 10);
+    // 11:10:30 to 12:10:30, begun half a minute past a whole ten: from the next whole ten, 11:10
+    // being before the hours shown.
+    expect(labels({ from: nine(130) + 30, to: nine(190) + 30 })).toEqual([
+      "11:20",
+      "11:30",
+      "11:40",
+      "11:50",
+      "12:00",
+      "12:10",
+    ]);
     // Five minutes: every minute; three hours: every half hour; a day's hours: by the hour up.
     expect(labels({ from: nine(60), to: nine(65) })).toEqual([
       "10:00",

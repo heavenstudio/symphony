@@ -77,11 +77,13 @@ function navigated(nav: Navigation, width = 1000) {
 
 type Pointer = Parameters<LanesHandlers["onPointerDown"]>[0];
 
-/** A pointer's event at `x` (`y`), the left button's, a mouse's unless `kind` says otherwise. */
+/** A pointer's event at `x`, the left button's and with it held, a mouse's unless `more` says
+ * otherwise. */
 const pointer = (x: number, more: Record<string, unknown> = {}) =>
   ({
     pointerType: "mouse",
     button: 0,
+    buttons: 1,
     pointerId: 1,
     clientX: x,
     clientY: 100,
@@ -215,6 +217,34 @@ describe("a mouse on the lanes", () => {
     at.handlers.onPointerCancel(pointer(700));
     at.handlers.onPointerUp(pointer(700));
     expect([at.band(), nav.given]).toEqual([null, []]);
+  });
+
+  it("let go outside the lanes before it dragged, draws no band when it comes back", () => {
+    const nav = navigation(null);
+    const at = navigated(nav);
+    // Pressed, moved straight down off the lanes and let go there: the lanes saw no release.
+    at.handlers.onPointerDown(pointer(450));
+    at.handlers.onPointerMove(pointer(451, { clientY: 400 }));
+    // Back over the lanes with no button held, further across than a drag needs.
+    at.handlers.onPointerMove(pointer(700, { buttons: 0 }));
+    at.handlers.onPointerMove(pointer(800, { buttons: 0 }));
+    expect([at.band(), at.captured, nav.given]).toEqual([null, [], []]);
+    // The next press, a click, is a click.
+    at.handlers.onPointerDown(pointer(800));
+    at.handlers.onPointerUp(pointer(800, { buttons: 0 }));
+    const click = kept({});
+    at.handlers.onClickCapture(click.event);
+    expect([at.band(), nav.given, click.said.prevented]).toEqual([null, [], false]);
+  });
+
+  it("let go outside the lanes mid-drag, its band goes at the next press", () => {
+    const nav = navigation(null);
+    const at = navigated(nav);
+    at.handlers.onPointerDown(pointer(450));
+    at.handlers.onPointerMove(pointer(700));
+    expect(at.band()).toEqual([0.25, 0.5]);
+    at.handlers.onPointerDown(pointer(900));
+    expect(at.band()).toBeNull();
   });
 
   it("double clicked on a stage zooms to it, and elsewhere does nothing", () => {

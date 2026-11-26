@@ -303,19 +303,18 @@
 .tl-zoom-group .dx-button + .dx-button {
   margin-left: -1px;
 }
-.tl-zoom-group .dx-button:not(:last-child) {
+/* A button that cannot act is not drawn, and keeps its place; the buttons drawn round their own
+   ends: + alone on the whole task, − the last at the least. */
+.tl-zoom-group .dx-button.tl-idle {
+  visibility: hidden;
+}
+.tl-zoom-group .dx-button:not(:last-child, :has(+ .tl-idle)) {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
-.tl-zoom-group .dx-button:not(:first-child) {
+.tl-zoom-group .dx-button:not(:first-child, .tl-idle + *) {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
-}
-.tl-zoom-group .dx-button[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--primary) 18%, transparent);
-  color: var(--primary);
-  font-weight: 600;
-  opacity: 1;
 }
 .tl-range {
   color: var(--muted-foreground);
