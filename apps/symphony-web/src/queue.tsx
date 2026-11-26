@@ -1,8 +1,11 @@
-// The complete review queue: what waits on the owner, by the document folders' topics, then what
-// to spot-check and what waits on an agent. The board's feed invalidates it; rows mount their
-// contents near the viewport, while each group's anchor stays for the home's links.
+// The complete review queue: what waits on the owner, by the document folders' topics, the comments
+// held on documents that wait on the reader to pass them on, then what to spot-check and what waits
+// on an agent. The board's feed invalidates it, and so does a held comment's move (`held`); rows
+// mount their contents near the viewport, while each group's anchor stays for the home's links.
+// A held comment's row leads to it on its document's page, where its words and Pass on are: the
+// queue carries neither.
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useFreshen } from "./board-page";
 import { Button } from "./button";
 import { answered, boardItem, drawn, failed, keepLater, QUEUE, readKept } from "./cache";
@@ -17,9 +20,19 @@ import { TaskTag } from "./task-tag";
 import { retryWait, tick } from "./timing";
 import { failed as failedRead, ready } from "./trouble";
 import { drawnHeight, drawnStyle, NearViewport, rememberDrawn } from "./viewport";
-import { ASK_LATE_SECONDS, type Card, type Queue, type QueueAsk, type QueueItem } from "./wire";
+import {
+  ASK_LATE_SECONDS,
+  type Card,
+  type Queue,
+  type QueueAsk,
+  type QueueHeld,
+  type QueueItem,
+} from "./wire";
 
-/** The feed's regions that move the queue: its items and their order, in each of its groups. */
+/**
+ * The feed's regions that move the queue: its items and their order, in each of its groups, and a
+ * comment held on a document moved.
+ */
 const REGIONS = [
   "queue-item",
   "queue-item-order",
@@ -27,6 +40,7 @@ const REGIONS = [
   "spot-check-order",
   "agent-queue",
   "agent-queue-order",
+  "held",
 ];
 
 /** Whether a feed event moves the queue. */
@@ -65,6 +79,14 @@ function isItem(value: unknown): value is QueueItem {
     ["href", "path", "slug", "title", "kind", "text"].every((key) => isText(field(value, key))) &&
     isOptionalText(field(value, "branch")) &&
     isOptionalAsk(field(value, "ask"))
+  );
+}
+
+/** A held comment's row: its number, where it is, its document's title and who wrote it. */
+function isHeld(value: unknown): value is QueueHeld {
+  return (
+    Number.isSafeInteger(field(value, "id")) &&
+    ["href", "doc_title", "author"].every((key) => isText(field(value, key)))
   );
 }
 
@@ -111,9 +133,11 @@ export function AskLine({ ask, now }: { ask: QueueAsk; now: number }) {
  */
 export function readQueue(value: unknown): Queue | null {
   const [waiting, spot, agent] = ["waiting", "spot_check", "agent"].map((key) => field(value, key));
+  const held = field(value, "held");
   return Array.isArray(waiting) &&
     waiting.every(isCard) &&
-    [spot, agent].every((group) => Array.isArray(group) && group.every(isItem))
+    [spot, agent].every((group) => Array.isArray(group) && group.every(isItem)) &&
+    (held === undefined || (Array.isArray(held) && held.every(isHeld)))
     ? (value as Queue)
     : null;
 }
@@ -181,6 +205,9 @@ export function recallRows(kept: string): (number | null)[] {
   });
 }
 
+/** Where this browser keeps how many held comments the queue listed when it last drew. */
+const HELD_ROWS = "queue-held-rows";
+
 /** The rows each group showed, as ROWS keeps them. */
 export function keepRows([waiting, spot, agent]: [number, number, number]): string {
   return `${waiting} ${spot} ${agent}`;
@@ -211,46 +238,65 @@ function GhostRow({ ranked = false }: { ranked?: boolean }) {
 
 /**
  * The queue before its read: each group's card with its heading and as many rows as it showed
- * last, at the height it took in a window as wide; else the rows it is likely to hold.
+ * last, at the height it took in a window as wide; else the rows it is likely to hold. The held
+ * comments' group, after what waits on the owner, only where it listed some last.
  */
 function GhostQueue() {
   const rows = recallRows(load(ROWS) ?? "");
+  const [held] = recallRows(load(HELD_ROWS) ?? "");
   return (
     <>
       {GROUPS.map(([id, guess], group) => (
-        <div
-          key={id}
-          className="card ghost-group"
-          data-for={id}
-          style={drawnStyle(drawnHeight(`queue:${id}`))}
-        >
-          <div>
-            <span className="bone" style={{ "--w": "12ch" } as React.CSSProperties} />
+        <Fragment key={id}>
+          <div
+            className="card ghost-group"
+            data-for={id}
+            style={drawnStyle(drawnHeight(`queue:${id}`))}
+          >
+            <div>
+              <span className="bone" style={{ "--w": "12ch" } as React.CSSProperties} />
+            </div>
+            {/* What waits on the owner opens on its topic chips. */}
+            {group === 0 && (
+              <div className="ghost-chips">
+                <span className="ghost-pill">
+                  <span className="bone" style={{ "--w": "4ch" } as React.CSSProperties} />
+                </span>
+                <span className="ghost-pill">
+                  <span className="bone" style={{ "--w": "6ch" } as React.CSSProperties} />
+                </span>
+              </div>
+            )}
+            {/* A group that showed none says so in a line. */}
+            {rows[group] === 0 && (
+              <div className="ghost-none">
+                <span className="bone" style={{ "--w": "14ch" } as React.CSSProperties} />
+              </div>
+            )}
+            {Array.from({ length: Math.min(rows[group] ?? guess, 12) }, (_, n) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: the ghost rows are alike
+              <GhostRow key={n} ranked={group === 0} />
+            ))}
           </div>
-          {/* What waits on the owner opens on its topic chips. */}
-          {group === 0 && (
-            <div className="ghost-chips">
-              <span className="ghost-pill">
-                <span className="bone" style={{ "--w": "4ch" } as React.CSSProperties} />
-              </span>
-              <span className="ghost-pill">
-                <span className="bone" style={{ "--w": "6ch" } as React.CSSProperties} />
-              </span>
-            </div>
-          )}
-          {/* A group that showed none says so in a line. */}
-          {rows[group] === 0 && (
-            <div className="ghost-none">
-              <span className="bone" style={{ "--w": "14ch" } as React.CSSProperties} />
-            </div>
-          )}
-          {Array.from({ length: Math.min(rows[group] ?? guess, 12) }, (_, n) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: the ghost rows are alike
-            <GhostRow key={n} ranked={group === 0} />
-          ))}
-        </div>
+          {group === 0 && (held ?? 0) > 0 && <GhostHeld rows={held ?? 0} />}
+        </Fragment>
       ))}
     </>
+  );
+}
+
+/** The held comments' group while the queue loads: its heading and `rows` rows. */
+function GhostHeld({ rows }: { rows: number }) {
+  return (
+    <div className="card ghost-group" data-for="held" style={drawnStyle(drawnHeight("queue:held"))}>
+      <div>
+        <span className="bone" style={{ "--w": "12ch" } as React.CSSProperties} />
+      </div>
+      {Array.from({ length: Math.min(rows, 12) }, (_, n) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the ghost rows are alike
+        <GhostRow key={n} />
+      ))}
+    </div>
   );
 }
 
@@ -331,6 +377,32 @@ export function WaitingQueue({
           </li>
         ))}
       </ol>
+    </section>
+  );
+}
+
+/**
+ * The comments held on documents that wait on the reader to pass them on, oldest first: each its
+ * document's title, leading to it on its page, and who wrote it.
+ */
+export function HeldGroup({ items }: { items: QueueHeld[] }) {
+  return (
+    <section id="held" className="card queue-group">
+      <h2>{`Held comments (${items.length})`}</h2>
+      <ul className="queue-list">
+        {items.map((item) => (
+          <li key={item.id} data-held={item.id}>
+            <NearViewport height={64} ghost={<GhostRow />}>
+              <div className="queue-row">
+                <div>
+                  <a href={href(item.href)}>{item.doc_title}</a>
+                  <p className="muted">{item.author}</p>
+                </div>
+              </div>
+            </NearViewport>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -509,8 +581,13 @@ export function QueuePage({ scope, refreshed }: { scope: string; refreshed: numb
         queue.agent.length,
       ]),
     );
+    const held = queue.held?.length ?? 0;
+    if (held > 0 || load(HELD_ROWS) !== null) save(HELD_ROWS, String(held));
     void rememberDrawn(
-      GROUPS.map(([id]) => [`queue:${id}`, `#${id}`]),
+      [
+        ...GROUPS.map(([id]): [string, string] => [`queue:${id}`, `#${id}`]),
+        ["queue:held", "#held"],
+      ],
       500,
       mounted.signal,
     );
@@ -540,6 +617,7 @@ export function QueuePage({ scope, refreshed }: { scope: string; refreshed: numb
                 setSelected(topic);
               }}
             />
+            {(queue.held?.length ?? 0) > 0 && <HeldGroup items={queue.held ?? []} />}
             <QueueGroup
               id="spot"
               title="Auto-approved: spot-check"

@@ -663,6 +663,8 @@ pub fn snapshot(
         spot_check: count(queue.spot_check.len()),
         answered_today: answered,
         tasks: None,
+        // The board's, which the server puts on its page (`apps/symphony-server/src/live/held.rs`).
+        held: 0,
     };
     progress.decisions_waiting = counts.waiting;
     let board = Board {

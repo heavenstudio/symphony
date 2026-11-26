@@ -56,7 +56,8 @@ function isCard(value: unknown): value is Card {
 function readCounts(value: unknown): Counts | null {
   const tasks = field(value, "tasks");
   return has(value, ["waiting", "docs_waiting", "spot_check", "answered_today"], isCount) &&
-    maybe(tasks, (tasks) => has(tasks, ["in_progress", "in_review", "agents_live"], isCount))
+    maybe(tasks, (tasks) => has(tasks, ["in_progress", "in_review", "agents_live"], isCount)) &&
+    optional(field(value, "held"), isCount)
     ? { ...(value as Counts), tasks: (tasks as Counts["tasks"] | undefined) ?? null }
     : null;
 }

@@ -641,7 +641,10 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
         | symphony_api::CARD_OWNERS_PATH
         | symphony_api::DOCUMENT_HELD_PATH
         | "/api/task-history" => board_read(shared, hub, &asked, &request).await,
-        _ => page_read(&hub, scope, path, named_reader(&request).as_deref()),
+        _ => {
+            let hosted = crate::hosted::admission(&request).is_some();
+            page_read(&hub, scope, path, named_reader(&request).as_deref(), hosted)
+        }
     }
 }
 
@@ -888,7 +891,7 @@ async fn board_read(
             // A hosted visitor reads them and passes none on, as it saves nothing here.
             symphony_api::DOCUMENT_HELD_PATH => {
                 let passes = !hosted && passes(&store, asker.1, &asker.0);
-                document_held(&store, &scope, &rel, passes).map(|held| no_store(Json(held)))
+                document_held(&store, &root, &scope, &rel, passes).map(|held| no_store(Json(held)))
             }
             "/api/task-page" => store.get(&slug).map_err(task_failure).and_then(|record| {
                 let owner = symphony::owners::task(&store, &record, &asker.0, asker.1)
@@ -945,32 +948,29 @@ fn may_ask(shared: &Shared, hub: &Hub, request: &Request) -> bool {
 }
 
 /// The comments held for people on the document `rel` of the checkout `scope` (empty: the
-/// project's own), not passed on yet, oldest first, and whether the one reading may pass them on
-/// (`passes`): what its page draws ([`symphony_api::DocumentHeld`]).
+/// project's own) at `root`, not passed on yet, oldest first, each where its pass would write it
+/// now ([`symphony::save::drawn_held`]), against the document as its page shows it, read and keyed
+/// once where a callout is held; and whether the one reading may pass them on (`passes`): what its
+/// page draws ([`symphony_api::DocumentHeld`]).
 fn document_held(
     store: &symphony_board::Store,
+    root: &std::path::Path,
     scope: &str,
     rel: &str,
     passes: bool,
 ) -> Result<symphony_api::DocumentHeld, Failed> {
-    let scope = Some(scope).filter(|scope| !scope.is_empty());
-    let held = store.held_on_document(rel.trim_start_matches('/'), scope);
+    let rel = rel.trim_start_matches('/');
+    let held = store.held_on_document(rel, Some(scope).filter(|scope| !scope.is_empty()));
     let held = held.map_err(|e| unavailable(&e.to_string(), ""))?;
-    let held = (held.into_iter())
+    let held: Vec<_> = (held.into_iter())
         .filter(|held| held.passed.is_none())
-        .map(|held| {
-            let block = held.document.block;
-            symphony_api::HeldComment {
-                id: held.id,
-                author: held.author,
-                kind: held.document.kind,
-                text: held.text,
-                card: held.document.card,
-                key: block.as_ref().map(|block| block.key.clone()),
-                line: block.map(|block| block.line),
-            }
-        })
         .collect();
+    // A document that cannot be read draws each where it was left.
+    let text = (held.iter().any(|held| held.document.block.is_some()))
+        .then(|| symphony::docview::source(root, rel, scope).ok())
+        .flatten()
+        .map(|(_, text, _)| text);
+    let held = symphony::save::drawn_held(text.as_deref(), held);
     Ok(symphony_api::DocumentHeld { held, passes })
 }
 
@@ -1040,17 +1040,33 @@ fn agents(hub: &Hub, hosted: bool, page: Option<(AgentsAsked, bool)>) -> Result<
 }
 
 /// A region the hub keeps of the page of the worktree `scope`, as its last read left it: what of
-/// it waits as `reader`, a person a board named, is shown it (`crate::live::theirs`), and whole to
+/// it waits as `reader`, a person a board named, is shown it (`crate::live::theirs`); whole to a
+/// `hosted` visitor but the comments held on documents, as they may pass none on; and whole to
 /// anyone else.
-fn page_read(hub: &Hub, scope: &str, path: &str, reader: Option<&str>) -> Response {
+fn page_read(hub: &Hub, scope: &str, path: &str, reader: Option<&str>, hosted: bool) -> Response {
     let pages = hub.pages.read().recover();
     let Some(page) = pages.get(scope) else {
         return error(StatusCode::NOT_FOUND, "this worktree was removed");
     };
-    let theirs = reader.map(|name| {
-        let deciders = page.deciders.as_deref();
-        crate::live::theirs::shown(&page.board, &page.queue, &page.pending, deciders, name)
-    });
+    let theirs = match reader {
+        Some(name) => {
+            let deciders = page.deciders.as_deref();
+            let shown = crate::live::theirs::shown;
+            Some(shown(
+                &page.board,
+                &page.queue,
+                &page.pending,
+                deciders,
+                name,
+            ))
+        }
+        None if hosted && !page.queue.held.is_empty() => Some(crate::live::theirs::unheld(
+            &page.board,
+            &page.queue,
+            &page.pending,
+        )),
+        None => None,
+    };
     let (board, queue, pending) = match &theirs {
         Some(shown) => (&shown.board, &shown.queue, &shown.pending),
         None => (&page.board, &page.queue, &page.pending),

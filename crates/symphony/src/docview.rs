@@ -199,24 +199,22 @@ fn mark_draft(html: &mut String, slug: &str) {
 /// ([`crate::merging`]): the page shows the branch's last committed copy instead of the markers.
 pub const MERGING: &str = "> **Merging.** This worktree is in the middle of a merge, and its copy of this document holds conflict markers. This is the branch's last committed copy. An answer given on a card here is saved on the branch's side of the merge.";
 
-/// The file `rel` of the checkout `render` reads, and the text its page shows: on a branch's page
+/// The file `rel` of the checkout at `root`, and the text its page shows: on a branch's page
 /// (`scope`) while a merge stopped on the file, its last committed copy, and `true`
 /// ([`crate::merging::committed`]).
-fn source(render: &Render, rel: &str, scope: &str) -> Result<(PathBuf, String, bool), String> {
-    let path = target(render.root(), rel, true)?;
+pub fn source(root: &Path, rel: &str, scope: &str) -> Result<(PathBuf, String, bool), String> {
+    let path = target(root, rel, true)?;
     let text = crate::text::read_text(&path).map_err(|e| e.to_string())?;
-    let file = crate::project::Project::of(render.root()).file(rel);
+    let file = crate::project::Project::of(root).file(rel);
     if scope.is_empty() {
         // The owner's saves a project that delivers by pull request still keeps are shown.
-        let text = crate::commit::pending::shown(render.root(), &file, text);
+        let text = crate::commit::pending::shown(root, &file, text);
         return Ok((path, text, false));
     }
-    Ok(
-        match crate::merging::committed(render.root(), &file, &text) {
-            Some(committed) => (path, committed, true),
-            None => (path, text, false),
-        },
-    )
+    Ok(match crate::merging::committed(root, &file, &text) {
+        Some(committed) => (path, committed, true),
+        None => (path, text, false),
+    })
 }
 
 /// A section's markup made ready for the page: its links scoped, its blocks parsed and its hash
@@ -247,7 +245,7 @@ pub fn document_marked(
     cards: &[crate::Decision],
     drafts: &BTreeSet<String>,
 ) -> Result<Document, String> {
-    let (path, text, merging) = source(render, rel, scope)?;
+    let (path, text, merging) = source(render.root(), rel, scope)?;
     let (text, _) = crate::register::supersede(&text, &crate::clock::now_stamp());
     // A card shown in another group than its file copy's is drawn in its group: the page draws the
     // register regrouped, each line standing for the file's it was. Its waiting cards stay the
@@ -607,7 +605,7 @@ fn section_with(
     scope: &str,
     typed: bool,
 ) -> Result<Fragment, String> {
-    let (_, text, _) = source(render, rel, scope)?;
+    let (_, text, _) = source(render.root(), rel, scope)?;
     let part = crate::edit::section_text(&text, anchor)
         .ok_or_else(|| format!("no such heading in {rel}"))?;
     let mut fragment: Fragment = wire(render.excerpt(&part, rel, typed));
@@ -630,7 +628,7 @@ pub fn history(
     rel: &str,
     scope: &str,
 ) -> Result<BTreeMap<String, Fragment>, String> {
-    let (_, text, _) = source(render, rel, scope)?;
+    let (_, text, _) = source(render.root(), rel, scope)?;
     let mut threads: BTreeMap<String, Fragment> = wire(render.typed_history(&text, rel));
     for fragment in threads.values_mut() {
         prepare_fragment(

@@ -19,8 +19,10 @@ pub(crate) fn project_page(mut page: symphony_api::TaskPage) -> symphony_api::Ta
 }
 
 /// Keep ordinary project deltas and every native version, without diagnostics. A diagnostics-only
-/// event keeps its empty changes array so section reads at that cursor can still catch up.
-/// Malformed envelopes are withheld, never passed through as an authentication fallback.
+/// event keeps its empty changes array so section reads at that cursor can still catch up. The
+/// counts say no comment held on a document, as a hosted visitor may pass none on
+/// ([`symphony_api::Counts::held`]). Malformed envelopes are withheld, never passed through as an
+/// authentication fallback.
 pub(crate) fn project_feed(json: &str) -> Option<String> {
     let mut event: serde_json::Value = serde_json::from_slice(json.as_bytes()).ok()?;
     let changes = event.get_mut("changes")?.as_array_mut()?;
@@ -30,6 +32,13 @@ pub(crate) fn project_feed(json: &str) -> Option<String> {
             Some("machine-work" | "agent-probes")
         )
     });
+    for change in changes.iter_mut() {
+        if change.get("region").and_then(serde_json::Value::as_str) == Some("counts")
+            && let Some(counts) = change.get_mut("data").and_then(|data| data.as_object_mut())
+        {
+            counts.remove("held");
+        }
+    }
     serde_json::to_string(&event).ok()
 }
 
@@ -50,6 +59,30 @@ mod tests {
         let projected = project_feed(&source.to_string()).unwrap();
         let projected: serde_json::Value = serde_json::from_str(&projected).unwrap();
         assert_eq!(projected, json!({"version":17,"changes":[ordinary]}));
+    }
+
+    #[test]
+    fn the_counts_say_no_held_comment_and_nothing_else_of_them_moves() {
+        let counts = json!({"waiting": 2, "docs_waiting": 1, "spot_check": 0,
+            "answered_today": 3, "tasks": null});
+        let mut held = counts.clone();
+        held["held"] = json!(4);
+        let source = json!({"version": 9, "changes": [
+            {"region": "held", "data": {}},
+            {"region": "counts", "data": held},
+            {"region": "task", "data": {"held": 1}}
+        ]});
+        let projected: serde_json::Value =
+            serde_json::from_str(&project_feed(&source.to_string()).unwrap()).unwrap();
+        assert_eq!(
+            projected,
+            json!({"version": 9, "changes": [
+                {"region": "held", "data": {}},
+                {"region": "counts", "data": counts},
+                {"region": "task", "data": {"held": 1}}
+            ]}),
+            "the bare region every reader hears, and another region's field of that name, stay"
+        );
     }
 
     #[test]

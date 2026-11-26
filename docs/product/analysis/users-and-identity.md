@@ -532,8 +532,9 @@ What a person may do is kept with the board, and in no repository
   board, beside its tasks: in the git common dir's database on a machine, in the hosted
   database on a hosted board. An admin of the board changes them from a People page or a
   command, and the board keeps each change in a log.
-- **Two boards differ.** A person can decide on one board and only read another, of the same
-  project or not.
+- **Two boards differ.** A person can decide on one board and only read another. A project has
+  one board ([boards and projects](boards-and-projects.md#one-board-for-each-project)), so two
+  boards are two projects', even two of one repository over the same folders.
 - **A clone holds nobody's sign-in.** A service's subject for a person never leaves the board.
 - **The short name is the part that is in git.** It is written where the record is: on a card's
   line and in a comment, which are files, and on a thread. So it outlives the board's row for
@@ -733,8 +734,8 @@ The place it is in, unless a name is written on it
 
 What follows:
 
-- **The map is the board's own**, as its groups are, so two boards of one project can send the
-  same folder to different groups. Its admins keep it ([below](#who-changes-settings)).
+- **The map is the board's own**, as its groups are, and maps its project's places. Its admins
+  keep it ([below](#who-changes-settings)).
 - **A name written on a card is in the file**, so a group's name is public as a person's is. A
   board with no group of that name treats the card as unnamed and falls back to the map.
 - **An agent posting a card writes nothing** in the usual case, and names a group only when the
@@ -874,6 +875,32 @@ and may not direct agents. A person who may direct agents writes as the owner do
 
     Neither decides this.
   [2026-11-26 08:08] owner · approved — B
+
+- [ ] **held-callout-block-twice** — A held comment is written after the block it was left on when it is passed on. Where that block's words stand twice, under its heading or twice elsewhere and nowhere under it, every Pass on is refused until one copy goes, so the comment can wait for good. Where should it go? A: at the end of its section, as a changed block's does. B: after the copy nearest the line it was left after. C: where it was left, with no Pass on while its block stands twice. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+  [2026-11-26 09:46] agent — Posted for the board task `app/held-comment-block-follow-ups`, a question **held-callout-block-changed** leaves open once a block's words stand twice. Nothing that depends on it is built.
+
+    **Base (today).** A pass finds the block again by its words: under its own heading, else anywhere they stand once. Where they stand twice under its heading, or twice elsewhere and nowhere under it, the pass is refused with "the block this comment was left after now stands in several places: nothing was written". The comment stays held, drawn where it was left, with a Pass on that is refused every time until the document holds those words once. A comment left after words that already stood twice under its heading is refused from its first press.
+
+    **A, placed at its section's end.**
+    - Pass on is seen at the end of its section, after the last block under the heading it was left under, as for a block that changed.
+    - It moves there even where nothing in the document changed since it was left.
+
+    **B, after the nearest copy.**
+    - Pass on is seen after the copy nearest the line it was left after, under its heading where a copy stands there. Of two as near, the first.
+    - Where nothing above it changed, that is the block it was left after.
+    - Where blocks were added above it, it may be the other copy. The page draws it there before the press, so whoever passes it on sees where it goes.
+
+    **C, no Pass on while it stands twice.**
+    - It stays drawn where it was left, with no Pass on, until one copy goes.
+    - Nothing says why, and a comment left after words that already stood twice waits until someone edits the document.
+
+    **Why B.** It keeps the comment where it was left whenever the document has not moved, which A does not, and it needs nobody to come back, which C does. As with B on **held-callout-block-changed**, the person passing it on sees where it goes and decides that it still applies.
+
+    **Earlier verdicts checked.**
+    - **held-callout-block-changed** (B) puts a comment whose block changed or is gone at its section's end. Here the words still stand, twice, so it does not say which copy.
+    - **words-without-agent-reach** (A) says a pass writes the words into the file. It does not say where once they stand twice.
+
+    Neither decides this.
 
 What follows:
 
@@ -1056,8 +1083,9 @@ What follows:
 - **A preference spends someone's credits.** A costlier model for the board's shared agents runs
   on their host's credits. What a host may limit is a [later round's](#later-rounds).
 - **Making a value the project's reaches beyond the board.** It changes the committed file every
-  clone and every board of the project reads. With one board for a project, that board's say is
-  the whole of it; several boards for one project is a concept of its own.
+  clone of the project reads. A project has one board
+  ([boards and projects](boards-and-projects.md#one-board-for-each-project)), so that board's say
+  is the whole of it.
 
 - [r] **settings-who-changes** — Today you change every setting the Settings page offers. Its concept, now on main, keeps a change in the board's store, where it holds at once, and a control beside it makes the value the project's, a commit. It left to this concept who may do that once there are several people. A: the group the Settings page maps to; the page is a place like a folder of documents, so any member of its group changes a stored value and makes it the project's, and no power is added. B: the board's admins, as with who is on the board. C: a power of its own, to configure, given apart from deciding. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Who changes settings]]
   [2026-11-22 20:13] agent — Posted for the board task `app/users-and-identity`, the question the settings concept (`app/settings-page`) left to this one. A concept: nothing is built by this card.
@@ -1550,7 +1578,9 @@ Each step can ship alone, and a machine with one person sees none of them.
    ([TASKS](../../workflow/TASKS.md#words-held-for-people)). On a document, such a person's
    callout or card message held the same way, reaching no clone, no ask and no agent, drawn where
    it was left on the document's page and told to those who may pass it on, and passed on with one
-   press under both names, as an ask, after its block found again or refused with nothing written;
+   press under both names, as an ask, after its block found again, else at the end of its section
+   ([its card](#held-callout-block-changed)), or refused with nothing written where it stands twice,
+   which [its card](#held-callout-block-twice) asks of the owner;
    and the note beside a verdict written with it, by one who may decide and not direct agents.
    Not yet: a held ask, which [its card](#held-ask) asks of the owner, while the document's page
    draws its questions' Ask and Follow up for those who may ask alone; and the two cards above on
@@ -1643,6 +1673,3 @@ Not carded yet.
 - Shared agents: whose machine and credits host them, what a host may limit, and how an agent on
   another machine proves to a board its handle and, for a personal agent, whose it is.
 - Removing a person: their open asks, their unanswered cards, their agents' sessions.
-- Several boards for one project: nothing proposed here ties people to a project, and what else
-  a second board needs, among it who makes a value the project's for every board, is a concept
-  of its own.

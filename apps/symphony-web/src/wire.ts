@@ -294,6 +294,10 @@ export type Counts = {
    * The task board's counts; `None` when the server has no task board.
    */
   tasks: TaskCounts | null;
+  /**
+   * Comments held on documents that wait on the one reading to pass them on ([`Queue::held`]).
+   */
+  held?: number;
 };
 
 export type TaskCounts = { in_progress: number; in_review: number; agents_live: number };
@@ -372,6 +376,11 @@ export type Queue = {
    * Always empty; retained for clients from the preceding build that require this wire field.
    */
   branches: Array<QueueItem>;
+  /**
+   * The comments held on documents that wait on the one reading to pass them on, oldest first:
+   * each where it was left, never its words, which its document's page shows with Pass on.
+   */
+  held?: Array<QueueHeld>;
 };
 
 export type QueueItem = {
@@ -407,6 +416,26 @@ export type QueueAsk = {
    * Since when its holder holds it, in whole seconds since the epoch.
    */
   held?: number | null;
+};
+
+export type QueueHeld = {
+  /**
+   * Its number among the comments held on documents ([`HeldComment::id`]).
+   */
+  id: number;
+  /**
+   * Where it is drawn: its document's page, at its box, `/DOC#held-N`, a branch's page under
+   * its scope (`/@scope/DOC#held-N`).
+   */
+  href: string;
+  /**
+   * The document's title.
+   */
+  doc_title: string;
+  /**
+   * Who wrote it, by their short name.
+   */
+  author: string;
 };
 
 export type Activity = { items: Array<ActivityItem> };
@@ -1103,11 +1132,13 @@ export type HeldComment = {
    */
   card?: string | null;
   /**
-   * The section a callout was left after, by its key ([`Section::key`]).
+   * The section a callout goes after, by its key ([`Section::key`]): the one its pass would
+   * write it after now, the block it was left after or, that block changed, the end of its
+   * section; else the one it was left after.
    */
   key?: string | null;
   /**
-   * That section's last line then.
+   * That section's last line.
    */
   line?: number | null;
 };

@@ -232,6 +232,7 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::Queue>(cfg),
         declared::<api::QueueItem>(cfg),
         declared::<api::QueueAsk>(cfg),
+        declared::<api::QueueHeld>(cfg),
         declared::<api::Activity>(cfg),
         declared::<api::ActivityItem>(cfg),
         declared::<api::Pending>(cfg),
@@ -1386,6 +1387,33 @@ fn routes() -> Value {
 /// A value of each read the client checks at run time, as the server writes it: every field the
 /// type has, then only those it always sends.
 fn samples() -> Value {
+    let mut samples = queue_samples();
+    samples.extend(task_board_samples());
+    samples.extend(workflow_samples());
+    samples.extend(attempt_samples());
+    samples.extend(agents_samples());
+    samples.insert("reports".into(), json!(reports()));
+    samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
+    samples.insert("landed".into(), json!(landed_page()));
+    samples.insert(
+        "emptyLanded".into(),
+        json!(api::report_page::LandedPage::default()),
+    );
+    samples.insert("settings".into(), json!(settings()));
+    samples.insert("emptySettings".into(), json!(api::SettingsPage::default()));
+    samples.extend(people_samples());
+    samples.extend(tokens_samples());
+    samples.insert("blocks".into(), json!(blocks()));
+    samples.extend(
+        documents()
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value)),
+    );
+    Value::Object(samples)
+}
+
+/// The review queue and the board, every field given and none, as [`samples`] holds them.
+fn queue_samples() -> serde_json::Map<String, Value> {
     let card = api::Card {
         postponed: true,
         slug: "lamp-colour".into(),
@@ -1442,6 +1470,12 @@ fn samples() -> Value {
             asked(Some("umber-stoat")),
         ],
         branches: vec![],
+        held: vec![api::QueueHeld {
+            id: 4,
+            href: "/@proposal~lamps/docs/lamps/LAMPS.md#held-4".into(),
+            doc_title: "Lamps".into(),
+            author: "ana".into(),
+        }],
     };
     let board = api::Board {
         version: 7,
@@ -1455,28 +1489,7 @@ fn samples() -> Value {
     samples.insert("queue".into(), json!(queue));
     samples.insert("emptyQueue".into(), json!(api::Queue::default()));
     samples.insert("board".into(), json!(board));
-    samples.extend(task_board_samples());
-    samples.extend(workflow_samples());
-    samples.extend(attempt_samples());
-    samples.extend(agents_samples());
-    samples.insert("reports".into(), json!(reports()));
-    samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
-    samples.insert("landed".into(), json!(landed_page()));
-    samples.insert(
-        "emptyLanded".into(),
-        json!(api::report_page::LandedPage::default()),
-    );
-    samples.insert("settings".into(), json!(settings()));
-    samples.insert("emptySettings".into(), json!(api::SettingsPage::default()));
-    samples.extend(people_samples());
-    samples.extend(tokens_samples());
-    samples.insert("blocks".into(), json!(blocks()));
-    samples.extend(
-        documents()
-            .into_iter()
-            .map(|(name, value)| (name.to_owned(), value)),
-    );
-    Value::Object(samples)
+    samples
 }
 
 /// The People page's reads, as [`samples`] holds them: the person at the machine's, an empty

@@ -10,8 +10,9 @@
 //! written, their name on it and the passer's first in its words
 //! ([`symphony_board::held::passed_text`]): a callout after its block found again in the file as
 //! it is now (the one block under its heading holding the same lines, else the one block anywhere
-//! that does), refused in plain words with nothing written where none or several do; a message on
-//! its card.
+//! that does), refused in plain words with nothing written where several do, and at the end of its
+//! section where none does ([`goes_after`]); a message on its card. Its page draws a callout where
+//! its pass would write it then ([`drawn_held`]).
 //! The save's ask and callback follow as the author's, and the row is marked passed once the file
 //! holds the words.
 
@@ -84,39 +85,121 @@ pub(super) fn place(
     })
 }
 
-/// The line a passed callout left after `block` goes after in `text`, the document as it is now:
-/// the end of the one block under its heading that holds the same lines, else of the one block
-/// anywhere that does. A key's place under its heading moves with every block above it there, so
-/// it never tells two such blocks apart: refused, with nothing written, where its lines stand
-/// twice under its heading, twice elsewhere and not under it, or nowhere.
-pub(super) fn found_again(text: &str, block: &Block) -> Result<i64, Failure> {
-    let blocks = crate::render::keyed_blocks(text);
-    let same: Vec<&(String, crate::render::Block)> = (blocks.iter())
-        .filter(|(_, found)| found.text == block.text)
-        .collect();
-    let mine: Vec<&(String, crate::render::Block)> = (same.iter().copied())
-        .filter(|(key, _)| heading(key) == heading(&block.key))
-        .collect();
-    let found = match (mine.as_slice(), same.as_slice()) {
-        ([one], _) | ([], [one]) => one,
-        (_, []) => {
-            return Err(Failure {
-                status: 409,
-                error: "the block this comment was left after has changed or is gone: nothing \
-                        was written"
-                    .into(),
-            });
-        }
-        _ => {
-            return Err(Failure {
-                status: 409,
-                error: "the block this comment was left after now stands in several places: \
-                        nothing was written"
-                    .into(),
-            });
-        }
+/// The block of `text`, the document as it is now, a passed callout left after `block` goes after,
+/// by its key and last line: the one block under its heading that holds the same lines, else the
+/// one block anywhere that does. A key's place under its heading moves with every block above it
+/// there, so it never tells two such blocks apart: refused, with nothing written, where its lines
+/// stand twice under its heading, or twice elsewhere and not under it.
+///
+/// Where its lines stand nowhere, its block changed or is gone, and it goes at the end of its
+/// section (docs/product/analysis/users-and-identity.md, `held-callout-block-changed`): after the
+/// last block under the heading it was left under, the key's (`section:ANCHOR`), that a callout
+/// may follow ([`edit::comment_refused_after`]), a heading under it starting a section of its own;
+/// else, that heading gone, after the document's last such block. Refused, with nothing written,
+/// where the document holds none.
+pub fn goes_after(text: &str, block: &Block) -> Result<(String, i64), Failure> {
+    Keyed::of(text).goes_after(block)
+}
+
+/// The held comments `held` of one document as its page draws them, in their order: a callout
+/// under the block its pass would write it after in `text`, the document as that page shows it
+/// ([`goes_after`]), keyed once for them all, else, that refused or the document not read, under
+/// the block it was left after, by its key and line then; a card's message on its card.
+pub fn drawn_held(text: Option<&str>, held: Vec<OnDocument>) -> Vec<symphony_api::HeldComment> {
+    let keyed = text.map(Keyed::of);
+    (held.into_iter())
+        .map(|held| drawn(keyed.as_ref(), held))
+        .collect()
+}
+
+/// The held comment `held` as [`drawn_held`] draws it, against the document `keyed`.
+fn drawn(keyed: Option<&Keyed>, held: OnDocument) -> symphony_api::HeldComment {
+    let left = held.document.block;
+    let now = (left.as_ref().zip(keyed)).and_then(|(block, keyed)| keyed.goes_after(block).ok());
+    let (key, line) = match (now, left) {
+        (Some((key, line)), _) => (Some(key), Some(line)),
+        (None, left) => (
+            left.as_ref().map(|block| block.key.clone()),
+            left.map(|block| block.line),
+        ),
     };
-    Ok(i64::try_from(found.1.end).unwrap_or(i64::MAX))
+    symphony_api::HeldComment {
+        id: held.id,
+        author: held.author,
+        kind: held.document.kind,
+        text: held.text,
+        card: held.document.card,
+        key,
+        line,
+    }
+}
+
+/// The line a passed callout left after `block` goes after in `text`: [`goes_after`]'s block's last.
+pub(super) fn found_again(text: &str, block: &Block) -> Result<i64, Failure> {
+    goes_after(text, block).map(|(_, line)| line)
+}
+
+/// A document's text as a held callout's block is found in it: its blocks by key and its lines,
+/// read once for every callout placed in it.
+struct Keyed<'a> {
+    blocks: Vec<(String, crate::render::Block)>,
+    lines: Vec<&'a str>,
+}
+
+impl<'a> Keyed<'a> {
+    fn of(text: &'a str) -> Self {
+        Keyed {
+            blocks: crate::render::keyed_blocks(text),
+            lines: crate::text::splitlines(text),
+        }
+    }
+
+    /// [`goes_after`] in this document.
+    fn goes_after(&self, block: &Block) -> Result<(String, i64), Failure> {
+        let same: Vec<&(String, crate::render::Block)> = (self.blocks.iter())
+            .filter(|(_, found)| found.text == block.text)
+            .collect();
+        let mine: Vec<&(String, crate::render::Block)> = (same.iter().copied())
+            .filter(|(key, _)| heading(key) == heading(&block.key))
+            .collect();
+        let found = match (mine.as_slice(), same.as_slice()) {
+            ([one], _) | ([], [one]) => *one,
+            (_, []) => return self.section_end(heading(&block.key)),
+            _ => {
+                return Err(Failure {
+                    status: 409,
+                    error: "the block this comment was left after now stands in several places: \
+                            nothing was written"
+                        .into(),
+                });
+            }
+        };
+        Ok(after(found))
+    }
+
+    /// The last block under the heading `under` (`section:ANCHOR`) that a callout may follow,
+    /// else the document's last such: its key and last line.
+    fn section_end(&self, under: &str) -> Result<(String, i64), Failure> {
+        let takes = |(_, block): &&(String, crate::render::Block)| {
+            let end = i64::try_from(block.end).unwrap_or(i64::MAX);
+            edit::comment_refused_after(&self.lines, end).is_none()
+        };
+        let last = (self.blocks.iter().rev())
+            .filter(|(key, _)| heading(key) == under)
+            .find(takes)
+            .or_else(|| self.blocks.iter().rev().find(takes));
+        last.map(after).ok_or_else(|| Failure {
+            status: 409,
+            error: "the block this comment was left after is gone, and no block of the document \
+                    may take it: nothing was written"
+                .into(),
+        })
+    }
+}
+
+/// A block's key and its last line, which a callout after it goes after.
+fn after((key, block): &(String, crate::render::Block)) -> (String, i64) {
+    (key.clone(), i64::try_from(block.end).unwrap_or(i64::MAX))
 }
 
 /// The heading a block's key (`section:ANCHOR:N`) sits under: the key without its place there.
@@ -350,24 +433,185 @@ mod tests {
         // B gone instead: A stands alone under its heading and is found.
         let alone = "# Topic\n\nX.\n\nSame.\n";
         assert_eq!(ok(found_again(alone, &after_a)), 5);
-        // Its lines changed, or stand twice under no block of its heading: refused.
-        let changed = refused(found_again(
-            PAGE,
-            &block("section:topic:1", 3, "Some proze."),
-        ));
+        // Its lines changed: after the last block under its heading, a heading under it its own.
         assert_eq!(
-            (changed.status, changed.error.as_str()),
-            (
-                409,
-                "the block this comment was left after has changed or is gone: nothing was written"
-            )
+            ok(goes_after(
+                PAGE,
+                &block("section:topic:1", 3, "Some proze.")
+            )),
+            ("section:topic:1".into(), 3),
+            "Lamps' blocks are under a heading of their own"
         );
+        assert_eq!(
+            ok(goes_after(
+                PAGE,
+                &block("section:lamps:1", 7, "Some proze.")
+            )),
+            ("section:lamps:2".into(), 9)
+        );
+        // Its lines stand twice under no block of its heading: refused.
         let twice = refused(found_again(PAGE, &prose("section:elsewhere:4")));
         assert_eq!(
             twice.error,
             "the block this comment was left after now stands in several places: nothing was \
              written"
         );
+    }
+
+    /// Where a callout left after `left`, its key and lines, in a document that no longer holds
+    /// those lines goes in `page`: the key and last line of the block it goes after.
+    fn changed(page: &str, left: &str) -> (String, i64) {
+        ok(goes_after(page, &block(left, 3, "Words gone.")))
+    }
+
+    #[test]
+    fn a_changed_blocks_comment_goes_at_its_sections_end_else_the_documents() {
+        // Its heading gone, or renamed: after the document's last block.
+        assert_eq!(
+            changed(PAGE, "section:gone:1"),
+            ("section:lamps:2".into(), 9)
+        );
+        let renamed = PAGE.replace("## Lamps", "## Lights");
+        assert_eq!(
+            changed(&renamed, "section:lamps:1"),
+            ("section:lights:2".into(), 9)
+        );
+        // A heading standing twice is told apart by its count, as the page's keys are.
+        let twice = "# Topic\n\n## Cards\n\nA.\n\n## Cards\n\nB.\n\nC.\n\n## End\n\nZ.\n";
+        assert_eq!(
+            changed(twice, "section:cards:1"),
+            ("section:cards:1".into(), 5)
+        );
+        assert_eq!(
+            changed(twice, "section:cards-2:1"),
+            ("section:cards-2:2".into(), 11)
+        );
+        // Above the first heading, the blocks there are its section.
+        let preamble = "Intro.\n\nMore.\n\n# Topic\n\nX.\n";
+        assert_eq!(changed(preamble, "section::1"), ("section::2".into(), 3));
+        assert_eq!(
+            changed("# Topic\n\nX.\n", "section::1"),
+            ("section:topic:1".into(), 3)
+        );
+    }
+
+    #[test]
+    fn a_changed_blocks_comment_passes_over_the_blocks_no_callout_may_follow() {
+        // A register opens under Cards, its headings under it each their own, and closes before
+        // After: no callout may follow a line inside it.
+        let register = "# Topic\n\nSome prose.\n\n## Cards\n\n<!-- register:start -->\n\
+                        ## Group\n\n### One\n\n- [ ] **one** — x.\n\n### Two\n\n\
+                        - [ ] **two** — y.\n<!-- register:end -->\n\nAfter.\n";
+        // Cards' last block opens the register: its heading takes the callout.
+        assert_eq!(
+            changed(register, "section:cards:1"),
+            ("section:cards:0".into(), 5)
+        );
+        // One's every block is inside it: after the document's last block.
+        assert_eq!(
+            changed(register, "section:one:1"),
+            ("section:two:3".into(), 19)
+        );
+        // Two's section runs on past the register's end to After, its last block.
+        assert_eq!(
+            changed(register, "section:two:1"),
+            ("section:two:3".into(), 19)
+        );
+        // A document of no block takes none.
+        for page in ["", "---\ntitle: x\n---\n"] {
+            let none = refused(goes_after(page, &block("section:topic:1", 3, "X.")));
+            assert_eq!(
+                (none.status, none.error.as_str()),
+                (
+                    409,
+                    "the block this comment was left after is gone, and no block of the document \
+                     may take it: nothing was written"
+                ),
+                "{page:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_held_callout_is_drawn_where_its_pass_writes_it_else_where_it_was_left() {
+        let drawn = |page: Option<&str>, row: OnDocument| {
+            let [held] = <[_; 1]>::try_from(drawn_held(page, vec![row])).expect("one drawn");
+            (held.key, held.line)
+        };
+        let row = || held(None, None);
+        let at = |key: &str, line: i64| (Some(key.to_string()), Some(line));
+        assert_eq!(drawn(Some(PAGE), row()), at("section:topic:1", 3));
+        let grown = PAGE.replace("# Topic\n\n", "# Topic\n\nNew.\n\n");
+        assert_eq!(drawn(Some(&grown), row()), at("section:topic:2", 5));
+        // Its lines changed: at its section's end.
+        let other = OnDocument {
+            document: Place {
+                block: Some(block("section:lamps:2", 9, "Other prose.")),
+                ..row().document
+            },
+            ..row()
+        };
+        let edited = PAGE.replace("Other prose.", "Other proze.\n\nLast.");
+        assert_eq!(drawn(Some(&edited), other), at("section:lamps:3", 11));
+        // Standing twice under its heading, or the document unread: where it was left.
+        let twice = PAGE.replace(
+            "# Topic\n\nSome prose.",
+            "# Topic\n\nSome prose.\n\nSome prose.",
+        );
+        for page in [Some(twice.as_str()), None] {
+            assert_eq!(drawn(page, row()), at("section:topic:1", 3), "{page:?}");
+        }
+        let message = drawn_held(Some(PAGE), vec![held(Some("one"), None)]);
+        assert_eq!(
+            message,
+            [symphony_api::HeldComment {
+                id: 4,
+                author: "ana".into(),
+                kind: MESSAGE.into(),
+                text: "Lamps\nToo many".into(),
+                card: Some("one".into()),
+                key: None,
+                line: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn the_held_comments_of_one_read_are_each_drawn_where_their_own_pass_writes_them() {
+        let left = |id: i64, key: &str, line: i64, text: &str| OnDocument {
+            id,
+            document: Place {
+                block: Some(block(key, line, text)),
+                ..held(None, None).document
+            },
+            ..held(None, None)
+        };
+        let grown = PAGE.replace("# Topic\n\n", "# Topic\n\nNew.\n\nNew.\n\n");
+        let rows = vec![
+            left(1, "section:lamps:2", 9, "Other prose."),
+            held(Some("one"), None),
+            left(2, "section:topic:1", 3, "Gone."),
+            left(3, "section:topic:1", 3, "New."),
+            left(5, "section:lamps:1", 7, "Some prose."),
+        ];
+        let drawn: Vec<_> = (drawn_held(Some(&grown), rows).into_iter())
+            .map(|held| (held.id, held.key, held.line))
+            .collect();
+        let at = |id: i64, key: &str, line: i64| (id, Some(key.to_string()), Some(line));
+        assert_eq!(
+            drawn,
+            [
+                at(1, "section:lamps:2", 13),
+                (4, None, None),
+                // Changed: its section's end, Lamps under a heading of its own.
+                at(2, "section:topic:3", 7),
+                // Its lines twice under its heading: where it was left.
+                at(3, "section:topic:1", 3),
+                at(5, "section:lamps:1", 11),
+            ],
+            "each its own, in the order read, the message on its card"
+        );
+        assert!(drawn_held(Some(PAGE), Vec::new()).is_empty());
     }
 
     #[test]

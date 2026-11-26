@@ -500,8 +500,9 @@ fn passers(people: &People, owning: &Owning, author: &str) -> Vec<String> {
 /// The comments `held` on documents, not passed on, each waiting for someone who may pass it on
 /// ([`passers`]) of whose its card or its document is on `people` and `map` (`root` the project's
 /// checkout, its documents read once each): a notice links its place on its document's page,
-/// `/DOC#held-N`, a branch's under its scope.
-fn held_waiting(
+/// `/DOC#held-N`, a branch's under its scope. The review queue lists each to those it tells
+/// ([`super::held`]).
+pub(super) fn held_waiting(
     people: &People,
     map: &Map,
     root: &std::path::Path,
@@ -509,19 +510,15 @@ fn held_waiting(
 ) -> Vec<Waiting> {
     let docs: Vec<(String, String)> = (held.iter())
         .map(|held| {
-            let place = &held.document;
-            let doc = match &place.scope {
-                Some(scope) => format!("@{scope}/{}", place.path),
-                None => place.path.clone(),
-            };
-            (doc, place.card.clone().unwrap_or_default())
+            let card = held.document.card.clone().unwrap_or_default();
+            (super::held::document(held), card)
         })
         .collect();
     let owners = symphony::owners::waiting(people, map, root, &docs);
-    (held.iter().zip(docs).zip(owners))
-        .map(|((held, (doc, _)), owning)| Waiting {
+    (held.iter().zip(owners))
+        .map(|(held, owning)| Waiting {
             key: format!("{HELD}{}", held.id),
-            page: format!("/{doc}#held-{}", held.id),
+            page: super::held::page(held),
             told: Some(passers(people, &owning, &held.author)),
             owning,
             kind: Kind::Held,

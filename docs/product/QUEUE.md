@@ -14,16 +14,25 @@ search the documents for what is open.
 - **Puts a card off** with **Later**, and takes that back with **Undo Later**.
 - **Spot-checks** what was approved without them, and sees what they said that still waits on an
   agent.
+- **Reaches a held comment** a person who may not direct agents left on a document, where it waits
+  on them to pass it on; **Pass on** is on the document's page.
 
 ## What it shows
 
-Three groups, always in this order, each with its count in its heading.
+Three groups, always in this order, each with its count in its heading, and after the first, for
+whoever a comment held on a document waits on, a fourth.
 
 | Group | Holds | A row shows |
 | --- | --- | --- |
 | Waiting on you | a card not answered yet, a card whose agent asks the owner a question, and a card the owner commented on that an agent has answered since | its rank, its first sentence, its document and why it ranks there, **Later** |
 | Auto-approved: spot-check | a card approved on the owner's earlier words | its first sentence, its mark, the basis it was approved on |
+| Held comments | a comment or a card's message held on a document, left by a person who may not direct agents, that waits on the reader to pass it on ([TASKS](../workflow/TASKS.md#words-held-for-people)) | its document's title, leading to it on its page, and who left it; none of its words, and no **Pass on** |
 | Waiting on the agent | a card the owner had the last word on, and each open comment in a document | its first sentence or the comment's title, its mark, the card's last line or the comment's document |
+
+A held comment waits on the person at the machine and on those the notice runner tells of it,
+who may pass it on, never on its author. Only their queue draws the group; nobody else's queue,
+home or feed says one is there, a visitor by a hosted board sees none, and an agent's queue never
+lists one. Passed on, it leaves the queue.
 
 A card an agent posted on a branch that has not landed is in the same groups. Among those waiting
 on the owner it carries a tag naming its task; in the other two it looks like a card of main's,
@@ -62,7 +71,7 @@ laptop.
 
 | State | What the page shows |
 | --- | --- |
-| Loading, first visit | the three groups as outlines, with the rows each is likely to hold |
+| Loading, first visit | the three groups as outlines, with the rows each is likely to hold, and the held comments' where this device last listed some |
 | Loading, a later visit | at once, the queue this device last held, while the server is asked; Later takes no press until it has answered |
 | Nothing waits on the owner | *nothing to decide* in the first group; the other groups as they are |
 | A group is empty | *none* under spot-check, *every comment is answered* under the agents' group |
@@ -74,7 +83,7 @@ laptop.
 
 ![The queue on a phone](pictures/queue-phone.png)
 
-The same three groups in one column. The chips wrap onto a second line, a card's first sentence
+The same groups in one column. The chips wrap onto a second line, a card's first sentence
 wraps beside its rank, and **Later** stays under each card.
 
 ## Edges

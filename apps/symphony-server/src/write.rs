@@ -517,6 +517,9 @@ mod decide_tests;
 mod held_tests;
 
 #[cfg(test)]
+mod held_queue_tests;
+
+#[cfg(test)]
 mod queue_tests;
 
 #[cfg(test)]

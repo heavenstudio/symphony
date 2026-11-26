@@ -301,6 +301,9 @@ pub struct Counts {
     /// The task board's counts; `None` when the server has no task board.
     #[serde(default)]
     pub tasks: Option<TaskCounts>,
+    /// Comments held on documents that wait on the one reading to pass them on ([`Queue::held`]).
+    #[serde(default, skip_serializing_if = "is_none_held")]
+    pub held: u32,
 }
 
 /// The task board's counts.
@@ -445,6 +448,14 @@ fn is_zero(value: &usize) -> bool {
     *value == 0
 }
 
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes the field by reference"
+)]
+fn is_none_held(value: &u32) -> bool {
+    *value == 0
+}
+
 /// The document's first folder under docs, shared by main and scoped branch proposals.
 /// Root-level documents belong to docs; categories are path names, not inferred card kinds.
 pub fn queue_category(path: &str) -> &str {
@@ -467,6 +478,26 @@ pub struct Queue {
     pub agent: Vec<QueueItem>,
     /// Always empty; retained for clients from the preceding build that require this wire field.
     pub branches: Vec<QueueItem>,
+    /// The comments held on documents that wait on the one reading to pass them on, oldest first:
+    /// each where it was left, never its words, which its document's page shows with Pass on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held: Vec<QueueHeld>,
+}
+
+/// A comment held on a document as the review queue lists it: a link to it on its document's page,
+/// and who wrote it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct QueueHeld {
+    /// Its number among the comments held on documents ([`HeldComment::id`]).
+    pub id: i64,
+    /// Where it is drawn: its document's page, at its box, `/DOC#held-N`, a branch's page under
+    /// its scope (`/@scope/DOC#held-N`).
+    pub href: String,
+    /// The document's title.
+    pub doc_title: String,
+    /// Who wrote it, by their short name.
+    pub author: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -807,10 +838,12 @@ pub struct HeldComment {
     /// The card, for a message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card: Option<String>,
-    /// The section a callout was left after, by its key ([`Section::key`]).
+    /// The section a callout goes after, by its key ([`Section::key`]): the one its pass would
+    /// write it after now, the block it was left after or, that block changed, the end of its
+    /// section; else the one it was left after.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-    /// That section's last line then.
+    /// That section's last line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<i64>,
 }

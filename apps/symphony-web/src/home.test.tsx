@@ -358,6 +358,46 @@ describe("an empty queue", () => {
   });
 });
 
+describe("the held comments", () => {
+  /** `shown` with `held` comments waiting on the reader to pass them on. */
+  const holding = (shown: Board, held: number): Board => ({
+    ...shown,
+    counts: { ...shown.counts, held },
+  });
+
+  it("are counted under the greeting after the cards, leading to their group of the queue", () => {
+    expect(render(holding(board(), 2))).toContain(
+      '<p class="head-state">37 cards wait on you across 9 documents. ' +
+        '<a href="/queue#held">2 held comments</a> to pass on.</p>',
+    );
+  });
+
+  it("are all that is said where no card waits, the hero saying no card does", () => {
+    const html = render(holding(board(emptyBoard), 1));
+    expect(html).toContain(
+      '<p class="head-state"><a href="/queue#held">1 held comment</a> to pass on.</p>',
+    );
+    expect(html).not.toContain("Your queue is empty.");
+    expect(html).toContain('<h2 class="hero-title">No card waits on you.</h2>');
+    expect(html).toContain("2 auto-approved cards</a> to spot-check.");
+  });
+
+  it("change nothing where none waits, as a board that names nobody sends none", () => {
+    expect(render(holding(board(), 0))).toBe(render(board()));
+    expect(render(holding(board(emptyBoard), 0))).toBe(render(board(emptyBoard)));
+  });
+
+  it("are read as the server counts them, and refused as anything but a count", () => {
+    const counted = structuredClone(emptyBoard) as { counts: Record<string, unknown> };
+    counted.counts.held = 3;
+    expect(readBoard(counted)?.counts.held).toBe(3);
+    counted.counts.held = "3";
+    expect(readBoard(counted)).toBeNull();
+    counted.counts.held = null;
+    expect(readBoard(counted)).toBeNull();
+  });
+});
+
 /** The home's row of page links. */
 function links(html: string): string {
   const start = html.indexOf('class="dash-links"');
