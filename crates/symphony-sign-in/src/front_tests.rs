@@ -133,10 +133,15 @@ impl Through {
         self.get(&format!("{CALLBACK}?{query}"), &headers).await
     }
 
-    /// The way back for `begun` with Google's code, from the browser that began it.
+    /// The way back for `begun` with Google's code, from the browser that began it, with the
+    /// parameters Google adds and the service does not read.
     async fn back_for(&self, begun: &Begun) -> Response<Bytes> {
         self.back(
-            &format!("state={}&code={}", begun.state(), enc(CODE)),
+            &format!(
+                "state={}&code={}&scope=openid&authuser=0&prompt=none",
+                begun.state(),
+                enc(CODE)
+            ),
             Some(&begun.cookie),
         )
         .await
