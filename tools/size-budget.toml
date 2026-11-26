@@ -58,7 +58,23 @@
 # 2,607,394, which this line covers with 72,606 to spare. Measured 2,583,195; the line is that
 # plus 4 %, rounded down to 10,000, by the orchestrator's gate decision. Independent review is
 # required.
-client = 2_680_000
+# The timeline's landings and the held comments in the review queue took the folder past that line
+# together (tests/release-red-verify-size-check-15): 2,670,457 at the last green run's 75cd2ed1d
+# (builds of 889,058, 888,611 and 884,994, and 7,794 of page), 2,755,669 at the release candidate
+# 386c8d7fc (920,219, 919,872 and 907,784, and the same page). The newest build grew 31,161 bytes:
+# timeline.js 29,299 and a shared chunk 8 (app/timeline-zoom 12,622, app/timeline-quiet-bands
+# 12,088, app/timeline-navigation 4,098, app/client-one-advance-table 347 and
+# app/timeline-label-width-estimate 152), and queue.js 1,232, review.js 335 and docs.js 287
+# (app/held-comments-in-review-queue 1,567 and the held comment blocks' two landings 287). No
+# reduction holds: the two newer builds and the page are 1,847,885 bytes, so a build that replaces
+# the oldest is green only at 832,115, a cut of 88,104, more than the whole timeline chunk
+# (82,650); a build with all of that growth taken back leaves the folder 56,943 past, and a cut
+# under 12,435 bytes raises the count, its build still larger than the one it replaces. The cuts
+# found, the timeline's container-query steps (1,276) and its letter-width table (383), with what
+# the zoom and the quiet bands added, are a task of its own on main, where a cut reaches the count
+# once the older builds are no longer kept. Measured 2,755,669; the line is that plus 4 %, rounded
+# down to 10,000, by the orchestrator's gate decision. Independent review is required.
+client = 2_860_000
 
 # Each binary's file; symphony-server's less the client above, which it embeds.
 [binaries]
