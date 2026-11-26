@@ -1,10 +1,12 @@
 //! What the tests stand in for, so no test reaches the network: a machine folder of a test's own;
-//! Google's token endpoint, on a private loopback port, answering as the test sets it and keeping
-//! every form it heard; and the server behind, which verifies every word it is passed with the
+//! Google's token endpoint and GitHub's token and user endpoints, each on a private loopback port,
+//! answering as the test sets them, taking a code once and keeping every request they heard; and
+//! the server behind, which verifies every word it is passed with the
 //! server's own check (`symphony::signed_in`), against the `sign-in.toml` its machine folder holds,
 //! and keeps who each request was from, as that check says.
 
 use crate::front::Body;
+use crate::github;
 use crate::google::Provider;
 use crate::settings::{Client, Key, Secret, Settings};
 use base64::Engine as _;
@@ -37,6 +39,14 @@ pub(crate) const CLIENT_SECRET: &str = "GOCSPX-stand-in-secret-0000";
 pub(crate) const SUBJECT: &str = "110248495921238986420";
 /// The code the stand-in hands back and takes once.
 pub(crate) const CODE: &str = "4/0stand-in-code";
+/// The client id of the tests' GitHub OAuth app.
+pub(crate) const GITHUB_CLIENT_ID: &str = "Ov23liStandIn0000000";
+/// Its secret, which no GitHub issued.
+pub(crate) const GITHUB_CLIENT_SECRET: &str = "0123456789abcdef0123456789abcdef01234567";
+/// The access token the stand-in GitHub answers a code with.
+pub(crate) const GITHUB_TOKEN: &str = "gho_StandIn0000000000000000000000000000";
+/// Ana's account id at GitHub.
+pub(crate) const GITHUB_ID: u64 = 77_001_234;
 /// The origin the tests' browsers reach the server at.
 pub(crate) const ORIGIN: &str = "https://board.example.com";
 /// The seed of the tests' service key.
@@ -107,10 +117,19 @@ pub(crate) fn settings(upstream: SocketAddr, origin: &str) -> Settings {
         listen: "127.0.0.1:0".parse().unwrap(),
         upstream,
         origin: origin.into(),
-        google: Client {
+        google: Some(Client {
             id: CLIENT_ID.into(),
             secret: Secret::stand_in(CLIENT_SECRET),
-        },
+        }),
+        github: None,
+    }
+}
+
+/// The tests' GitHub OAuth app.
+pub(crate) fn github_client() -> Client {
+    Client {
+        id: GITHUB_CLIENT_ID.into(),
+        secret: Secret::stand_in(GITHUB_CLIENT_SECRET),
     }
 }
 
@@ -202,6 +221,8 @@ pub(crate) struct Expect {
     pub(crate) redirect: String,
     /// What it answers a form that is right: its status and body.
     pub(crate) answer: (u16, String),
+    /// Whether its code was taken: a code is taken once, and refused after.
+    pub(crate) taken: bool,
 }
 
 /// Google's token endpoint, standing in.
@@ -231,7 +252,8 @@ impl Google {
                         .find(|(named, _)| named == name)
                         .map(|(_, value)| value.as_str())
                 };
-                let Some(expect) = taken.lock().unwrap().clone() else {
+                let mut expected = taken.lock().unwrap();
+                let Some(expect) = expected.as_mut() else {
                     return answer(StatusCode::BAD_REQUEST, r#"{"error":"invalid_request"}"#);
                 };
                 let verified = field("code_verifier").is_some_and(|verifier| {
@@ -242,11 +264,13 @@ impl Google {
                     && field("client_id") == Some(CLIENT_ID)
                     && field("client_secret") == Some(CLIENT_SECRET)
                     && field("redirect_uri") == Some(expect.redirect.as_str())
-                    && verified;
+                    && verified
+                    && !expect.taken;
                 if !right {
                     return answer(StatusCode::BAD_REQUEST, r#"{"error":"invalid_grant"}"#);
                 }
-                let (status, body) = expect.answer;
+                expect.taken = true;
+                let (status, body) = expect.answer.clone();
                 answer(StatusCode::from_u16(status).unwrap(), body)
             }
         })
@@ -264,12 +288,13 @@ impl Google {
     }
 
     /// From now, the exchange of [`CODE`] for the sign-in sent with `challenge` to come back to
-    /// `redirect` is answered `status` and `body`.
+    /// `redirect` is answered `status` and `body`, once.
     pub(crate) fn answers(&self, challenge: &str, redirect: &str, status: u16, body: &str) {
         *self.expect.lock().unwrap() = Some(Expect {
             challenge: challenge.into(),
             redirect: redirect.into(),
             answer: (status, body.into()),
+            taken: false,
         });
     }
 
@@ -289,6 +314,134 @@ impl Google {
     /// Every form it heard, in order.
     pub(crate) fn heard(&self) -> Vec<Form> {
         self.heard.lock().unwrap().clone()
+    }
+}
+
+/// GitHub's token and user endpoints, standing in on one loopback port: the token endpoint takes
+/// [`CODE`] once for the sign-in it is told of, with the app's id and secret, the way back and the
+/// verifier of its challenge, and answers [`GITHUB_TOKEN`], as GitHub does `200` with an `error`
+/// where it takes no code; the user endpoint answers whom [`GITHUB_TOKEN`] is for, Ana's
+/// [`GITHUB_ID`] unless a test sets another answer, and `401` for any other token.
+pub(crate) struct GitHub {
+    /// The token endpoint's URL, as GitHub's is `https://github.com/login/oauth/access_token`.
+    pub(crate) token: String,
+    /// The user endpoint's URL, as GitHub's is `https://api.github.com/user`.
+    pub(crate) user: String,
+    expect: Arc<Mutex<Option<Expect>>>,
+    says: Arc<Mutex<(u16, String)>>,
+    heard: Arc<Mutex<Vec<Form>>>,
+    asked: Arc<Mutex<Vec<HeaderMap>>>,
+}
+
+impl GitHub {
+    /// A stand-in that takes no code until it is told what to take.
+    pub(crate) async fn new() -> GitHub {
+        let expect: Arc<Mutex<Option<Expect>>> = Arc::default();
+        let says = Arc::new(Mutex::new((
+            200,
+            serde_json::json!({"login": "ana", "id": GITHUB_ID, "type": "User"}).to_string(),
+        )));
+        let heard: Arc<Mutex<Vec<Form>>> = Arc::default();
+        let asked: Arc<Mutex<Vec<HeaderMap>>> = Arc::default();
+        let kept = (expect.clone(), says.clone(), heard.clone(), asked.clone());
+        let address = serving(move |request: Request<Incoming>| {
+            let (expect, says, heard, asked) = kept.clone();
+            async move {
+                if request.uri().path() == "/user" {
+                    asked.lock().unwrap().push(request.headers().clone());
+                    let bearer = format!("Bearer {GITHUB_TOKEN}");
+                    if request.method() != hyper::Method::GET
+                        || request.headers().get(header::AUTHORIZATION)
+                            != Some(&HeaderValue::from_str(&bearer).unwrap())
+                    {
+                        return answer(StatusCode::UNAUTHORIZED, r#"{"message":"Bad credentials"}"#);
+                    }
+                    let (status, body) = says.lock().unwrap().clone();
+                    return answer(StatusCode::from_u16(status).unwrap(), body);
+                }
+                let body = request.into_body().collect().await.unwrap().to_bytes();
+                let form: Form = form_urlencoded::parse(&body)
+                    .map(|(name, value)| (name.into_owned(), value.into_owned()))
+                    .collect();
+                heard.lock().unwrap().push(form.clone());
+                let field = |name: &str| {
+                    form.iter()
+                        .find(|(named, _)| named == name)
+                        .map(|(_, value)| value.as_str())
+                };
+                let refused = r#"{"error":"bad_verification_code","error_description":"The code passed is incorrect or expired."}"#;
+                let mut expected = expect.lock().unwrap();
+                let Some(expect) = expected.as_mut() else {
+                    return answer(StatusCode::OK, refused);
+                };
+                let verified = field("code_verifier").is_some_and(|verifier| {
+                    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())) == expect.challenge
+                });
+                let right = field("code") == Some(CODE)
+                    && field("client_id") == Some(GITHUB_CLIENT_ID)
+                    && field("client_secret") == Some(GITHUB_CLIENT_SECRET)
+                    && field("redirect_uri") == Some(expect.redirect.as_str())
+                    && verified
+                    && !expect.taken;
+                if !right {
+                    return answer(StatusCode::OK, refused);
+                }
+                expect.taken = true;
+                let (status, body) = expect.answer.clone();
+                answer(StatusCode::from_u16(status).unwrap(), body)
+            }
+        })
+        .await;
+        GitHub {
+            token: format!("http://{address}/login/oauth/access_token"),
+            user: format!("http://{address}/user"),
+            expect,
+            says,
+            heard,
+            asked,
+        }
+    }
+
+    /// The provider whose endpoints are this stand-in's, reached through `curl`.
+    pub(crate) fn provider(&self) -> github::Provider {
+        github::Provider::stand_in(&self.token, &self.user, "curl")
+    }
+
+    /// From now, the exchange of [`CODE`] for the sign-in sent with `challenge` to come back to
+    /// `redirect` is answered `status` and `body`, once.
+    pub(crate) fn answers(&self, challenge: &str, redirect: &str, status: u16, body: &str) {
+        *self.expect.lock().unwrap() = Some(Expect {
+            challenge: challenge.into(),
+            redirect: redirect.into(),
+            answer: (status, body.into()),
+            taken: false,
+        });
+    }
+
+    /// From now, the exchange for the sign-in sent with `challenge` is answered with
+    /// [`GITHUB_TOKEN`], as GitHub answers, once.
+    pub(crate) fn signs_in(&self, challenge: &str, redirect: &str) {
+        let body = serde_json::json!({
+            "access_token": GITHUB_TOKEN,
+            "token_type": "bearer",
+            "scope": "",
+        });
+        self.answers(challenge, redirect, 200, &body.to_string());
+    }
+
+    /// From now, the user endpoint answers [`GITHUB_TOKEN`]'s asking with `status` and `body`.
+    pub(crate) fn says(&self, status: u16, body: &str) {
+        *self.says.lock().unwrap() = (status, body.into());
+    }
+
+    /// Every form the token endpoint heard, in order.
+    pub(crate) fn heard(&self) -> Vec<Form> {
+        self.heard.lock().unwrap().clone()
+    }
+
+    /// The headers of every request the user endpoint heard, in order.
+    pub(crate) fn asked(&self) -> Vec<HeaderMap> {
+        self.asked.lock().unwrap().clone()
     }
 }
 

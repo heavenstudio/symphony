@@ -7,7 +7,7 @@
 //! secret.
 
 use super::*;
-use crate::kept::{STALE, UNBOUND, UNKNOWN};
+use crate::flow::{FORGED, STALE, UNBOUND};
 use crate::stand_in::{
     BACKSTOP, CLIENT_ID, CLIENT_SECRET, CODE, Google, ORIGIN, SEED, SUBJECT, Server, claims,
     folder, key, now, send, server_names, settings, text,
@@ -67,10 +67,14 @@ impl Through {
         let server = Server::new(&machine).await;
         let log = Arc::new(Mutex::new(Vec::new()));
         let (ended, ends) = tokio::sync::watch::channel(false);
+        let providers = Providers {
+            google: google.provider(),
+            ..Providers::real()
+        };
         let front = Front::new(
             settings(server.address, origin),
             key(),
-            google.provider(),
+            providers,
             log.clone(),
         )
         .unwrap()
@@ -244,11 +248,22 @@ async fn a_navigation_with_no_session_is_sent_to_google_with_a_fresh_state_nonce
     for name in ["state", "nonce", "code_challenge"] {
         assert_eq!(query[name].len(), 43, "{name}: {}", query[name]);
     }
+    let sealed = begun.cookie.split_once('=').unwrap().1;
     assert_eq!(
         begun.set_cookie,
         format!(
-            "__Host-symphony-sign-in-flow={}; Max-Age=600; Path=/; HttpOnly; SameSite=Lax; Secure",
-            begun.state()
+            "__Host-symphony-sign-in-flow={sealed}; Max-Age=600; Path=/; HttpOnly; SameSite=Lax; Secure"
+        )
+    );
+    let held = (through.front.seal)
+        .take(begun.state(), Some(sealed), now())
+        .unwrap();
+    assert_eq!(
+        (held.nonce.as_str(), held.challenge(), held.to.as_str()),
+        (
+            query["nonce"].as_str(),
+            query["code_challenge"].clone(),
+            "/docs/TOPIC?x=1"
         )
     );
     let again = through.begin("/docs/TOPIC?x=1").await;
@@ -532,8 +547,9 @@ async fn a_socket_is_signed_spliced_both_ways_and_ends_at_its_words_expiry() {
 }
 
 /// A stream passed on ends when the word it was passed on with expires, the word's lifetime after
-/// it was passed on; the service ends its streams so unless a test stands in for that.
-#[tokio::test(flavor = "multi_thread")]
+/// it was passed on and not a second before; the service ends its streams so unless a test stands
+/// in for that. The clock is paused, so nothing waits on this machine's, however long it has run.
+#[tokio::test(start_paused = true)]
 async fn a_stream_ends_when_its_word_expires() {
     let opened = Instant::now();
     assert_eq!(expiry(opened) - opened, Duration::from_secs(word::LIFETIME));
@@ -541,20 +557,19 @@ async fn a_stream_ends_when_its_word_expires() {
     let front = Front::new(
         settings("127.0.0.1:1".parse().unwrap(), ORIGIN),
         key(),
-        Provider::google(),
+        Providers::real(),
         log,
     )
     .unwrap();
     assert!(matches!(front.ends, Ends::Expiry));
-    let passed = opened
-        .checked_sub(Duration::from_secs(word::LIFETIME))
-        .unwrap();
-    let cut = tokio::time::timeout(
-        BACKSTOP,
-        Ends::Expiry.bound(passed, std::future::pending::<()>()),
-    )
-    .await;
-    assert_eq!(cut, Ok(None), "a stream outlived its word");
+    let lifetime = Duration::from_secs(word::LIFETIME);
+    let early = Duration::from_secs(word::LIFETIME - 1);
+    let pending = || Ends::Expiry.bound(opened, std::future::pending::<()>());
+    let before = tokio::time::timeout_at(opened + early, pending()).await;
+    assert!(before.is_err(), "a stream ended before its word expired");
+    assert_eq!(Instant::now() - opened, early);
+    assert_eq!(pending().await, None, "a stream outlived its word");
+    assert_eq!(Instant::now() - opened, lifetime);
 }
 
 /// Every answer passed on is its one visitor's, so no cache in front keeps it for another: the
@@ -653,9 +668,10 @@ async fn a_new_sign_in_ends_the_session_its_browser_held() {
 }
 
 /// Each way back but the browser's own good one is refused with a page that offers to begin
-/// again, and no session is made: a forged state, a replay, a way back from a browser that did not
-/// begin it or began another, Google's own refusal, and an id token with another nonce, for
-/// another client or expired. The log says why, and nothing reaches the server.
+/// again, and no session is made: a forged state, a replay, which Google refuses as it takes a code
+/// once, a way back from a browser that did not begin it or began another, Google's own refusal,
+/// and an id token with another nonce, for another client or expired. The log says why, and nothing
+/// reaches the server.
 #[tokio::test(flavor = "multi_thread")]
 async fn every_way_back_but_the_browsers_own_good_one_is_refused_with_no_session() {
     let through = Through::new().await;
@@ -681,7 +697,7 @@ async fn every_way_back_but_the_browsers_own_good_one_is_refused_with_no_session
             Some(&format!("__Host-symphony-sign-in-flow={forged}")),
         )
         .await;
-    refused(&response, UNKNOWN, &through.log());
+    refused(&response, FORGED, &through.log());
 
     let begun = through.begin("/").await;
     through.answers(&begun, &claims(&begun.query["nonce"]));
@@ -697,11 +713,18 @@ async fn every_way_back_but_the_browsers_own_good_one_is_refused_with_no_session
         through.back_for(&begun).await.status(),
         StatusCode::SEE_OTHER
     );
-    refused(&through.back_for(&begun).await, UNKNOWN, &through.log());
+    let replay = through.back_for(&begun).await;
+    let replayed = (replay.status(), cookies(&replay));
+    assert_eq!(replayed, (StatusCode::BAD_GATEWAY, vec![]), "a replay");
+    assert!(
+        through.log().ends_with(": invalid_grant\n"),
+        "{}",
+        through.log()
+    );
     assert_eq!(
         through.google.heard().len(),
-        1,
-        "a replay is never exchanged"
+        2,
+        "a replay is exchanged once more, and Google takes a code once"
     );
 
     let begun = through.begin("/").await;
@@ -760,10 +783,10 @@ async fn every_way_back_but_the_browsers_own_good_one_is_refused_with_no_session
 #[tokio::test(flavor = "multi_thread")]
 async fn a_way_back_past_its_sign_ins_ten_minutes_is_refused() {
     let through = Through::new().await;
-    let flow = (through.front.kept())
-        .begin("/".into(), now() - FLOW_SECONDS)
+    let (flow, sealed) = (through.front.seal)
+        .begin("/", now() - FLOW_SECONDS)
         .unwrap();
-    let cookie = format!("__Host-symphony-sign-in-flow={}", flow.state);
+    let cookie = format!("__Host-symphony-sign-in-flow={sealed}");
     let response = through
         .back(
             &format!("state={}&code={}", flow.state, enc(CODE)),
@@ -930,6 +953,10 @@ async fn a_visitor_comes_back_to_a_path_of_the_origin_never_a_url_a_caller_names
     let location = (said.lines())
         .find_map(|line| line.strip_prefix("location: "))
         .unwrap();
+    let flow = (said.lines())
+        .find_map(|line| line.strip_prefix("set-cookie: "))
+        .and_then(|set| set.split(';').next())
+        .unwrap();
     let state = form_urlencoded::parse(location.split_once('?').unwrap().1.as_bytes())
         .find(|(name, _)| name == "state")
         .unwrap()
@@ -954,7 +981,7 @@ async fn a_visitor_comes_back_to_a_path_of_the_origin_never_a_url_a_caller_names
                 "state={state}&code={}&redirect_uri=https://evil.example&to=//evil.example",
                 enc(CODE)
             ),
-            Some(&format!("__Host-symphony-sign-in-flow={state}")),
+            Some(flow),
         )
         .await;
     assert_eq!(
@@ -973,9 +1000,14 @@ async fn an_http_origins_cookies_are_neither_host_prefixed_nor_secure() {
     assert_eq!(
         begun.set_cookie,
         format!(
-            "symphony-sign-in-flow={}; Max-Age=600; Path=/; HttpOnly; SameSite=Lax",
-            begun.state()
+            "{}; Max-Age=600; Path=/; HttpOnly; SameSite=Lax",
+            begun.cookie
         )
+    );
+    assert!(
+        begun.cookie.starts_with("symphony-sign-in-flow="),
+        "{}",
+        begun.cookie
     );
     assert_eq!(
         begun.query["redirect_uri"],
@@ -1008,13 +1040,11 @@ async fn a_server_behind_that_does_not_answer_is_a_bad_gateway() {
     drop(closed);
     let log = Arc::new(Mutex::new(Vec::new()));
     let google = Google::new().await;
-    let front = Front::new(
-        settings(address, ORIGIN),
-        key(),
-        google.provider(),
-        log.clone(),
-    )
-    .unwrap();
+    let providers = Providers {
+        google: google.provider(),
+        ..Providers::real()
+    };
+    let front = Front::new(settings(address, ORIGIN), key(), providers, log.clone()).unwrap();
     let token = front.kept().open(ana(), now()).unwrap();
     let (_front, at) = listening(front).await;
     let request = Request::get("/api/people")
@@ -1037,8 +1067,8 @@ async fn a_server_behind_that_does_not_answer_is_a_bad_gateway() {
 }
 
 /// What the log says over a whole sign-in, a passed-on read, every refusal and sign-out names
-/// no secret: not the client secret, the key, the code, a state, a nonce, a verifier, a session's
-/// id, an id token or a word.
+/// no secret: not the client secret, the key, the code, a state, a nonce, a verifier, a flow
+/// cookie, a session's id, an id token or a word.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_log_names_no_secret_code_token_cookie_or_word() {
     let through = Through::new().await;
@@ -1089,7 +1119,14 @@ async fn the_log_names_no_secret_code_token_cookie_or_word() {
     ];
     for begun in [&begun, &other] {
         secrets.extend(["state", "nonce", "code_challenge"].map(|name| begun.query[name].clone()));
+        secrets.push(begun.cookie.split_once('=').unwrap().1.to_string());
     }
+    let verifiers: Vec<String> = (through.google.heard().iter())
+        .flat_map(|form| form.iter().filter(|(name, _)| name == "code_verifier"))
+        .map(|(_, verifier)| verifier.clone())
+        .collect();
+    assert_eq!(verifiers.len(), 3, "{verifiers:?}");
+    secrets.extend(verifiers);
     secrets.extend(words);
     for secret in &secrets {
         assert!(

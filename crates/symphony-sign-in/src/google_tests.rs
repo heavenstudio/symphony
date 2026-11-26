@@ -3,7 +3,7 @@
 //! its issuer, its audience, its life, its nonce and its subject.
 
 use super::*;
-use crate::kept::Flow;
+use crate::flow::Flow;
 use crate::settings::Secret;
 use crate::stand_in::{CLIENT_ID, CLIENT_SECRET, CODE, Google, SUBJECT, claims, id_token, now};
 use std::collections::BTreeMap;

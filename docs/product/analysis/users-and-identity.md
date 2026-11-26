@@ -1647,9 +1647,9 @@ Each step can ship alone, and a machine with one person sees none of them.
    to each board's powers as any named person; where no key is set, a header is refused
    ([SIGNED_IN](../../operations/SIGNED_IN.md)). And the Symphony's own sign-in service,
    `symphony-sign-in`, a separate program in front that signs visitors in with Google by OpenID
-   Connect and signs that header for each request it passes on
+   Connect or with GitHub by OAuth 2 and signs that header for each request it passes on
    ([SIGN_IN_SERVICE](../../operations/SIGN_IN_SERVICE.md)). Not yet: hosted saves through the
-   same writes, and the service's sign-in with GitHub.
+   same writes.
 7. **Shared agents' hosts**, then a board's agent credentials.
 
 With nobody named on a board, the person at the machine holds every power there and is its

@@ -1,9 +1,10 @@
 //! The listener (`docs/operations/SIGN_IN_SERVICE.md`): plain HTTP/1.1 on the settings' `listen`,
 //! in front of the server at `upstream`.
 //!
-//! - **Its own paths**, under [`PREFIX`], are answered here and never passed on: the provider's way
-//!   back ([`CALLBACK`]), the visitor's own page ([`PREFIX`] itself: whom they are signed in as,
-//!   and sign-out) and sign-out ([`SIGN_OUT`]).
+//! - **Its own paths**, under [`PREFIX`], are answered here and never passed on: each provider's
+//!   way back ([`CALLBACK`] for Google, [`GITHUB_CALLBACK`] for GitHub), where its client is set;
+//!   the visitor's own page ([`PREFIX`] itself: whom they are signed in as, and sign-out); and
+//!   sign-out ([`SIGN_OUT`]).
 //! - **Every other request needs a session.** With one, every `Symphony-Signed-In` the caller sent
 //!   is dropped, and so is every cookie (the server reads none) and every hop-by-hop header; `Host`
 //!   is the origin's, and a word signed for it afresh is added. The request goes to the server on a
@@ -12,7 +13,8 @@
 //!   end at their word's expiry, and the client reconnects with a fresh word while the session
 //!   holds.
 //! - **Without a session nothing is passed on.** A browser's navigation is sent to sign in, its
-//!   path kept to come back to; anything else, a fetch, a script, a socket, is answered `401`.
+//!   path kept to come back to: to the one provider whose client is set, or, with both set, to a
+//!   page of two links, one to each. Anything else, a fetch, a script, a socket, is answered `401`.
 //!
 //! The session cookie and the flow cookie are `HttpOnly` and `SameSite=Lax`, and for an `https://`
 //! origin `Secure` and `__Host-`: a cross-site POST, fetch or socket carries neither, so it is never
@@ -21,10 +23,11 @@
 //! the origin, the one they asked for; no parameter names one.
 
 use crate::PREFIX;
-use crate::google::{self, Provider};
-use crate::kept::{FLOW_SECONDS, Kept, SESSION_SECONDS};
-use crate::settings::{self, Key, Settings};
+use crate::flow::{FLOW_SECONDS, Flow, Seal};
+use crate::kept::{Kept, SESSION_SECONDS};
+use crate::settings::{self, Client, Key, Settings};
 use crate::word::{self, Who};
+use crate::{github, google};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use http_body_util::combinators::UnsyncBoxBody;
@@ -44,8 +47,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::Instant;
 
-/// The provider's way back, registered with it as the redirect URI.
+/// Google's way back, registered with the Google client as its redirect URI.
 pub(crate) const CALLBACK: &str = "/.sign-in/callback";
+/// GitHub's way back, registered with the GitHub OAuth app as its callback URL.
+pub(crate) const GITHUB_CALLBACK: &str = "/.sign-in/github-callback";
 /// Where the visitor's own page posts to sign out.
 pub(crate) const SIGN_OUT: &str = "/.sign-in/sign-out";
 /// The session cookie's name, `__Host-` before it for an `https://` origin.
@@ -82,7 +87,7 @@ pub(crate) fn serve(machine: &Path) -> Result<(), String> {
             .await
             .map_err(|error| format!("listen {listen}: {error}"))?;
         let log: Log = Arc::new(Mutex::new(std::io::stderr()));
-        let front = Arc::new(Front::new(settings, key, Provider::google(), log)?);
+        let front = Arc::new(Front::new(settings, key, Providers::real(), log)?);
         front.say(format_args!(
             "listening on {listen} for {}, passing on to {}",
             front.settings.origin, front.settings.upstream
@@ -92,11 +97,74 @@ pub(crate) fn serve(machine: &Path) -> Result<(), String> {
     })
 }
 
+/// Where each provider is reached: their own endpoints, which a test alone stands in for.
+#[derive(Clone, Debug)]
+pub(crate) struct Providers {
+    pub(crate) google: google::Provider,
+    pub(crate) github: github::Provider,
+}
+
+impl Providers {
+    /// Google's and GitHub's own.
+    pub(crate) fn real() -> Providers {
+        Providers {
+            google: google::Provider::google(),
+            github: github::Provider::github(),
+        }
+    }
+}
+
+/// A provider a visitor signs in with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum By {
+    Google,
+    GitHub,
+}
+
+impl By {
+    /// Both, in the order a visitor is offered them.
+    const ALL: [By; 2] = [By::Google, By::GitHub];
+
+    /// Its name, as a visitor reads it.
+    fn name(self) -> &'static str {
+        match self {
+            By::Google => "Google",
+            By::GitHub => "GitHub",
+        }
+    }
+
+    /// Its name in the word, the SERVICE of a profile's `SERVICE:SUBJECT` sign-in.
+    fn service(self) -> &'static str {
+        match self {
+            By::Google => google::SERVICE,
+            By::GitHub => github::SERVICE,
+        }
+    }
+
+    /// The path of its way back.
+    fn way_back(self) -> &'static str {
+        match self {
+            By::Google => CALLBACK,
+            By::GitHub => GITHUB_CALLBACK,
+        }
+    }
+}
+
+/// Why a way back's code signed nobody in.
+enum Unsigned {
+    /// The provider did not answer as it does: said as a gateway that did not.
+    Unanswered(String),
+    /// The provider's answer is not taken: said as a sign-in refused.
+    Refused(&'static str),
+}
+
 /// The service, as its listener answers each request.
 pub(crate) struct Front {
     settings: Settings,
     key: Key,
-    provider: Provider,
+    providers: Providers,
+    /// What signs each flow cookie.
+    seal: Seal,
     kept: Mutex<Kept>,
     log: Log,
     /// The origin's host and port, which every request passed on names in its `Host`.
@@ -108,16 +176,16 @@ pub(crate) struct Front {
 }
 
 impl Front {
-    /// The service of `settings`, signing with `key`, signing visitors in at `provider` and
+    /// The service of `settings`, signing with `key`, signing visitors in at `providers` and
     /// saying what it does to `log`.
     ///
     /// # Errors
     ///
-    /// The origin's host is no header value.
+    /// The origin's host is no header value, or the system's randomness did not read.
     pub(crate) fn new(
         settings: Settings,
         key: Key,
-        provider: Provider,
+        providers: Providers,
         log: Log,
     ) -> Result<Front, String> {
         let (secure, authority) = match settings.origin.strip_prefix("https://") {
@@ -126,10 +194,13 @@ impl Front {
         };
         let host = HeaderValue::from_str(authority)
             .map_err(|error| format!("the origin's host is no header value: {error}"))?;
+        let seal = Seal::new()
+            .map_err(|error| format!("the system's randomness did not read: {error}"))?;
         Ok(Front {
             settings,
             key,
-            provider,
+            providers,
+            seal,
             kept: Mutex::new(Kept::default()),
             log,
             host,
@@ -176,8 +247,10 @@ impl Front {
         if path == PREFIX {
             return self.page(&request);
         }
-        if path == CALLBACK {
-            return self.callback(&request).await;
+        if let Some((by, client)) =
+            (self.signers().into_iter()).find(|(by, _)| by.way_back() == path)
+        {
+            return self.callback(&request, by, client).await;
         }
         if path == SIGN_OUT {
             return self.sign_out(&request);
@@ -220,8 +293,8 @@ impl Front {
             .map(hyper::http::uri::PathAndQuery::as_str)
             .filter(|asked| asked.starts_with('/'))
             .unwrap_or("/");
-        let flow = match self.kept().begin(to.into(), now()) {
-            Ok(flow) => flow,
+        let (flow, sealed) = match self.seal.begin(to, now()) {
+            Ok(begun) => begun,
             Err(error) => {
                 self.say(format_args!("a sign-in did not begin: {error}"));
                 return plain(
@@ -230,24 +303,46 @@ impl Front {
                 );
             }
         };
-        let to = self
-            .provider
-            .authorize(&self.settings.google, &self.redirect(), &flow);
-        let mut response = empty(StatusCode::FOUND);
-        let headers = response.headers_mut();
-        insert(headers, header::LOCATION, &to);
+        let mut response = match self.signers().as_slice() {
+            [(by, client)] => {
+                let mut response = empty(StatusCode::FOUND);
+                insert(
+                    response.headers_mut(),
+                    header::LOCATION,
+                    &self.authorize(*by, client, &flow),
+                );
+                response
+            }
+            signers => {
+                let links: Vec<String> = (signers.iter())
+                    .map(|(by, client)| {
+                        format!(
+                            "<p><a href=\"{}\">Sign in with {}</a></p>",
+                            escaped(&self.authorize(*by, client, &flow)),
+                            by.name()
+                        )
+                    })
+                    .collect();
+                html(StatusCode::OK, "Sign in", &links.join("\n"))
+            }
+        };
         append(
-            headers,
+            response.headers_mut(),
             header::SET_COOKIE,
-            &self.cookie(FLOW, &flow.state, FLOW_SECONDS),
+            &self.cookie(FLOW, &sealed, FLOW_SECONDS),
         );
         response
     }
 
-    /// The provider's way back: taken once, from the browser whose sign-in it is, its code
-    /// exchanged and its id token checked, and a session made in place of any the browser held;
-    /// refused otherwise.
-    async fn callback(&self, request: &Request<Incoming>) -> Response<Body> {
+    /// The way back of the provider `by`, whose client is `client`: taken from the browser whose
+    /// sign-in it is, its code exchanged and the provider's answer checked, and a session made in
+    /// place of any the browser held; refused otherwise.
+    async fn callback(
+        &self,
+        request: &Request<Incoming>,
+        by: By,
+        client: &Client,
+    ) -> Response<Body> {
         if request.method() != Method::GET {
             return not_allowed("GET");
         }
@@ -272,37 +367,23 @@ impl Front {
             return self.refuse("its query names no state");
         };
         let cookie = cookie(request.headers(), &self.name(FLOW));
-        let flow = match self.kept().take(&state, cookie.as_deref(), now()) {
+        let flow = match self.seal.take(&state, cookie.as_deref(), now()) {
             Ok(flow) => flow,
             Err(why) => return self.refuse(why),
         };
         if error.is_some() {
-            return self.refuse("Google did not sign the visitor in");
+            return self.refuse(&format!("{} did not sign the visitor in", by.name()));
         }
         let Some(code) = code else {
             return self.refuse("its query names no code");
         };
-        let (provider, client, redirect) = (
-            self.provider.clone(),
-            self.settings.google.clone(),
-            self.redirect(),
-        );
-        let verifier = flow.verifier.clone();
-        let exchanged = tokio::task::spawn_blocking(move || {
-            provider.exchange(&client, &redirect, &code, &verifier)
-        })
-        .await;
-        let token = match exchanged {
-            Ok(Ok(token)) => token,
-            Ok(Err(why)) => return self.unexchanged(format_args!("{why}")),
-            Err(error) => return self.unexchanged(format_args!("its exchange ended: {error}")),
-        };
-        let subject = match google::subject(&token, &self.settings.google.id, &flow.nonce, now()) {
+        let subject = match self.subject(by, client, code, &flow).await {
             Ok(subject) => subject,
-            Err(why) => return self.refuse(why),
+            Err(Unsigned::Unanswered(why)) => return self.unanswered(by, &why),
+            Err(Unsigned::Refused(why)) => return self.refuse(why),
         };
         let who = Who {
-            service: google::SERVICE,
+            service: by.service(),
             subject,
         };
         let mut kept = self.kept();
@@ -347,13 +428,52 @@ impl Front {
         )
     }
 
-    /// A way back whose code was not exchanged, for `why`.
-    fn unexchanged(&self, why: fmt::Arguments<'_>) -> Response<Body> {
-        self.say(format_args!("a sign-in's code was not exchanged: {why}"));
+    /// Whom the provider `by` says `code` signed in, exchanged as `client` for the sign-in under
+    /// way `flow`: their subject. The calls block while `curl` runs, so they run where blocking is
+    /// allowed; GitHub's access token lives within them alone.
+    async fn subject(
+        &self,
+        by: By,
+        client: &Client,
+        code: String,
+        flow: &Flow,
+    ) -> Result<String, Unsigned> {
+        let (providers, client, redirect) =
+            (self.providers.clone(), client.clone(), self.redirect(by));
+        let (nonce, verifier) = (flow.nonce.clone(), flow.verifier.clone());
+        let signed = tokio::task::spawn_blocking(move || match by {
+            By::Google => {
+                let token = (providers.google)
+                    .exchange(&client, &redirect, &code, &verifier)
+                    .map_err(Unsigned::Unanswered)?;
+                google::subject(&token, &client.id, &nonce, now()).map_err(Unsigned::Refused)
+            }
+            By::GitHub => {
+                let token = (providers.github)
+                    .exchange(&client, &redirect, &code, &verifier)
+                    .map_err(Unsigned::Unanswered)?;
+                let user = (providers.github)
+                    .user(&token)
+                    .map_err(Unsigned::Unanswered)?;
+                github::subject(&user).map_err(Unsigned::Refused)
+            }
+        })
+        .await;
+        signed.unwrap_or_else(|error| {
+            Err(Unsigned::Unanswered(format!("its exchange ended: {error}")))
+        })
+    }
+
+    /// A way back the provider `by` did not answer as it does, for `why`.
+    fn unanswered(&self, by: By, why: &str) -> Response<Body> {
+        self.say(format_args!("a sign-in was not answered: {why}"));
         html(
             StatusCode::BAD_GATEWAY,
             "Sign-in failed",
-            "<p>Google did not answer the sign-in.</p>\n<p><a href=\"/\">Sign in again</a></p>",
+            &format!(
+                "<p>{} did not answer the sign-in.</p>\n<p><a href=\"/\">Sign in again</a></p>",
+                by.name()
+            ),
         )
     }
 
@@ -473,9 +593,32 @@ impl Front {
         self.kept().who(&id, now())
     }
 
-    /// The provider's way back, as it is registered.
-    fn redirect(&self) -> String {
-        format!("{}{CALLBACK}", self.settings.origin)
+    /// The providers whose clients are set, each with its client, in the order a visitor is
+    /// offered them.
+    fn signers(&self) -> Vec<(By, &Client)> {
+        (By::ALL.into_iter())
+            .filter_map(|by| {
+                let client = match by {
+                    By::Google => self.settings.google.as_ref(),
+                    By::GitHub => self.settings.github.as_ref(),
+                };
+                client.map(|client| (by, client))
+            })
+            .collect()
+    }
+
+    /// Where a visitor is sent to sign in with `by` as `client` for the sign-in under way `flow`.
+    fn authorize(&self, by: By, client: &Client, flow: &Flow) -> String {
+        let redirect = self.redirect(by);
+        match by {
+            By::Google => self.providers.google.authorize(client, &redirect, flow),
+            By::GitHub => self.providers.github.authorize(client, &redirect, flow),
+        }
+    }
+
+    /// The way back of `by`, as it is registered with it.
+    fn redirect(&self, by: By) -> String {
+        format!("{}{}", self.settings.origin, by.way_back())
     }
 
     /// The cookie `name` as this origin names it.
@@ -799,3 +942,7 @@ fn never(never: Infallible) -> hyper::Error {
 #[cfg(test)]
 #[path = "front_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "front_github_tests.rs"]
+mod github_tests;
