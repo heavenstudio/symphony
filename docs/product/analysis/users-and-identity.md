@@ -846,7 +846,7 @@ and may not direct agents. A person who may direct agents writes as the owner do
   as that person's own are: written into the file or shown on the thread, and an ask an agent
   answers. The line carries both names, whose words they are and who passed them on.
 
-- [ ] **held-callout-block-changed** — A held comment is written after the block it was left on when it is passed on. Once that block's words change, or the block is gone, every Pass on is refused and nobody can withdraw the comment, so it stays on the page for good. What should happen to it? A: its author may withdraw it. B: whoever passes it on places it at the end of its section. C: it lapses and leaves the page. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+- [x] **held-callout-block-changed** — A held comment is written after the block it was left on when it is passed on. Once that block's words change, or the block is gone, every Pass on is refused and nobody can withdraw the comment, so it stays on the page for good. What should happen to it? A: its author may withdraw it. B: whoever passes it on places it at the end of its section. C: it lapses and leaves the page. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
   [2026-11-25 01:19] agent — Posted for the board task `app/held-on-documents-follow-ups`, a question the pass leaves open once a document moves. Nothing that depends on it is built.
 
     **Base (today).** A pass finds the block again by its words: under its own heading, else anywhere it stands once. Where they changed or are gone, the pass is refused with "the block this comment was left after has changed or is gone: nothing was written". The comment stays held, drawn where its block was, with a Pass on that is refused every time.
@@ -871,6 +871,7 @@ and may not direct agents. A person who may direct agents writes as the owner do
     - **held-on-document-waits-where** (open) asks where a held comment waits. It does not ask what happens once its block is gone.
 
     Neither decides this.
+  [2026-11-26 08:08] owner · approved — B
 
 What follows:
 
