@@ -13,8 +13,8 @@
 //! board the visitor is nobody, and its project is one the server does not hold. A failed read is
 //! said in the server's log by the board's folder alone, never by the visitor's login. So is the
 //! person at the machine's own profile ([`Profiles::machine`]), which holds no sign-in but where
-//! `people.json` was written by hand: they are known by where they are, and a login under their
-//! name would write as them with another's powers.
+//! `people.json` was written by hand: they are known by where they are, and a login or a signed
+//! word under their name would write as them with another's powers.
 
 use crate::gate::{Roster, Visitor};
 use std::path::{Path, PathBuf};

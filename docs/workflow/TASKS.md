@@ -2645,11 +2645,11 @@ with what it holds, so one they added to a board before naming themselves is the
 signs in as, a group's, a person's that a board holds with no profile here, a second name or a
 sign-in is refused in words saying what to choose instead, with nothing written. Once named, the
 section shows how they read and a form for their display name and git handles, and their profile
-takes no sign-in from any write: they are known by where they are, and a login under their name
-would write as them with another's powers. A card a board holds of their name draws no sign-in
-field, and the server admits no login by that profile. Nobody else sees it, and the write from
-anyone else is a 403, `Forbidden: only the person at the machine gives themselves its name`. The
-header shows the reader by how they are shown (`owner` until the person at the machine names
+takes no sign-in from any write: they are known by where they are, and a login or a signed word
+under their name would write as them with another's powers. A card a board holds of their name draws
+no sign-in field, and the server admits neither by that profile. Nobody else sees it, and the write
+from anyone else is a 403, `Forbidden: only the person at the machine gives themselves its name`.
+The header shows the reader by how they are shown (`owner` until the person at the machine names
 themselves) and links to the You section, or to a person's own card. The pages draw a line written
 as `owner`, or under that short name, with the name the person at the machine is shown by, the
 stored word on hover; the line's text and the stamp's name stay as written.

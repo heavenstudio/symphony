@@ -529,3 +529,31 @@ fn a_word_is_refused_where_no_key_is_set_where_the_file_does_not_read_and_by_ano
     let stale = service.signs(&SignIn::claims("google", "110248", -400, 300));
     assert_eq!(gate.signed(&stale, now), None, "stale");
 }
+
+/// A signed visitor is never the person at the machine, though the machine's profiles name one and
+/// `people.json`, written by hand, gives that profile the word's service and subject: the word is
+/// the signed visitor's, admitted as nobody's machine, and on no board (the roster's refusal is
+/// `roster_tests`' `a_sign_in_of_the_person_at_the_machines_profile_is_on_no_board`).
+#[test]
+fn a_signed_word_for_the_person_at_the_machines_profile_is_never_them() {
+    use crate::testing::SignIn;
+    let service = SignIn::new(1);
+    let machine = naming(&service);
+    machine.write(
+        symphony_board::people::FILE,
+        r#"{"people": [{"name": "stefano", "display": "Stefano", "signins": [{"service": "google", "subject": "110248"}]}], "machine": "stefano"}"#,
+    );
+    let gate = Judge::new(&[]).gate.with_machine(machine.path(""));
+    assert_eq!(
+        gate.person().name(),
+        "stefano",
+        "the machine's profiles read"
+    );
+    let visitor = gate
+        .signed(&service.word("google", "110248"), SystemTime::now())
+        .unwrap();
+    assert!(matches!(visitor, Visitor::Signed(_)), "{visitor:?}");
+    let admitted = crate::front::Admitted::of(&visitor, gate.person());
+    assert!(!admitted.machine);
+    assert_eq!(gate.member(Path::new("/alpha"), &visitor), None);
+}
