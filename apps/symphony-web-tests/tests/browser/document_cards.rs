@@ -719,19 +719,23 @@ fn document_card_excerpt_opened_below_a_short_windows_fold_fills_without_a_scrol
     let show = "[data-doc-key=\"card:alpha\"] .section-prose .show-link";
     // The address names the card, so the page lands on it (`land`, shell/shell.ts) once its
     // section has drawn, in an effect that runs after the button is in the page: a scroll made
-    // before it is taken back to the card. So the reader's scroll waits for the landing, and is a
-    // wheel, the reader's own input, which ends the landing whatever still draws around the card.
+    // before it is taken back to the card. The landing holds the card at the scroll padding while
+    // the sections near it draw: the intro, drawn above it late under its margin, pushes it some
+    // 900 px down until the hold's next frame takes it back, and a wheel measured in between
+    // scrolls the wrong way. So the reader's scroll is measured once the landing has ended, with
+    // nothing near the card left to draw, and is a wheel, the reader's own input.
     assert!(
         page.wait_for(
             &format!(
                 "{} && {}",
                 crate::visible(show),
-                crate::document_landing::landed_on(DOC, "alpha")
+                crate::document_landing::landing_ended_on(DOC, "alpha")
             ),
             SHOWN
         ),
-        "the card alpha is drawn and the page has landed on it: {}",
-        page.eval(PLACE_OF_SHOW)
+        "the card alpha is drawn, the page has landed on it and its landing has ended: {} {}",
+        page.eval(PLACE_OF_SHOW),
+        page.eval("getComputedStyle(document.documentElement).overflowAnchor")
     );
     let by = page.eval(&format!("{PLACE_OF_SHOW}.below"));
     page.call(

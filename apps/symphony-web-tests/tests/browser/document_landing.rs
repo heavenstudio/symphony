@@ -810,6 +810,16 @@ pub(crate) fn landed_on(path: &str, id: &str) -> String {
     )
 }
 
+/// True once the page has landed on the element `id` names ([`landed_on`]) and the landing has
+/// ended, the root's anchoring back ([`ANCHORING`]): with no input, that is once it went quiet,
+/// with nothing near the screen left to draw or busy (`land`, shell/shell.ts). Until then a section
+/// near the element can still draw and move it, and the hold takes it back a frame later, so a
+/// place read in between is one the page then leaves. On a page whose root's own `overflow-anchor`
+/// is not `none`.
+pub(crate) fn landing_ended_on(path: &str, id: &str) -> String {
+    format!("({} && {ANCHORING} !== 'none')", landed_on(path, id))
+}
+
 /// What a reader read: where what the page landed on was ([`READ`]), and where what they read was
 /// before and after the sections near them drew, with the page's own scrolls meanwhile.
 struct Read {
