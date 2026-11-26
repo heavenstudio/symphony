@@ -103,8 +103,8 @@ pub(crate) struct Front {
     host: HeaderValue,
     /// Whether the origin is `https://`, and so the cookies `Secure` and `__Host-`.
     secure: bool,
-    /// How long a stream passed on stays open: its word's lifetime.
-    streams: Duration,
+    /// When the streams a request opened end: when the word it was passed on with expires.
+    ends: Ends,
 }
 
 impl Front {
@@ -134,14 +134,15 @@ impl Front {
             log,
             host,
             secure,
-            streams: Duration::from_secs(word::LIFETIME),
+            ends: Ends::Expiry,
         })
     }
 
-    /// The same, with its streams ended after `streams` rather than their word's lifetime.
+    /// The same, with its streams ended when `ended` turns true rather than when their word
+    /// expires.
     #[cfg(test)]
-    pub(crate) fn streams(mut self, streams: Duration) -> Front {
-        self.streams = streams;
+    pub(crate) fn ends(mut self, ended: tokio::sync::watch::Receiver<bool>) -> Front {
+        self.ends = Ends::Signal(ended);
         self
     }
 
@@ -303,7 +304,13 @@ impl Front {
             service: google::SERVICE,
             subject,
         };
-        let id = match self.kept().open(who, now()) {
+        let mut kept = self.kept();
+        if let Some(earlier) = self::cookie(request.headers(), &self.name(SESSION)) {
+            kept.close(&earlier);
+        }
+        let opened = kept.open(who, now());
+        drop(kept);
+        let id = match opened {
             Ok(id) => id,
             Err(error) => {
                 self.say(format_args!("a session was not made: {error}"));
@@ -383,7 +390,7 @@ impl Front {
     /// `request` passed on to the server as `who`, and the server's answer.
     async fn pass(&self, mut request: Request<Incoming>, who: &Who) -> Response<Body> {
         let upgrade = upgrading(request.headers()).then(|| hyper::upgrade::on(&mut request));
-        let deadline = Instant::now() + self.streams;
+        let opened = Instant::now();
         let Ok(word) =
             HeaderValue::from_str(&word::signed(&self.key, who, &self.settings.origin, now()))
         else {
@@ -418,17 +425,20 @@ impl Front {
         };
         if response.status() == StatusCode::SWITCHING_PROTOCOLS {
             if let Some(client) = upgrade {
-                tokio::spawn(splice(client, hyper::upgrade::on(&mut response), deadline));
+                let server = hyper::upgrade::on(&mut response);
+                tokio::spawn(splice(client, server, self.ends.clone(), opened));
             }
             let (parts, _) = response.into_parts();
             return Response::from_parts(parts, Empty::new().map_err(never).boxed_unsync());
         }
         hop_by_hop(response.headers_mut(), false);
+        private(response.headers_mut());
         let stream = (response.headers().get(header::CONTENT_TYPE))
             .is_some_and(|kind| kind.as_bytes().starts_with(b"text/event-stream"));
+        let ends = self.ends.clone();
         response.map(|body| {
             if stream {
-                until(body, deadline)
+                until(body, ends, opened)
             } else {
                 body.boxed_unsync()
             }
@@ -496,30 +506,119 @@ impl Front {
     }
 }
 
+/// When the streams a request opened end.
+#[derive(Clone)]
+enum Ends {
+    /// When the word the request was passed on with expires.
+    Expiry,
+    /// When a test turns its signal true.
+    #[cfg(test)]
+    Signal(tokio::sync::watch::Receiver<bool>),
+}
+
+impl Ends {
+    /// What `work` comes to, unless the streams of a request passed on at `opened` end first.
+    async fn bound<F: Future>(&self, opened: Instant, work: F) -> Option<F::Output> {
+        match self {
+            Ends::Expiry => tokio::time::timeout_at(expiry(opened), work).await.ok(),
+            #[cfg(test)]
+            Ends::Signal(ended) => {
+                let mut ended = ended.clone();
+                tokio::select! {
+                    done = work => Some(done),
+                    _ = ended.wait_for(|ended| *ended) => None,
+                }
+            }
+        }
+    }
+}
+
+/// When the word of a request passed on at `opened` expires, and with it the streams it opened.
+fn expiry(opened: Instant) -> Instant {
+    opened + Duration::from_secs(word::LIFETIME)
+}
+
 /// Splices a WebSocket's two upgraded connections, the browser's and the server's, until either
-/// ends or `deadline` passes.
-async fn splice(client: OnUpgrade, server: OnUpgrade, deadline: Instant) {
+/// ends or the streams of its request, passed on at `opened`, do.
+async fn splice(client: OnUpgrade, server: OnUpgrade, ends: Ends, opened: Instant) {
     let (Ok(client), Ok(server)) = tokio::join!(client, server) else {
         return;
     };
     let (mut client, mut server) = (TokioIo::new(client), TokioIo::new(server));
-    let _ = tokio::time::timeout_at(
-        deadline,
-        tokio::io::copy_bidirectional(&mut client, &mut server),
-    )
-    .await;
+    let copied = tokio::io::copy_bidirectional(&mut client, &mut server);
+    let _ = ends.bound(opened, copied).await;
 }
 
-/// `body` passed on frame by frame, ended when `deadline` passes.
-fn until(body: Incoming, deadline: Instant) -> Body {
-    let frames = futures_util::stream::unfold(Some(body), move |body| async move {
-        let mut body = body?;
-        match tokio::time::timeout_at(deadline, body.frame()).await {
-            Ok(Some(frame)) => Some((frame, Some(body))),
-            Ok(None) | Err(_) => None,
+/// `body` passed on frame by frame, ended when the streams of its request, passed on at `opened`,
+/// end.
+fn until(body: Incoming, ends: Ends, opened: Instant) -> Body {
+    let frames = futures_util::stream::unfold(Some(body), move |body| {
+        let ends = ends.clone();
+        async move {
+            let mut body = body?;
+            match ends.bound(opened, body.frame()).await {
+                Some(Some(frame)) => Some((frame, Some(body))),
+                Some(None) | None => None,
+            }
         }
     });
     StreamBody::new(frames).boxed_unsync()
+}
+
+/// Makes the answer whose `headers` these are its one visitor's: no cache it passes through may
+/// keep it for another. The server's `public`, and a `private` that names only some fields, give
+/// way to `private`; an answer that says `no-store` keeps it, and a value that is not text is
+/// `no-store`.
+fn private(headers: &mut HeaderMap) {
+    let said: Option<Vec<String>> = (headers.get_all(header::CACHE_CONTROL).iter())
+        .map(|value| value.to_str().ok().map(str::to_owned))
+        .collect();
+    let control = match said {
+        None => "no-store".to_owned(),
+        Some(said) => {
+            let mut kept: Vec<&str> = (said.iter())
+                .flat_map(|value| directives(value))
+                .filter(|directive| {
+                    let (name, argued) = directive
+                        .split_once('=')
+                        .map_or((*directive, false), |(name, _)| (name.trim(), true));
+                    !(name.eq_ignore_ascii_case("public")
+                        || (argued && name.eq_ignore_ascii_case("private")))
+                })
+                .collect();
+            let held = kept.iter().any(|directive| {
+                directive.eq_ignore_ascii_case("private")
+                    || directive.eq_ignore_ascii_case("no-store")
+            });
+            if !held {
+                kept.push("private");
+            }
+            kept.join(", ")
+        }
+    };
+    insert(headers, header::CACHE_CONTROL, &control);
+}
+
+/// The directives of a `Cache-Control` value, split at each comma outside a quoted string.
+fn directives(value: &str) -> Vec<&str> {
+    let (mut found, mut start, mut quoted, mut escaped) = (Vec::new(), 0, false, false);
+    for (at, byte) in value.bytes().enumerate() {
+        match byte {
+            _ if escaped => escaped = false,
+            b'\\' if quoted => escaped = true,
+            b'"' => quoted = !quoted,
+            b',' if !quoted => {
+                found.extend(value.get(start..at));
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    found.extend(value.get(start..));
+    (found.into_iter())
+        .map(str::trim)
+        .filter(|directive| !directive.is_empty())
+        .collect()
 }
 
 /// Whether `headers` ask for an upgrade: an `Upgrade`, and `upgrade` among `Connection`'s.

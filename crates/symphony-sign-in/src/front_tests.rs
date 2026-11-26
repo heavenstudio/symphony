@@ -35,6 +35,8 @@ struct Through {
     front: Arc<Front>,
     origin: String,
     log: Arc<Mutex<Vec<u8>>>,
+    /// Turned true, it ends every stream passed on, as their word's expiry does.
+    ended: tokio::sync::watch::Sender<bool>,
 }
 
 /// A sign-in begun: what the visitor's redirect to Google says, and the flow cookie it set.
@@ -54,26 +56,25 @@ impl Begun {
 
 impl Through {
     async fn new() -> Through {
-        Through::with(ORIGIN, None).await
+        Through::with(ORIGIN).await
     }
 
-    /// For `origin`, its streams ended after `streams` where one is given.
-    async fn with(origin: &str, streams: Option<Duration>) -> Through {
+    /// For `origin`.
+    async fn with(origin: &str) -> Through {
         let machine = folder("front");
         server_names(&machine, origin);
         let google = Google::new().await;
         let server = Server::new(&machine).await;
         let log = Arc::new(Mutex::new(Vec::new()));
-        let mut front = Front::new(
+        let (ended, ends) = tokio::sync::watch::channel(false);
+        let front = Front::new(
             settings(server.address, origin),
             key(),
             google.provider(),
             log.clone(),
         )
-        .unwrap();
-        if let Some(streams) = streams {
-            front = front.streams(streams);
-        }
+        .unwrap()
+        .ends(ends);
         let (front, address) = listening(front).await;
         Through {
             _machine: machine,
@@ -83,7 +84,13 @@ impl Through {
             front,
             origin: origin.into(),
             log,
+            ended,
         }
+    }
+
+    /// Ends every stream passed on, as their word's expiry does.
+    fn end_streams(&self) {
+        self.ended.send_replace(true);
     }
 
     /// The answer to `method` on `path` with `headers` and `body`.
@@ -444,7 +451,7 @@ async fn a_callers_own_signed_in_header_is_dropped_for_the_services_own() {
 /// at its word's expiry, so a session signed out keeps no feed.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_feeds_stream_is_signed_streams_back_and_ends_at_its_words_expiry() {
-    let through = Through::with(ORIGIN, Some(Duration::from_millis(200))).await;
+    let through = Through::new().await;
     let cookie = through.sign_in("/").await;
     let request = Request::get("/feed")
         .header("cookie", &cookie)
@@ -464,6 +471,7 @@ async fn the_feeds_stream_is_signed_streams_back_and_ends_at_its_words_expiry() 
         .unwrap()
         .unwrap();
     assert_eq!(first.into_data().unwrap(), format!("data: {ANA}\n\n"));
+    through.end_streams();
     let ended = tokio::time::timeout(BACKSTOP, body.frame()).await.unwrap();
     assert!(ended.is_none(), "the stream went on past its word's expiry");
 }
@@ -473,7 +481,7 @@ async fn the_feeds_stream_is_signed_streams_back_and_ends_at_its_words_expiry() 
 /// the socket ends at its word's expiry.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_socket_is_signed_spliced_both_ways_and_ends_at_its_words_expiry() {
-    let through = Through::with(ORIGIN, Some(Duration::from_millis(300))).await;
+    let through = Through::new().await;
     let cookie = through.sign_in("/").await;
     let mut socket = TcpStream::connect(through.address).await.unwrap();
     let handshake = format!(
@@ -507,6 +515,7 @@ async fn a_socket_is_signed_spliced_both_ways_and_ends_at_its_words_expiry() {
         .unwrap()
         .unwrap();
     assert_eq!(&echoed, b"ping");
+    through.end_streams();
     let end = tokio::time::timeout(BACKSTOP, socket.read(&mut buffer))
         .await
         .unwrap();
@@ -520,6 +529,127 @@ async fn a_socket_is_signed_spliced_both_ways_and_ends_at_its_words_expiry() {
         "dGhlIHNhbXBsZSBub25jZQ=="
     );
     assert_eq!(handshake.headers[header::UPGRADE], "websocket");
+}
+
+/// A stream passed on ends when the word it was passed on with expires, the word's lifetime after
+/// it was passed on; the service ends its streams so unless a test stands in for that.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_ends_when_its_word_expires() {
+    let opened = Instant::now();
+    assert_eq!(expiry(opened) - opened, Duration::from_secs(word::LIFETIME));
+    let log: Log = Arc::new(Mutex::new(Vec::new()));
+    let front = Front::new(
+        settings("127.0.0.1:1".parse().unwrap(), ORIGIN),
+        key(),
+        Provider::google(),
+        log,
+    )
+    .unwrap();
+    assert!(matches!(front.ends, Ends::Expiry));
+    let passed = opened
+        .checked_sub(Duration::from_secs(word::LIFETIME))
+        .unwrap();
+    let cut = tokio::time::timeout(
+        BACKSTOP,
+        Ends::Expiry.bound(passed, std::future::pending::<()>()),
+    )
+    .await;
+    assert_eq!(cut, Ok(None), "a stream outlived its word");
+}
+
+/// Every answer passed on is its one visitor's, so no cache in front keeps it for another: the
+/// server's `public`, as on an upload, gives way to `private`, an answer naming neither is made
+/// `private`, and `no-store` stays as it is said.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_answer_passed_on_is_private_to_its_visitor() {
+    let through = Through::new().await;
+    let cookie = through.sign_in("/").await;
+    let cases: [(&[&str], &str); 9] = [
+        (
+            &["public, max-age=31536000, immutable"],
+            "max-age=31536000, immutable, private",
+        ),
+        (&[], "private"),
+        (&["no-store"], "no-store"),
+        (&["no-cache"], "no-cache, private"),
+        (&["private, max-age=60"], "private, max-age=60"),
+        (&["Public, s-maxage=600"], "s-maxage=600, private"),
+        (
+            &[r#"private="set-cookie, x-who", max-age=60"#],
+            "max-age=60, private",
+        ),
+        (&["public", "max-age=10"], "max-age=10, private"),
+        (
+            &[r#"no-cache="public, x", public"#],
+            r#"no-cache="public, x", private"#,
+        ),
+    ];
+    for (said, made) in cases {
+        let mut headers = vec![("cookie", cookie.as_str()), ("sec-fetch-mode", "cors")];
+        headers.extend(said.iter().map(|value| ("x-answer-cache-control", *value)));
+        let answer = through.get("/uploads/ana.png", &headers).await;
+        assert_eq!(answer.status(), StatusCode::OK, "{said:?}");
+        let controls: Vec<_> = answer
+            .headers()
+            .get_all(header::CACHE_CONTROL)
+            .iter()
+            .collect();
+        assert_eq!(controls, [made], "{said:?}");
+    }
+}
+
+/// A `Cache-Control` value's directives split at each comma outside a quoted string, an escaped
+/// quote inside one kept.
+#[test]
+fn directives_split_at_commas_outside_quotes() {
+    assert_eq!(
+        directives(r#" a, b="c, \"d", e ,, "#),
+        ["a", r#"b="c, \"d""#, "e"]
+    );
+    assert_eq!(directives(""), Vec::<&str>::new());
+}
+
+/// A cache-control the server sends that is not text is answered `no-store`.
+#[test]
+fn a_cache_control_that_is_not_text_is_no_store() {
+    let mut headers = HeaderMap::new();
+    headers.append(
+        header::CACHE_CONTROL,
+        HeaderValue::from_bytes(b"public, \xff").unwrap(),
+    );
+    headers.append(header::CACHE_CONTROL, HeaderValue::from_static("max-age=9"));
+    private(&mut headers);
+    let controls: Vec<_> = headers.get_all(header::CACHE_CONTROL).iter().collect();
+    assert_eq!(controls, ["no-store"]);
+}
+
+/// A new sign-in in a browser that holds a session ends that session, so its id signs nothing
+/// in, and the new one alone does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_sign_in_ends_the_session_its_browser_held() {
+    let through = Through::new().await;
+    let earlier = through.sign_in("/").await;
+    let begun = through.begin("/").await;
+    through.answers(&begun, &claims(&begun.query["nonce"]));
+    let both = format!("{}; {earlier}", begun.cookie);
+    let back = through
+        .back(
+            &format!("state={}&code={}", begun.state(), enc(CODE)),
+            Some(&both),
+        )
+        .await;
+    assert_eq!(back.status(), StatusCode::SEE_OTHER, "{}", through.log());
+    let later = cookies(&back).into_iter().next().unwrap();
+    let later = later.split(';').next().unwrap();
+    assert_ne!(later, earlier);
+    for (cookie, answered) in [
+        (earlier.as_str(), StatusCode::UNAUTHORIZED),
+        (later, StatusCode::OK),
+    ] {
+        let headers = [("cookie", cookie), ("sec-fetch-mode", "cors")];
+        let fetched = through.get("/api/people", &headers).await;
+        assert_eq!(fetched.status(), answered, "{cookie}");
+    }
 }
 
 /// Each way back but the browser's own good one is refused with a page that offers to begin
@@ -838,7 +968,7 @@ async fn a_visitor_comes_back_to_a_path_of_the_origin_never_a_url_a_caller_names
 #[tokio::test(flavor = "multi_thread")]
 async fn an_http_origins_cookies_are_neither_host_prefixed_nor_secure() {
     let origin = "http://localhost:8766";
-    let through = Through::with(origin, None).await;
+    let through = Through::with(origin).await;
     let begun = through.begin("/").await;
     assert_eq!(
         begun.set_cookie,

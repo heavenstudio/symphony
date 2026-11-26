@@ -105,6 +105,9 @@ The service keeps its two files there, beside the server's `sign-in.toml`. The e
    }
    ```
 
+   Nothing in front of the service may cache what it passes on: each answer is one signed-in
+   visitor's, and the service marks every one `private`.
+
 7. **Run it**, and keep it running with the machine's own service manager (launchd, systemd):
 
    ```sh
@@ -151,7 +154,8 @@ Any other path under `/.sign-in/` is answered `404`.
   `Cookie` (the server reads none) and every header that is said of one connection alone. It sets
   `Host` to the origin's and adds a word it signs for that request alone. Then it passes the
   request to `upstream` on a connection of its own. Bodies stream both ways, so reads, saves and
-  uploads pass whole.
+  uploads pass whole. Each answer comes back marked `private`, as it is that visitor's alone: the
+  server's `public`, as on an upload, gives way to it, and its `no-store` stays.
 - **The feed passes on too.** An event stream streams back as the server sends it. A WebSocket's
   handshake that the server answers `101` is joined to the browser's connection both ways. Each
   ends when the word it was opened with expires, five minutes later, and the client opens it again
@@ -215,7 +219,10 @@ the visitor is stays in the service's memory, kept under the id's digest. It is 
 `SameSite=Lax`, on the path `/` and held twelve hours from the sign-in, however it is used. The flow
 cookie is the same, held ten minutes. For an `https://` origin both are `Secure` and named with
 `__Host-`, so only this host can set them. For an `http://` origin, which Google allows on
-`localhost` alone, they are neither.
+`localhost` alone, they are neither, and a browser sends them to every port of `localhost`, not to
+the service's alone: whatever else listens on `localhost` receives the session's id.
+
+**A new sign-in** in a browser that holds a session ends that session as the new one begins.
 
 **Sign-out.** The visitor's own page posts to `/.sign-in/sign-out`. The service takes that only
 when the request's `Origin` is the origin. It ends the session at once and clears its cookie, and a

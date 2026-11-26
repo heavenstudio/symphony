@@ -305,7 +305,8 @@ pub(crate) struct Heard {
 }
 
 /// The server behind, standing in: every request's word verified by the server's own check, and
-/// answered `200` saying who it is from; `/feed` an event stream that sends who it is from and
+/// answered `200` saying who it is from, with each `X-Answer-Cache-Control` it was sent as its
+/// `Cache-Control`; `/feed` an event stream that sends who it is from and
 /// stays open; and `/socket`, a WebSocket's handshake, answered `101`, its connection sending who
 /// it is from and echoing what it is sent.
 pub(crate) struct Server {
@@ -384,6 +385,11 @@ impl Server {
                     return response;
                 }
                 let mut response = answer(StatusCode::OK, said);
+                for control in parts.headers.get_all("x-answer-cache-control") {
+                    response
+                        .headers_mut()
+                        .append(header::CACHE_CONTROL, control.clone());
+                }
                 response.headers_mut().insert(
                     header::CONNECTION,
                     HeaderValue::from_static("keep-alive, x-dropped"),
