@@ -23,6 +23,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { Button } from "./button";
 import type { View } from "./timeline-layout";
 import {
@@ -139,17 +140,20 @@ const LABELS = { in: "Zoom in", out: "Zoom out" } as const;
  * is the whole), and the range shown. */
 export function ZoomBar({ timeline, nav }: { timeline: TaskTimeline; nav: Navigation }) {
   const { view, whole, set } = nav;
-  /** A press of `button`, which sets `next`, the focus handed on where it would hide. */
+  /** A press of `button`, which sets `next`, the focus handed on where it would hide: once the
+   * view is drawn, as the button it goes to may be hidden until then (+ at the least, − on the
+   * whole task). */
   const press = (button: ZoomButton, next: () => View | null) => {
     return (event: MouseEvent<HTMLButtonElement>) => {
       const view = next();
       const pressed = event.currentTarget;
       const to = pressed.ownerDocument.activeElement === pressed ? handoff(button, view) : null;
-      if (to !== null) {
-        const label = LABELS[to];
-        pressed.parentElement?.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.focus();
+      if (to === null) {
+        set(view);
+        return;
       }
-      set(view);
+      flushSync(() => set(view));
+      pressed.parentElement?.querySelector<HTMLElement>(`[aria-label="${LABELS[to]}"]`)?.focus();
     };
   };
   return (

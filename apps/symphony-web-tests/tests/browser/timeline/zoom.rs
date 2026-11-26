@@ -242,6 +242,18 @@ fn a_toolbar_button_that_hides_itself_hands_the_focus_on() {
     }
     assert!(said.contains(" · 5 m of "), "{said}");
     assert_eq!(chrome.eval(focused), json!("Zoom out"));
+    // Whole task from the least, + hidden until the whole task is drawn: to + once it is.
+    chrome.eval("document.querySelector('.tl-zoom-group button:first-child').focus()");
+    let whole = enter(&mut chrome, "Whole task from the least");
+    assert_eq!(whole, WHOLE);
+    assert_eq!(chrome.eval(focused), json!("Zoom in"));
+    // + back to the least, then − from it: still the focus's.
+    for _ in 0..12 {
+        if enter(&mut chrome, "+ to the least again").contains(" · 5 m of ") {
+            break;
+        }
+    }
+    assert_eq!(chrome.eval(focused), json!("Zoom out"));
     // From there the keys go on zooming: − with the focus where it was handed.
     let out = enter(&mut chrome, "− from the least");
     assert!(out.contains(" · 10 m of "), "{out}");
@@ -662,13 +674,12 @@ fn on_a_phone_the_timeline_keeps_its_list_with_no_toolbar() {
     assert_eq!(chrome.eval(SIDEWAYS), json!(false));
 }
 
-/// A task whose hours are no longer than a zoom's least (here made half a minute after its hour,
-/// done two minutes later) draws its lanes as before: no toolbar, nothing to zoom.
-#[test]
-fn a_task_too_short_to_zoom_into_draws_no_toolbar() {
+/// The fixture's task made half a minute after its hour and done `took` seconds later, by one
+/// executor, with nothing else on it.
+fn short(took: f64) -> Value {
     let mut brief = fixture();
     let hour = (brief["created"].as_f64().unwrap() / 3600.0).floor() * 3600.0;
-    let (made, done) = (hour + 30.0, hour + 150.0);
+    let (made, done) = (hour + 30.0, hour + 30.0 + took);
     brief["zone"] = json!([]);
     brief["created"] = json!(made);
     brief["now"] = json!(done);
@@ -682,7 +693,14 @@ fn a_task_too_short_to_zoom_into_draws_no_toolbar() {
     brief["rounds"] = json!([]);
     brief["runs"] = json!([]);
     brief["gates"] = json!([]);
-    let site = served(&brief);
+    brief
+}
+
+/// A task whose hours are no longer than a zoom's least (here done two minutes after it was made,
+/// half a minute after its hour) draws its lanes as before: no toolbar, nothing to zoom.
+#[test]
+fn a_task_too_short_to_zoom_into_draws_no_toolbar() {
+    let site = served(&short(120.0));
     let Some(mut chrome) = chrome() else { return };
     open_drawn(&mut chrome, &site, 1440);
     assert!(drawn(&mut chrome, ".tl-lanes"));
@@ -691,4 +709,28 @@ fn a_task_too_short_to_zoom_into_draws_no_toolbar() {
         chrome.eval("[document.querySelector('.tl-lanes').className, document.querySelectorAll('.tl-lanes [data-from]').length]"),
         json!(["tl-lanes", 0])
     );
+}
+
+/// On hours of 8½ minutes one + goes from the whole task to the least and one − back: each hands
+/// the focus to a button that was hidden until the press drew it.
+#[test]
+fn on_a_short_task_one_press_from_end_to_end_hands_the_focus_to_a_button_it_draws() {
+    let site = served(&short(480.0));
+    let Some(mut chrome) = chrome() else { return };
+    open_drawn(&mut chrome, &site, 1440);
+    let focused =
+        "document.activeElement.getAttribute('aria-label') ?? document.activeElement.textContent";
+    let shown = "[...document.querySelectorAll('.tl-zoom-group button')].map(b => getComputedStyle(b).visibility === 'visible')";
+    assert_eq!(chrome.eval(shown), json!([false, false, true]));
+    chrome.eval("document.querySelector(\".tl-zoom button[aria-label='Zoom in']\").focus()");
+    let whole = chrome.eval(RANGE);
+    components::key(&mut chrome, "Enter", "Enter", 13);
+    let least = readout(&mut chrome, "+", "said.includes(' · 5 m of ')");
+    assert_eq!(chrome.eval(shown), json!([true, true, false]));
+    assert_eq!(chrome.eval(focused), json!("Zoom out"), "{least}");
+    components::key(&mut chrome, "Enter", "Enter", 13);
+    // The whole task again; its hours keep their marks by the hour, one here.
+    assert!(chrome.wait_for(&format!("({RANGE}) === {whole}"), SHOWN));
+    assert_eq!(chrome.eval(shown), json!([false, false, true]));
+    assert_eq!(chrome.eval(focused), json!("Zoom in"));
 }
