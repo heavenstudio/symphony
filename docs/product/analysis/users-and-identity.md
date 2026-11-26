@@ -1187,7 +1187,7 @@ What follows:
 What is not settled is the person at the machine once others are named: they keep writing as
 `owner` on every board, holding every power there, until the card below decides otherwise.
 
-- [ ] **machine-person-name** — Once a board names other people, your own lines there still read `owner ·`, beside `ana ·` and the others'. What is left is whether you take a short name of your own, and when. A: never; you are `owner` on every board, the one line that names no profile. B: on a board that names anyone else, your new lines carry your own short name, from a profile you give yourself, and on a board with nobody named they read `owner ·` as today. C: once you give yourself a short name, every new line of yours carries it, on every board, named or not. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
+- [x] **machine-person-name** — Once a board names other people, your own lines there still read `owner ·`, beside `ana ·` and the others'. What is left is whether you take a short name of your own, and when. A: never; you are `owner` on every board, the one line that names no profile. B: on a board that names anyone else, your new lines carry your own short name, from a profile you give yourself, and on a board with nobody named they read `owner ·` as today. C: once you give yourself a short name, every new line of yours carries it, on every board, named or not. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
   [2026-11-23 19:40] agent — Posted for the board task `app/names-on-lines`. A concept: nothing is built by this card.
 
     **Base (today, with names on lines built).** A person a board names writes `ana · approved — A`, a thread's sender `ana` and a comment `ana · title`. You, the person at the machine, write `owner` on every board, and hold every power there. A line already written is never rewritten: the lines written as `owner` read as yours.
@@ -1213,6 +1213,7 @@ What is not settled is the person at the machine once others are named: they kee
     - **people-kept-where** (B) gives the person at the machine every power on a board with nobody named. It does not say how their lines read once others are.
 
     None of them decides this.
+  [2026-11-26 08:03] owner · approved — C
 
 - [r] **person-name-on-lines** — Once several people are on a board, each line a person writes on a card carries their short name where it says `owner` today. The choice is how it is written. A: the name takes the owner's place, `ana · approved — A`; a person's line is any line that is not an agent's, and `agent` and `owner` are never anyone's name. B: the word stays and the name follows, `owner ana · approved — A`. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
   [2026-11-23 00:52] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
