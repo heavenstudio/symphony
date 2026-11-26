@@ -1,0 +1,54 @@
+# `symphony-sign-in`: the Symphony's own sign-in service (docs/operations/SIGN_IN_SERVICE.md), a
+# program of its own that stands in front of the server, signs visitors in with Google by OpenID
+# Connect, keeps the client secret and the session, and passes each request on signed with the header
+# the server verifies (docs/operations/SIGNED_IN.md). Never published and never shipped: nothing links
+# it, the server knows it only by the public key `sign-in.toml` names, and it reaches Google through
+# `curl`, so it adds no TLS crate.
+[package]
+name = "symphony-sign-in"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The machine folder, by the server's rule, which the notice crate repeats for a program that links
+# no board crate.
+symphony-notice = { path = "../symphony-notice" }
+# The word's three parts and the tokens a sign-in carries: base64url.
+base64.workspace = true
+# The word's signature: the version the server verifies it with.
+ed25519-dalek = { version = "3", default-features = false }
+# The provider's query and the token request's body.
+form_urlencoded = "1"
+# A feed's body ended at its word's expiry (`stream::unfold`).
+futures-util = { version = "0.3", default-features = false }
+http-body-util = "0.1"
+# The listener and the request passed on: HTTP/1.1, upgrades for the feed's socket. The version the
+# server's axum builds already; `client` is this package's alone.
+hyper = { version = "1", features = ["client", "http1", "server"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+# Whose its files are.
+libc.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+# PKCE's challenge, and the digests a sign-in under way and a session are kept by.
+sha2.workspace = true
+# The browser's flow cookie compared with the provider's `state`, and the id token's `nonce` with
+# ours, in constant time: the version ed25519-dalek builds already.
+subtle = { version = "2", default-features = false }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+# Its settings file.
+toml.workspace = true
+
+[dev-dependencies]
+# The server's own check of the word (`symphony::signed_in`), which the tests' server behind runs on
+# every request it is passed.
+symphony = { package = "symphony-app", path = "../symphony" }
+test-time = { path = "../test-time" }
+
+[lints]
+workspace = true
