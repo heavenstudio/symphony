@@ -374,3 +374,68 @@ fn a_roster_says_which_boards_a_visitor_is_on_and_is_never_asked_of_the_machine(
         "asked with the board's root and the visitor; the machine is never asked of"
     );
 }
+
+/// A machine folder whose `sign-in.toml` names `service`'s key.
+fn naming(service: &crate::testing::SignIn) -> crate::testing::Tree {
+    let machine = crate::testing::Tree::new();
+    service.named_in(&machine.path(""));
+    machine
+}
+
+#[test]
+fn a_word_the_machine_folders_key_verifies_is_the_person_its_service_names_never_the_machine() {
+    use crate::testing::SignIn;
+    let service = SignIn::new(1);
+    let machine = naming(&service);
+    let gate = Judge::new(&[]).gate.with_machine(machine.path(""));
+    let visitor = gate
+        .signed(&service.word("google", "110248"), SystemTime::now())
+        .unwrap();
+    assert_eq!(
+        visitor,
+        Visitor::Signed(SignedIn {
+            service: "google".into(),
+            subject: "110248".into(),
+            display: Some("Ana Lima".into()),
+            origin: SignIn::ORIGIN.into(),
+        })
+    );
+    assert_eq!(visitor.origin(), Some(SignIn::ORIGIN));
+    for other in [
+        Visitor::Machine,
+        Visitor::Node("ci".into()),
+        Visitor::Login(login(OTHER, "ana@example.com", "Ana")),
+    ] {
+        assert_eq!(other.origin(), None, "{other:?}");
+    }
+    // Asked of the roster, which the folder's profiles fill: it holds none, so no board has them.
+    assert_eq!(gate.member(Path::new("/alpha"), &visitor), None);
+}
+
+#[test]
+fn a_word_is_refused_where_no_key_is_set_where_the_file_does_not_read_and_by_another_key() {
+    use crate::testing::{SignIn, Tree};
+    let service = SignIn::new(1);
+    let word = service.word("google", "110248");
+    let now = SystemTime::now();
+    assert_eq!(
+        Judge::new(&[]).gate.signed(&word, now),
+        None,
+        "no machine folder"
+    );
+    let empty = Tree::new();
+    let gate = Judge::new(&[]).gate.with_machine(empty.path(""));
+    assert_eq!(gate.signed(&word, now), None, "no sign-in.toml");
+    let broken = Tree::new();
+    broken.write(symphony::signed_in::FILE, "key = 7\n");
+    let gate = Judge::new(&[]).gate.with_machine(broken.path(""));
+    assert_eq!(gate.signed(&word, now), None, "a file that does not read");
+    let other = naming(&SignIn::new(2));
+    let gate = Judge::new(&[]).gate.with_machine(other.path(""));
+    assert_eq!(gate.signed(&word, now), None, "another key");
+    let own = naming(&service);
+    let gate = Judge::new(&[]).gate.with_machine(own.path(""));
+    assert!(gate.signed(&word, now).is_some());
+    let stale = service.signs(&SignIn::claims("google", "110248", -400, 300));
+    assert_eq!(gate.signed(&stale, now), None, "stale");
+}

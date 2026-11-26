@@ -83,7 +83,7 @@ pub(super) fn asked(request: &Request) -> bool {
 }
 
 /// Whether a WebSocket's `Origin`, when it names one, is this server's own page: `http://` and the
-/// request's `Host`.
+/// request's `Host`, or the origin its signed word was made for ([`crate::front::own_origin`]).
 fn own_origin(request: &Request) -> bool {
     // The hosted boundary already required its exact configured HTTPS Origin before any read.
     if crate::hosted::admission(request).is_some() {
@@ -97,9 +97,10 @@ fn own_origin(request: &Request) -> bool {
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
-    origin.to_str().is_ok_and(|origin| {
-        !host.is_empty() && origin.eq_ignore_ascii_case(&format!("http://{host}"))
-    })
+    let signed = crate::front::Admitted::origin(request.extensions());
+    origin
+        .to_str()
+        .is_ok_and(|origin| crate::front::own_origin(origin, host, signed.as_deref()))
 }
 
 /// The refusal of an upgrade from another site's page, answered before the feed reads anything.
@@ -391,6 +392,55 @@ mod tests {
             HeaderValue::from_bytes(b"http://127.0.0.1:8765\xff").unwrap(),
         );
         assert!(!own_origin(&opaque));
+    }
+
+    /// A signed visitor's socket from the page of the origin their word was made for is theirs,
+    /// and only that page is, under the service's name; under a name of this machine's the page
+    /// of either is.
+    #[test]
+    fn a_signed_visitors_socket_is_from_the_origin_their_word_was_made_for() {
+        let signed = |headers: &[(header::HeaderName, &str)]| {
+            let mut request = request(headers);
+            request.extensions_mut().insert(crate::front::Admitted {
+                actor: symphony_board::workflow::local_actor(),
+                machine: false,
+                origin: Some("https://board.example.com".into()),
+            });
+            own_origin(&request)
+        };
+        let service = (header::HOST, "board.example.com");
+        assert!(signed(&[
+            service.clone(),
+            (header::ORIGIN, "https://board.example.com")
+        ]));
+        for other in [
+            "http://board.example.com",
+            "https://example.com",
+            "https://board.example.com:8443",
+        ] {
+            assert!(
+                !signed(&[service.clone(), (header::ORIGIN, other)]),
+                "{other}"
+            );
+        }
+        let loopback = (header::HOST, "127.0.0.1:8765");
+        assert!(signed(&[
+            loopback.clone(),
+            (header::ORIGIN, "https://board.example.com")
+        ]));
+        assert!(signed(&[
+            loopback.clone(),
+            (header::ORIGIN, "http://127.0.0.1:8765")
+        ]));
+        assert!(!signed(&[
+            loopback,
+            (header::ORIGIN, "https://example.com")
+        ]));
+        // Without a word, the service's page is another site's.
+        assert!(!own_origin(&request(&[
+            service,
+            (header::ORIGIN, "https://board.example.com")
+        ])));
     }
 
     #[tokio::test]

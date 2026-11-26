@@ -525,11 +525,14 @@ async fn dispatch(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     request: Request,
 ) -> Response {
-    let Some(visitor) = crate::front::visitor(&projects.starter, peer.ip()).await else {
-        return crate::front::peer_refused();
+    let visitor = match crate::front::judged(&projects.starter, peer.ip(), request.headers()).await
+    {
+        Ok(visitor) => visitor,
+        Err(refused) => return *refused,
     };
     let path = request.uri().path().to_string();
-    // `/api/front` holds to loopback's name alone; every other route to a name of this machine.
+    // `/api/front` holds to loopback's name alone; every other route to a name of this machine, or
+    // to the origin a signed visitor's word was made for.
     if path != symphony_api::FRONT_PATH {
         let host = request
             .headers()
@@ -537,10 +540,14 @@ async fn dispatch(
             .and_then(|host| host.to_str().ok())
             .unwrap_or("")
             .to_string();
+        let signed = visitor
+            .origin()
+            .is_some_and(|origin| crate::front::names_origin(origin, &host));
         let starter = projects.starter.clone();
-        let named = crate::spawn::blocking(move || starter.allows_host(&host))
-            .await
-            .unwrap_or(false);
+        let named = signed
+            || crate::spawn::blocking(move || starter.allows_host(&host))
+                .await
+                .unwrap_or(false);
         if !named {
             return (
                 StatusCode::FORBIDDEN,

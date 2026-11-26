@@ -294,6 +294,85 @@ pub fn laptop_with(roster: crate::gate::Roster) -> crate::gate::Gate {
     .with_roster(roster)
 }
 
+/// A sign-in service in front of the server, as a test stands one in: the key it signs with, and
+/// the words it signs for [`SignIn::ORIGIN`] (docs/operations/SIGNED_IN.md).
+pub struct SignIn {
+    key: ed25519_dalek::SigningKey,
+}
+
+impl SignIn {
+    /// The origin browsers reach the server at through it.
+    pub const ORIGIN: &str = "https://board.example.com";
+    /// The Host a request through it names.
+    pub const HOST: &str = "board.example.com";
+
+    /// The service whose key is made of `seed`.
+    pub fn new(seed: u8) -> SignIn {
+        SignIn {
+            key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32]),
+        }
+    }
+
+    /// Its public key, as `sign-in.toml` names it.
+    pub fn public(&self) -> String {
+        let bytes = self.key.verifying_key().to_bytes();
+        let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        format!("ed25519:{hex}")
+    }
+
+    /// The machine folder `machine` naming this service's key and [`SignIn::ORIGIN`] in its
+    /// `sign-in.toml`, mode 600.
+    pub fn named_in(&self, machine: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(machine).unwrap();
+        let path = machine.join(symphony::signed_in::FILE);
+        let text = format!(
+            "key = \"{}\"\norigin = \"{}\"\n",
+            self.public(),
+            SignIn::ORIGIN
+        );
+        std::fs::write(&path, text).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    /// `claims`, an object, signed as the word a request carries.
+    pub fn signs(&self, claims: &serde_json::Value) -> String {
+        use base64::Engine as _;
+        use ed25519_dalek::Signer as _;
+        let part = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+        let input = format!(
+            "{}.{}",
+            part(br#"{"alg":"EdDSA","typ":"JWT"}"#),
+            part(claims.to_string().as_bytes())
+        );
+        let signature = self.key.sign(input.as_bytes());
+        format!("{input}.{}", part(&signature.to_bytes()))
+    }
+
+    /// The claims of a word for `service`'s `subject`, made for [`SignIn::ORIGIN`], issued
+    /// `issued` seconds from now (before it when negative) and holding `life` seconds.
+    pub fn claims(service: &str, subject: &str, issued: i64, life: u64) -> serde_json::Value {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let iat = now.checked_add_signed(issued).unwrap();
+        serde_json::json!({
+            "iss": service,
+            "sub": subject,
+            "name": "Ana Lima",
+            "aud": SignIn::ORIGIN,
+            "iat": iat,
+            "exp": iat + life,
+        })
+    }
+
+    /// A word for `service`'s `subject`, issued a few seconds ago and holding five minutes.
+    pub fn word(&self, service: &str, subject: &str) -> String {
+        self.signs(&SignIn::claims(service, subject, -5, 300))
+    }
+}
+
 /// The board of the project at a root, made on PostgreSQL as its command line makes it, in the
 /// checkout's git folder: its server stopped when it drops.
 pub struct Board(symphony_board::server::Home);

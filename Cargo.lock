@@ -4350,6 +4350,7 @@ dependencies = [
 name = "symphony-app"
 version = "0.2.0"
 dependencies = [
+ "base64",
  "comrak",
  "ed25519-dalek",
  "fancy-regex",
@@ -4546,6 +4547,8 @@ name = "symphony-server"
 version = "0.2.0"
 dependencies = [
  "axum",
+ "base64",
+ "ed25519-dalek",
  "flate2",
  "futures-util",
  "libc",
