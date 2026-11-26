@@ -110,12 +110,20 @@ export function textPx(text: string, tabular = false): number {
   return (advances * XS_PX) / 1000 + 0.5;
 }
 
+/** The tracks of the common page widths, in pixels: 1280, 1440, and 1600 or wider, where the track
+ * stops growing. The timeline browser test measures each at its page width. */
+export const TRACKS: readonly number[] = [935, 1095, 1158];
+
 /**
- * The track widths a word's room is weighed at, in pixels, every 50 from 400 to 1600: a word shows
- * from the first of them its room holds it at (`tl-from-W`, `tl-to-W` in the style sheet), at
- * every width when 300 does, and never when 1600 does not.
+ * The track widths a word's room is weighed at, in pixels, ascending: every 50 from 400 to 1600,
+ * and TRACKS, so a word whose room holds it at a common page's track shows there rather than from
+ * the next 50. A word shows from the first of them its room holds it at (`tl-from-W`, `tl-to-W`
+ * in the style sheet: two container queries a width), at every width when 300 does, and never
+ * when 1600 does not.
  */
-export const WIDTHS: readonly number[] = Array.from({ length: 25 }, (_, at) => 400 + at * 50);
+export const WIDTHS: readonly number[] = Array.from({ length: 25 }, (_, at) => 400 + at * 50)
+  .concat(TRACKS)
+  .sort((a, b) => a - b);
 
 /** How wide a run's bar is, in pixels, before its words go inside it, cut to fit; narrower, they
  * are in its hover, its focus and its row in the list. */

@@ -3780,7 +3780,8 @@ is a filled dot with one arrow from it to a ring on its addressed lane's line, i
 and time on the hours line over a dashed guide down to it; one whose two ends are one lane
 is a ring around its dot, with no arrow. A word in the lanes is drawn only where it fits, weighed
 letter by letter at the widest of the faces the page's type names, so it is whole in each, and
-clear of a segment of a few minutes before it that is drawn wider than its time; every part of them is said to assistive technology and reached by the arrow keys, and the
+clear of a segment of a few minutes before it that is drawn wider than its time; every part of
+them is said to assistive technology and reached by the arrow keys, and the
 list stays for assistive technology beside them. A run's words name its command, its
 wait to start and its run time apart (to the second under a minute), how it ended, its
 commit, who ran it and where: a pointer resting on its part reads them; wide, its part

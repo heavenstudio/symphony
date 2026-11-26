@@ -72,6 +72,7 @@ import {
   statusTone,
   stops,
   stretches,
+  TRACKS,
   textPx,
   timelineEnd,
   took,
@@ -906,10 +907,11 @@ describe("a task's timeline laid out", () => {
     ]);
     // A short word that fits only where the long one does is left out.
     expect(fitted("ab", "a", 0.5)).toEqual([]);
-    // "abc" needs 36 px of 3.2 %, a 1,126 px track: from 1150; "ab" 29.1 px, from 950 to there.
+    // "abc" needs 36 px of 3.2 %, a 1,126 px track: from 1150; "ab" 29.1 px, a 909 px track, from
+    // 935 (a 1280 page's track, TRACKS) to there.
     expect(fitted("abc", "ab", 3.2)).toEqual([
       { text: "abc", from: 1150, to: null },
-      { text: "ab", from: 950, to: 1150 },
+      { text: "ab", from: 935, to: 1150 },
     ]);
     // A segment's words keep clear of its padding and its 1 px border either side.
     expect(SEG_MIN_PX).toBe(PAD_PX + 2);
@@ -921,7 +923,12 @@ describe("a task's timeline laid out", () => {
     expect(roomCss({ room: 0.125, last: false, bar: 1 })).toBe("0.12%");
     expect(roomCss({ room: 0.375, last: true, bar: 1 })).toBe("calc(0.38% + var(--end))");
     expect(fitClass({ text: "x", from: null, to: 500 })).toBe("tl-fit tl-to-500");
-    expect(WIDTHS).toEqual(Array.from({ length: 25 }, (_, at) => 400 + 50 * at));
+    // Every 50 from 400 to 1600, and the tracks of a 1280, a 1440 and a 1600 or wider page.
+    expect(TRACKS).toEqual([935, 1095, 1158]);
+    expect(WIDTHS).toEqual([
+      400, 450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 935, 950, 1000, 1050, 1095, 1100, 1150,
+      1158, 1200, 1250, 1300, 1350, 1400, 1450, 1500, 1550, 1600,
+    ]);
   });
 
   it("the wide lanes read as the approved picture at its width, and mark the hours and now", () => {
@@ -2073,12 +2080,12 @@ describe("each stage's cost after its time", () => {
   it("tries three widths, longest first: its word, time and cost; its time and cost; its time", () => {
     const all = ["in progress 3 h 14 m $30.75", "3 h 14 m $30.75", "3 h 14 m"];
     // 27, 15 and 8 characters: 183, 112 and 66 px weighed letter by letter with their padding and
-    // border, of 12 % of the track.
+    // border, of 12 % of the track: from 1,525, 933 (a 1280 page's track, 935) and 550 px.
     const fits = fittedFirst(all, 12);
     expect(fits).toEqual([
       { text: all[0], from: 1550, to: null },
-      { text: all[1], from: 950, to: 1550 },
-      { text: all[2], from: 550, to: 950 },
+      { text: all[1], from: 935, to: 1550 },
+      { text: all[2], from: 550, to: 935 },
     ]);
     expect(shown(fits, 1600)).toBe(all[0]);
     expect(shown(fits, 1400)).toBe(all[1]);
@@ -2407,9 +2414,8 @@ describe("a quiet stretch skipped", () => {
       }
     }
     // The review of two minutes at 02:44 on 11-20, drawn at its least width, and the hour after
-    // it, whose words keep past it: at 1440 wide its "1 h 4 m" (44.1 px) gives way, as the track
-    // it is weighed at, 1050, leaves it 43.3 past the review; at 1600 wide (a 1,158 px track) it is
-    // drawn clear of it.
+    // it, whose words keep past it: its "1 h 4 m" (44.1 px) gives way on a 1,050 px track, which
+    // leaves it 43.3 past the review, and from 1440 wide (a 1,095 px track) it is drawn clear of it.
     const stage = segs("stage");
     const after = stage.findIndex((seg) => seg.title.startsWith("in progress 1 h 4 m"));
     const review = stage[after - 1] as Seg;
@@ -2418,7 +2424,11 @@ describe("a quiet stretch skipped", () => {
       (review.width * 1095) / 100 < SEG_MIN_PX,
     ]).toEqual([true, true]);
     expect(stage[after]?.inset).toBeCloseTo(review.width, 9);
-    expect([1095, 1158].map((px) => shown(stage[after]?.text ?? [], px))).toEqual(["", "1 h 4 m"]);
+    expect([1050, 1095, 1158].map((px) => shown(stage[after]?.text ?? [], px))).toEqual([
+      "",
+      "1 h 4 m",
+      "1 h 4 m",
+    ]);
     // The 39 minutes before the band, in its stage and its claim, give way at 1440 and 1600 wide,
     // where "39 m" whole needs 44.8 px, which the system face draws 30 px wide; on a track of 1,200,
     // wider than the page draws, they are said.
@@ -2426,6 +2436,31 @@ describe("a quiet stretch skipped", () => {
     for (const key of ["stage", "executor"]) {
       expect([1095, 1158, 1200].map((px) => shown(late(key).text, px))).toEqual(["", "", "39 m"]);
     }
+  });
+
+  it("says the first round that asked for changes from a 1280 page's track, which holds it", () => {
+    const segs =
+      lanes(guards(), undefined, null, CUT).lanes.find((lane) => lane.key === "reviewer")?.segs ??
+      [];
+    const said = segs.flatMap((seg) =>
+      seg.after === null ? [] : [[seg.title.split(":")[0], seg.after[0]]],
+    );
+    // Rounds 1 and 5 have no room at any width. Round 3's "changes" is 6.7 % of the track before
+    // the band: its word, its 6 px inset past a bar of 34 px and its 4 px gap, 60.5 px, from a
+    // 903 px track, so from 935 (TRACKS), where a step of 50 put it at 950, past a 1280 page's
+    // track. Round 4's needs 1,162 px, wider than the page draws; round 2's 738, from 750.
+    expect(said).toEqual([
+      ["round 2", { text: "approved", from: 750, to: null }],
+      ["round 3", { text: "changes", from: 935, to: null }],
+      ["round 4", { text: "changes", from: 1200, to: null }],
+      ["round 6", { text: "approved", from: null, to: null }],
+    ]);
+    const after = segs.find((seg) => seg.title.startsWith("round 3") && seg.after !== null)?.after;
+    if (!after) throw new Error("round 3 says no verdict");
+    const [, , room] = after;
+    const words = textPx("changes") + AFTER_PAD_PX + GAP_PX;
+    expect([room.last, (room.bar * 935) / 100 > SEG_MIN_PX]).toEqual([false, true]);
+    expect([902, 935].map((px) => words <= (room.room * px) / 100)).toEqual([false, true]);
   });
 
   it("is a row of a phone's list after the rows of the instant it begins at", () => {
@@ -2586,8 +2621,9 @@ describe("a quiet stretch skipped", () => {
     expect(second?.length).toEqual({ text: "+6 h 44 m", from: 1150, to: null });
     // Its day's 76.8 px past its middle, 23.6 of "+10 m" and a gap, over 6.7%: from 1,559 px.
     expect(second?.day).toEqual({ text: "11-20", from: 1600, to: null });
-    // The third's length gives way to the second's alone: 62.5 px over 6.7%, from 933 px.
-    expect(third?.length).toEqual({ text: "+10 m", from: 950, to: null });
+    // The third's length gives way to the second's alone: 62.5 px over 6.7%, from 933 px, so from
+    // a 1280 page's track.
+    expect(third?.length).toEqual({ text: "+10 m", from: 935, to: null });
     expect(third?.day).toBeNull();
   });
 });
@@ -2603,7 +2639,8 @@ describe("the lanes' weights", () => {
   // Segoe UI's metrics (release 1.01), loaded as a web font in Chrome: its semibold for 600, its
   // bold as that one's bound (Selawik's match was made for its regular and bold, before its
   // semibold), its regular for 400. They are the design's advances: how Windows hints Segoe UI at
-  // 12 px is not measured here.
+  // 12 px is not measured here. Nor is the stack's trailing generic `sans-serif`, the face a
+  // machine with none of those draws (a Linux machine's own): it is outside the faces measured.
   const FACES: Record<string, string> = {
     "system 600":
       "266 342 539 658 658 999 734 331 414 414 481 658 331 481 331 325 667 496 630 655 673 649 668 593 676 668 331 331 658 658 658 543 924 713 682 733 741 614 590 756 770 302 581 693 586 896 760 782 661 782 681 663 652 753 706 996 713 691 671 414 325 414 658 613 500 577 639 579 639 591 393 634 618 274 274 582 281 912 613 611 635 635 417 553 397 613 570 823 562 580 558 414 286 414 658 331",
