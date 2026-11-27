@@ -908,6 +908,7 @@ and may not direct agents. A person who may direct agents writes as the owner do
 
     Neither decides this.
   [2026-11-27 07:47] owner · approved — B
+  [2026-11-27 07:48] agent — Filed as `app/held-comment-block-twice` and staffed: a held comment whose block stands twice is drawn and passed on after the copy nearest the line it was left after, so no Pass on is refused for it.
 
 What follows:
 
