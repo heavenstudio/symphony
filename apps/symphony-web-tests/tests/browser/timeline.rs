@@ -31,6 +31,16 @@ fn fixture() -> Value {
     .expect("the timeline fixture")
 }
 
+/// The pictures' task with its second test made red and its third grey (its result unknown), as
+/// the card `timeline-run-words-contrast` drew it: a green, a red and a grey bar wide enough for
+/// their words at 1280 wide.
+fn red_and_grey() -> Value {
+    let mut timeline = fixture();
+    timeline["runs"][2]["result"] = json!("red");
+    timeline["runs"][3]["result"] = json!("unknown");
+    timeline
+}
+
 /// A week-long task of fifty steps: twenty-four review rounds of two minutes each, each sent back
 /// after six hours' work, the last of it going on now.
 fn week() -> Value {
@@ -649,6 +659,56 @@ fn the_cards_task_draws_its_runs_on_one_or_two_rows_and_hatches_the_time_not_kep
         chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
         json!(true)
     );
+}
+
+/// Each finished run's bar that draws its words: its tone, its words, and their WCAG contrast
+/// against the bar as drawn, each colour laid on a canvas pixel over the layers under it up to the
+/// first opaque one.
+const RUN_CONTRAST: &str = "(() => {
+    const pen = document.createElement('canvas').getContext('2d', {willReadFrequently: true});
+    const paint = colours => { pen.clearRect(0, 0, 1, 1); for (const colour of colours) { pen.fillStyle = colour; pen.fillRect(0, 0, 1, 1); } return [...pen.getImageData(0, 0, 1, 1).data]; };
+    const under = e => { const layers = []; for (let at = e; at; at = at.parentElement) { const colour = getComputedStyle(at).backgroundColor; layers.unshift(colour); if (paint([colour])[3] === 255) break; } return layers; };
+    const linear = v => (v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    const luminance = ([r, g, b]) => 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+    return [...document.querySelectorAll('.tl-lane:is([data-lane=builds], [data-lane=tests]) .tl-seg:not(.tl-waiting, .tl-running) > .tl-fit')].filter(e => e.getClientRects().length > 0).map(words => {
+        const bar = words.parentElement, layers = under(bar);
+        const [a, b] = [luminance(paint([...layers, getComputedStyle(words).color])), luminance(paint(layers))];
+        return [bar.style.getPropertyValue('--c'), words.textContent, Math.round((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) * 100) / 100];
+    });
+})()";
+
+/// A finished run's words on its bar, the owner's B on the card `timeline-run-words-contrast`
+/// (docs/design/analysis/timeline-navigation.md): each bar in its tone's full colour, its words
+/// the card's colour, at 4.5 to 1 or more on a green, a red and a grey bar, on a light page and on
+/// a dark one.
+#[test]
+fn a_runs_words_read_at_four_and_a_half_to_one_on_its_bar_in_both_schemes() {
+    let site = served(&red_and_grey());
+    let Some(mut chrome) = chrome() else { return };
+    for mode in ["light", "dark"] {
+        chrome.scheme(mode);
+        open_drawn(&mut chrome, &site, 1280);
+        let read = chrome.eval(RUN_CONTRAST);
+        let bars: Vec<(String, String, f64)> = serde_json::from_value(read.clone()).unwrap();
+        assert_eq!(
+            bars.iter()
+                .map(|(tone, words, _)| (tone.as_str(), words.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("var(--like)", "verify · 24 m"),
+                ("var(--dislike)", "verify · 23 m"),
+                ("var(--resolved)", "certificate verify · 24 m")
+            ],
+            "{mode}: {read}"
+        );
+        for (tone, words, ratio) in bars {
+            assert!(
+                ratio >= 4.5,
+                "{mode}: \"{words}\" reads at {ratio}:1 on its {tone} bar, under 4.5:1: {read}"
+            );
+        }
+        eprintln!("{mode}: {read}");
+    }
 }
 
 /// Where each message's tick is against its lane: its x off its time, its middle off its lane's
@@ -1684,8 +1744,9 @@ fn an_answer_for_a_task_the_page_left_never_draws_one_tasks_timeline_in_anothers
 /// (docs/product/analysis/reports-timeline-*.svg): `symphony shot`, the workspace's build run as an agent
 /// runs it, of the pictures' task and of a week-long task of fifty steps on its page from the
 /// stand-in server, at a phone's width and wide, light and dark, and of a phone off its network
-/// failing to read it, into the folder `SYMPHONY_TIMELINE_SHOTS` names. Without it the case takes
-/// none.
+/// failing to read it, with the card's example task and the pictures' task with a red and a grey
+/// test before and after, into the folder `SYMPHONY_TIMELINE_SHOTS` names. Without it the case
+/// takes none.
 #[test]
 fn pictures_of_the_timeline_when_a_folder_is_named() {
     let Some(out) = std::env::var_os("SYMPHONY_TIMELINE_SHOTS").map(PathBuf::from) else {
@@ -1793,6 +1854,27 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
                 &site,
                 view,
                 out.join(format!("timeline-guards-{version}-{name}.png")),
+            );
+        }
+    }
+    // The pictures' task with a test made red and one grey, before and after, 1280 wide, light and
+    // dark: each colour a finished run's words sit on, as the card timeline-run-words-contrast
+    // drew them.
+    for (version, site) in [
+        (
+            "before",
+            served_by(
+                Site::start(&committed, &super::common::fixture("board.json")),
+                &red_and_grey(),
+            ),
+        ),
+        ("after", served(&red_and_grey())),
+    ] {
+        for (name, view) in &common {
+            shoot(
+                &site,
+                view,
+                out.join(format!("timeline-runs-{version}-{name}.png")),
             );
         }
     }

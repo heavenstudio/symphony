@@ -189,6 +189,7 @@ keeps its own bar at its recorded start and end:
     Neither decides this.
   [2026-11-27 07:45] owner · approved — B
   [2026-11-27 07:46] agent — Filed as `app/timeline-run-words-contrast` and staffed: each build and test bar in its full colour, the words as they are, measured at 4.5 to 1 or more on both pages before it lands.
+  [2026-11-27 07:54] agent — Built as B in `app/timeline-run-words-contrast`: a finished build or test bar is its tone's full colour, its words the card's colour as before, in the runs lane's rule of `apps/symphony-web/src/timeline.css`. Green, red and grey bars read 5.05, 5.94 and 5.47 to 1 on a light page and 8.09, 5.94 and 5.94 on a dark one, held by the timeline's browser test `a_runs_words_read_at_four_and_a_half_to_one_on_its_bar_in_both_schemes`.
 
 ### Message marks
 
