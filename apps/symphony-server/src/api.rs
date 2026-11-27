@@ -263,13 +263,17 @@ impl Asked {
     }
 }
 
-/// The refusal `request` gets before any route answers it, the first of: its Host, a sandboxed
-/// page's Origin, its method, an argument its route requires, and a worktree that is gone.
+/// The refusal `request` gets before any route answers it, the first of: no gate's mark on it
+/// ([`crate::front::Admitted`]), its Host, a sandboxed page's Origin, its method, an argument its
+/// route requires, and a worktree that is gone.
 async fn admit(
     shared: &Arc<Shared>,
     asked: &Asked,
     request: &Request,
 ) -> Result<(), Box<Response>> {
+    if (request.extensions().get::<crate::front::Admitted>()).is_none() {
+        return Err(Box::new(crate::front::unmarked()));
+    }
     let path = asked.path.as_str();
     let host = request
         .headers()
@@ -483,13 +487,13 @@ async fn off_board(
         // and its running sessions on that one store; one that does not answer is said on the page
         // for both, and the files' settings hold. A person a board named who is not of the
         // Settings page's owner is answered no preference to write, so the page draws the values
-        // alone (`symphony::owners::changes_settings`).
+        // alone (`symphony::owners::changes_settings`), and so is a hosted visitor, who has no
+        // actor here.
         symphony_api::SETTINGS_PATH => {
             let hub = shared.hub()?;
-            let reader = (!crate::front::Admitted::machine(request.extensions())).then(|| {
-                let actor = crate::front::Admitted::actor(shared, request.extensions());
-                actor.name().to_string()
-            });
+            let at_machine = crate::front::Admitted::machine(request.extensions());
+            let reader = (crate::front::Admitted::actor(request.extensions()))
+                .map(|actor| actor.name().to_string());
             let read = crate::spawn::blocking(move || {
                 let machine = symphony::settings::Machine::of_process();
                 let (entries, running) = match hub.on_reader(|store| {
@@ -501,12 +505,13 @@ async fn off_board(
                 };
                 let board = symphony::settings::stored::Board::with(&hub.root, entries, running);
                 let mut page = symphony::settings::page_with(&hub.root, &machine, &board);
-                let changes = reader.is_none()
-                    || hub
-                        .on_reader(|store| {
-                            Ok(symphony::owners::changes_settings(store, reader.as_deref()))
+                let changes = at_machine
+                    || reader.as_deref().is_some_and(|reader| {
+                        hub.on_reader(|store| {
+                            Ok(symphony::owners::changes_settings(store, Some(reader)))
                         })
-                        .unwrap_or(false);
+                        .unwrap_or(false)
+                    });
                 if !changes {
                     page.stored.clear();
                 }
@@ -622,10 +627,10 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
             task_diff::answer(hub.clone(), checkout(), &request, patch).await
         }
         "/api/feed" => feed(hub, scope, request).await,
-        symphony_api::TASK_ATTEMPTS_PATH => attempts(shared, hub, &request).await,
+        symphony_api::TASK_ATTEMPTS_PATH => attempts(hub, &request).await,
         symphony_api::workflow::WORKFLOW_GUARDS_PATH => guards(hub, &request).await,
         symphony_api::workflow::WORKFLOW_PATH | symphony_api::workflow::WORKFLOW_ACTIONS_PATH => {
-            workflow(shared, hub, path, &request).await
+            workflow(hub, path, &request).await
         }
         "/api/tasks" | "/api/task-board" => tasks(hub, path, &request).await,
         // The machine's work alone, for a page that reads the board's listings without it
@@ -654,31 +659,29 @@ async fn over_hub(shared: &Arc<Shared>, hub: Arc<Hub>, asked: Asked, request: Re
 /// The reader a board named who asks `request`, by short name, to whom what waits is said as
 /// theirs alone (`crate::live::theirs`): the visitor a gate let in on the board, not the person at
 /// the machine, whatever name they write under. None for anyone else (the person at the machine,
-/// a request a test hands a route past every gate, a hosted visitor, a principal no board names),
-/// each told it whole.
+/// a hosted visitor, a principal no board names), each told it whole.
 pub(crate) fn named_reader(request: &Request) -> Option<String> {
-    if crate::hosted::admission(request).is_some() {
-        return None;
+    match request.extensions().get::<crate::front::Admitted>()? {
+        crate::front::Admitted::Named { actor, .. } => Some(actor.name().to_string()),
+        crate::front::Admitted::Machine(_) | crate::front::Admitted::Hosted(_) => None,
     }
-    let admitted = request.extensions().get::<crate::front::Admitted>()?;
-    (!admitted.machine).then(|| admitted.actor.name().to_string())
 }
 
 /// A task's execution attempts, the board's own read, the same for every branch: the actor this
 /// machine's gate admitted the request as ([`crate::front::Admitted`]), or the visitor's hosted
 /// admission verified (`crate::attempts`).
-async fn attempts(shared: &Arc<Shared>, hub: Arc<Hub>, request: &Request) -> Response {
+async fn attempts(hub: Arc<Hub>, request: &Request) -> Response {
     let slug = query(request, "slug").unwrap_or_default();
-    let asker = crate::hosted::admission(request).map_or_else(
-        || {
-            let actor = crate::front::Admitted::actor(shared, request.extensions());
-            crate::attempts::Asker::Local(actor.principal)
-        },
-        |admitted| {
+    let asker = match request.extensions().get::<crate::front::Admitted>() {
+        Some(
+            crate::front::Admitted::Machine(actor) | crate::front::Admitted::Named { actor, .. },
+        ) => crate::attempts::Asker::Local(actor.principal.clone()),
+        Some(crate::front::Admitted::Hosted(admitted)) => {
             let context = admitted.context();
             crate::attempts::Asker::hosted(&context.actor, &context.policy_revision)
-        },
-    );
+        }
+        None => return crate::front::unmarked(),
+    };
     let read = crate::spawn::blocking(move || crate::attempts::read(&hub, &slug, &asker).map(Json));
     answered(read.await, "")
 }
@@ -701,14 +704,21 @@ async fn guards(hub: Arc<Hub>, request: &Request) -> Response {
 /// The board's active custom workflow, and the next actions on one task it holds of the
 /// principal this machine's gate admitted the request as ([`crate::front::Admitted`])
 /// (docs/workflow/WORKFLOW.md, "The app"): the board's own reads, the same for every branch.
-async fn workflow(shared: &Shared, hub: Arc<Hub>, path: &str, request: &Request) -> Response {
+async fn workflow(hub: Arc<Hub>, path: &str, request: &Request) -> Response {
     let slug = query(request, "slug").unwrap_or_default();
-    let actions = path == symphony_api::workflow::WORKFLOW_ACTIONS_PATH;
-    let asker = crate::front::Admitted::actor(shared, request.extensions()).principal;
+    // Whose next actions are read: a hosted visitor's are refused before ([`arguments`]).
+    let asker = if path == symphony_api::workflow::WORKFLOW_ACTIONS_PATH {
+        match crate::front::Admitted::actor(request.extensions()) {
+            Some(actor) => Some(actor.principal),
+            None => return crate::front::unmarked(),
+        }
+    } else {
+        None
+    };
     let read = crate::spawn::blocking(move || {
         let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
-        let read = if actions {
-            next_actions(&store, &slug, &asker)
+        let read = if let Some(asker) = &asker {
+            next_actions(&store, &slug, asker)
                 .map(|read| no_store(Json(read)))
                 .map_err(task_failure)
         } else {
@@ -812,14 +822,12 @@ async fn board_read(
     let local = matches!(path.as_str(), "/api/agent-page" | "/api/task-page")
         && crate::session_go::local(shared, request).await;
     // Whose a thing is is said to who asks, and whom they may hand it to; a hosted visitor, who
-    // saves nothing here, is told whose it is alone.
-    let asker = if hosted {
-        (String::new(), false)
-    } else {
-        let actor = crate::front::Admitted::actor(shared, request.extensions());
-        let name = actor.name().to_string();
-        (name, crate::front::Admitted::machine(request.extensions()))
-    };
+    // saves nothing here and has no actor, is told whose it is alone.
+    let asker = (
+        (crate::front::Admitted::actor(request.extensions()))
+            .map_or_else(String::new, |actor| actor.name().to_string()),
+        crate::front::Admitted::machine(request.extensions()),
+    );
     let document = query(request, "path").unwrap_or_default();
     let (scope, rel) = (asked.scope.clone(), asked.rel.clone());
     let read = crate::spawn::blocking(move || {
@@ -937,14 +945,14 @@ fn passes(store: &symphony_board::Store, machine: bool, name: &str) -> bool {
 /// Ask and Follow up for: the person at the machine, or a person holding what `/api/ask` needs
 /// ([`crate::powers::may_ask`]). Never a hosted visitor, who saves nothing here, and no one but the
 /// machine's person on a board whose people cannot be read, as the route would refuse their press.
-fn may_ask(shared: &Shared, hub: &Hub, request: &Request) -> bool {
-    if crate::hosted::admission(request).is_some() {
-        return false;
-    }
+fn may_ask(hub: &Hub, request: &Request) -> bool {
     if crate::front::Admitted::machine(request.extensions()) {
         return true;
     }
-    let actor = crate::front::Admitted::actor(shared, request.extensions());
+    // A hosted visitor has no actor here.
+    let Some(actor) = crate::front::Admitted::actor(request.extensions()) else {
+        return false;
+    };
     (hub.on_reader(symphony_board::Store::people))
         .is_ok_and(|people| crate::powers::may_ask(&people, actor.name()))
 }
@@ -1159,7 +1167,7 @@ fn document_response(
         return match ask_response(&render, rel, scope, request, list, recipient) {
             Ok(mut value) => {
                 if list {
-                    value["may_ask"] = json!(may_ask(shared, hub, request));
+                    value["may_ask"] = json!(may_ask(hub, request));
                 }
                 no_store(Json(value))
             }

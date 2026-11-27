@@ -3,8 +3,10 @@
 //! Each save is asked by the actor the local host's gate admitted its request as
 //! ([`crate::front::Admitted`]: the person at the machine, or a visitor a board added), the actor
 //! its save takes ([`symphony::save::Saves::post_as`]), never one its payload names. A
-//! request hosted admission let in is refused here: a hosted visitor's saves are its host's
-//! dispatch ([`crate::hosted::Host::dispatch`]) until hosted saves go through these.
+//! request hosted admission let in is refused here before anything else, the upload, the agent
+//! focus and an attempt's controls included: a hosted visitor's saves are its host's dispatch
+//! ([`crate::hosted::Host::dispatch`]) until hosted saves go through these. A request no gate
+//! marked is no one's, and refused next.
 
 use crate::api::error;
 use crate::front::Shared;
@@ -24,7 +26,7 @@ const ORIGIN_REFUSED: &str = "its Origin is not http:// and its Host";
 const CHECK_FAILED: &str = "its Host check did not finish";
 
 /// Why a save hosted admission let in is refused here.
-const HOSTED_SAVE: &str =
+pub(crate) const HOSTED_SAVE: &str =
     "a hosted visitor's saves are its host's to dispatch, never the local owner's";
 
 /// The server log's line for a refused write: its path, why, and its Host and Origin as sent, or
@@ -46,20 +48,25 @@ pub(crate) fn handles(request: &Request) -> bool {
     methods(request.uri().path()).is_some() && request.method() == Method::POST
 }
 
+/// The save routes this server answers beside the app's own (`symphony::save::ROUTES`): with
+/// those, every route [`answer`] takes, so a route added here is refused to a hosted visitor and
+/// to a request no gate marked as every other is.
+pub(crate) const ROUTES: [&str; 6] = [
+    symphony_api::UPLOAD_PATH,
+    symphony_api::AGENT_FOCUS_PATH,
+    symphony_api::ATTEMPT_CONTROL_ROUTE,
+    symphony_api::ATTEMPT_VIEW_ROUTE,
+    symphony_api::PEOPLE_CHANGE_PATH,
+    symphony_api::PROFILE_PATH,
+];
+
 /// The methods the save route at `path` takes, as an `Allow` header names them: POST, and the
 /// reads of the one route that is also read (`/api/ask`); none for a path no save answers.
 pub(crate) fn methods(path: &str) -> Option<&'static str> {
     let (_, route) = crate::api::scope_path(path);
     if route == "/api/ask" {
         Some("GET, HEAD, POST")
-    } else if symphony::save::ROUTES.contains(&route)
-        || route == symphony_api::UPLOAD_PATH
-        || route == symphony_api::AGENT_FOCUS_PATH
-        || route == symphony_api::ATTEMPT_CONTROL_ROUTE
-        || route == symphony_api::ATTEMPT_VIEW_ROUTE
-        || route == symphony_api::PEOPLE_CHANGE_PATH
-        || route == symphony_api::PROFILE_PATH
-    {
+    } else if symphony::save::ROUTES.contains(&route) || ROUTES.contains(&route) {
         Some("POST")
     } else {
         None
@@ -70,7 +77,12 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
     let (scope, route) = crate::api::scope_path(request.uri().path());
     let scope = scope.to_string();
     let route = route.to_string();
-    let actor = crate::front::Admitted::actor(shared, request.extensions());
+    if crate::hosted::admission(&request).is_some() {
+        return error(StatusCode::FORBIDDEN, HOSTED_SAVE);
+    }
+    let Some(actor) = crate::front::Admitted::actor(request.extensions()) else {
+        return crate::front::unmarked();
+    };
     let machine = crate::front::Admitted::machine(request.extensions());
     if let Err(why) = allowed(shared, &request).await {
         eprintln!("{}", refusal(request.uri().path(), why, request.headers()));
@@ -92,9 +104,6 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
     }
     if route == symphony_api::ATTEMPT_CONTROL_ROUTE || route == symphony_api::ATTEMPT_VIEW_ROUTE {
         return attempt(shared, &route, request, &actor).await;
-    }
-    if crate::hosted::admission(&request).is_some() {
-        return error(StatusCode::FORBIDDEN, HOSTED_SAVE);
     }
     let payload = match json_body(request.into_body()).await {
         Ok(payload) => payload,
@@ -259,20 +268,15 @@ async fn workflow_apply(
 }
 
 /// A control or a view of an execution attempt (`crate::attempts`), `actor`'s, whom the gate
-/// admitted: never a hosted visitor's, whose posts are its host's dispatch. A view's address is
-/// answered `no-store` and said nowhere else, this server's log included.
+/// admitted: never a hosted visitor's, whose posts are its host's dispatch, refused before
+/// ([`answer`]). A view's address is answered `no-store` and said nowhere else, this server's log
+/// included.
 async fn attempt(
     shared: &Arc<Shared>,
     route: &str,
     request: Request,
     actor: &symphony_plugin::Actor,
 ) -> Response {
-    if crate::hosted::admission(&request).is_some() {
-        return error(
-            StatusCode::FORBIDDEN,
-            "an attempt's controls are the local owner's; a hosted visitor's are its host's",
-        );
-    }
     let payload = match json_body(request.into_body()).await {
         Ok(payload) => payload,
         Err((status, why)) => return error(status, why),

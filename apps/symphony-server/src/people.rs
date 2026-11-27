@@ -47,11 +47,13 @@ pub(crate) struct Asker {
 }
 
 impl Asker {
-    fn of(shared: &Shared, extensions: &axum::http::Extensions) -> Asker {
-        Asker {
-            name: Admitted::actor(shared, extensions).name().to_string(),
+    /// Who asks a request a gate let in as the person at the machine or a person a board named;
+    /// none for a hosted visitor, and for a request no gate marked.
+    fn of(extensions: &axum::http::Extensions) -> Option<Asker> {
+        Admitted::actor(extensions).map(|actor| Asker {
+            name: actor.name().to_string(),
             machine: Admitted::machine(extensions),
-        }
+        })
     }
 }
 
@@ -60,11 +62,13 @@ pub(crate) async fn read(shared: &Shared, request: &axum::http::Request<()>) -> 
     if crate::hosted::admission(request).is_some() {
         return error(StatusCode::FORBIDDEN, HOSTED);
     }
+    let Some(asker) = Asker::of(request.extensions()) else {
+        return crate::front::unmarked();
+    };
     let hub = match shared.hub() {
         Ok(hub) => hub,
         Err(refusal) => return *refusal,
     };
-    let asker = Asker::of(shared, request.extensions());
     let machine = shared.gate.machine().map(Path::to_path_buf);
     let read = crate::spawn::blocking(move || {
         let board = hub.on_reader(|store| Ok((store.people()?, store.people_log()?)));

@@ -61,6 +61,7 @@ async fn read_on_a_board() {
             .body(())
             .unwrap();
         async move {
+            let request = crate::testing::at_the_machine(&shared, request);
             let response = crate::api::answer(&shared, request).await.unwrap();
             let status = response.status();
             let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -120,6 +121,22 @@ async fn read_on_a_board() {
         .find(|item| item.key == "limits.low_volume")
         .unwrap();
     assert_eq!((low.value.as_deref(), low.held), (Some("3"), true));
+    // A hosted visitor, who has no actor here and saves nothing, is answered the values alone,
+    // never what the person at the machine may write.
+    let mut request = axum::http::Request::builder()
+        .uri(SETTINGS_PATH)
+        .header("Host", "localhost:1234")
+        .body(())
+        .unwrap();
+    (request.extensions_mut()).insert(crate::hosted::tests::admitted().await);
+    let response = crate::api::answer(&shared, request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let page: SettingsPage = serde_json::from_slice(&body).unwrap();
+    assert!(page.stored.is_empty(), "{:?}", page.stored);
+    assert!(!page.sections.is_empty(), "the values are drawn");
 }
 
 #[test]

@@ -106,7 +106,11 @@ async fn a_server_of_its_own_admits_its_boards_people_alone() {
         admitted(shared, ip.parse().unwrap(), &axum::http::HeaderMap::new())
             .await
             .ok()
-            .map(|admitted| (admitted.actor, admitted.machine))
+            .map(|admitted| match admitted {
+                Admitted::Machine(actor) => (actor, true),
+                Admitted::Named { actor, .. } => (actor, false),
+                Admitted::Hosted(_) => panic!("the local gate marks no hosted visitor"),
+            })
     };
     for ip in ["127.0.0.1", "::ffff:127.0.0.1", PEER] {
         assert_eq!(

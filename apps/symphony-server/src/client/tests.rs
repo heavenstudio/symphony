@@ -178,9 +178,8 @@ async fn read(shared: &Arc<Shared>, path: &str, etag: Option<&str>) -> axum::res
     if let Some(etag) = etag {
         request = request.header(header::IF_NONE_MATCH, etag);
     }
-    crate::api::answer(shared, request.body(()).unwrap())
-        .await
-        .unwrap()
+    let request = crate::testing::at_the_machine(shared, request.body(()).unwrap());
+    crate::api::answer(shared, request).await.unwrap()
 }
 
 #[tokio::test]
