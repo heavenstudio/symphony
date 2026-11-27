@@ -40,8 +40,8 @@ const HOSTED: &str = "Forbidden: the board's people are this machine's, never a 
 /// What a server that names no machine folder says of the profiles.
 const NO_MACHINE: &str = "this server names no machine folder, so no profile is read or written";
 
-/// Who asks: their short name (`owner` for the person at the machine) and whether they are that
-/// person.
+/// Who asks: their short name (the person at the machine's own once they gave themselves one, else
+/// `owner`) and whether they are that person.
 #[derive(Clone, Debug)]
 pub(crate) struct Asker {
     pub(crate) name: String,
