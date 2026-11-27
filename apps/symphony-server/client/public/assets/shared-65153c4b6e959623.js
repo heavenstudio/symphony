@@ -1,0 +1,1 @@
+import{mt as e}from"./shared-6d22ccab91233e3b.js";function t({className:t,onChange:n,...r}){return e(`input`,{className:t===void 0?`dx-input`:`dx-input ${t}`,...r,onInput:n===void 0?void 0:e=>n(e)})}export{t};
