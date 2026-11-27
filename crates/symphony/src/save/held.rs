@@ -9,10 +9,10 @@
 //! Its pass, by someone who may direct agents, writes it as its author's own comment would be
 //! written, their name on it and the passer's first in its words
 //! ([`symphony_board::held::passed_text`]): a callout after its block found again in the file as
-//! it is now (the one block under its heading holding the same lines, else the one block anywhere
-//! that does), refused in plain words with nothing written where several do, and at the end of its
-//! section where none does ([`goes_after`]); a message on its card. Its page draws a callout where
-//! its pass would write it then ([`drawn_held`]).
+//! it is now (of the blocks under its heading holding the same lines, else of those anywhere that
+//! do, the one nearest the line it was left after), and at the end of its section where none does
+//! ([`goes_after`]); a message on its card. Its page draws a callout where its pass would write it
+//! then ([`drawn_held`]).
 //! The save's ask and callback follow as the author's, and the row is marked passed once the file
 //! holds the words.
 
@@ -79,17 +79,18 @@ pub(super) fn place(
         card: None,
         block: Some(Block {
             key: left.0.clone(),
-            line: i64::try_from(left.1.end).unwrap_or(i64::MAX),
+            line: after_line(&left.1),
             text: left.1.text.clone(),
         }),
     })
 }
 
 /// The block of `text`, the document as it is now, a passed callout left after `block` goes after,
-/// by its key and last line: the one block under its heading that holds the same lines, else the
-/// one block anywhere that does. A key's place under its heading moves with every block above it
-/// there, so it never tells two such blocks apart: refused, with nothing written, where its lines
-/// stand twice under its heading, or twice elsewhere and not under it.
+/// by its key and last line: of the blocks under its heading that hold the same lines, else of
+/// those anywhere that do, the one whose last line is nearest the line it was left after, of two as
+/// near the first (docs/product/analysis/users-and-identity.md, `held-callout-block-twice`). Where
+/// nothing above it changed, that is the block it was left after; where blocks came or went above
+/// it, it may be another copy, which its page draws it after before the press ([`drawn_held`]).
 ///
 /// Where its lines stand nowhere, its block changed or is gone, and it goes at the end of its
 /// section (docs/product/analysis/users-and-identity.md, `held-callout-block-changed`): after the
@@ -162,27 +163,21 @@ impl<'a> Keyed<'a> {
         let mine: Vec<&(String, crate::render::Block)> = (same.iter().copied())
             .filter(|(key, _)| heading(key) == heading(&block.key))
             .collect();
-        let found = match (mine.as_slice(), same.as_slice()) {
-            ([one], _) | ([], [one]) => *one,
-            (_, []) => return self.section_end(heading(&block.key)),
-            _ => {
-                return Err(Failure {
-                    status: 409,
-                    error: "the block this comment was left after now stands in several places: \
-                            nothing was written"
-                        .into(),
-                });
-            }
-        };
-        Ok(after(found))
+        let copies = if mine.is_empty() { same } else { mine };
+        // The first of the copies as near, as `min_by_key` keeps, in the document's order.
+        let nearest =
+            (copies.into_iter()).min_by_key(|(_, found)| after_line(found).abs_diff(block.line));
+        match nearest {
+            Some(found) => Ok(after(found)),
+            None => self.section_end(heading(&block.key)),
+        }
     }
 
     /// The last block under the heading `under` (`section:ANCHOR`) that a callout may follow,
     /// else the document's last such: its key and last line.
     fn section_end(&self, under: &str) -> Result<(String, i64), Failure> {
         let takes = |(_, block): &&(String, crate::render::Block)| {
-            let end = i64::try_from(block.end).unwrap_or(i64::MAX);
-            edit::comment_refused_after(&self.lines, end).is_none()
+            edit::comment_refused_after(&self.lines, after_line(block)).is_none()
         };
         let last = (self.blocks.iter().rev())
             .filter(|(key, _)| heading(key) == under)
@@ -199,7 +194,12 @@ impl<'a> Keyed<'a> {
 
 /// A block's key and its last line, which a callout after it goes after.
 fn after((key, block): &(String, crate::render::Block)) -> (String, i64) {
-    (key.clone(), i64::try_from(block.end).unwrap_or(i64::MAX))
+    (key.clone(), after_line(block))
+}
+
+/// A block's last line, the one a callout after it goes after.
+fn after_line(block: &crate::render::Block) -> i64 {
+    i64::try_from(block.end).unwrap_or(i64::MAX)
 }
 
 /// The heading a block's key (`section:ANCHOR:N`) sits under: the key without its place there.
@@ -417,19 +417,21 @@ mod tests {
             11,
             "the one block holding them"
         );
-        // Under one heading X, A and B, A and B alike: a comment left after A keeps A's place,
-        // which is B's once X is gone. Refused while they stand twice there, never put after B.
+        // Under one heading X, A and B, A and B alike: a comment left after A goes after the copy
+        // nearest the line it was left after, A itself while nothing above it changed, and B,
+        // which stands on A's line, once X is gone.
         let twins = "# Topic\n\nX.\n\nSame.\n\nSame.\n";
         let after_a = block("section:topic:2", 5, "Same.");
+        assert_eq!(
+            ok(goes_after(twins, &after_a)),
+            ("section:topic:2".into(), 5)
+        );
         let without_x = twins.replace("X.\n\n", "");
-        for page in [twins, without_x.as_str()] {
-            let twice = refused(found_again(page, &after_a));
-            assert!(
-                twice.error.contains("several places"),
-                "{page}: {}",
-                twice.error
-            );
-        }
+        assert_eq!(
+            ok(goes_after(&without_x, &after_a)),
+            ("section:topic:2".into(), 5),
+            "B, now on A's line"
+        );
         // B gone instead: A stands alone under its heading and is found.
         let alone = "# Topic\n\nX.\n\nSame.\n";
         assert_eq!(ok(found_again(alone, &after_a)), 5);
@@ -449,13 +451,82 @@ mod tests {
             )),
             ("section:lamps:2".into(), 9)
         );
-        // Its lines stand twice under no block of its heading: refused.
-        let twice = refused(found_again(PAGE, &prose("section:elsewhere:4")));
+        // Its lines stand twice under no block of its heading: the copy nearest its line.
+        assert_eq!(ok(found_again(PAGE, &prose("section:elsewhere:4"))), 3);
+    }
+
+    /// The key and last line of the block a callout left after `left`'s lines, under the heading
+    /// of `left` and on `line`, goes after in `page`.
+    fn nearest(page: &str, left: &str, line: i64) -> (String, i64) {
+        ok(goes_after(page, &block(left, line, "Same.")))
+    }
+
+    #[test]
+    fn a_block_standing_twice_is_found_again_at_the_copy_nearest_the_line_it_was_left_after() {
+        // Three copies under one heading, on lines 3, 7 and 11: left after the middle one.
+        let three = "# Topic\n\nSame.\n\nX.\n\nSame.\n\nY.\n\nSame.\n";
+        let at = |key: &str, line: i64| (key.to_string(), line);
         assert_eq!(
-            twice.error,
-            "the block this comment was left after now stands in several places: nothing was \
-             written"
+            nearest(three, "section:topic:3", 7),
+            at("section:topic:3", 7)
         );
+        // A block came above them, so they stand on 5, 9 and 13: of two as near, the first.
+        let one_above = three.replace("# Topic\n\n", "# Topic\n\nNew.\n\n");
+        assert_eq!(
+            nearest(&one_above, "section:topic:3", 7),
+            at("section:topic:2", 5)
+        );
+        // Two came, so they stand on 7, 11 and 15: the first copy now stands on its line.
+        let two_above = three.replace("# Topic\n\n", "# Topic\n\nNew.\n\nNewer.\n\n");
+        assert_eq!(
+            nearest(&two_above, "section:topic:3", 7),
+            at("section:topic:3", 7)
+        );
+        // Blocks went from above them: the nearest of those under its heading, though a copy under
+        // another heading now stands on its very line.
+        let headed = "# Topic\n\nSame.\n\nSame.\n\n## Lamps\n\nSame.\n";
+        assert_eq!(
+            nearest(headed, "section:topic:4", 9),
+            at("section:topic:2", 5)
+        );
+        // Nowhere under its heading, twice elsewhere: the same rule over those copies, on 3 and 9.
+        let elsewhere = "# Topic\n\nSame.\n\n## Lamps\n\nX.\n\nSame.\n";
+        for (line, found) in [
+            (1, at("section:topic:1", 3)),
+            (6, at("section:topic:1", 3)),
+            (7, at("section:lamps:2", 9)),
+            (99, at("section:lamps:2", 9)),
+        ] {
+            let left = nearest(elsewhere, "section:gone:2", line);
+            assert_eq!(left, found, "left on {line}");
+        }
+        // A line no row could have written still finds the nearest.
+        assert_eq!(
+            nearest(three, "section:topic:1", i64::MIN),
+            at("section:topic:1", 3)
+        );
+        assert_eq!(
+            nearest(three, "section:topic:1", i64::MAX),
+            at("section:topic:5", 11)
+        );
+    }
+
+    #[test]
+    fn a_comment_left_after_words_already_standing_twice_is_found_again_where_it_was_left() {
+        // Every block a callout may be left after, in a page whose blocks stand twice and three
+        // times, under one heading and under two: unchanged, its pass writes it where it was left.
+        let page = "# Topic\n\nSame.\n\nSame.\n\nOther.\n\n## Lamps\n\nSame.\n\nOther.\n\nSame.\n";
+        let blocks = crate::render::keyed_blocks(page);
+        let ends: Vec<usize> = (blocks.iter()).map(|(_, block)| block.end).collect();
+        assert_eq!(ends, [1, 3, 5, 7, 9, 11, 13, 15]);
+        let kind = json!({"kind": "comment"});
+        for (key, left) in blocks {
+            let at = i64::try_from(left.end).unwrap();
+            let placed = ok(place("/api/comment", "", "docs/a.md", page, &kind, at));
+            let block = placed.block.expect("a callout's block");
+            assert_eq!(block.key, key);
+            assert_eq!(ok(goes_after(page, &block)), (key, at), "{}", left.text);
+        }
     }
 
     /// Where a callout left after `left`, its key and lines, in a document that no longer holds
@@ -553,14 +624,25 @@ mod tests {
         };
         let edited = PAGE.replace("Other prose.", "Other proze.\n\nLast.");
         assert_eq!(drawn(Some(&edited), other), at("section:lamps:3", 11));
-        // Standing twice under its heading, or the document unread: where it was left.
+        // Standing twice under its heading: after the copy nearest the line it was left after,
+        // the very block while nothing above it changed, and the other once a block came above.
         let twice = PAGE.replace(
             "# Topic\n\nSome prose.",
             "# Topic\n\nSome prose.\n\nSome prose.",
         );
-        for page in [Some(twice.as_str()), None] {
-            assert_eq!(drawn(page, row()), at("section:topic:1", 3), "{page:?}");
-        }
+        assert_eq!(drawn(Some(twice.as_str()), row()), at("section:topic:1", 3));
+        let pushed = twice.replace("# Topic\n\n", "# Topic\n\nNew.\n\n");
+        assert_eq!(
+            drawn(Some(pushed.as_str()), row()),
+            at("section:topic:2", 5)
+        );
+        assert_eq!(
+            ok(found_again(&pushed, &row().document.block.unwrap())),
+            5,
+            "as passed"
+        );
+        // The document unread: where it was left.
+        assert_eq!(drawn(None, row()), at("section:topic:1", 3));
         let message = drawn_held(Some(PAGE), vec![held(Some("one"), None)]);
         assert_eq!(
             message,
@@ -605,7 +687,7 @@ mod tests {
                 (4, None, None),
                 // Changed: its section's end, Lamps under a heading of its own.
                 at(2, "section:topic:3", 7),
-                // Its lines twice under its heading: where it was left.
+                // Its lines twice under its heading: the copy nearest the line it was left after.
                 at(3, "section:topic:1", 3),
                 at(5, "section:lamps:1", 11),
             ],
