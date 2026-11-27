@@ -692,7 +692,9 @@
 }
 /* A runs lane: a row per runs that overlap, each run one 14 px bar at its recorded times, at least
    2 px wide, its queue the lighter head of it, a 1 px edge of the card's colour keeping two bars
-   apart, its words inside it where it is wide enough, cut to fit. */
+   apart, its words inside it where it is wide enough, cut to fit. A bar is its tone's full colour,
+   so its words in the card's colour read 5:1 or more on either page (the owner's B on
+   timeline-run-words-contrast, docs/design/analysis/timeline-navigation.md). */
 .tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-track {
   height: calc(var(--rows) * 20px + 16px);
 }
@@ -703,7 +705,7 @@
   border: 0;
   border-radius: 2px;
   box-shadow: 0 0 0 1px var(--card);
-  background: color-mix(in srgb, var(--c) 70%, transparent);
+  background: var(--c);
   color: var(--card);
   font-size: 10.5px;
   line-height: 14px;
