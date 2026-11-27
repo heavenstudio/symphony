@@ -3,10 +3,11 @@
 //! leaves a callout and a card's message, and neither reaches a clone (no file, commit, branch,
 //! ask or chat journal carries her words, on a checkout that delivers by pull request too) while
 //! the document's held read shows them, with Pass on for one who may. A pass writes each as hers,
-//! the passer first in its words, after its block found again once the file moved, or at the end of
-//! its section once its words changed, where the held read draws it; then the ask and the callback
-//! follow, once. Asks stay hers to make only with direct agents. The note beside her verdict is
-//! written with it ("The note beside a verdict").
+//! the passer first in its words, after its block found again once the file moved (where its words
+//! stand twice, after the copy nearest the line it was left after), or at the end of its section
+//! once its words changed, where the held read draws it; then the ask and the callback follow, once.
+//! Asks stay hers to make only with direct agents. The note beside her verdict is written with it
+//! ("The note beside a verdict").
 
 use super::decide_tests::{MACHINE, as_person, post, read, with_hub};
 use crate::testing::{Board, LAPTOP, Tree, git, repository_holding};
@@ -298,6 +299,109 @@ async fn a_pass_finds_its_block_once_the_file_moved_or_goes_at_its_sections_end_
             "\n> [!question] ana · [passed on by owner] Too many {TOKEN}s\n\
              > Show the thirty that matter.\n"
         )),
+        "{page}"
+    );
+    assert_eq!(held(&stefano, MACHINE).await["held"], json!([]));
+}
+
+/// Each held comment of the held read of [`DOC`] by the machine's client of `shared`: its id, key
+/// and line.
+async fn drawn_at(shared: &std::sync::Arc<crate::front::Shared>) -> Vec<(i64, Value, Value)> {
+    let read = held(shared, MACHINE).await;
+    (read["held"].as_array().unwrap().iter())
+        .map(|held| {
+            (
+                held["id"].as_i64().unwrap(),
+                held["key"].clone(),
+                held["line"].clone(),
+            )
+        })
+        .collect()
+}
+
+/// The line her question passed on by the person at the machine opens with.
+fn passed() -> String {
+    format!("> [!question] ana · [passed on by owner] Too many {TOKEN}s")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_comment_after_words_standing_twice_is_drawn_and_passed_after_the_copy_nearest_its_line()
+{
+    // Her paragraph stands twice under its heading, on lines 3 and 5, before she comments.
+    let twice = "# Topic\n\nSome prose about lamps.\n\nSome prose about lamps.\n";
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", DOC, twice);
+    let _board = named(&root);
+    let ana = as_person(&root, "ana");
+    let id = |answer: Value| answer["held"].as_i64().unwrap();
+    let mut second = question();
+    second["after_line"] = json!(5);
+    let first_press = id(ok(post(&ana, LAPTOP, "/api/comment", second.clone()).await));
+    let moved = id(ok(post(&ana, LAPTOP, "/api/comment", second).await));
+    ana.saves.get().unwrap().close();
+    let stefano = as_person(&root, "stefano");
+    let second_copy = (json!("section:topic:2"), json!(5));
+    assert_eq!(
+        drawn_at(&stefano).await,
+        [
+            (first_press, second_copy.0.clone(), second_copy.1.clone()),
+            (moved, second_copy.0, second_copy.1),
+        ],
+        "each after the block it was left after"
+    );
+    // Passed on from its first press, after that block.
+    ok(post(
+        &stefano,
+        MACHINE,
+        "/api/document-pass",
+        json!({"id": first_press}),
+    )
+    .await);
+    stefano.saves.get().unwrap().close();
+    let page = std::fs::read_to_string(root.join(DOC)).unwrap();
+    let lines: Vec<&str> = page.lines().collect();
+    assert_eq!(
+        &lines[2..7],
+        [
+            "Some prose about lamps.",
+            "",
+            "Some prose about lamps.",
+            "",
+            &passed()
+        ],
+        "{page}"
+    );
+    // Two blocks come above both copies, which stand on 7 and 9 now: the first is nearer the
+    // line the other was left after, and it is drawn there and passed on there.
+    let grown = page.replace(
+        "# Topic\n\n",
+        "# Topic\n\nA new opening.\n\nAnother one.\n\n",
+    );
+    std::fs::write(root.join(DOC), &grown).unwrap();
+    git(&root, &["commit", "-qam", "two blocks above"]);
+    let stefano = as_person(&root, "stefano");
+    assert_eq!(
+        drawn_at(&stefano).await,
+        [(moved, json!("section:topic:3"), json!(7))]
+    );
+    ok(post(
+        &stefano,
+        MACHINE,
+        "/api/document-pass",
+        json!({"id": moved}),
+    )
+    .await);
+    stefano.saves.get().unwrap().close();
+    let page = std::fs::read_to_string(root.join(DOC)).unwrap();
+    let lines: Vec<&str> = page.lines().collect();
+    assert_eq!(
+        (lines[6], lines[8], lines[11], lines[13]),
+        (
+            "Some prose about lamps.",
+            &*passed(),
+            "Some prose about lamps.",
+            &*passed()
+        ),
         "{page}"
     );
     assert_eq!(held(&stefano, MACHINE).await["held"], json!([]));

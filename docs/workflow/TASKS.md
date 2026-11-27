@@ -2571,10 +2571,12 @@ and asks, as a card's note is; on a task she may not decide it is held.
   those who may pass a held message on. A pass (`/api/document-pass`) writes it into the file as
   her own save would, her name on it and the passer first in its words, then opens or joins its
   ask and tells the chat, as hers; a callout goes after its block found again in the file as it is
-  now, the one block under its heading holding the same lines, else the one block anywhere that
-  does, and is refused with nothing written where several do, two alike under its heading among
-  them, as its place there moves with every block above. Where none does, its block changed or is
-  gone, and it goes at the end of its section: after the last block under the heading it was left
+  now: of the blocks under its heading holding the same lines, else of those anywhere that do, the
+  one whose last line is nearest the line it was left after, of two as near the first
+  ([its card](../product/analysis/users-and-identity.md#held-callout-block-twice)). Where nothing
+  above it changed, that is the block it was left after; where blocks came or went above it, it
+  may be another copy, which the page draws it after before the press. Where none does, its block
+  changed or is gone, and it goes at the end of its section: after the last block under the heading it was left
   under that a callout may follow (a heading under it starts a section of its own, and a register
   takes no callout), else, that heading gone, after the document's last such block
   ([its card](../product/analysis/users-and-identity.md#held-callout-block-changed)). A card's

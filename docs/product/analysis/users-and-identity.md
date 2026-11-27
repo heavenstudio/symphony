@@ -1590,9 +1590,9 @@ Each step can ship alone, and a machine with one person sees none of them.
    document's page, told to those who may pass it on and listed for them and the person at the
    machine in the review queue's group of held comments until it is passed on, an agent's queue
    listing none ([its card](#held-on-document-waits-where)), and passed on with one press under
-   both names, as an ask, after its block found again, else at the end of its section
-   ([its card](#held-callout-block-changed)), or refused with nothing written where it stands twice,
-   which [its card](#held-callout-block-twice) asks of the owner
+   both names, as an ask, after its block found again, after the copy nearest the line it was left
+   after where its words stand twice ([its card](#held-callout-block-twice)), else at the end of
+   its section ([its card](#held-callout-block-changed))
    ([TASKS](../../workflow/TASKS.md#words-held-for-people), [QUEUE](../QUEUE.md#what-it-shows));
    and the note beside a verdict written with it, by one who may decide and not direct agents.
    Their ask stays refused, never held ([its card](#held-ask), A): such a person asks about a place
