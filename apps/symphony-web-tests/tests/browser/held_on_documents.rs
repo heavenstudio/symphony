@@ -6,8 +6,10 @@
 //! words, with no Pass on. For one who may pass them on, Pass on posts the pass once, and the page's
 //! next read leaves the comment out. A callout whose paragraph changed while the page held it is
 //! read again as the page's copy moves and drawn where the server says its pass writes it now, at
-//! the end of its section, and passed on there. On a desk and a phone, each is drawn within the
-//! screen's width. The document is the card probe's.
+//! the end of its section, and passed on there. A callout left after a paragraph that stands twice
+//! is drawn after the copy the server says its pass writes it after, the second, and passed on
+//! from its first press. On a desk and a phone, each is drawn within the screen's width. The
+//! document is the card probe's, but for the one whose paragraph stands twice.
 //!
 //! With `SYMPHONY_HELD_SHOTS` naming a folder, the page is saved there at each width and in each
 //! scheme, held for ana and offered to a passer: a reader who is not the person at the machine
@@ -103,16 +105,24 @@ fn both(passes: bool) -> Value {
 /// The desk's and the phone's screens.
 const SCREENS: [(u32, u32, bool); 2] = [(1440, 900, false), (390, 844, true)];
 
-/// The screen with the held callout in its middle, saved as `NAME-WIDTH-light.png` and
+/// The screen from the held callout down, saved as `NAME-WIDTH-light.png` and
 /// `NAME-WIDTH-dark.png` in the folder `SYMPHONY_HELD_SHOTS` names; nothing without one. The
 /// scheme is put back as it was.
 fn shot(page: &mut Chrome, name: &str, width: u32) {
+    shot_from(page, "#held-4", name, width);
+}
+
+/// [`shot`], the screen from the element `top` down.
+fn shot_from(page: &mut Chrome, top: &str, name: &str, width: u32) {
     let Some(folder) = std::env::var_os("SYMPHONY_HELD_SHOTS") else {
         return;
     };
     let folder = std::path::PathBuf::from(folder);
     std::fs::create_dir_all(&folder).unwrap();
-    page.eval("document.querySelector('#held-4').scrollIntoView({block: 'start'})");
+    page.eval(&format!(
+        "document.querySelector({}).scrollIntoView({{block: 'start'}})",
+        json!(top)
+    ));
     for scheme in ["light", "dark"] {
         page.scheme(scheme);
         page.frames_with_fonts();
@@ -190,6 +200,106 @@ fn pass_on_posts_once_and_the_next_read_leaves_the_comment_out() {
         page.eval("document.querySelector('#held-4 button').click()");
         let left = shown(&mut page, 1);
         assert_eq!(left[0]["id"], "held-5", "{width}: {left}");
+        assert_eq!(
+            site.posts(),
+            [(
+                symphony_api::DOCUMENT_PASS_ROUTE.to_string(),
+                json!({"id": 4})
+            )]
+        );
+    }
+}
+
+/// The words of the paragraph [`twice`]'s document holds twice.
+const TWICE: &str = "The catalogue holds 141 lamps.";
+
+/// A document whose paragraph stands twice under its one heading, on lines 3 and 7, another
+/// between them, `held` its held comments, the reader passing them on.
+fn twice(held: &[Value]) -> Site {
+    let site = crate::site();
+    let paragraph = |key: &str, line: usize, words: &str| {
+        json!({"start": line, "end": line, "key": key, "hash": key, "part": 1,
+            "blocks": [{"type": "paragraph", "spans": [{"type": "text", "text": words}]}]})
+    };
+    let sections = json!([
+        {"start": 1, "end": 1, "key": "lamps", "hash": "lamps", "part": 1,
+         "blocks": [{"type": "heading", "level": 2, "anchor": "lamps",
+            "spans": [{"type": "text", "text": "Lamps"}]}]},
+        paragraph("first", 3, TWICE),
+        paragraph("between", 5, "Most of them hang in the corridors."),
+        paragraph("second", 7, TWICE),
+    ]);
+    let document = json!({"version": 7, "path": "docs/PROBE.md", "title": "Probe",
+        "waiting": [], "crumbs": [], "headings": [{"level": 2, "anchor": "lamps", "text": "Lamps"}],
+        "sections": sections, "cards": [], "threads": {}, "tasks": []});
+    site.set_json(
+        "/api/document",
+        &json!({"document": document, "anchors": {}}),
+    );
+    let change = json!({"path": "docs/PROBE.md", "sections": sections, "threads": {}});
+    site.set_json("/api/section", &json!({"version": 7, "change": change}));
+    site.set_json("/api/asks", &json!({"asks": [], "recipient": null}));
+    site.set_json("/api/postponed", &json!([]));
+    holding(&site, held, true);
+    site.set_json(symphony_api::DOCUMENT_PASS_ROUTE, &json!({"ok": true}));
+    site
+}
+
+#[test]
+fn a_comment_whose_paragraph_stands_twice_is_drawn_after_the_copy_its_pass_writes_it_after() {
+    // ana's question, left after the second copy of words that stood twice already: the server
+    // says its pass writes it after that copy, the one nearest the line it was left after.
+    let after_the_second = json!({"id": 4, "author": "ana", "kind": "question", "text": WORDS,
+        "key": "second", "line": 7});
+    for (width, height, mobile) in SCREENS {
+        let site = twice(std::slice::from_ref(&after_the_second));
+        let Some(mut page) = chrome() else { return };
+        page.viewport(width, height, mobile);
+        page.open(&site.url(PAGE));
+        page.reveal("[data-doc-key=\"second\"]");
+        assert!(
+            page.wait_for(
+                "document.querySelector('[data-doc-key=\"second\"] #held-4') !== null",
+                SHOWN
+            ),
+            "{width}: never drawn after the second copy: {}",
+            page.eval("document.body.innerText.slice(0, 1500)")
+        );
+        page.frames_with_fonts();
+        assert_eq!(
+            drawn(&mut page),
+            json!([{"id": "held-4", "under": "second", "author": "ana", "kind": "question",
+                "mark": "held", "words": WORDS, "buttons": ["Pass on"], "within": true}]),
+            "{width}: after the second copy alone"
+        );
+        let copies = page.eval(&format!(
+            "[...document.querySelectorAll('[data-doc-key]')]\
+                .filter(s => s.textContent.includes({})).map(s => s.dataset.docKey)",
+            json!(TWICE)
+        ));
+        assert_eq!(
+            copies,
+            json!(["first", "second"]),
+            "{width}: both copies drawn"
+        );
+        // Pictured from its heading, both copies above it.
+        shot_from(
+            &mut page,
+            "[data-doc-key=\"lamps\"]",
+            "document-held-twice",
+            width,
+        );
+        // Passed on from its first press: the server holds nothing more.
+        holding(&site, &[], true);
+        page.eval("document.querySelector('#held-4 button').click()");
+        assert!(
+            page.wait_for(
+                "document.querySelectorAll('.held-comment').length === 0",
+                SHOWN
+            ),
+            "{width}: still drawn once passed: {}",
+            drawn(&mut page)
+        );
         assert_eq!(
             site.posts(),
             [(
