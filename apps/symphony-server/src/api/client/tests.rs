@@ -678,3 +678,46 @@ async fn the_page_names_its_reader_and_the_person_at_the_machine_as_their_profil
         (Some(named.clone()), "/people#you", Some(named))
     );
 }
+
+/// A page asked by a request no board names, which a hosted visitor's and one no gate marked are
+/// alike ([`crate::front::Admitted::actor`] is none), names no reader and links no profile, and
+/// still draws the person at the machine's lines by the name their profile gives them.
+#[tokio::test]
+async fn a_page_no_board_names_the_reader_of_names_nobody_but_the_person_at_the_machine() {
+    let tree = Tree::new();
+    let path = tree.path("install/client/public/index.html");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, b"<html><head></head><body>shell</body></html>").unwrap();
+    std::fs::create_dir_all(tree.path("repo")).unwrap();
+    let machine = tree.path("machine");
+    symphony_board::people::Profiles {
+        people: vec![symphony_board::people::Profile {
+            name: "stefano".into(),
+            display: "Stefano".into(),
+            ..Default::default()
+        }],
+        machine: Some("stefano".into()),
+    }
+    .write(&machine)
+    .unwrap();
+    let gate = crate::testing::open_gate().with_machine(machine);
+    let shared = Shared::new(1, 1, &tree.path("repo"), Some(&tree.path("install")), gate);
+    let request = axum::http::Request::get("/docs/README.md")
+        .header("Host", "localhost:1")
+        .body(())
+        .unwrap();
+    let response = static_response(&shared, "/docs/README.md", &request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let view = carried(&String::from_utf8_lossy(&body));
+    let named = symphony_api::PersonName {
+        name: "stefano".into(),
+        shown: "Stefano".into(),
+    };
+    assert_eq!(
+        (view.you, view.profile.as_str(), view.machine),
+        (None, "", Some(named))
+    );
+}
