@@ -389,7 +389,8 @@ attaches, with no new sorting:
 **Blueprints.** A blueprint is a set of the same settings given a name. The page meets it in the
 source of a value: a value comes from the default, the project file, the board's store or the
 local file, and a blueprint adds no place to that order: its values are in the project file,
-with a record of which of them it put ([its analysis](blueprints.md#how-a-project-takes-one)).
+which also names the blueprint and its version, and which of them it put is read from the
+blueprint at that version ([its analysis](blueprints.md#what-the-project-holds-of-its-blueprint)).
 The page's source line is then where a person sees which values are the blueprint's. A
 preference kept in the board's store changes nothing the blueprint put; committing one over a
 value the blueprint set makes the project its own version of the blueprint, and the page says so

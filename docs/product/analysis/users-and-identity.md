@@ -882,7 +882,7 @@ and may not direct agents. A person who may direct agents writes as the owner do
   [2026-11-27 07:43] agent — Built as B by `app/held-comment-block-changed`: a held comment whose block changed or is gone is passed on at its section's end. A block whose words stand twice is asked on **held-callout-block-twice**.
   [2026-11-27 07:43] agent · resolved
 
-- [ ] **held-callout-block-twice** — A held comment is written after the block it was left on when it is passed on. Where that block's words stand twice, under its heading or twice elsewhere and nowhere under it, every Pass on is refused until one copy goes, so the comment can wait for good. Where should it go? A: at the end of its section, as a changed block's does. B: after the copy nearest the line it was left after. C: where it was left, with no Pass on while its block stands twice. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+- [x] **held-callout-block-twice** — A held comment is written after the block it was left on when it is passed on. Where that block's words stand twice, under its heading or twice elsewhere and nowhere under it, every Pass on is refused until one copy goes, so the comment can wait for good. Where should it go? A: at the end of its section, as a changed block's does. B: after the copy nearest the line it was left after. C: where it was left, with no Pass on while its block stands twice. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
   [2026-11-26 09:46] agent — Posted for the board task `app/held-comment-block-follow-ups`, a question **held-callout-block-changed** leaves open once a block's words stand twice. Nothing that depends on it is built.
 
     **Base (today).** A pass finds the block again by its words: under its own heading, else anywhere they stand once. Where they stand twice under its heading, or twice elsewhere and nowhere under it, the pass is refused with "the block this comment was left after now stands in several places: nothing was written". The comment stays held, drawn where it was left, with a Pass on that is refused every time until the document holds those words once. A comment left after words that already stood twice under its heading is refused from its first press.
@@ -907,6 +907,8 @@ and may not direct agents. A person who may direct agents writes as the owner do
     - **words-without-agent-reach** (A) says a pass writes the words into the file. It does not say where once they stand twice.
 
     Neither decides this.
+  [2026-11-27 07:47] owner · approved — B
+  [2026-11-27 07:48] agent — Filed as `app/held-comment-block-twice` and staffed: a held comment whose block stands twice is drawn and passed on after the copy nearest the line it was left after, so no Pass on is refused for it.
 
 What follows:
 

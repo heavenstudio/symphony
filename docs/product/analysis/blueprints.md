@@ -19,11 +19,11 @@ card at the section that argues it, a few at a time.
   assistant.
 - **Updates.** A new version [reaches a project that follows by itself](#how-a-new-version-arrives):
   a task the Symphony files, landed once the project's own checks pass, with no reviewer.
-- **One for each project.** A project has one board
+- **One for each project, named in its settings.** A project has one board
   ([boards and projects](boards-and-projects.md#one-board-for-each-project)), and a part that
-  needs a template of its own is a project of its own, so a project has one blueprint and one
-  record of it. [What that record holds](#what-the-project-holds-of-its-blueprint) is asked again
-  on that ground.
+  needs a template of its own is a project of its own, so a project has one blueprint. Its
+  project file [names it](#what-the-project-holds-of-its-blueprint): the address and the version.
+  There is no record file of its own and no submodule.
 
 How facts are marked: a fact about the code names the file it was read in; "read 2026-11-20" is
 this machine that day, the other registered projects' checkouts read in place and changed in
@@ -100,24 +100,26 @@ A blueprint is a starter the project keeps following, until the project changes 
 
 **Taking one.** Its files are copied into the project, each at the place its reader looks: the
 project file at the root, the recipes beside the justfile, the skills in the skills folder, the
-rules, the theme's files, the starting documents. They are committed there. With them goes a
-record of what the blueprint put: its address, its version, each file it wrote and each key it
-set in the project file.
+rules, the theme's files, the starting documents. They are committed there, and the project file
+names the blueprint and the version taken
+([below](#what-the-project-holds-of-its-blueprint)). What the blueprint put, each file it wrote
+and each key it set in the project file, is read again from the blueprint at that version.
 
-**Following.** While everything in that record is still as the blueprint put it, the project
-follows. A new version replaces those files and keys. Nothing of the project's can be lost by
-that, since the project changed none of them, so the update needs no agent to work it out.
+**Following.** While everything the blueprint put is still as it put it, the project follows. A
+new version replaces those files and keys. Nothing of the project's can be lost by that, since
+the project changed none of them, so the update needs no agent to work it out.
 
 **What is the project's own from the first day.** A project adds without ceasing to follow: a key
 the blueprint does not set (its name, its id), a skill, a recipe or a document of its own. The
 starting documents a project writes in (its README, its register, its guide for agents) are
-copied once, are outside the record, and are never replaced. A preference changed on the Settings
-page is kept in the board's store, not in the committed file, so it changes nothing the blueprint
-put ([below](#how-it-meets-the-other-two-concepts)).
+copied once and never replaced: the blueprint names them as starting files, and following
+compares none of them. A preference changed on the Settings page is kept in the board's store, not
+in the committed file, so it changes nothing the blueprint put
+([below](#how-it-meets-the-other-two-concepts)).
 
-**Its own version.** A landing that changes something in the record (a key the blueprint set, a
-file it wrote) makes the project its own version of the blueprint. Nothing replaces its files
-from then on. The record keeps the version it left from, so the project can still ask for what
+**Its own version.** A landing that changes something the blueprint put (a key it set, a file it
+wrote) makes the project its own version of the blueprint. Nothing replaces its files from then
+on. The setting keeps the version it left from, so the project can still ask for what
 the blueprint changed since: that is an agent's task, which reads the blueprint's changes, fits
 them to the project's own, and lands under review as any change does, since nothing promises
 they still fit.
@@ -126,16 +128,17 @@ they still fit.
 would end the following on the first day. So a blueprint keeps its part and the project's part in
 separate files wherever a reader allows it, as the shipped skills do with `project.md`: its rules
 in a file of their own that the project's guide links, its recipes in a file the project's
-justfile imports. The project file is one file by its reader, which is why it is recorded key by
-key.
+justfile imports. The project file is one file by its reader, which is why what the blueprint put
+there is compared key by key.
 
-**Against the three shapes first proposed.** It is the starter (A) with a record, so later
-versions can still arrive. It is not the layer (B): there is no folder apart and no second file
-read under the project's, so the project file keeps one reader; and a project's change over the
-blueprint ends the following, where the layer kept it. It is nearest the reference (C), in that a
-project that changed nothing stays current with no work. It differs from C in two ways: the
-blueprint's content is committed in the project, so a clone at any commit reads the setup that
-commit had, whatever the machine has installed; and a project can leave and become its own.
+**Against the three shapes first proposed.** It is the starter (A) with the blueprint named in
+the project's settings, so later versions can still arrive. It is not the layer (B): there is no
+folder apart and no second file read under the project's, so the project file keeps one reader;
+and a project's change over the blueprint ends the following, where the layer kept it. It is
+nearest the reference (C), in that a project that changed nothing stays current with no work. It
+differs from C in two ways: the blueprint's content is committed in the project, so a clone at any
+commit reads the setup that commit had, whatever the machine has installed; and a project can
+leave and become its own.
 
 - [-] **blueprint-shape** — A blueprint would be a ready-made setup a project starts from: its board columns, checks, recipes, skills, rules and look. This card decides what a blueprint is inside a project once taken, which decides whether similar projects can stay alike. A: a starter. Its files are copied in once and are the project's from then on; nothing updates them. B: a layer. Its files are committed in a folder of their own that the project never edits, the project's own settings, recipes and skills sit over them, and an update replaces that folder by a task that lands in the project. C: a reference. The project names a blueprint, and Symphony reads it from the release installed on the machine; an update arrives with the release, with no commit in the project. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/blueprints#How a project takes one]]
   [2026-11-20 06:25] agent — Posted for the board task `app/blueprints`, from your ask: "an out of the box setup, that has a certain set of preconfigured elements, including ui compoenents and themes, columns, tooling and quality gate checks, and so on", for new projects and to "\"maintain\" similar boards projects on the same set of processes, tools and UI". Nothing is built; this is the first of several rounds.
@@ -160,11 +163,11 @@ commit had, whatever the machine has installed; and a project can leave and beco
 ### How a new version arrives
 
 A new version reaches a project that follows by itself. When the blueprint has a newer tag, the
-Symphony files a task in the project that replaces what the blueprint put, runs the project's own
-checks at that tip, and lands it once they pass, with no reviewer. The change was reviewed where
-it was made, in the blueprint's repository, and the project trusts that address as it trusts a
-dependency. The version arrives as a commit in the project, so its history says which version it
-ran on at any commit.
+Symphony files a task in the project that replaces what the blueprint put and moves the version
+its project file names, runs the project's own checks at that tip, and lands it once they pass,
+with no reviewer. The change was reviewed where it was made, in the blueprint's repository, and
+the project trusts that address as it trusts a dependency. The version arrives as a commit in the
+project, so its project file says which version it ran on at any commit.
 
 A task whose checks fail does not land: it stays on the project's board as any red task does,
 and the project keeps the version it had.
@@ -191,27 +194,35 @@ person asks, under which projects fall behind until someone does.
 
 ### What the project holds of its blueprint
 
-The copies sit where their readers look under either way considered: Claude Code, `just` and the
-Symphony each read fixed places, and a submodule lives at one path. What differs is how the
-project knows its blueprint and what it left.
+The blueprint a project follows is a setting of that project, in its project file
+([its card](#blueprint-record): "should be a setting config. Multiple projects could have
+different settings, so it would keep 1 project per blueprint."). The setting names the
+blueprint's address and its version: the tag, with the commit it named when it was taken. The
+project keeps no file of its own for its blueprint and no submodule. The blueprint's files are
+copies at the places their readers look, since Claude Code, `just` and the Symphony each read
+fixed places.
 
-- **A. A record alone.** One committed file names the address, the version and what the
-  blueprint put. The Symphony fetches the blueprint into the machine's folder when it takes a
-  version, compares, or hands an agent what changed.
-- **B. A submodule as well.** The blueprint's repository is a Git submodule inside the project's,
-  at the version taken. Git records the version, and the untouched blueprint is in the checkout to
-  compare with and for an agent's task to read. Every clone and every task's worktree has to
-  fetch and check out the submodule, and the Symphony makes a worktree for each task; Git's own
-  manual says its support for submodules in several checkouts of one repository is incomplete and
-  advises against it. The checkout holds the blueprint twice.
+**Committed.** Which blueprint a project follows, and at which version, decides commands it runs
+and what its land needs, so the setting is read from a commit as those are
+([above](#what-a-blueprint-must-respect)): from the committed project file, never from the
+board's store or the local settings file. Taking a blueprint writes it, and each new version
+moves it in the same commit that brings that version's files.
 
-**One record for each project.** A project has one board, and a part of the work that needs a
-template of its own is a project of its own, in the same repository or another
-([boards and projects](boards-and-projects.md#one-board-for-each-project)). So a project has one
-blueprint and one record of it, never one for each board. Two projects of one repository over
-folders of their own each keep theirs in their own folder. Two projects over the same folders
-share the blueprint's files; where each keeps its record and which blueprint writes those files
-wait until a repository first needs such projects
+**What the blueprint put is read from the blueprint.** A version is a commit of the blueprint's
+repository and does not change, its files are copied into the project as they are, and which of
+them are starting files the blueprint itself says. So the files it wrote and the keys it set are
+worked out again from the blueprint at that commit, and the setting holds no list of them. To
+compare, to take a new version or to hand an agent what changed, the Symphony fetches the
+blueprint at that commit into the machine's folder, or reads the copy it fetched before.
+
+**One blueprint for each project.** Each project has its own settings, so each names one
+blueprint, and many projects can name the same one. A project has one board, and a part of the
+work that needs a template of its own is a project of its own, in the same repository or another
+([boards and projects](boards-and-projects.md#one-board-for-each-project)). Two projects of one
+repository over folders of their own each name theirs in their own project file. Two projects
+over the same folders each name theirs wherever such a project keeps its own settings, and they
+share the blueprint's files; where those settings are kept and which blueprint writes the shared
+files wait until a repository first needs such projects
 ([its later rounds](boards-and-projects.md#later-rounds)).
 
 - [-] **blueprint-in-project** — You asked whether a blueprint could be added to a project as a Git submodule inside its repository. Either way the blueprint's files are copied to where they are read (the skills folder, the project file at the root), since each reader looks in a fixed place. The choice is how the project remembers its blueprint. A: a record alone. One committed file names the blueprint's address, its version and what it put; Symphony fetches the blueprint when it needs to compare or update. B: a submodule as well, inside the project's repository, at the version taken. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/blueprints#What the project holds of its blueprint]]
@@ -232,7 +243,7 @@ wait until a repository first needs such projects
   [2026-11-23 12:27] agent — This question waits. Whether a project may hold several boards, or each is a project entirely, is now a concept of its own with its own reasoning and proposal: the board task app/boards-and-projects. How a blueprint is recorded in a project is asked again after that is decided, as a new card. The section above this card says so, and its paragraph on several boards is taken back to what is known today: a project has one board.
   [2026-11-26 08:34] agent — It is decided. On **boards-per-project** you approved "B, but they may even reference the same base folder. They should have different settings including people, tasks, board, decision queue tho and they could use different folders." A project has one board, and a part with a template of its own is a project of its own, so the record is one for each project, never one for each board. That answers your question here, and not the choice between A and B, so it is asked again on the new card **blueprint-record** below, its options written for one record per project.
 
-- [ ] **blueprint-record** — How a project remembers the blueprint it follows. A project now has one board and one blueprint, so this is one record for the project; it asks again what **blueprint-in-project** asked. Either way the blueprint's files are copied to where they are read (the skills folder, the project file at the root). A: a record alone. One committed file in the project names the blueprint's address, its version and what it put; Symphony fetches the blueprint when it compares or updates. B: a submodule as well, the blueprint's repository inside the project's at the version taken, beside that record. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/blueprints#What the project holds of its blueprint]]
+- [r] **blueprint-record** — How a project remembers the blueprint it follows. A project now has one board and one blueprint, so this is one record for the project; it asks again what **blueprint-in-project** asked. Either way the blueprint's files are copied to where they are read (the skills folder, the project file at the root). A: a record alone. One committed file in the project names the blueprint's address, its version and what it put; Symphony fetches the blueprint when it compares or updates. B: a submodule as well, the blueprint's repository inside the project's at the version taken, beside that record. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/blueprints#What the project holds of its blueprint]]
   [2026-11-26 08:34] agent — Posted for the board task `docs/boards-question-settled`. It asks again **blueprint-in-project**, which you rejected until boards were decided: "We need to decide upon if we are going to do multiple boards per project or multiple project entirely." A concept: nothing is built by this card.
 
     **Base.** Nothing is built. A blueprint is a Git repository of its own, as you approved on **blueprint-home**.
@@ -253,6 +264,10 @@ wait until a repository first needs such projects
     - **blueprint-in-project** was rejected for the boards question, not for A or B.
 
     None decides this.
+  [2026-11-27 07:46] owner · approved — should be a setting config. Multiple projects could have different settings, so it would keep 1 project per blueprint.
+  [2026-11-27 07:47] agent — Understood: the record is a setting of the project, in its settings file, one blueprint for each project, and no submodule. Filed as `docs/blueprint-record-setting`, which rewrites this analysis to say so; anything your words leave open (where the list of what the blueprint put is kept) comes back as a card of its own, not as a choice of ours.
+  [2026-11-27 07:54] agent — Recorded: the blueprint a project follows is a setting of that project, in its committed project file, as your note says: "should be a setting config. Multiple projects could have different settings, so it would keep 1 project per blueprint." The setting names the blueprint's address and its version (the tag, with the commit it named); there is no record file of its own and no submodule. Each project has its own settings, so each names one blueprint, and many projects can name the same one. It is read from a commit, never from the board's store or the local file, since it decides what lands. What the blueprint put (the files it wrote and the keys it set) is not kept in the setting: a version is a fixed commit and its files are copied as they are, so that list is worked out again from the blueprint at that commit, and nothing is left for a card. Changed: the section above this card, the summary at the top, How a project takes one, How a new version arrives, Where blueprints live and How it meets the other two concepts here, and the lines on the record in boards-and-projects.md and settings-page.md.
+  [2026-11-27 07:54] agent · resolved
 
 ## Where blueprints live
 
@@ -261,8 +276,8 @@ Anyone can publish one, and an organisation can keep one private for its own pro
 
 What follows from that:
 
-- **A version** is a tag, recorded with the commit it named when it was taken, so a tag moved
-  later changes nothing already taken.
+- **A version** is a tag, recorded in the project's settings with the commit it named when it
+  was taken, so a tag moved later changes nothing already taken.
 - **Trust.** The Symphony fetches a blueprint from its address, and what it brings is run in the
   project: commands, and instructions agents follow. Naming an address is trusting it as a
   dependency is trusted. The Symphony fetches from an address nowhere else today.
@@ -335,8 +350,8 @@ It is last because it asks two things the other two do not.
 A blueprint's look is the `[theme]` keys and the files it puts. A project that wants its own
 icons and another mood changes those, and by the shape above that makes it its own version. Two
 ways keep it following, each a later card: a blueprint that leaves the look to the project (it
-puts none, or puts it among the starting files, outside the record), and the reader's own saved
-theme in the browser, which is one person's and sits over everything.
+puts none, or puts it among the starting files, which following never compares), and the reader's
+own saved theme in the browser, which is one person's and sits over everything.
 
 Two gaps are for a later round as well. A theme package comes from a plugin alone, so a
 blueprint's look needs a way to be plain files. And a look is tokens, a stylesheet, one icon and
@@ -349,14 +364,16 @@ today.
 it; a blueprint decides what it starts as.
 
 - A value is read from the default, the committed project file, the board's store, then the local
-  file. A blueprint adds no place to that order: its values are in the committed file, and the
-  record says which of them it put. The page's source line can say "the blueprint's" for those.
+  file. A blueprint adds no place to that order: its values are in the committed file, which also
+  names the blueprint and its version, and which of them it put is read from the blueprint at
+  that version. The page's source line can say "the blueprint's" for those.
 - A preference changed on the page goes to the board's store, which no commit holds, so the
   project still follows. The control that makes a stored value the project's commits it; where
   that key is one the blueprint set, the commit makes the project its own version, and the page
   says so before it is pressed.
 - The settings that hold commands or decide what lands are one list, the one the store and the
-  local file refuse. A blueprint sets many of them, which is why its versions arrive as commits.
+  local file refuse. The blueprint a project follows is on it, and a blueprint sets many of the
+  others, which is why its versions arrive as commits.
 - Taking a blueprint, and asking for its changes once the project is its own version, are actions
   the page can offer that file a task. Neither is a save.
 
@@ -380,7 +397,7 @@ Each is a card of a later round.
    source the project builds, or none until a blueprint needs one.
 2. **Rules as separate files**: where a blueprint's standing rules sit so that every agent reads
    them and a project adds its own without changing them.
-3. **The look**: whether a blueprint puts one inside the record, a look as plain files, and
+3. **The look**: whether a blueprint puts one that following compares, a look as plain files, and
    whether a theme can set the board's own icons.
 4. **Checks of the project's own tools**: whether recorded recipes under the `tests` stamp are
    enough, or a project needs stamps of its own beyond the four readers.
