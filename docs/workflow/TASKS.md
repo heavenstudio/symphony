@@ -3858,8 +3858,9 @@ stretch at once; a press on a band draws its stretch on the true clock, the focu
 the switch. A task with no quiet stretch draws neither. A phone's list says each as a row of its
 own: "10 h 54 m quiet, 14:03 → 11-20 00:57" over "Task done, nothing recorded".
 
-- [ ] **timeline-quiet-words** — The approved pictures leave two words of a quiet stretch to the build. As built, while a band is in view the range readout says the time skipped after the hours shown, "11-19 01:00 → 11-20 04:34 · 1 d 3 h · 10 h 54 m skipped", where the whole task's picture reads no more than its length. A phone's quiet row says under its length and its ends the band's own words, "Task done, nothing recorded", where its picture lists what the rule counts, "Task done. No role held, no run, message or change recorded.", which a page leaves to the product docs. Approve, or comment.
+- [x] **timeline-quiet-words** — The approved pictures leave two words of a quiet stretch to the build. As built, while a band is in view the range readout says the time skipped after the hours shown, "11-19 01:00 → 11-20 04:34 · 1 d 3 h · 10 h 54 m skipped", where the whole task's picture reads no more than its length. A phone's quiet row says under its length and its ends the band's own words, "Task done, nothing recorded", where its picture lists what the rule counts, "Task done. No role held, no run, message or change recorded.", which a page leaves to the product docs. Approve, or comment.
   [2026-11-26 18:07] agent — Posted for the board task `app/timeline-quiet-bands`, the whole task with its quiet stretch skipped, at 1440 wide and on a phone. ![The readout with a band in view, light](../design/analysis/timeline-navigation/quiet-words.webp) ![The readout with a band in view, dark](../design/analysis/timeline-navigation/quiet-words-dark.webp) ![The quiet row on a phone, light](../design/analysis/timeline-navigation/quiet-row.webp) ![The quiet row on a phone, dark](../design/analysis/timeline-navigation/quiet-row-dark.webp)
+  [2026-11-27 07:49] owner · approved
 
 ## Links with the documents
 
