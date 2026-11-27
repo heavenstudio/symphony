@@ -296,6 +296,16 @@ fn a_build_publishes_every_kind_over_one_shared_stylesheet_into_out_as_named_fro
             .all(|name| !name.ends_with(".wasm") && !name.contains("-dxh")),
         "{present:?}"
     );
+    // Every element is a call of the build's own binding of the JSX runtime (vite.config.ts's
+    // `jsxBindings`), in every chunk, those a page imports later too: never `(0,J.jsx)(`, a
+    // property of React's CommonJS exports.
+    for name in present.iter().filter(|name| name.ends_with(".js")) {
+        let module = String::from_utf8(file(&format!("/assets/{name}"))).unwrap();
+        assert!(
+            !module.contains(".jsx)(") && !module.contains(".jsxs)("),
+            "{name} calls the JSX runtime through React's CommonJS exports"
+        );
+    }
     let mut top: Vec<String> = fs::read_dir(&public)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
