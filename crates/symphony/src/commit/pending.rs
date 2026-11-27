@@ -103,6 +103,11 @@ pub(super) struct Delivery {
     /// owner's, the machine's person, and for an agent's.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     person: String,
+    /// Whether [`Delivery::person`] is the person at the machine, under the name they gave
+    /// themselves: their task is filed as theirs ([`symphony_board::Store::for_machine`]). Left out
+    /// of the entry for anyone else.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    machine: bool,
     /// The later agent's saves committed on this save's branch with it, by their entries'
     /// numbers ([`joining`]): each takes that branch up as its own. Left out of the entry with
     /// none.
@@ -153,10 +158,21 @@ impl Delivery {
     }
 
     /// [`Delivery::saved`], `person`'s save (`owner` for the machine's person, kept as none).
-    pub(super) fn saved_by(root: &Path, person: &str) -> Self {
+    pub(super) fn saved_by(root: &Path, person: &symphony_plugin::Actor) -> Self {
+        let name = person_of(person.name());
         Self {
-            person: person_of(person),
+            machine: !name.is_empty() && symphony_board::workflow::is_machine(person),
+            person: name,
             ..Self::saved(root)
+        }
+    }
+
+    /// The board, for the writes of the person whose save it is ([`Delivery::acting`]).
+    fn store(&self, store: symphony_board::Store) -> symphony_board::Store {
+        if self.machine {
+            store.for_machine(self.acting())
+        } else {
+            store.for_person(self.acting())
         }
     }
 
@@ -1058,7 +1074,7 @@ fn filed(root: &Path, delivery: &Delivery, saves: &[(Edit, String)]) -> Result<(
     // The person whose save it is files the task and sends it to review: the owner, or a person a
     // board names, for whom the Symphony's store vouches as it does for their save.
     let owner = delivery.acting();
-    let store = crate::taskview::connect(root)?.for_person(owner);
+    let store = delivery.store(crate::taskview::connect(root)?);
     let app = crate::verdicts::app_handle(&store).map_err(|e| e.to_string())?;
     let slug = &delivery.branch;
     let receipt = format!("document-save:{slug}:{}", delivery.tip);

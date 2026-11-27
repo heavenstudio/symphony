@@ -75,7 +75,23 @@ pub(super) async fn static_response(shared: &Shared, path: &str, request: &Reque
         {
             preload::page(shared, kind, &mut shell).await;
         }
-        bytes = Bytes::from(crate::shell::page(&shell, &shared.root, &shared.base, ""));
+        // A hosted visitor, whom no board names, and a request no gate marked are served the page
+        // for nobody in particular, the person at the machine's lines still drawn by their name.
+        let machine = shared.gate.machine_person();
+        let reader = match crate::front::Admitted::actor(request.extensions()) {
+            Some(actor) => crate::shell::Reader::of(&actor, machine),
+            None => crate::shell::Reader {
+                machine,
+                ..crate::shell::Reader::default()
+            },
+        };
+        bytes = Bytes::from(crate::shell::page_for(
+            &shell,
+            &shared.root,
+            &shared.base,
+            "",
+            &reader,
+        ));
     }
     let (content_type, compresses) = file_type(&extension);
     let hash: String = sha2::Sha256::digest(&bytes)

@@ -126,10 +126,16 @@ fn committed(root: &std::path::Path, branch: &str) -> Result<String, Failure> {
 }
 
 impl Saves {
-    /// The Settings page's write, `payload` a [`SettingWrite`], recorded as made by `by`, the short
-    /// name of who asked: what it did, as a [`SettingWritten`], or why it is refused with nothing
-    /// changed.
-    pub(super) fn setting(&self, scope: &str, payload: &Value, by: &str) -> Result<Value, Failure> {
+    /// The Settings page's write, `payload` a [`SettingWrite`], recorded as made by `actor`, by
+    /// the short name their lines carry: what it did, as a [`SettingWritten`], or why it is
+    /// refused with nothing changed.
+    pub(super) fn setting(
+        &self,
+        scope: &str,
+        payload: &Value,
+        actor: &symphony_plugin::Actor,
+    ) -> Result<Value, Failure> {
+        let by = actor.name();
         if !scope.is_empty() {
             return Err(Failure {
                 status: 404,
@@ -151,7 +157,7 @@ impl Saves {
                 self.keep(&write.key, &toml_of(value), by)?
             }
             SettingAction::Remove => self.remove(&write.key, by)?,
-            SettingAction::Commit => self.make_the_projects(&write.key, by)?,
+            SettingAction::Commit => self.make_the_projects(&write.key, actor)?,
         };
         Ok(serde_json::to_value(done).expect("a setting's answer is JSON"))
     }
@@ -206,7 +212,12 @@ impl Saves {
     }
 
     /// The stored value of `key` made the project's, as [the module](self) says.
-    fn make_the_projects(&self, key: &str, by: &str) -> Result<SettingWritten, Failure> {
+    fn make_the_projects(
+        &self,
+        key: &str,
+        actor: &symphony_plugin::Actor,
+    ) -> Result<SettingWritten, Failure> {
+        let by = actor.name();
         let root = &self.root;
         // Held through a delivery's submit, as a document save holds them; a commit straight to
         // the default branch takes them again under the commits' lock, which comes first
@@ -302,7 +313,7 @@ impl Saves {
         if delivers {
             self.committer
                 .get_or_init(|| commit::Committer::start(root, self.writes.clone()))
-                .submit_as(edit, by)?;
+                .submit_as(edit, actor)?;
             drop(file);
             drop(saving);
             return Ok(SettingWritten {

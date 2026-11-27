@@ -22,12 +22,14 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use symphony_api::{
-    Addresses, GroupRow, NoticeWay, PEOPLE_CHANGE_PATH, PeopleAction, PeopleChange, PeopleLogLine,
-    PeoplePage, PersonRow, ProfileWrite,
+    Addresses, GroupRow, MachineProfile, NoticeWay, PEOPLE_CHANGE_PATH, PeopleAction, PeopleChange,
+    PeopleLogLine, PeoplePage, PersonRow, ProfileWrite,
 };
 use symphony_board::Store;
-use symphony_board::people::change::{self, Given, Stopped, Writer};
-use symphony_board::people::{Change, Holder, People, Power, Profile, Profiles, Signin, ways};
+use symphony_board::people::change::{self, Failure, Given, Held, Stopped, Writer};
+use symphony_board::people::{
+    Change, Holder, People, Power, Profile, Profiles, Signin, TAILSCALE, ways,
+};
 
 /// A route's refusal: its status and its words.
 type Failed = (StatusCode, String);
@@ -38,8 +40,8 @@ const HOSTED: &str = "Forbidden: the board's people are this machine's, never a 
 /// What a server that names no machine folder says of the profiles.
 const NO_MACHINE: &str = "this server names no machine folder, so no profile is read or written";
 
-/// Who asks: their short name (`owner` for the person at the machine) and whether they are that
-/// person.
+/// Who asks: their short name (the person at the machine's own once they gave themselves one, else
+/// `owner`) and whether they are that person.
 #[derive(Clone, Debug)]
 pub(crate) struct Asker {
     pub(crate) name: String,
@@ -58,7 +60,7 @@ impl Asker {
 }
 
 /// `GET` [`symphony_api::PEOPLE_PATH`]: the page, the board read on the store the pages share.
-pub(crate) async fn read(shared: &Shared, request: &axum::http::Request<()>) -> Response {
+pub(crate) async fn read(shared: &Arc<Shared>, request: &axum::http::Request<()>) -> Response {
     if crate::hosted::admission(request).is_some() {
         return error(StatusCode::FORBIDDEN, HOSTED);
     }
@@ -70,9 +72,12 @@ pub(crate) async fn read(shared: &Shared, request: &axum::http::Request<()>) -> 
         Err(refusal) => return *refusal,
     };
     let machine = shared.gate.machine().map(Path::to_path_buf);
+    let shared = shared.clone();
     let read = crate::spawn::blocking(move || {
         let board = hub.on_reader(|store| Ok((store.people()?, store.people_log()?)));
-        Ok::<_, Failed>(Json(page(board, profiles(machine.as_deref()), &asker)))
+        let mut page = page(board, profiles(machine.as_deref()), &asker);
+        offer_signins(&shared, &mut page);
+        Ok::<_, Failed>(Json(page))
     });
     answered(read.await, "the people could not be read: ")
 }
@@ -98,6 +103,7 @@ pub(crate) async fn write(
         shared.gate.machine().map(Path::to_path_buf),
     );
     let route = route.to_string();
+    let shared = shared.clone();
     let written = crate::spawn::blocking(move || {
         let store = symphony::taskview::connect(&root).map_err(|why| {
             (
@@ -115,20 +121,36 @@ pub(crate) async fn write(
             changed(&store, machine, &asked, &asker)?;
         } else {
             let asked = serde_json::from_value(payload).map_err(|e| bad(format!("{e}")))?;
-            profiled(machine, &asked, &asker)?;
+            profiled(machine, &root, &asked, &asker)?;
         }
         let board = (store.people()).and_then(|people| Ok((people, store.people_log()?)));
-        Ok::<_, Failed>(page(
+        let mut page = page(
             board.map_err(|why| why.to_string()),
             profiles(machine),
             &asker,
-        ))
+        );
+        offer_signins(&shared, &mut page);
+        Ok::<_, Failed>(page)
     })
     .await;
     answered(
         written.map(|done| done.map(Json)),
         "the people could not be changed: ",
     )
+}
+
+/// `page` offering the sign-ins the server knows a visitor by, which an add and a profile then
+/// take: Tailscale's while this machine is on a tailnet ([`crate::gate::Gate::tailnet`]), and the
+/// service a signed word names while the machine folder sets a signing service's key
+/// ([`crate::gate::Gate::signs_words`]). With neither it offers none, as no sign-in could then
+/// match a visitor.
+fn offer_signins(shared: &Shared, page: &mut PeoplePage) {
+    page.signins = if shared.gate.tailnet() {
+        vec![TAILSCALE.to_string()]
+    } else {
+        Vec::new()
+    };
+    page.signed_words = shared.gate.signs_words();
 }
 
 /// The machine's profiles, read from `machine`.
@@ -216,6 +238,20 @@ pub(crate) fn page(
         groups,
         log,
         problem: (!problems.is_empty()).then(|| problems.join("; ")),
+        mine: asker.machine.then(|| {
+            let profile = profiles.machine();
+            MachineProfile {
+                name: profile.map(|profile| profile.name.clone()),
+                display: profile
+                    .map(|profile| profile.display.clone())
+                    .unwrap_or_default(),
+                git: profile
+                    .map(|profile| profile.git.clone())
+                    .unwrap_or_default(),
+            }
+        }),
+        signins: Vec::new(),
+        signed_words: false,
     }
 }
 
@@ -361,15 +397,44 @@ fn changed(
         ),
         PeopleAction::Grant => drop(store.grant(holder, &given, by).map_err(board(asker))?),
         PeopleAction::Revoke => drop(store.revoke(holder, &given, by).map_err(board(asker))?),
-        PeopleAction::GroupAdd => drop(store.add_group(name, &given, by).map_err(board(asker))?),
+        PeopleAction::GroupAdd => drop(
+            change::add_group(store, &folder(machine)?, name, &given, by)
+                .map_err(stopped(asker))?,
+        ),
         PeopleAction::GroupRemove => drop(store.remove_group(name, by).map_err(board(asker))?),
     }
     Ok(())
 }
 
 /// `asked` written to the machine's profile in `machine` as `asker` may: any for the person at
-/// the machine, their own for the person themself, none for anyone else.
-fn profiled(machine: Option<&Path>, asked: &ProfileWrite, asker: &Asker) -> Result<(), Failed> {
+/// the machine, their own for the person themself, none for anyone else; and the name the person
+/// at the machine gives themselves, theirs alone to ask ([`change::name_machine`]), checked against
+/// every board the machine serves, the project at `root` among them ([`held`]).
+fn profiled(
+    machine: Option<&Path>,
+    root: &Path,
+    asked: &ProfileWrite,
+    asker: &Asker,
+) -> Result<(), Failed> {
+    if asked.machine {
+        if !asker.machine {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Forbidden: only the person at the machine gives themselves its name".into(),
+            ));
+        }
+        let given = Given {
+            display: asked.display.clone(),
+            signins: signins(&asked.signins)?,
+            git: asked.git.clone(),
+            ..Given::default()
+        };
+        let machine = folder(machine)?;
+        return change::name_machine(&machine, &asked.name, &given, |name| {
+            held(&machine, root, name)
+        })
+        .map_err(stopped(asker));
+    }
     let writer = if asker.machine {
         Writer::Machine
     } else if asked.name == asker.name {
@@ -402,6 +467,41 @@ fn profiled(machine: Option<&Path>, asked: &ProfileWrite, asker: &Asker) -> Resu
     };
     change::profile(&folder(machine)?, &asked.name, &given, writer).map_err(stopped(asker))?;
     Ok(())
+}
+
+/// What the boards the machine serves hold under `name`: those its registry in `machine` lists, and
+/// the project at `root`, which a server of its own serves unlisted. A group on any of them, else a
+/// person on any; a registry or a board that cannot be read fails, as a name it holds could not be
+/// seen.
+fn held(machine: &Path, root: &Path, name: &str) -> Result<Option<Held>, Stopped> {
+    let unread = |why: String| {
+        Stopped::Failed(Failure {
+            said: "a board of this machine could not be read, so nothing was written".into(),
+            why,
+            left: None,
+        })
+    };
+    let registry = symphony::machine::Registry::read(machine).map_err(unread)?;
+    let mut roots: Vec<PathBuf> = vec![root.to_path_buf()];
+    // A project whose folder is gone holds no board to read.
+    for entry in registry.projects {
+        if entry.root.is_dir() && !roots.contains(&entry.root) {
+            roots.push(entry.root);
+        }
+    }
+    let mut found = None;
+    for root in roots {
+        let people = symphony::taskview::connect(&root)
+            .and_then(|store| store.people().map_err(|e| e.to_string()))
+            .map_err(|why| unread(format!("{}: {why}", root.display())))?;
+        if people.group(name).is_some() {
+            return Ok(Some(Held::Group));
+        }
+        if people.member(name).is_some() {
+            found = Some(Held::Person);
+        }
+    }
+    Ok(found)
 }
 
 #[cfg(test)]

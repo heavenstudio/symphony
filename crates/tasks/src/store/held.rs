@@ -16,7 +16,8 @@ use serde_json::{Value, json};
 
 impl Store {
     /// `sender`'s message on `slug`'s thread, which waits on an agent's answer: said as
-    /// [`Store::say_asking_as`] says it where they may direct agents (the owner always does), and
+    /// [`Store::say_asking_as`] says it where they may direct agents (the person at the machine
+    /// always does, as `owner` or the name they gave themselves: [`Store::is_machine`]), and
     /// held for people ([`Store::hold_words`]) where they are a person a board named who may not.
     /// A line that reads as an approve ([`crate::stamps::read::reads_as_approve`]) is said, with
     /// the note in its words, by one who may decide the task, whether or not they may direct
@@ -35,7 +36,7 @@ impl Store {
         text: &str,
         to: Option<&str>,
     ) -> Result<Said, Error> {
-        if sender == OWNER || !self.is_person(sender) {
+        if self.is_machine(sender) || !self.is_person(sender) {
             return self.say_asking_as(slug, sender, text, to).map(Said::Line);
         }
         let powers = self.people()?.powers_of(sender);
@@ -67,10 +68,11 @@ impl Store {
         self.say_asking_as(slug, sender, text, to).map(Said::Line)
     }
 
-    /// Whether `name` may direct the board's agents: the owner, a session (an agent's own words
-    /// are no person's), or a person the board gives the power to.
+    /// Whether `name` may direct the board's agents: the person at the machine
+    /// ([`Store::is_machine`]), a session (an agent's own words are no person's), or a person the
+    /// board gives the power to.
     pub fn may_direct_agents(&self, name: &str) -> Result<bool, Error> {
-        if name == OWNER || !self.is_person(name) {
+        if self.is_machine(name) || !self.is_person(name) {
             return Ok(true);
         }
         Ok(self.people()?.powers_of(name).holds(Power::DirectAgents))
@@ -79,8 +81,8 @@ impl Store {
     /// `author`'s message `text` on `slug`'s thread, to `to` (a role, a session or nobody), held for
     /// people: the row, and the board's line to `owner` saying a message is held, whose number is
     /// the row's ([`crate::held`]). No agent is handed the words. Refused, with nothing written: an
-    /// author who is not a person this store writes for ([`Store::for_person`]; the owner's words
-    /// are never held), an empty text, a task, role or session that is not there, and a board
+    /// author who is not a person this store writes for ([`Store::for_person`]; the person at the
+    /// machine's words are never held, [`Store::is_machine`]), an empty text, a task, role or session that is not there, and a board
     /// without the step.
     pub fn hold_words(
         &self,
@@ -89,7 +91,7 @@ impl Store {
         text: &str,
         to: Option<&str>,
     ) -> Result<Held, Error> {
-        if author == OWNER || !self.is_person(author) {
+        if self.is_machine(author) || !self.is_person(author) {
             return Err(refused(format!(
                 "only a person's words are held, and {} writes as no person here: nothing was \
                  written",
@@ -216,7 +218,8 @@ impl Store {
     /// `author`'s comment `text` on a document, left at `place`, held for people
     /// ([`crate::held::OnDocument`]): its row alone, with no line on any thread and no ask, so no
     /// agent is handed it. Refused, with nothing written: an author who is not a person this store
-    /// writes for (the owner's words are never held), an empty text, a place that names no
+    /// writes for (the person at the machine's words, as `owner` or under the name they gave
+    /// themselves, are never held: [`Store::is_machine`]), an empty text, a place that names no
     /// document, a card's message with no card, a callout with no block, and a board without the
     /// step.
     pub fn hold_on_document(
@@ -225,7 +228,7 @@ impl Store {
         text: &str,
         place: &Place,
     ) -> Result<OnDocument, Error> {
-        if author == OWNER || !self.is_person(author) {
+        if self.is_machine(author) || !self.is_person(author) {
             return Err(refused(format!(
                 "only a person's words are held, and {} writes as no person here: nothing was \
                  written",

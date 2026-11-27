@@ -379,6 +379,13 @@ fn a_hold_that_cannot_be_made_writes_nothing() {
     // A store that writes for nobody holds no one's words either.
     let why = refused(f.store.hold_on_document("ana", WORDS, &good));
     assert!(why.contains("'ana' writes as no person here"), "{why}");
+    // Nor the person at the machine's, under the name they gave themselves as under `owner`.
+    let machine = f.other().for_machine("rui");
+    let why = refused(machine.hold_on_document("rui", WORDS, &good));
+    assert!(
+        why.starts_with("only a person's words are held, and 'rui' writes as no person here"),
+        "{why}"
+    );
     assert_eq!(f.store.held_on_documents().unwrap(), []);
 }
 

@@ -217,6 +217,7 @@ fn declarations() -> Vec<Declared> {
 fn board_declarations(cfg: &Config) -> Vec<Declared> {
     vec![
         declared::<api::ProjectView>(cfg),
+        declared::<api::PersonName>(cfg),
         declared::<api::NavItem>(cfg),
         declared::<api::Board>(cfg),
         declared::<api::Card>(cfg),
@@ -280,6 +281,7 @@ fn page_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::PeopleAction>(cfg),
         declared::<api::PeopleChange>(cfg),
         declared::<api::ProfileWrite>(cfg),
+        declared::<api::MachineProfile>(cfg),
         // Whose a card or a task is.
         declared::<api::Owner>(cfg),
         declared::<api::CardOwners>(cfg),
@@ -1399,15 +1401,7 @@ fn samples() -> Value {
     );
     samples.insert("settings".into(), json!(settings()));
     samples.insert("emptySettings".into(), json!(api::SettingsPage::default()));
-    samples.insert("people".into(), json!(people()));
-    samples.insert(
-        "emptyPeople".into(),
-        json!(api::PeoplePage {
-            administers: true,
-            machine: true,
-            ..api::PeoplePage::default()
-        }),
-    );
+    samples.extend(people_samples());
     samples.extend(tokens_samples());
     samples.insert("blocks".into(), json!(blocks()));
     samples.extend(
@@ -1495,6 +1489,38 @@ fn queue_samples() -> serde_json::Map<String, Value> {
     samples.insert("queue".into(), json!(queue));
     samples.insert("emptyQueue".into(), json!(api::Queue::default()));
     samples.insert("board".into(), json!(board));
+    samples
+}
+
+/// The People page's reads, as [`samples`] holds them: the person at the machine's, an empty
+/// board's, and theirs once they gave themselves a name.
+fn people_samples() -> serde_json::Map<String, Value> {
+    let mut samples = serde_json::Map::new();
+    samples.insert("people".into(), json!(people()));
+    samples.insert(
+        "emptyPeople".into(),
+        json!(api::PeoplePage {
+            administers: true,
+            machine: true,
+            mine: Some(api::MachineProfile::default()),
+            ..api::PeoplePage::default()
+        }),
+    );
+    // The person at the machine once they gave themselves a name, on a board with nobody named.
+    samples.insert(
+        "namedPeople".into(),
+        json!(api::PeoplePage {
+            administers: true,
+            machine: true,
+            mine: Some(api::MachineProfile {
+                name: Some("stefano".into()),
+                display: "Stefano".into(),
+                git: vec!["stefano-b".into()],
+            }),
+            signins: vec!["tailscale".into()],
+            ..api::PeoplePage::default()
+        }),
+    );
     samples
 }
 
@@ -2757,6 +2783,9 @@ fn people() -> api::PeoplePage {
         machine: true,
         you: None,
         problem: None,
+        mine: Some(api::MachineProfile::default()),
+        signins: words(&["tailscale"]),
+        signed_words: true,
     }
 }
 

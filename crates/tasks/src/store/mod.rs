@@ -278,9 +278,13 @@ pub struct Store {
     /// of its schema write it ([`schema::COMPATIBLE`]); set only by an opening that read the board,
     /// never by a store taken unchecked.
     reader: bool,
-    /// The person a board named whose writes this store makes ([`Store::for_person`]): none for
+    /// The person a board named whose writes this store makes ([`Store::for_person`]), or the
+    /// person at the machine by the name they gave themselves ([`Store::for_machine`]): none for
     /// the owner's and a session's.
     person: Option<String>,
+    /// Whether [`Store::person`] is the person at the machine, whose writes take the principal
+    /// they always took ([`crate::workflow::local_owner`]) under their own name.
+    machine: bool,
 }
 
 /// The command that reaches the board on `database` again: `just tasks`, naming the database when
@@ -1487,23 +1491,54 @@ impl Store {
     pub fn for_person(mut self, name: &str) -> Store {
         if name != work::OWNER {
             self.person = Some(name.to_string());
+            self.machine = false;
         }
         self
     }
 
+    /// This store, writing for the person at the machine under `name`, the short name they gave
+    /// themselves (`symphony_board::people::Profiles::machine`): their writes by `name` are a
+    /// person's, as [`Store::for_person`]'s are, and are taken as the principal the owner's always
+    /// were ([`crate::workflow::local_owner`]), who holds every power on every board with no row
+    /// saying so. `owner` writes as the owner, as it always has.
+    #[must_use]
+    pub fn for_machine(self, name: &str) -> Store {
+        let mut store = self.for_person(name);
+        store.machine = store.person.is_some();
+        store
+    }
+
+    /// This store, writing for `actor` as their host admitted them: the person at the machine where
+    /// their principal is the local owner's ([`Store::for_machine`]), else a person a board named
+    /// ([`Store::for_person`]).
+    #[must_use]
+    pub fn for_actor(self, actor: &symphony_plugin::Actor) -> Store {
+        if crate::workflow::is_machine(actor) {
+            self.for_machine(actor.name())
+        } else {
+            self.for_person(actor.name())
+        }
+    }
+
     /// Whether `actor` writes as a person, not a session: the owner, or the person this store
-    /// writes for ([`Store::for_person`]) when theirs is a short name.
+    /// writes for ([`Store::for_person`], [`Store::for_machine`]) when theirs is a short name.
     pub fn is_person(&self, actor: &str) -> bool {
         actor == work::OWNER
             || (self.person.as_deref() == Some(actor)
                 && symphony_docs::syntax::is_short_name(actor))
     }
 
-    /// The principal `actor`'s write is taken as: the person at the machine for the owner, a
-    /// person a board named for the one this store writes for ([`Store::is_person`]), else the
-    /// session of that handle.
+    /// Whether `actor` writes as the person at the machine: the owner, or the name this store writes
+    /// them under ([`Store::for_machine`]).
+    pub(crate) fn is_machine(&self, actor: &str) -> bool {
+        actor == work::OWNER || (self.machine && self.is_person(actor))
+    }
+
+    /// The principal `actor`'s write is taken as: the person at the machine for the owner and for
+    /// the name this store writes them under ([`Store::for_machine`]), a person a board named for
+    /// the one this store writes for ([`Store::is_person`]), else the session of that handle.
     pub(crate) fn principal_of(&self, actor: &str) -> symphony_plugin::execution::Principal {
-        if actor == work::OWNER {
+        if self.is_machine(actor) {
             crate::workflow::local_owner()
         } else if self.is_person(actor) {
             crate::workflow::person(actor)

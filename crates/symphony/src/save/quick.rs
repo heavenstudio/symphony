@@ -3,6 +3,7 @@
 use super::{Failure, Saves, quick_task, string};
 use crate::asks;
 use serde_json::{Value, json};
+use symphony_plugin::Actor;
 
 struct PageContext {
     page: String,
@@ -16,15 +17,16 @@ enum Filing {
 }
 
 impl Saves {
-    /// Apply a quick save by `by`, the short name of who asked, with its page context and any
-    /// already recorded task intent.
+    /// Apply a quick save asked by `actor`, its lines under their short name, with its page
+    /// context and any already recorded task intent.
     pub(super) fn quick(
         &self,
         scope: &str,
         route: &str,
         payload: &Value,
-        by: &str,
+        actor: &Actor,
     ) -> Result<Value, Failure> {
+        let by = actor.name();
         let title = string(payload, "title").trim();
         if route == "/api/quick-task" {
             if title.chars().count() > symphony_api::QUICK_TASK_TITLE_MAX {
@@ -45,7 +47,7 @@ impl Saves {
             if let Some(result) = receipt.completed() {
                 return result;
             }
-            let result = self.quick_task(scope, payload, &identity, &receipt, by);
+            let result = self.quick_task(scope, payload, &identity, &receipt, actor);
             return receipt.finish(result);
         }
         let PageContext { page, doc, anchor } = self.quick_context(scope, payload)?;
@@ -74,8 +76,9 @@ impl Saves {
         payload: &Value,
         identity: &str,
         receipt: &quick_task::Receipt,
-        by: &str,
+        actor: &Actor,
     ) -> Result<Value, Failure> {
+        let by = actor.name();
         let record = quick_task::load(&self.root, identity, scope, payload).map_err(|error| {
             if receipt.fresh {
                 before_dispatch(error)
@@ -84,7 +87,7 @@ impl Saves {
             }
         })?;
         if let Some(record) = record {
-            return match self.store_by(&record.task().by) {
+            return match self.store_as(&record.task().by, record.machine()) {
                 Ok(store) => quick_task::create(
                     &store,
                     &record.task(),
@@ -95,7 +98,7 @@ impl Saves {
             };
         }
         if !receipt.fresh {
-            return match self.store_by(by) {
+            return match self.store_for(actor) {
                 Ok(store) => match quick_task::recover(&store, &receipt.fingerprint) {
                     Ok(Some(saved)) => Ok(saved),
                     Ok(None) => Err(Failure { status: 422,
@@ -106,13 +109,14 @@ impl Saves {
             };
         }
         let context = self.quick_context(scope, payload)?;
-        let store = self.store_by(by).map_err(before_dispatch)?;
+        let store = self.store_for(actor).map_err(before_dispatch)?;
         let new =
             match self.quick_task_fields(payload, context, &store, &receipt.fingerprint, by)? {
                 Filing::Saved(slug) => return Ok(json!({"slug":slug})),
                 Filing::New(new) => new,
             };
-        let record = quick_task::reserve(&self.root, identity, scope, payload, &new)
+        let machine = symphony_board::workflow::is_machine(actor);
+        let record = quick_task::reserve(&self.root, identity, scope, payload, &new, machine)
             .map_err(before_dispatch)?;
         quick_task::create(
             &store,

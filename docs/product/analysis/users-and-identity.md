@@ -50,8 +50,10 @@ the modules and documents read.
   never how to reach them, and nobody on a read ([decided](#what-a-plugin-is-told-of-who-asked)).
 - **Not on a board, a person cannot see it exists.** That holds for a machine of the tailnet
   under another login as for a hosted visitor ([decided](#a-tailnet-machine-under-another-login)).
-- **A machine with one person changes in nothing.** With nobody named on a board, the person at
-  the machine holds everything there, as today.
+- **A machine with one person changes in nothing until they choose.** With nobody named on a
+  board, the person at the machine holds everything there, as today. Their lines read `owner`
+  until they give themselves a short name, which then carries them on every board
+  ([decided](#how-a-persons-name-is-written)).
 
 ## What the Symphony has today
 
@@ -467,8 +469,8 @@ Kept once, with the server, and written by the person
 - **A line carries the short name and nothing else.** A name once used is never given to
   another. Emails and chat addresses are in no repository, and no agent or project plugin is
   handed them.
-- **The lines already written as `owner` stay**, and a machine with nobody named keeps writing
-  as `owner`.
+- **The lines already written as `owner` stay**, and the person at the machine writes as `owner`
+  until they give themselves a short name ([decided](#how-a-persons-name-is-written)).
 
 What follows:
 
@@ -1215,9 +1217,14 @@ task's thread has the sender `owner`, and a comment in a document names nobody.
   message on a thread, the name on a comment in a document.
 - **A person's line is any line that is not an agent's.** `agent` and `owner` are never given to
   anyone as a short name.
+- **The person at the machine writes under a short name of their own once they give one**
+  ([its card](#machine-person-name), C): on every board, whether it names anyone else or not.
+  They give it in the You section of the People page, which asks once more before sending it,
+  as the name is never changed once given. They keep every power. Until then their lines read
+  `owner`, the role's word.
 - **What is written stays.** A line already written is never rewritten. The lines written as
-  `owner` read as the machine's person's, and on a board with nobody named new lines keep reading
-  `owner ·`.
+  `owner` are the machine's person's, and the pages draw them with the name that person is shown
+  by, the word the line holds on hover.
 
 What follows:
 
@@ -1226,12 +1233,15 @@ What follows:
   has each read a person's line as any line not an agent's, where they look for `owner ·` today.
 - **`board` is kept from anyone too**, as the name the board writes its own lines under on a
   thread.
+- **What the server says of them now names them**: a stamp's reading, `Approved by Stefano at
+  1a2b3c4`, and the line that moves a task out of its block. A wait names them only while nobody
+  else on the board decides. The `owner` stamp keeps its name, and `--to owner` still reaches
+  them.
+- **The header names the reader** and links to their profile: the person at the machine's own
+  section, or a person's card.
 - **The record's format changes for every project**, so the build that brings names says so to
-  consuming projects, as any change to what a project's tools read does. A project with nobody
-  named writes as it does today.
-
-What is not settled is the person at the machine once others are named: they keep writing as
-`owner` on every board, holding every power there, until the card below decides otherwise.
+  consuming projects, as any change to what a project's tools read does. A project whose person
+  at the machine gives no name writes as it does today.
 
 - [r] **machine-person-name** — Once a board names other people, your own lines there still read `owner ·`, beside `ana ·` and the others'. What is left is whether you take a short name of your own, and when. A: never; you are `owner` on every board, the one line that names no profile. B: on a board that names anyone else, your new lines carry your own short name, from a profile you give yourself, and on a board with nobody named they read `owner ·` as today. C: once you give yourself a short name, every new line of yours carries it, on every board, named or not. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
   [2026-11-23 19:40] agent — Posted for the board task `app/names-on-lines`. A concept: nothing is built by this card.
@@ -1259,6 +1269,7 @@ What is not settled is the person at the machine once others are named: they kee
     - **people-kept-where** (B) gives the person at the machine every power on a board with nobody named. It does not say how their lines read once others are.
 
     None of them decides this.
+  [2026-11-24 11:29] agent — Recorded from the owner's words on the board task `app/machine-person-name`: "it should move to person name, even if there is no one else. If we don't have the person's name, fallback is their role", "right now everyone owner should become "stefano"", "Could be "Stefano"" and "But it is missing some place to edit your profile". That is C, and it is built. The People page has a You section where the person at the machine gives themselves a short name. They are asked once more before it is sent, because the name is never changed once given. From then on every new line of theirs carries that name on every board, named or not, and they keep every power. Lines already written as `owner` stay as written, and the pages draw them with the name the person is shown by (`Stefano`), the stored word on hover. What the server says of them now names them too: "Approved by Stefano at 1a2b3c4", or "Waits on Stefano's approve" where nobody else decides. The stamp's own name, `owner`, stays. The header shows the name and links to the You section. Until a name is given, every line reads `owner`, the role's word, as before. Written in [[analysis/users-and-identity#How a person's name is written]].
   [2026-11-26 08:03] owner · approved — C
   [2026-11-27 07:43] agent — Built as C with your notes of 2026-11-24 by `app/machine-person-name`: your lines carry your name on every board, the role where there is none, and the People page has a profile to edit. It waits for your approve on its task page before it lands.
   [2026-11-27 07:43] agent · resolved

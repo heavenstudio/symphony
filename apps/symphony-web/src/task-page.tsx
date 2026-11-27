@@ -36,7 +36,7 @@ import type { NextActionsProps } from "./nextactions";
 import type { OwnerLineProps } from "./owner";
 import { decides } from "./owner-read";
 import { PartsContext, type Shown, usePart } from "./parts";
-import { href, scoped } from "./project";
+import { writer as drawnWriter, href, scoped } from "./project";
 import { getJson, post, said } from "./request";
 import { currentRoute } from "./route";
 import { SelectField } from "./select";
@@ -162,12 +162,15 @@ export const TaskMessage = memo(function TaskMessage({
     return <HeldMessage entry={entry} held={held} passes={passes} />;
   }
   const who = voice(message);
+  // Its writer drawn by the one rule a card's thread draws them by too: no agent's handle is a
+  // person's name, so an agent's line is drawn as written.
+  const writer = drawnWriter(message.sender);
   return (
     <div className={`entry ${who}`}>
       <time>{entry.stamp}</time>{" "}
-      <span className="from">
-        {message.sender}
-        {message.recipient !== null && ` → ${message.recipient}`}
+      <span className="from" title={writer.title}>
+        {writer.text}
+        {message.recipient !== null && ` → ${drawnWriter(message.recipient).text}`}
       </span>
       {message.kind === "verdict" && <b>verdict </b>}
       {/* An owner message is literal text, unless it names an upload: the server then sends its
@@ -873,6 +876,7 @@ export interface TaskHeadProps {
 export function TaskHead({ page, scope, connected }: TaskHeadProps) {
   const { task } = page;
   const { slug } = task;
+  const filer = drawnWriter(task.created_by);
   return (
     <div className="task-head card">
       <p className="eyebrow">
@@ -883,7 +887,9 @@ export function TaskHead({ page, scope, connected }: TaskHeadProps) {
           once, by its own control. */}
       <div className="task-state row">
         <span className={`state pill st-${task.status}`}>{statusWords(task.status)}</span>
-        <span className="by">{`filed by ${task.created_by}`}</span>
+        <span className="by" title={filer.title}>
+          {`filed by ${filer.text}`}
+        </span>
         {decides(page.owner) ? (
           <OwnerControls slug={slug} priority={task.priority} status={task.status} />
         ) : (

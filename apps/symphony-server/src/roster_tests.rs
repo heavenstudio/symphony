@@ -159,3 +159,47 @@ fn a_signed_visitor_is_the_profile_holding_its_services_sign_in_and_only_that_on
     );
     assert!(held.is_none(), "on no board that gives her no power");
 }
+
+/// The person at the machine's own profile admits no sign-in, a Tailscale login or a signed word,
+/// though `people.json` written by hand gives it both and the board a row of its name: either
+/// would write as them with that row's powers. Both admit Ana while the profiles name nobody as
+/// the machine's.
+#[test]
+fn a_sign_in_of_the_person_at_the_machines_profile_is_on_no_board() {
+    let machine = Machine::with_ana("machine");
+    Profiles::change(&machine.0, |profiles| {
+        profiles.people[0].signins.push(Signin {
+            service: "google".into(),
+            subject: "110248495921238986420".into(),
+        });
+        Ok(())
+    })
+    .unwrap();
+    let root = Path::new("/a/project");
+    let visitors = [
+        login("ana@example.com"),
+        signed("google", "110248495921238986420"),
+    ];
+    let board = || holding(&[Power::Speak, Power::Decide]);
+    for visitor in &visitors {
+        let ana = member(&machine.0, root, visitor, board()).expect("on the board");
+        assert_eq!(ana.name(), "ana", "{visitor:?}");
+    }
+    Profiles::change(&machine.0, |profiles| {
+        profiles.machine = Some("ana".into());
+        Ok(())
+    })
+    .unwrap();
+    let profiles = Profiles::read(&machine.0).unwrap();
+    assert!(
+        profiles
+            .signed_in("google", "110248495921238986420")
+            .is_some()
+    );
+    for visitor in &visitors {
+        assert!(
+            member(&machine.0, root, visitor, board()).is_none(),
+            "{visitor:?}"
+        );
+    }
+}

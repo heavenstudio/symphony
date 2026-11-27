@@ -879,3 +879,23 @@ fn a_refused_take_whose_task_moved_meanwhile_moves_nothing_and_says_nothing() {
     );
     assert!(recoveries(&f, OTHER_TASK).is_empty());
 }
+
+/// A task filed under a custom workflow is admitted as who filed it: the person at the machine's
+/// principal for their store under the name they gave themselves (`Store::for_machine`), as for
+/// `owner`, and a person a board named's for theirs, so an edge only the owner takes stays theirs.
+#[test]
+fn a_task_the_machines_person_files_under_their_name_is_the_local_owners() {
+    let f = under(&attempts(MOVE));
+    let mine = (f.other().for_machine("stefano"))
+        .create_owner_task(&NewTask::new("sim/mine", "Mine", "stefano"), "receipt-mine")
+        .unwrap();
+    assert_eq!(mine.created_by, "stefano");
+    let [created] = transitions(&f, "sim/mine").try_into().unwrap();
+    assert_eq!(created.principal, local_owner());
+    let hers = (f.other().for_person("ana"))
+        .create_owner_task(&NewTask::new("sim/hers", "Hers", "ana"), "receipt-hers")
+        .unwrap();
+    assert_eq!(hers.created_by, "ana");
+    let [created] = transitions(&f, "sim/hers").try_into().unwrap();
+    assert_eq!(created.principal, symphony_board::workflow::person("ana"));
+}

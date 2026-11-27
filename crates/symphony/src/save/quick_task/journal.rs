@@ -21,6 +21,11 @@ pub(in crate::save) struct Record {
     /// Who asked for it, by their short name: `owner`, as a record written before it was kept says.
     #[serde(default = "the_machines_person")]
     by: String,
+    /// Whether `by` is the person at the machine, under the name they gave themselves: the task
+    /// is then filed as theirs ([`symphony_board::Store::for_machine`]). Left out for anyone else,
+    /// and for `owner`, who is the person at the machine by that word alone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    machine: bool,
     payload: Value,
 }
 
@@ -30,6 +35,11 @@ fn the_machines_person() -> String {
 }
 
 impl Record {
+    /// Whether the one who asked for it is the person at the machine ([`Record::machine`]).
+    pub(in crate::save) fn machine(&self) -> bool {
+        self.machine
+    }
+
     pub(in crate::save) fn task(&self) -> symphony_board::NewTask {
         symphony_board::NewTask {
             slug: self.slug.clone(),
@@ -115,6 +125,7 @@ pub(in crate::save) fn reserve(
     scope: &str,
     payload: &Value,
     new: &symphony_board::NewTask,
+    machine: bool,
 ) -> Result<Record, Failure> {
     if let Some(record) = load(root, identity, scope, payload)? {
         return Ok(record);
@@ -139,6 +150,7 @@ pub(in crate::save) fn reserve(
         by: Some(new.by.clone())
             .filter(|by| !by.is_empty())
             .unwrap_or_else(the_machines_person),
+        machine: machine && new.by != the_machines_person(),
         payload: json!([scope, payload]),
     };
     let result = (|| {
@@ -229,6 +241,7 @@ mod tests {
                     "",
                     &payload,
                     &task("inbox/one"),
+                    false,
                 ))
             });
             let two = scope.spawn(|| {
@@ -238,6 +251,7 @@ mod tests {
                     "",
                     &payload,
                     &task("inbox/two"),
+                    false,
                 ))
             });
             [one.join().unwrap(), two.join().unwrap()]
@@ -256,6 +270,7 @@ mod tests {
             "",
             &payload,
             &task("inbox/different-choice"),
+            false,
         ));
         assert_eq!(repeated.slug, records[0].slug);
         assert_eq!(repeated.task().body, "Original resolved details");
@@ -300,11 +315,45 @@ mod tests {
             by: "ana".into(),
             ..task("inbox/new")
         };
-        let kept = ok(reserve(&tree.root, &identity, "", &payload, &other));
+        let kept = ok(reserve(&tree.root, &identity, "", &payload, &other, false));
         assert_eq!(
             (kept.slug.as_str(), kept.task().by.as_str()),
             ("inbox/old", "owner")
         );
+    }
+
+    /// A task the person at the machine asked for under the name they gave themselves is kept as
+    /// theirs, so it is filed as theirs again after a restart; one under `owner` needs no mark, and
+    /// a person a board named is never the machine's.
+    #[test]
+    fn a_record_keeps_whether_the_machines_person_asked_under_their_name() {
+        let tree = test_tree::Tree::new();
+        let payload = json!({"title":"First owner task"});
+        let by = |by: &str| symphony_board::NewTask {
+            by: by.into(),
+            ..task("inbox/named")
+        };
+        let cases = [
+            ("d", "stefano", true, true),
+            ("e", "owner", true, false),
+            ("f", "ana", false, false),
+        ];
+        for (letter, name, machine, kept) in cases {
+            let identity = letter.repeat(32);
+            let made = ok(reserve(
+                &tree.root,
+                &identity,
+                "",
+                &payload,
+                &by(name),
+                machine,
+            ));
+            assert_eq!((made.task().by.as_str(), made.machine()), (name, kept));
+            let text = std::fs::read_to_string(path(&tree.root, &identity)).unwrap();
+            assert_eq!(text.contains("\"machine\""), kept, "{text}");
+            let read = ok(load(&tree.root, &identity, "", &payload)).unwrap();
+            assert_eq!((read.task().by.as_str(), read.machine()), (name, kept));
+        }
     }
 
     #[test]
@@ -328,9 +377,16 @@ mod tests {
         );
         let blocked = tree.root.join("blocked");
         std::fs::write(&blocked, "not a directory").unwrap();
-        let error = reserve(&blocked, &identity, "", &payload, &task("inbox/task"))
-            .err()
-            .expect("unwritable record");
+        let error = reserve(
+            &blocked,
+            &identity,
+            "",
+            &payload,
+            &task("inbox/task"),
+            false,
+        )
+        .err()
+        .expect("unwritable record");
         assert_eq!(error.status, 503);
         assert!(error.error.contains("blocked"), "{}", error.error);
     }

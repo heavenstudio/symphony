@@ -1143,10 +1143,11 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
         ),
         json!({"type":"image/svg+xml","fermata":true})
     );
-    // On a phone the mark and the name, the switch and the two buttons share the first row, the
-    // pages under them, at every width from the suite's narrowest phone up: two rows and never
-    // more. The name shows whole down to 320 wide, where the bell is drawn alone to leave it the
-    // room, a name longer than the row's room on a second line of it, the mark whole beside it.
+    // On a phone the mark and the name, the switch, the two buttons and the reader's initial share
+    // the first row, the pages under them, at every width from the suite's narrowest phone up: two
+    // rows and never more. The name shows whole down to 320 wide, the bell drawn alone below 420
+    // to leave it the room, a name longer than the row's room on a second line of it, the mark
+    // whole beside it.
     for (width, id, cut) in [
         (320, "alpha", Some(false)),
         (320, "lantern", Some(false)),
@@ -1156,6 +1157,8 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
         (375, "lantern", Some(false)),
         (390, "alpha", Some(false)),
         (390, "lantern", Some(false)),
+        (420, "alpha", Some(false)),
+        (420, "lantern", Some(false)),
     ] {
         browser.viewport(width, 844, true);
         browser.open(&server.url(&format!("/{id}/")));
@@ -1171,7 +1174,7 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
                 r#"(() => {
                     const box = e => e.getBoundingClientRect();
                     const mid = e => (box(e).top + box(e).bottom) / 2;
-                    const first = ['.app-brand', '.project-switch', '#appearance', '#bell'].map(s => document.querySelector(s));
+                    const first = ['.app-brand', '.project-switch', '#appearance', '#bell', '.app-you'].map(s => document.querySelector(s));
                     const name = document.querySelector('.app-brand span');
                     return {
                         oneRow: first.every(e => Math.abs(mid(e) - mid(first[0])) < 2),

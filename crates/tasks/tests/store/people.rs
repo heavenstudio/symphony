@@ -338,3 +338,46 @@ fn a_board_made_without_the_step_reads_every_line_and_takes_a_sessions_post() {
         );
     }
 }
+
+/// The person at the machine under the name they gave themselves (`Store::for_machine`): their lines
+/// are a person's, marked theirs and reaching whom the owner's reach, their move reads with their
+/// name, and the task they file is theirs; a store not made for them takes the name as a session's.
+#[test]
+fn the_machines_person_under_their_name_writes_as_a_person_and_files_as_the_owner() {
+    let f = Fixture::new(Seed::default());
+    let worker = claimed(&f);
+    f.store.inbox(&worker).unwrap();
+    let me = f.other().for_machine("stefano");
+    assert!(me.is_person("stefano") && me.is_person("owner") && !me.is_person(&worker));
+    assert!(!f.store.is_person("stefano"));
+    let said = me.say("tools/x", "stefano", "is it done?", None).unwrap();
+    assert_eq!(said.sender, "stefano");
+    let line = newest(&f, "tools/x");
+    assert!(line.person && line.by_person(), "{line:?}");
+    let moved = me.move_to("tools/x", "cancelled", "stefano").unwrap();
+    assert_eq!(moved.status, "cancelled");
+    let rows = f.store.thread_rows("tools/x").unwrap();
+    assert!(
+        rows.iter().any(|row| row.person
+            && row.sender == "stefano"
+            && row.text == "stefano moved it in_progress → cancelled"),
+        "{rows:?}"
+    );
+    let heard: Vec<String> = (f.store.inbox(&worker).unwrap().into_iter())
+        .map(|m| m.text)
+        .collect();
+    assert!(heard.contains(&"is it done?".to_string()), "{heard:?}");
+    let filed = me
+        .create_owner_task(
+            &NewTask::new("tools/mine", "Filed under a name", "stefano"),
+            "receipt-mine",
+        )
+        .unwrap();
+    assert_eq!(filed.created_by, "stefano");
+    assert_eq!(me.owner_saved("receipt-mine").unwrap(), ["tools/mine"]);
+    // `owner` stays the owner's from that store too, and a store for a person a board named
+    // takes nobody as the machine's.
+    assert!(f.other().for_machine("owner").is_person("owner"));
+    let refusal = refused(f.other().say("tools/x", "stefano", "hello", None));
+    assert!(refusal.starts_with("no session 'stefano'"), "{refusal}");
+}

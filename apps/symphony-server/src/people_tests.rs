@@ -88,6 +88,7 @@ fn line(n: i64, did: Did, name: &str, powers: &[Power]) -> Change {
 fn a_page_lists_each_person_by_their_profile_and_names_no_sign_ins_subject() {
     let profiles = Profiles {
         people: vec![anas()],
+        ..Profiles::default()
     };
     let log = vec![
         line(1, Did::GroupAdd, "staff", &[Power::Decide]),
@@ -146,6 +147,7 @@ fn a_page_lists_each_person_by_their_profile_and_names_no_sign_ins_subject() {
 fn reached() -> Profiles {
     let map = |value: serde_json::Value| value.as_object().unwrap().clone();
     Profiles {
+        machine: None,
         people: vec![
             Profile {
                 chat: map(serde_json::json!({"slack": "U024BE7LH"})),
@@ -331,6 +333,33 @@ struct Served {
     _tree: Tree,
 }
 
+/// A phone under this machine's own Tailscale login (the laptop gate's status says user 11).
+const PHONE: &str = "100.101.102.105:5000";
+
+/// The laptop gate, its whois naming the phone too, under this machine's own login: a node of the
+/// person at the machine's.
+fn laptop_and_phone(roster: crate::gate::Roster) -> crate::gate::Gate {
+    crate::gate::Gate::new(
+        Arc::new(|address: &str| {
+            Ok(match address {
+                "100.101.102.104" => Some(
+                    r#"{"Node": {"Name": "laptop"}, "UserProfile": {"ID": 12, "LoginName": "ana@example.com"}}"#,
+                ),
+                "100.101.102.105" => Some(
+                    r#"{"Node": {"Name": "phone"}, "UserProfile": {"ID": 11, "LoginName": "me@example.com"}}"#,
+                ),
+                _ => None,
+            }
+            .map(str::to_string))
+        }),
+        Arc::new(std::time::Instant::now),
+    )
+    .with_status(Arc::new(|| {
+        Ok(r#"{"Self": {"DNSName": "studio.tail.ts.net.", "UserID": 11}}"#.to_string())
+    }))
+    .with_roster(roster)
+}
+
 impl Served {
     /// The board holding `people`, Ana's profile signing her in as the laptop's login.
     fn new(people: &[(&str, &[Power])]) -> Served {
@@ -339,11 +368,12 @@ impl Served {
         let machine = tree.root.join("machine");
         (Profiles {
             people: vec![anas()],
+            ..Profiles::default()
         })
         .write(&machine)
         .unwrap();
         let board = Board::holding(&root, people);
-        let gate = laptop_with(Arc::new(|_, _| None)).with_machine(machine.clone());
+        let gate = laptop_and_phone(Arc::new(|_, _| None)).with_machine(machine.clone());
         let shared = Shared::new(1, 8123, &root, None, gate);
         let hub = crate::live::Hub::new(&root, &root.join("build/client"));
         assert!(shared.api.set(Arc::new(hub)).is_ok());
@@ -360,6 +390,17 @@ impl Served {
     fn signing_in(people: &[(&str, &[Power])]) -> Served {
         let served = Served::new(people);
         let gate = laptop_with(crate::roster::of(served.machine.clone()))
+            .with_machine(served.machine.clone());
+        let shared = Shared::new(1, 8123, &served.root, None, gate);
+        assert!(shared.api.set(served.shared.hub().ok().unwrap()).is_ok());
+        Served { shared, ..served }
+    }
+
+    /// [`Served::new`], on a machine on no tailnet: its status answer lists no name of it.
+    fn off_the_tailnet(people: &[(&str, &[Power])]) -> Served {
+        let served = Served::new(people);
+        let gate = laptop_and_phone(Arc::new(|_, _| None))
+            .with_status(Arc::new(|| Ok("{}".to_string())))
             .with_machine(served.machine.clone());
         let shared = Shared::new(1, 8123, &served.root, None, gate);
         assert!(shared.api.set(served.shared.hub().ok().unwrap()).is_ok());
@@ -997,6 +1038,200 @@ async fn the_page_waits_on_the_servers_start_and_a_change_on_a_board_it_reaches(
     assert!(body.contains("the task board cannot be reached"), "{body}");
 }
 
+/// `client`'s write of a profile `write`: status and body.
+async fn profile_write(
+    served: &Served,
+    client: &str,
+    write: serde_json::Value,
+) -> (StatusCode, String) {
+    served
+        .asked(client, "POST", PROFILE_PATH, &write.to_string())
+        .await
+}
+
+/// The person at the machine names themselves from their own phone, under the machine's login, as
+/// from here: their profile written and the machine naming it, every later write of theirs under
+/// the name, their You shown to them alone; a visitor under another login sees no You and cannot
+/// name anyone so; and a name once given is never changed.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_at_the_machine_names_themselves_from_their_phone_and_a_visitor_cannot() {
+    let served = Served::new(&[("ana", &[Power::Speak, Power::Administer])]);
+    let here = served.page(HERE).await;
+    assert_eq!(here.mine, Some(MachineProfile::default()));
+    assert_eq!(
+        here.signins,
+        ["tailscale"],
+        "this machine's status lists its names"
+    );
+    assert_eq!(
+        served.page(PHONE).await.mine,
+        Some(MachineProfile::default())
+    );
+    let hers = served.page(LAPTOP).await;
+    assert_eq!((hers.mine, hers.you.as_deref()), (None, Some("ana")));
+    let naming = serde_json::json!({
+        "name": "stefano", "display": "Stefano", "git": ["stefano-b"], "machine": true
+    });
+    let (status, body) = profile_write(&served, LAPTOP, naming.clone()).await;
+    assert_eq!(
+        (status, body.as_str()),
+        (
+            StatusCode::FORBIDDEN,
+            r#"{"error":"Forbidden: only the person at the machine gives themselves its name"}"#
+        )
+    );
+    assert_eq!(served.profiles().machine, None, "nothing was written");
+    let (status, body) = profile_write(&served, PHONE, naming).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let page: PeoplePage = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        page.mine,
+        Some(MachineProfile {
+            name: Some("stefano".into()),
+            display: "Stefano".into(),
+            git: vec!["stefano-b".into()],
+        })
+    );
+    assert_eq!(served.profiles().machine.as_deref(), Some("stefano"));
+    let person = served.shared.gate.person();
+    assert_eq!(
+        (person.name(), person.sender.display.as_str()),
+        ("stefano", "Stefano")
+    );
+    assert_eq!(person.principal, symphony_board::workflow::local_owner());
+    // Their next change is theirs by name, from here as from the phone.
+    served
+        .changed(
+            HERE,
+            serde_json::json!({"action": "group-add", "name": "design"}),
+        )
+        .await;
+    assert_eq!(
+        served.log().last().unwrap(),
+        &(
+            "group-add".to_string(),
+            "design".to_string(),
+            "stefano".to_string()
+        )
+    );
+    // Their display name and git handles stay theirs to write; their name is fixed.
+    let (status, body) = profile_write(
+        &served,
+        HERE,
+        serde_json::json!({"name": "stefano", "display": "Stefano B"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(served.shared.gate.person().sender.display, "Stefano B");
+    let (status, body) = profile_write(
+        &served,
+        HERE,
+        serde_json::json!({"name": "teo", "machine": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body.contains("you write as stefano already, and a short name once given is never changed"),
+        "{body}"
+    );
+}
+
+/// A name a board of the machine holds as a group is refused to the person at the machine, and a
+/// group named as a profile of the machine is refused to anyone, each with nothing written.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_groups_name_is_no_persons_and_a_persons_name_no_groups() {
+    let served = Served::new(&[]);
+    served
+        .changed(
+            HERE,
+            serde_json::json!({"action": "group-add", "name": "design"}),
+        )
+        .await;
+    let (status, body) = profile_write(
+        &served,
+        HERE,
+        serde_json::json!({"name": "design", "machine": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body.contains("design is a group's name on a board of this machine"),
+        "{body}"
+    );
+    let (status, body) = served
+        .asked(
+            HERE,
+            "POST",
+            PEOPLE_CHANGE_PATH,
+            r#"{"action": "group-add", "name": "ana"}"#,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body.contains("ana is a person's name on this machine"),
+        "{body}"
+    );
+    assert_eq!(served.profiles().machine, None);
+    assert_eq!(served.log().len(), 1, "only the first group was made");
+}
+
+/// The name the person at the machine gives themselves is checked against every board the
+/// machine's registry lists, not only the one asked: a person or a group another project's board
+/// holds is refused with nothing written, and a project whose folder is gone holds no board.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_name_another_board_of_the_machine_holds_is_refused_to_the_person_at_the_machine() {
+    let served = Served::new(&[]);
+    let elsewhere = Tree::new();
+    let other = repository_holding(&elsewhere, "other", "docs/README.md", "# Other\n");
+    let _board = Board::holding(&other, &[("bo", &[Power::Speak])]);
+    Board::store(&other)
+        .add_group("crew", &[Power::Speak], "owner")
+        .unwrap();
+    let entry = |id: &str, root: PathBuf| symphony::machine::Entry {
+        id: id.into(),
+        name: format!("{id} works"),
+        root,
+        manifest: None,
+        plugins: Vec::new(),
+        pin: 0,
+        schema: 0,
+    };
+    symphony::machine::Registry {
+        projects: vec![
+            entry("gone", elsewhere.path("gone")),
+            entry("other", other.clone()),
+        ],
+    }
+    .write(&served.machine)
+    .unwrap();
+    for (name, said) in [
+        (
+            "bo",
+            "bo is a person on a board of this machine whom it holds no profile of",
+        ),
+        ("crew", "crew is a group's name on a board of this machine"),
+    ] {
+        let (status, body) = profile_write(
+            &served,
+            HERE,
+            serde_json::json!({"name": name, "machine": true}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
+        assert!(body.contains(said), "{name}: {body}");
+    }
+    assert_eq!(served.profiles().machine, None, "nothing was written");
+    // A name no board holds is theirs, the gone project's folder read as no board.
+    let (status, body) = profile_write(
+        &served,
+        HERE,
+        serde_json::json!({"name": "stefano", "machine": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(served.profiles().machine.as_deref(), Some("stefano"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_person_writes_their_own_addresses_and_ways_and_no_one_elses() {
     let served = Served::new(&[("ana", &[Power::Speak]), ("bo", &[Power::Speak])]);
@@ -1070,4 +1305,35 @@ async fn a_person_writes_their_own_addresses_and_ways_and_no_one_elses() {
         assert!(said.contains(refused) && !said.contains(value), "{said}");
     }
     assert_eq!(served.profiles(), profiles);
+}
+
+/// The page offers a sign-in where the server reads a visitor by one: Tailscale's while the machine
+/// is on a tailnet, and a signing service's while the machine folder sets its key, on a tailnet or
+/// on none. With neither, or a `sign-in.toml` that does not read, it offers none, as no sign-in
+/// could then admit a visitor.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_page_offers_sign_ins_on_a_tailnet_and_where_a_signing_services_key_is_set() {
+    async fn offered(served: &Served) -> (Vec<String>, bool) {
+        let page = served.page(HERE).await;
+        (page.signins, page.signed_words)
+    }
+    let tailscale = vec![TAILSCALE.to_string()];
+    let on = Served::new(&[("ana", &[Power::Speak])]);
+    assert_eq!(offered(&on).await, (tailscale.clone(), false));
+    crate::testing::SignIn::new(1).named_in(&on.machine);
+    assert_eq!(offered(&on).await, (tailscale, true), "both");
+    let off = Served::off_the_tailnet(&[("ana", &[Power::Speak])]);
+    assert_eq!(offered(&off).await, (Vec::new(), false), "neither");
+    crate::testing::SignIn::new(1).named_in(&off.machine);
+    assert_eq!(
+        offered(&off).await,
+        (Vec::new(), true),
+        "a key and no tailnet"
+    );
+    std::fs::write(off.machine.join(symphony::signed_in::FILE), "key = 7\n").unwrap();
+    assert_eq!(
+        offered(&off).await,
+        (Vec::new(), false),
+        "a file that does not read"
+    );
 }

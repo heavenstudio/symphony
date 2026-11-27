@@ -1,4 +1,5 @@
 // Recorded metadata only: no attribution from today's role holders, and no message bodies.
+import { writer } from "./project";
 import { field } from "./shared";
 import type { History, MessageEndpoint, TaskEntry, TimelineMessage } from "./wire";
 
@@ -72,7 +73,8 @@ export function messagesOf(
 }
 
 export function address(message: TimelineMessage): string {
-  return `${message.sender} → ${message.recipient ?? "Everyone on task"}`;
+  const to = message.recipient == null ? "Everyone on task" : writer(message.recipient).text;
+  return `${writer(message.sender).text} → ${to}`;
 }
 
 /** A selected message as the hours line says it at its instant, `clock`: its number, its two ends,

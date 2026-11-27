@@ -189,6 +189,20 @@ describe("the view the server inlined", () => {
     });
   });
 
+  it("keeps who reads it, where they write their profile and the person at the machine as the server sent them", () => {
+    const you = { name: "stefano", shown: "Stefano" };
+    const profile = "/people#you";
+    expect(readView({ name: "n", register: "r", you, profile, machine: you })).toEqual({
+      name: "n",
+      register: "r",
+      nav: [],
+      entrypoints: [],
+      you,
+      profile,
+      machine: you,
+    });
+  });
+
   it.each([
     ["nothing", undefined],
     ["text", "x"],
@@ -212,6 +226,26 @@ describe("the page's project", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
+  });
+
+  it("names the person at the machine as a page that wrote their name says, with no read", async () => {
+    vi.stubGlobal("document", {
+      getElementById: () => ({
+        textContent: JSON.stringify({
+          name: "n",
+          register: "",
+          you: { name: "owner", shown: "owner" },
+        }),
+      }),
+    });
+    const { named, project } = await import("./project");
+    expect(project().machine).toBeUndefined();
+    named({ name: "stefano", shown: "Stefano" });
+    expect([project().name, project().you, project().machine]).toEqual([
+      "n",
+      { name: "stefano", shown: "Stefano" },
+      { name: "stefano", shown: "Stefano" },
+    ]);
   });
 
   it("is read once from its element, and its links take its base", async () => {

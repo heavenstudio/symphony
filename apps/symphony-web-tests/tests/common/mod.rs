@@ -26,7 +26,15 @@ pub fn delta(name: &str) -> Delta {
 /// `shell`, a build's `index.html`, as the server serves it to a project with a plugin page: the project fixture
 /// (`project.json`) inlined after `<body>`, escaped as the server escapes it.
 pub fn served_shell(shell: &str) -> String {
-    let project: ProjectView = serde_json::from_str(&fixture("project.json")).expect("a project");
+    served_shell_with(shell, |_| {})
+}
+
+/// [`served_shell`] with the project fixture's view changed by `change` first: who reads the page,
+/// say, as the server names them.
+pub fn served_shell_with(shell: &str, change: impl FnOnce(&mut ProjectView)) -> String {
+    let mut project: ProjectView =
+        serde_json::from_str(&fixture("project.json")).expect("a project");
+    change(&mut project);
     let element = format!(
         "<script type=\"application/json\" id=\"{PROJECT_ELEMENT}\">{}</script>",
         serde_json::to_string(&project)

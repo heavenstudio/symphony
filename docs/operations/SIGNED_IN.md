@@ -163,9 +163,15 @@ The server reads `iss` and `sub` as a sign-in, `iss:sub`. It looks for that sign
 profiles in the machine folder, as it does for a Tailscale login's `tailscale:LOGIN`
 ([TASKS](../workflow/TASKS.md#people)).
 - **The profile holding it is the person.** On each board, they have what that board gives them.
+- **The People page gives it.** The person at the machine gives a profile its sign-in there: the
+  field is drawn while this key is set, on a tailnet or not, its placeholder `service:subject`
+  ([TASKS](../workflow/TASKS.md#the-people-page)).
 - **A board that gives them nothing is not there for them.** It is in no list they see, and its
   pages answer as a project the server does not hold. A server of its own refuses them.
 - **A sign-in no profile holds is nobody's.** It sees no board.
+- **The person at the machine's own profile holds none.** A sign-in `people.json` gives it by
+  hand is nobody's too, as a login is: they are known by where they are
+  ([TASKS](../workflow/TASKS.md#the-people-page)).
 - **Case:** a sign-in is matched ignoring ASCII case, as every sign-in is. A service whose
   subjects can differ by case alone does not fit.
 

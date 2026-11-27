@@ -623,6 +623,9 @@ pub struct Kept {
     answered: Arc<AtomicUsize>,
     /// What the Symphony's own gates are read from.
     inputs: inputs::Inputs,
+    /// The machine folder whose profiles name the person at the machine, who decides on every
+    /// board under the name they gave themselves ([`Kept::machine_at`]): none reads no one more.
+    machine: std::sync::OnceLock<PathBuf>,
 }
 
 impl Default for Kept {
@@ -640,7 +643,21 @@ impl Kept {
             limits,
             answered: Arc::default(),
             inputs: inputs::Inputs::default(),
+            machine: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Reads the person at the machine from the profiles of the machine folder `folder`, as the
+    /// server's gate does: once, as the server's folder never changes while it runs.
+    pub fn machine_at(&self, folder: PathBuf) {
+        let _ = self.machine.set(folder);
+    }
+
+    /// The person at the machine, by the folder [`Kept::machine_at`] named
+    /// ([`symphony_board::people::machine_person`]): none where none was named, they gave
+    /// themselves no name, or their profiles cannot be read.
+    pub fn machine_person(&self) -> Option<symphony_board::people::MachinePerson> {
+        symphony_board::people::machine_person(self.machine.get()?)
     }
 
     /// How many times each part the Symphony's own gates are read from was read anew, since this
@@ -1132,11 +1149,18 @@ fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) ->
                 vec![record.slug.clone()]
             };
             let folder = read::folder(&project.artifacts, &record.slug);
-            let deciders = if needed.iter().any(|need| need == symphony_api::gates::OWNER) {
-                (read.deciders)()
-            } else {
-                Vec::new()
-            };
+            // The person at the machine decides on every board, under the name they gave
+            // themselves as under `owner`, which no row of the board says: read from the machine
+            // folder only for a task that needs the owner's stamp, as the land reads it.
+            let (deciders, machine) =
+                if needed.iter().any(|need| need == symphony_api::gates::OWNER) {
+                    let machine = kept.machine_person();
+                    let deciders =
+                        symphony_board::people::with_machine((read.deciders)(), machine.as_ref());
+                    (deciders, machine)
+                } else {
+                    (Vec::new(), None)
+                };
             let by_cards = |tip: &str| {
                 let default_tip = default_tip.as_deref();
                 (kept.inputs).posted(root, &record.slug, tip, default_tip, &deciders)
@@ -1150,6 +1174,7 @@ fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) ->
                 tip: at.as_deref(),
                 cards: &posted,
                 deciders: &deciders,
+                machine: machine.as_ref(),
                 posted: &by_cards,
             };
             stamps::stamps(record, &catalogue, &evidence)

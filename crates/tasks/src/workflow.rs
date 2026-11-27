@@ -582,6 +582,12 @@ pub fn local_actor() -> symphony_plugin::Actor {
     symphony_plugin::Actor::new(sender, owner)
 }
 
+/// Whether `actor` is the person at this machine, under `owner` or the name they gave themselves:
+/// their principal is the local owner's ([`local_owner`]), whatever their lines carry.
+pub fn is_machine(actor: &symphony_plugin::Actor) -> bool {
+    actor.principal == local_owner()
+}
+
 /// The board's own service `name` (its activation, its recovery), acting for no person.
 pub fn board_service(name: &str) -> Principal {
     Principal::new(PrincipalKind::Service, "board".into(), name.into())

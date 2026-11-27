@@ -279,6 +279,41 @@ fn who_may_direct_agents_writes_as_the_owner_does_and_only_a_persons_words_are_h
     assert_eq!(b.f.store.held_count("tools/x").unwrap(), 0);
 }
 
+/// The person at the machine under the name they gave themselves (`Store::for_machine`), whom the
+/// board holds no powers for, writes as `owner` does: they direct agents, their words are a line
+/// and never held, an approve among them, and they pass a held message on under that name.
+#[test]
+fn the_person_at_the_machine_under_their_name_is_never_held_and_passes_on() {
+    let b = board();
+    let rui = b.f.other().for_machine("rui");
+    assert!(rui.may_direct_agents("rui").unwrap());
+    for said in ["go on", "approve the wide page"] {
+        match rui.say_or_hold_as("tools/x", "rui", said, None).unwrap() {
+            Said::Line(line) => {
+                assert_eq!((line.sender.as_str(), line.text.as_str()), ("rui", said))
+            }
+            held => panic!("{said}: held {held:?}"),
+        }
+    }
+    let why = refused(rui.hold_words("tools/x", "rui", WORDS, None));
+    assert!(why.starts_with("only a person's words are held"), "{why}");
+    let held = b.held(None);
+    let mark = rui
+        .pass("tools/x", held.id, "rui")
+        .unwrap()
+        .passed
+        .expect("marked passed");
+    assert_eq!(mark.by, "rui");
+    let rows = b.f.store.thread_rows("tools/x").unwrap();
+    let line = rows.last().unwrap();
+    assert_eq!(
+        (line.sender.as_str(), line.person, line.text.as_str()),
+        ("ana", true, format!("[passed on by rui] {WORDS}").as_str())
+    );
+    // The same name written for a person the Symphony admitted is no person at the machine.
+    assert!(!b.person("rui").may_direct_agents("rui").unwrap());
+}
+
 #[test]
 fn one_who_may_direct_agents_and_not_decide_the_task_writes_no_line_that_reads_as_an_approve() {
     let b = board();

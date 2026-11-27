@@ -669,6 +669,84 @@ fn an_assessed_task_reads_its_stamps_at_the_tip_and_offers_the_owners_approve_un
     shared.stop();
 }
 
+/// The person at the machine approves under the name they gave themselves, on a board naming
+/// nobody: their approve meets the `owner` stamp once the hub reads their profiles' folder
+/// (`Kept::machine_at`, as the server's gate names it), named by how they are shown, and the page
+/// offers their approve no more; it counts for nothing while the hub reads none.
+#[test]
+fn the_machines_persons_approve_under_their_name_meets_the_owner_stamp() {
+    use symphony_board::people::{Profile, Profiles};
+    use symphony_board::stamps::{Catalogue, Needs};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    git(&root, &["branch", "tools/own"]);
+    let tip = commit_on(&root, "tools/own");
+    let f = Fixture::new(Seed::default().task("tools/own", "in_progress"));
+    let needs = Needs {
+        stamps: vec!["owner".into()],
+        tip: Some(tip.clone()),
+        by: f.session("worker"),
+        why: "the owner asked to see the page".into(),
+        import: None,
+    };
+    f.store
+        .set_needs("tools/own", &Catalogue::symphony(), &needs)
+        .unwrap();
+    let said = symphony::gates::stamps::approve_line(&tip).unwrap();
+    (f.other().for_machine("stefano"))
+        .say("tools/own", "stefano", &said, None)
+        .unwrap();
+    let short = tip.get(..7).unwrap();
+    let owner = |hub: Hub| {
+        let (shared, ask) = served(&root, hub);
+        let (status, answer) = ask("/api/task-gates?slug=tools/own");
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        let (status, offer) = ask("/api/task-offer?slug=tools/own");
+        assert_eq!(status, StatusCode::OK, "{offer}");
+        shared.stop();
+        let gate = gates(&answer)
+            .into_iter()
+            .find(|gate| gate.0 == "owner")
+            .unwrap();
+        (gate, offer["payload"].clone())
+    };
+    assert_eq!(
+        owner(hub(&root, &f, BACKSTOP)),
+        (
+            (
+                "owner".into(),
+                GateState::Held,
+                format!("Waits on the owner's approve of {short}")
+            ),
+            json!(tip)
+        )
+    );
+    let machine = tree.path("machine");
+    (Profiles {
+        people: vec![Profile {
+            name: "stefano".into(),
+            display: "Stefano".into(),
+            ..Profile::default()
+        }],
+        machine: Some("stefano".into()),
+    })
+    .write(&machine)
+    .unwrap();
+    let named = hub(&root, &f, BACKSTOP);
+    named.gates.machine_at(machine);
+    assert_eq!(
+        owner(named),
+        (
+            (
+                "owner".into(),
+                GateState::Met,
+                format!("Approved by Stefano at {short}")
+            ),
+            Value::Null
+        )
+    );
+}
+
 /// The owner's approve of the card a task's branch posted stands for its `owner` stamp: the page
 /// reads it met, naming the card, and offers no approve of the tip.
 #[test]

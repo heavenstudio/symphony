@@ -208,6 +208,7 @@ fn evidence<'a>(thread: &'a [Message], runs: Vec<Record>) -> Evidence<'a> {
         folder: crate::stamps::read::folder("artifacts", SLUG),
         main: std::path::PathBuf::from("/nowhere"),
         deciders: Vec::new(),
+        machine: None,
     }
 }
 

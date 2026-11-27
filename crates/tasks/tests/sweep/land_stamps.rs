@@ -464,6 +464,124 @@ fn a_task_needing_the_owner_lands_on_the_approve_of_one_the_board_gives_decide()
     assert_landed(&r, slug, &tip, result);
 }
 
+/// The person at the machine approves under the name they gave themselves, on a board that names
+/// nobody: their approve of the tip stands for the `owner` stamp as one under `owner` does, read
+/// from the machine folder the land's environment names, and nobody else's under that name does
+/// while the machine names nobody so.
+#[test]
+fn a_task_needing_the_owner_lands_on_the_machines_persons_approve_under_their_name() {
+    use symphony_board::people::{Profile, Profiles};
+    let r = Repo::new();
+    manifest(&r, "");
+    let slug = "ui/my-page";
+    let (staff, tip) = in_review(&r, slug, &[("ui/page.gd", "extends Node\n")]);
+    assess(&r, slug, &staff.assessor, &["tests", "owner"], &tip);
+    green(&r, slug, &tip);
+    // Their approve as their page posts it: the server's store writes for them under their name.
+    (r.board.other().for_machine("stefano"))
+        .say(slug, "stefano", &format!("approve {tip}"), None)
+        .unwrap();
+    let machine = r.dir.join("machine");
+    let land = |named: bool| {
+        let mut env = r.env(&r.root);
+        env.vars
+            .insert(FOLDER_VAR.into(), work(&r).to_string_lossy().into_owned());
+        env.vars.insert(
+            "SYMPHONY_MACHINE_DIR".into(),
+            machine.to_string_lossy().into_owned(),
+        );
+        let profiles = Profiles {
+            people: vec![Profile {
+                name: "stefano".into(),
+                ..Profile::default()
+            }],
+            machine: named.then(|| "stefano".into()),
+        };
+        profiles.write(&machine).unwrap();
+        let mut out = Vec::new();
+        let result = land(&r.board.store, &env, slug, &staff.orch, None, &mut out);
+        (String::from_utf8(out).unwrap(), result.map_err(refusal))
+    };
+    let before = head(&r.root, "main");
+    let refused = land(false).1.unwrap_err();
+    assert!(
+        refused.contains(&format!(
+            "owner (Waits on the owner's approve of {})",
+            &tip[..7]
+        )),
+        "a name the machine gives nobody approves nothing: {refused}"
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    let (said, result) = land(true);
+    assert!(said.contains("owner: Approved by stefano at "), "{said}");
+    assert_landed(&r, slug, &tip, result);
+}
+
+/// Where a task's deciders are those of its owner, the person at the machine under the name they
+/// gave themselves still decides every task: their approve stands on a task whose group holds
+/// nobody who decides, while one who decides elsewhere on the board does not count.
+#[test]
+fn the_machines_person_under_their_name_decides_a_task_its_group_decides_nothing_of() {
+    use symphony_board::people::ownership::Place;
+    use symphony_board::people::{Power, Profile, Profiles};
+    let r = Repo::new();
+    manifest(&r, "");
+    let slug = "ui/their-page";
+    let (staff, tip) = in_review(&r, slug, &[("ui/page.gd", "extends Node\n")]);
+    assess(&r, slug, &staff.assessor, &["tests", "owner"], &tip);
+    green(&r, slug, &tip);
+    let store = &r.board.store;
+    store
+        .add_person("ana", &[], &[Power::Speak, Power::Decide], &staff.orch)
+        .unwrap();
+    store.add_group("design", &[], &staff.orch).unwrap();
+    store
+        .map_place(&Place::Area("ui".into()), "design", &staff.orch)
+        .unwrap();
+    (r.board.other().for_person("ana"))
+        .say(slug, "ana", &format!("approve {tip}"), None)
+        .unwrap();
+    let machine = r.dir.join("machine");
+    Profiles {
+        people: vec![Profile {
+            name: "stefano".into(),
+            ..Profile::default()
+        }],
+        machine: Some("stefano".into()),
+    }
+    .write(&machine)
+    .unwrap();
+    let land = || {
+        let mut env = r.env(&r.root);
+        env.vars
+            .insert(FOLDER_VAR.into(), work(&r).to_string_lossy().into_owned());
+        env.vars.insert(
+            "SYMPHONY_MACHINE_DIR".into(),
+            machine.to_string_lossy().into_owned(),
+        );
+        let mut out = Vec::new();
+        let result = land(&r.board.store, &env, slug, &staff.orch, None, &mut out);
+        (String::from_utf8(out).unwrap(), result.map_err(refusal))
+    };
+    let before = head(&r.root, "main");
+    // Nobody else decides the task, so it waits on theirs by name.
+    let refused = land().1.unwrap_err();
+    assert!(
+        refused.contains(&format!(
+            "owner (Waits on stefano's approve of {})",
+            &tip[..7]
+        )),
+        "ana decides elsewhere, not the task: {refused}"
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    (r.board.other().for_machine("stefano"))
+        .say(slug, "stefano", &format!("approve {tip}"), None)
+        .unwrap();
+    let (said, result) = land();
+    assert!(said.contains("owner: Approved by stefano at "), "{said}");
+    assert_landed(&r, slug, &tip, result);
+}
+
 /// A task needing no review whose one missing stamp is the owner's is held blocked, keeping its
 /// slot, and lands from blocked once the owner approves its tip.
 #[test]

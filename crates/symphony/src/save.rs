@@ -216,11 +216,24 @@ impl Saves {
         })
     }
 
-    /// The board, for the writes `by` asked for: these saves vouch for a person their host
-    /// admitted, by the short name their lines carry ([`symphony_board::Store::for_person`]); the
-    /// person at the machine and a session write as they always have.
-    fn store_by(&self, by: &str) -> Result<symphony_board::Store, Failure> {
-        Ok(self.store()?.for_person(by))
+    /// The board, for the writes `actor` asked for: these saves vouch for the person their host
+    /// admitted, by the short name their lines carry ([`symphony_board::Store::for_actor`]): the
+    /// person at the machine, under `owner` or the name they gave themselves, or a person a board
+    /// named.
+    fn store_for(&self, actor: &Actor) -> Result<symphony_board::Store, Failure> {
+        Ok(self.store()?.for_actor(actor))
+    }
+
+    /// The board, for the writes `by` asked for, a record kept from such a write naming them
+    /// (a quick task's): the person at the machine where `machine`
+    /// ([`symphony_board::Store::for_machine`]), else a person a board named.
+    fn store_as(&self, by: &str, machine: bool) -> Result<symphony_board::Store, Failure> {
+        let store = self.store()?;
+        Ok(if machine {
+            store.for_machine(by)
+        } else {
+            store.for_person(by)
+        })
     }
 
     /// The scope and document name a save names: the page's `scope` and `rel`, or those a document
@@ -354,7 +367,7 @@ impl Saves {
                     Failure::from(format!("attestations: not signed statements: {e}"))
                 })?),
             };
-        let (store, owner) = (self.store_by(actor.name())?, &actor.principal);
+        let (store, owner) = (self.store_for(actor)?, &actor.principal);
         // A person moves a task by its workflow only while they are of its owner, refused here in
         // the board's words before any authority is asked; its host grants them its edges as well.
         if crate::owners::person(actor).is_some() {
@@ -505,7 +518,7 @@ impl Saves {
             | "/api/task-cancel"
             | symphony_api::TASK_HAND_ROUTE
             | symphony_api::TASK_ACTION_ROUTE => on_task(
-                &self.store_by(actor.name())?,
+                &self.store_for(actor)?,
                 || crate::plugins::Plugins::of(&self.root),
                 &self.root,
                 actor,
@@ -518,10 +531,8 @@ impl Saves {
             "/api/ask" | "/api/ask-reply" => self.ask(actor, scope, route, payload),
             symphony_api::SETTING_WRITE_PATH => self
                 .settings_refused(actor)
-                .and_then(|()| self.setting(scope, payload, actor.name())),
-            "/api/quick-chat" | "/api/quick-task" => {
-                self.quick(scope, route, payload, actor.name())
-            }
+                .and_then(|()| self.setting(scope, payload, actor)),
+            "/api/quick-chat" | "/api/quick-task" => self.quick(scope, route, payload, actor),
             _ => Err(Failure {
                 status: 404,
                 error: "no such route".into(),
@@ -586,7 +597,7 @@ impl Saves {
             return Ok(());
         }
         deciding(crate::owners::refused_settings(
-            &self.store_by(actor.name())?,
+            &self.store_for(actor)?,
             actor,
         ))
     }
@@ -614,7 +625,7 @@ impl Saves {
         let Some(card) = cards.iter().find(|card| card.slug == slug) else {
             return Ok(());
         };
-        let store = self.store_by(actor.name())?;
+        let store = self.store_for(actor)?;
         deciding(crate::owners::refused_card(&store, rel, card, actor))
     }
 
@@ -777,7 +788,7 @@ impl Saves {
         let name = pass.map_or(actor.name(), |held| held.author.as_str());
         let holding = match crate::owners::person(actor) {
             Some(person) if pass.is_none() && matches!(route, "/api/comment" | "/api/message") => {
-                let store = self.store_by(person)?;
+                let store = self.store_for(actor)?;
                 held::holds(&store, person)?.then_some(store)
             }
             _ => None,
@@ -805,7 +816,7 @@ impl Saves {
         // A comment passed on once: another pass that came first is refused here, under the lock.
         let passing = match pass {
             Some(passed) => {
-                let store = self.store_by(actor.name())?;
+                let store = self.store_for(actor)?;
                 let now = store.held_comment(passed.id)?;
                 if let Some(refused) = held::not_held(passed.id, now.as_ref()) {
                     return Err(refused);
@@ -927,7 +938,7 @@ impl Saves {
             let lines = crate::text::splitlines(&original);
             let cards = register::parse_decisions(&lines);
             if let Some(card) = cards.iter().find(|card| card.slug == slug) {
-                let store = self.store_by(actor.name())?;
+                let store = self.store_for(actor)?;
                 deciding(crate::owners::refused_card(&store, &rel, card, actor))?;
             }
         }
@@ -1000,7 +1011,7 @@ impl Saves {
         };
         let handed = match &handing {
             Some(hand) => {
-                let store = self.store_by(actor.name())?;
+                let store = self.store_for(actor)?;
                 let to = hand.to.as_str();
                 let written = hand.written.as_deref();
                 let Some(line) = store.hand_card(&hand.thing, written, to, actor.name())? else {
@@ -1050,7 +1061,7 @@ impl Saves {
                         base: original,
                         new: text,
                     },
-                    actor.name(),
+                    actor,
                 )
                 // Kept for delivery, a save is written nowhere else: one not kept keeps no line.
                 .map_err(|error| if pending { take_back(error) } else { error })?;
@@ -1093,7 +1104,7 @@ impl Saves {
     ) -> Result<(Value, Option<NewAsk>, Told), Failure> {
         let id =
             (payload["id"].as_i64()).ok_or("id must be a held comment's number".to_string())?;
-        let found = self.store_by(actor.name())?.held_comment(id)?;
+        let found = self.store_for(actor)?.held_comment(id)?;
         if let Some(refused) = held::not_held(id, found.as_ref()) {
             return Err(refused);
         }

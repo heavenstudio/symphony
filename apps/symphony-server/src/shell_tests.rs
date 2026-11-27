@@ -321,3 +321,37 @@ fn an_older_shell_with_body_attributes_keeps_the_notice_in_its_body() {
     );
     assert!(page.contains("<body class=\"old\"><section id=\"shell-notices\" aria-label=\"Server notices\">warning</section>"), "{page}");
 }
+
+/// A page served to a reader names them, and the person at the machine as they are shown, in the
+/// view it carries, so the header and each thread draw them with nothing more asked; a page served
+/// for nobody names neither, and a name that would close the element is carried as text.
+#[test]
+fn a_page_served_to_a_reader_carries_who_they_are_and_the_machines_person() {
+    let tree = project("");
+    let nobody = view(&page(SHELL, &tree.root, "", ""));
+    assert_eq!((nobody.you, nobody.machine), (None, None));
+    let named = |name: &str, shown: &str| symphony_api::PersonName {
+        name: name.into(),
+        shown: shown.into(),
+    };
+    let ana = symphony_plugin::Actor::new(
+        symphony_plugin::Sender::new("ana", "Ana </script><b>Lima", Vec::new()),
+        symphony_board::workflow::person("ana"),
+    );
+    let reader = Reader::of(&ana, Some(named("stefano", "Stefano")));
+    let page = page_for(SHELL, &tree.root, "", "", &reader);
+    assert!(!page.contains("</script><b>"), "{page}");
+    let carried = view(&page);
+    assert_eq!(carried.you, Some(named("ana", "Ana </script><b>Lima")));
+    assert_eq!(carried.profile, "/people#person-ana", "a person's own card");
+    assert_eq!(carried.machine, reader.machine);
+    assert_eq!(carried.name, "Lantern", "the rest of the view as before");
+    // The person at the machine, named or not, writes theirs in their own section.
+    let mut machine = symphony_board::workflow::local_actor();
+    for name in ["owner", "stefano"] {
+        machine.sender = symphony_plugin::Sender::new(name, "Stefano", Vec::new());
+        let page = page_for(SHELL, &tree.root, "", "", &Reader::of(&machine, None));
+        assert_eq!(view(&page).profile, "/people#you", "{name}");
+    }
+    assert_eq!(nobody.profile, "", "a page for nobody links nowhere");
+}

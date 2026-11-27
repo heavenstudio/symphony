@@ -1,5 +1,6 @@
 import type { JSX, ReactNode } from "react";
 import { Button } from "./button";
+import { writer } from "./project";
 import { address, endpointWords, historyWords, isoTime } from "./timeline-history";
 import type { TaskEntry, TaskTimeline, TimelineMessage } from "./wire";
 
@@ -104,8 +105,10 @@ export function MessagePanel({
             </time>
             {` · recorded time ${message.at}`}
           </p>
-          <p>{`Sender: ${message.sender}. ${endpointWords(message.from)}`}</p>
-          <p>{`Addressed to: ${message.recipient ?? "Everyone on task"}. ${endpointWords(message.to)}`}</p>
+          <p>{`Sender: ${writer(message.sender).text}. ${endpointWords(message.from)}`}</p>
+          <p>
+            {`Addressed to: ${message.recipient == null ? "Everyone on task" : writer(message.recipient).text}. ${endpointWords(message.to)}`}
+          </p>
           <p>
             {message.after_close === true
               ? "Sent after task closure."

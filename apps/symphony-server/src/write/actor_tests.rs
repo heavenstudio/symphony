@@ -253,7 +253,17 @@ async fn a_persons_write_where_the_board_cannot_be_read_is_refused_and_writes_no
 
 /// `body` posted at `route` through the router of `shared` from Ana's laptop: the status and body.
 async fn posted(shared: &Arc<Shared>, route: &str, body: &str) -> (StatusCode, String) {
-    let app = router(shared.clone()).layer(MockConnectInfo(LAPTOP.parse::<SocketAddr>().unwrap()));
+    posted_from(shared, LAPTOP, route, body).await
+}
+
+/// `body` posted at `route` through the router of `shared` from `client`: the status and body.
+async fn posted_from(
+    shared: &Arc<Shared>,
+    client: &str,
+    route: &str,
+    body: &str,
+) -> (StatusCode, String) {
+    let app = router(shared.clone()).layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()));
     let request = Request::post(route)
         .header(header::HOST, HOST)
         .header(header::ORIGIN, format!("http://{HOST}"))
@@ -283,6 +293,43 @@ async fn a_save_is_the_person_the_gate_admits_and_the_machines_own_reads_owner()
         assert!(page.lines().any(|l| l.ends_with(&line)), "{page}");
         assert!(!page.contains("mallory"), "{page}");
     }
+}
+
+/// Once the person at the machine named themselves `stefano`, their comment and their message on
+/// a card are written into the document under that name, never as `owner`, and never held, on a
+/// board whose person ana, who may not direct agents, has her words held.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_at_the_machine_under_their_name_comments_and_messages_as_themselves() {
+    use symphony_board::people::{Profile, Profiles};
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", "docs/TOPIC.md", PAGE);
+    let _board = staffed(&root, &[("ana", &[Power::Speak])]);
+    let machine = tree.path("machine");
+    let profiles = Profiles {
+        people: vec![Profile {
+            name: "stefano".into(),
+            display: "Stefano".into(),
+            ..Profile::default()
+        }],
+        machine: Some("stefano".into()),
+    };
+    profiles.write(&machine).unwrap();
+    let shared = Shared::new(1, 8123, &root, None, open_gate().with_machine(machine));
+    let comment = r#"{"path":"docs/TOPIC.md","after_line":1,"kind":"comment","text":"Wider?"}"#;
+    let message = r#"{"path":"docs/TOPIC.md","slug":"one","text":"And why?"}"#;
+    for (route, body) in [("/api/comment", comment), ("/api/message", message)] {
+        let (status, said) = posted_from(&shared, "127.0.0.1:5000", route, body).await;
+        assert_eq!(status, StatusCode::OK, "{route}: {said}");
+        assert!(!said.contains(r#""held""#), "{route}: never held: {said}");
+    }
+    shared.saves.get().unwrap().close();
+    let page = std::fs::read_to_string(root.join("docs/TOPIC.md")).unwrap();
+    assert!(page.contains("> [!comment] stefano · Wider?"), "{page}");
+    assert!(
+        page.lines().any(|l| l.ends_with("] stefano — And why?")),
+        "{page}"
+    );
+    assert!(!page.contains("owner"), "{page}");
 }
 
 #[tokio::test]

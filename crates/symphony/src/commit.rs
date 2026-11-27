@@ -2157,9 +2157,8 @@ impl OutputJob {
         Ok(folder)
     }
 
-    /// The journal entry of `job`, a save of `person`'s (their short name, `owner` for the
-    /// machine's person), written before anything commits it.
-    fn new(root: &Path, job: Job, person: &str) -> Result<Self, String> {
+    /// The journal entry of `job`, a save of `person`'s, written before anything commits it.
+    fn new(root: &Path, job: Job, person: &symphony_plugin::Actor) -> Result<Self, String> {
         let path = Self::folder(root)?.join(format!("{:020}.json", job.backlog.sequence));
         let saved = QueuedPublication {
             edit: job.edit.clone(),
@@ -2736,18 +2735,18 @@ impl Committer {
     }
 
     pub fn submit(&self, edit: Edit) -> Result<(), String> {
-        self.submit_as(edit, crate::postpone::OWNER)
+        self.submit_as(edit, &symphony_board::workflow::local_actor())
     }
 
-    /// [`Self::submit`], the save `person`'s, by the short name their lines carry (`owner` for
-    /// the machine's person): kept for delivery by pull request ([`pending`]), its task is filed
-    /// and sent to review as theirs, and the store entries a settings edit made the project's are
-    /// cleared as theirs.
+    /// [`Self::submit`], the save `person`'s, by the short name their lines carry (`owner` or the
+    /// name they gave themselves for the machine's person): kept for delivery by pull request
+    /// ([`pending`]), its task is filed and sent to review as theirs, and the store entries a
+    /// settings edit made the project's are cleared as theirs.
     ///
     /// # Errors
     ///
     /// As [`Self::submit`].
-    pub fn submit_as(&self, edit: Edit, person: &str) -> Result<(), String> {
+    pub fn submit_as(&self, edit: Edit, person: &symphony_plugin::Actor) -> Result<(), String> {
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let backlog = Arc::new(Backlog::new(&self.root)?);
         // Publish the immutable edit before registering it as a page another publication

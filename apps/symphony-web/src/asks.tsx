@@ -11,6 +11,7 @@ import { BlocksView } from "./blocks";
 import { Button } from "./button";
 import { readAsks } from "./document-read";
 import { useMount } from "./mount";
+import { writer } from "./project";
 import { getJson, post, said } from "./request";
 import { field, list, STALE, useStore } from "./shared";
 import { load, save } from "./storage";
@@ -438,7 +439,9 @@ export function AskThread({
           {ask.quote !== "" && <blockquote>{ask.quote}</blockquote>}
           {ask.messages.map((message) => (
             <div key={message.seq} className="ask-message">
-              <p className="by">{message.by}</p>
+              <p className="by" title={writer(message.by).title}>
+                {writer(message.by).text}
+              </p>
               <BlocksView blocks={message.blocks ?? []} />
             </div>
           ))}

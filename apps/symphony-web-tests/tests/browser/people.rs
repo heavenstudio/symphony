@@ -1,20 +1,26 @@
 //! The People page (apps/symphony-web/src/people.tsx, the web client's `people` kind), the release
 //! client against the stand-in server answering its read (`/api/people`) with the wire's own
-//! sample: on a desk and a phone every person, group and change drawn within the screen's width,
-//! the page lit in the header after Settings, direct agents a power to give as every other is, and
-//! nothing sent on opening; an add from its form (its fields cleared once it is done) and a
-//! power's toggle posted as one change each (`/api/people-change`), direct agents given at a
-//! press on a desk and a phone as any power is, the page drawn from the write's answer and what it
-//! did said on the part that sent it, and a refusal in the server's words; a person put in a
-//! group, a group made and a
+//! sample: on a desk and a phone the person at the machine's own section first, then every person,
+//! group and change drawn within the screen's width, the page lit in the header after Settings,
+//! direct agents a power to give as every other is, each field labelled, and nothing sent on
+//! opening; the person at the machine naming themselves from that section, asked once more before
+//! it is sent (`/api/people-profile`), the header then naming them and linking to it; an add of
+//! someone else from its form (its fields cleared once it is done) and a power's toggle posted as
+//! one change each (`/api/people-change`), direct agents given at a press on a desk and a phone as
+//! any power is, the page drawn from the write's answer and what it did said on the part that sent
+//! it, and a refusal in the server's words; a person put in a group, a group made and a
 //! removal (asked by a named confirmation, kept or confirmed) each posted as one change; a reader
-//! without administer shown no control but their own profile's and notices', which post to
+//! without administer, who is not the person at the machine, shown no section of theirs to name
+//! and no control but their own profile's and notices', which post to
 //! `/api/people-profile`, and no one's addresses but their own; a person's notices set on their
-//! card, what changed posted alone; and a read that fails said in the page's place.
+//! card, what changed posted alone; a signing service's key and no tailnet offering a sign-in of
+//! any service, and neither offering none; and a read that fails said in the page's place.
 //!
-//! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page, a person's notices being set
-//! and direct agents given are saved there, whole, at each width and in each scheme: a visitor who is not the person at the machine reaches a server only
-//! under another Tailscale login, so their page is pictured from the stand-in server.
+//! With `SYMPHONY_PEOPLE_SHOTS` naming a folder, the reader's page, a person's notices being set,
+//! direct agents given and the page behind a signing service on no tailnet are saved there, whole,
+//! at each width and in each scheme: a visitor who is not the person at the machine reaches a
+//! server only under another Tailscale login or a signed word, so their page is pictured from the
+//! stand-in server.
 use super::{SHOWN, chrome, chrome::Chrome, site, site::Site, texts};
 use serde_json::{Value, json};
 
@@ -136,7 +142,7 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
         );
         assert_eq!(
             texts(&mut chrome, ".people-section > h2"),
-            ["People", "Groups", "Log"]
+            ["You", "People", "Groups", "Log"]
         );
         assert_eq!(
             texts(&mut chrome, ".people-person-head h3"),
@@ -152,10 +158,15 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
                         held: [...ana.querySelectorAll('.people-power')].map(b => `${b.textContent}:${b.dataset.held}`),
                         log: [...document.querySelectorAll('.people-log li')].map(li => li.value),
                         newest: document.querySelector('.people-log li').textContent.endsWith('owner put cy on the board, holding read'),
-                        adds: document.querySelectorAll('form[aria-label="Add a person"], form[aria-label="Make a group"]').length,
+                        adds: document.querySelectorAll('form[aria-label="Add someone else"], form[aria-label="Make a group"]').length,
                         // Given as every power is, and no line beside a form says otherwise.
                         direct: (b => [b.getAttribute('aria-disabled'), b.title, getComputedStyle(b).opacity])(ana.querySelector("button[aria-label='direct agents for ana']")),
                         lines: document.querySelectorAll('.people-form p:not(.people-said)').length,
+                        hints: page.querySelectorAll('.people-hint').length,
+                        // The person at the machine, named by no profile yet, is shown the form that
+                        // names them, and no line: the header names who writes.
+                        you: [document.querySelectorAll('#you p:not(.people-said)').length, [...document.querySelectorAll('#you label')].map(l => l.textContent)],
+                        labels: [...document.querySelectorAll('#people-add label')].map(l => l.textContent),
                         removals: [...document.querySelectorAll('.people-actions > .dx-button')].map(b => `${b.textContent}:${b.dataset.style}`),
                         withinTheScreen: document.documentElement.scrollWidth <= innerWidth,
                         withinThePage: [...page.querySelectorAll('*')].every(e => e.getBoundingClientRect().right <= innerWidth + 0.5),
@@ -170,6 +181,16 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
                 "adds": 2,
                 "direct": [null, "Give ana direct agents", "1"],
                 "lines": 0,
+                "hints": 0,
+                "you": [
+                    0,
+                    ["Short name", "Display name (optional)", "Git handles (optional)"],
+                ],
+                "labels": [
+                    "Short name", "Display name (optional)",
+                    "Sign-in (optional)",
+                    "Git handles (optional)", "Group (optional)",
+                ],
                 "removals": [
                     "Take off the board:outline", "Take off the board:outline",
                     "Take off the board:outline", "Remove the group:outline",
@@ -186,6 +207,186 @@ fn the_people_page_draws_every_person_group_and_change_within_a_desk_and_a_phone
             .any(|asked| asked.contains(symphony_api::PEOPLE_PATH))
     );
     assert_eq!(site.posts(), []);
+}
+
+/// A signing service in front and no tailnet: the add and every card but the person at the
+/// machine's own offer a sign-in, its placeholder the form any service's takes, as the service is
+/// the word's to name. With neither a tailnet nor a signing service's key, no form offers one.
+#[test]
+fn a_signing_services_key_and_no_tailnet_offer_a_sign_in_of_any_service_and_neither_none() {
+    let mut signed = sample();
+    signed.as_object_mut().unwrap().remove("signins");
+    assert_eq!(
+        signed["signed_words"],
+        json!(true),
+        "the wire's sample sets it"
+    );
+    let mut neither = signed.clone();
+    neither.as_object_mut().unwrap().remove("signed_words");
+    let fields = r#"[...document.querySelectorAll('input[aria-label^="Sign-in"]')].map(i => `${i.getAttribute('aria-label')}:${i.placeholder}`)"#;
+    let Some(mut chrome) = chrome() else { return };
+    let site = served(&signed);
+    for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
+        screen(&mut chrome, width, height, mobile);
+        open(&mut chrome, &site, "people");
+        assert_eq!(
+            chrome.eval(fields),
+            json!([
+                "Sign-in of ana:service:subject",
+                "Sign-in of bo:service:subject",
+                "Sign-in of cy:service:subject",
+                "Sign-in:service:subject",
+            ]),
+            "{width}"
+        );
+        assert_eq!(
+            chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
+            json!(true)
+        );
+        // Ana's profile opened, its sign-in field drawn beside the add's.
+        click(
+            &mut chrome,
+            "#person-ana .people-profile:not(.people-notices) summary",
+        );
+        assert_eq!(
+            chrome.eval(r#"document.querySelector('input[aria-label="Sign-in of ana"]').offsetParent !== null"#),
+            json!(true)
+        );
+        let view = if mobile { "phone" } else { "wide" };
+        shot(
+            &mut chrome,
+            &format!("people-signed-{view}"),
+            (width, height, mobile),
+        );
+    }
+    let site = served(&neither);
+    screen(&mut chrome, 1440, 900, false);
+    open(&mut chrome, &site, "people");
+    assert_eq!(chrome.eval(fields), json!([]));
+    assert_eq!(site.posts(), []);
+}
+
+/// The person at the machine names themselves from their own section: asked once more, as a short
+/// name is never changed once given, then posted alone; the page and the header then name them by
+/// how they are shown, the header linking to that section.
+#[test]
+fn the_person_at_the_machine_names_themselves_asked_once_more_and_the_header_names_them() {
+    let site = served(&sample());
+    let owner = symphony_api::PersonName {
+        name: "owner".into(),
+        shown: "owner".into(),
+    };
+    site.serve_to(owner, "/people#you");
+    let mut after = sample();
+    after["mine"] = json!({"name": "stefano", "display": "Stefano", "git": ["stefano-b"]});
+    site.set_json(symphony_api::PROFILE_PATH, &after);
+    let Some(mut chrome) = chrome() else { return };
+    for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
+        screen(&mut chrome, width, height, mobile);
+        open(&mut chrome, &site, "people");
+        let view = if mobile { "phone" } else { "wide" };
+        shot(
+            &mut chrome,
+            &format!("people-you-unnamed-{view}"),
+            (width, height, mobile),
+        );
+    }
+    screen(&mut chrome, 1440, 900, false);
+    open(&mut chrome, &site, "people");
+    let header = r#"(() => {
+        const link = document.querySelector('.app-you');
+        return [link.textContent, new URL(link.href).pathname + new URL(link.href).hash];
+    })()"#;
+    assert_eq!(
+        chrome.eval(header),
+        json!(["owner", "/people#you"]),
+        "the header names the reader as the server named them"
+    );
+    type_into(&mut chrome, "Your short name", "stefano");
+    type_into(&mut chrome, "Your display name", "Stefano");
+    type_into(&mut chrome, "Your git handles", "stefano-b");
+    let keep = "document.querySelector(\"form[aria-label='Your name']\").requestSubmit()";
+    chrome.eval(keep);
+    let asked =
+        "document.querySelector(\"#you [role=group][aria-label='Your short name: confirmation']\")";
+    assert!(chrome.wait_for(&format!("{asked} !== null"), SHOWN));
+    assert_eq!(
+        chrome.eval(&format!("{asked}.querySelector('span').textContent")),
+        json!("Write as stefano on every board? A short name is never changed once given.")
+    );
+    press(&mut chrome, "you", "Change it");
+    assert_eq!(chrome.eval(&format!("{asked} === null")), json!(true));
+    assert_eq!(
+        site.posts(),
+        [],
+        "neither the first press nor changing it sends anything"
+    );
+    chrome.eval(keep);
+    assert!(chrome.wait_for(&format!("{asked} !== null"), SHOWN));
+    press(&mut chrome, "you", "Confirm the name");
+    assert_eq!(said(&mut chrome, "you", false), "The profile is written.");
+    assert_eq!(
+        site.posts(),
+        [(
+            symphony_api::PROFILE_PATH.to_string(),
+            json!({"name": "stefano", "display": "Stefano", "git": ["stefano-b"], "machine": true})
+        )]
+    );
+    assert!(chrome.wait_for(
+        "document.querySelector('.app-you')?.textContent === 'Stefano'",
+        SHOWN
+    ));
+    assert_eq!(
+        chrome.eval(
+            r#"(() => {
+                const link = document.querySelector('.app-you');
+                return {
+                    you: [...document.querySelectorAll('#you h3, #you .people-name')].map(e => e.textContent),
+                    form: document.querySelector("form[aria-label='Your name']") === null,
+                    href: new URL(link.href).pathname + new URL(link.href).hash,
+                    label: link.getAttribute('aria-label'),
+                };
+            })()"#
+        ),
+        json!({
+            "you": ["Stefano", "stefano"], "form": true, "href": "/people#you",
+            "label": "Stefano, your profile",
+        })
+    );
+    for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
+        screen(&mut chrome, width, height, mobile);
+        let view = if mobile { "phone" } else { "wide" };
+        assert_eq!(
+            chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
+            json!(true),
+            "{view}"
+        );
+        // The name at the row's end beside the bell: whole on a desk, a round initial on a phone.
+        assert_eq!(
+            chrome.eval(
+                r#"(() => {
+                    const link = document.querySelector('.app-you');
+                    const box = link.getBoundingClientRect();
+                    const bell = document.querySelector('#bell').getBoundingClientRect();
+                    return {
+                        size: innerWidth < 761 ? [Math.round(box.width), Math.round(box.height)] : link.scrollWidth <= link.clientWidth && box.width > 0,
+                        row: Math.abs(box.top + box.bottom - bell.top - bell.bottom) < 4,
+                    };
+                })()"#
+            ),
+            if mobile {
+                json!({"size": [32, 32], "row": true})
+            } else {
+                json!({"size": true, "row": true})
+            },
+            "{view}"
+        );
+        shot(
+            &mut chrome,
+            &format!("people-you-named-{view}"),
+            (width, height, mobile),
+        );
+    }
 }
 
 #[test]
@@ -214,11 +415,11 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
         click(
             &mut chrome,
             &format!(
-                "form[aria-label='Add a person'] button[aria-label='{power} for the new person']"
+                "form[aria-label='Add someone else'] button[aria-label='{power} for the new person']"
             ),
         );
     }
-    chrome.eval("document.querySelector(\"form[aria-label='Add a person']\").requestSubmit()");
+    chrome.eval("document.querySelector(\"form[aria-label='Add someone else']\").requestSubmit()");
     assert_eq!(
         said(&mut chrome, "people-add", false),
         "owner put dora on the board, holding speak, decide."
@@ -237,7 +438,7 @@ fn an_add_and_a_power_are_each_one_change_the_page_draws_from_its_answer_a_refus
     // The page is the write's answer: no read follows it; the form is cleared for the next one.
     assert!(chrome.wait_for("document.querySelector('#person-dora') !== null", SHOWN));
     assert!(chrome.wait_for(
-        "[...document.querySelectorAll(\"form[aria-label='Add a person'] input\")].every(i => i.value === '')",
+        "[...document.querySelectorAll(\"form[aria-label='Add someone else'] input\")].every(i => i.value === '')",
         SHOWN
     ));
     // A power's toggle is one change of the person's own; a refusal is said on their card.
@@ -419,6 +620,8 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
     reader["administers"] = json!(false);
     reader["machine"] = json!(false);
     reader["you"] = json!("cy");
+    // The server sends the person at the machine's own profile to them alone.
+    reader.as_object_mut().unwrap().remove("mine");
     // As the server answers cy: no one's addresses or ways but cy's own.
     for person in reader["people"].as_array_mut().unwrap() {
         if person["name"] != "cy" {
@@ -429,10 +632,25 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
     }
     let site = served(&reader);
     site.set_json(symphony_api::PROFILE_PATH, &reader);
+    let cy = symphony_api::PersonName {
+        name: "cy".into(),
+        shown: "Cy Moreau".into(),
+    };
+    site.serve_to(cy, "/people#person-cy");
     let Some(mut chrome) = chrome() else { return };
     for (width, height, mobile) in [(1440, 900, false), (390, 844, true)] {
         screen(&mut chrome, width, height, mobile);
         open(&mut chrome, &site, "people");
+        assert_eq!(
+            chrome.eval(
+                r#"(() => {
+                    const link = document.querySelector('.app-you');
+                    return [link.textContent, link.getAttribute('aria-label'), new URL(link.href).pathname + new URL(link.href).hash];
+                })()"#
+            ),
+            json!(["Cy Moreau", "Cy Moreau, your profile", "/people#person-cy"]),
+            "the header names cy and links to their own card"
+        );
         assert_eq!(
             chrome.eval(
                 r#"(() => {
@@ -442,9 +660,12 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
                         outside: controls.filter(e => !e.closest('#person-cy .people-profile')).length,
                         signin: document.querySelector('input[aria-label="Sign-in of cy"]') !== null,
                         you: document.querySelector('#person-cy .people-you')?.textContent,
+                        // Not the person at the machine: no section of theirs to name, nor its form.
+                        mine: [document.querySelector('#you'), document.querySelector("form[aria-label='Your name']")].every(e => e === null),
                         addresses: [...document.querySelectorAll('.people-addresses')].map(p => p.closest('.people-person').id),
                         notices: [...document.querySelectorAll('.people-notices')].map(d => d.closest('.people-person').id),
-                        said: document.querySelector('.people-refused').textContent === 'Changing who is on the board needs administer.',
+                        // No line says why the controls are absent: the head is its title alone.
+                        head: document.querySelector('.people-head').textContent,
                         // What a group holds, read among it, as each of its powers includes read.
                         staff: [...document.querySelectorAll('#group-staff .people-power')].map(t => `${t.textContent}:${t.dataset.held}`),
                         bo: [...document.querySelectorAll('#person-bo .people-power')].map(t => `${t.textContent}:${t.dataset.held}`),
@@ -452,7 +673,7 @@ fn a_reader_without_administer_is_shown_no_control_but_their_own_profile() {
                 })()"#
             ),
             json!({
-                "outside": 0, "signin": false, "you": "you", "said": true,
+                "outside": 0, "signin": false, "you": "you", "mine": true, "head": "People",
                 "addresses": ["person-cy"], "notices": ["person-cy"],
                 "staff": ["read:own", "decide:own"],
                 "bo": ["read:own", "administer:own"],

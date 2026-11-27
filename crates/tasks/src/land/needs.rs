@@ -218,11 +218,16 @@ pub struct Evidence<'a> {
     /// The main checkout, where the `owner` stamp reads the cards the task's branch posted
     /// ([`read::owner_at`]).
     pub main: PathBuf,
-    /// The people of the task's owner who hold decide, whose approve meets the `owner` stamp as
-    /// the owner's does ([`read::owner_at_by`], [`Store::task_deciders`]): read only when `owner`
-    /// is needed, and none where the task, the board's people or its map cannot be read, so the
-    /// owner's approve alone meets it then.
+    /// The people of the task's owner who hold decide, and the person at the machine by the name
+    /// they gave themselves ([`crate::people::with_machine`]), whose approve meets the `owner` stamp
+    /// as the owner's does ([`read::owner_at_by`], [`Store::task_deciders`]): read only when `owner`
+    /// is needed, and none of the board's where the task, the board's people or its map cannot be
+    /// read, so the owner's approve, under either name, alone meets it then.
     pub deciders: Vec<String>,
+    /// The person at the machine, once they gave themselves a name, read from the machine folder
+    /// the land's environment names ([`crate::people::machine_person_in`]): among the deciders,
+    /// and named by how they are shown in what the `owner` stamp's reading says.
+    pub machine: Option<crate::people::MachinePerson>,
 }
 
 impl<'a> Evidence<'a> {
@@ -247,10 +252,18 @@ impl<'a> Evidence<'a> {
             (Vec::new(), vec![slug.to_string()])
         };
         let artifacts = crate::project::artifacts(main).unwrap_or_else(|| "artifacts".into());
-        let deciders = if needed.has(OWNER) {
-            store.task_deciders_of(slug)
+        // The person at the machine decides on every board, under the name they gave themselves
+        // as under `owner`, which no row says.
+        let (deciders, machine) = if needed.has(OWNER) {
+            let machine = crate::people::machine_person_in(|name| {
+                env.var(name).map(std::ffi::OsString::from)
+            });
+            (
+                crate::people::with_machine(store.task_deciders_of(slug), machine.as_ref()),
+                machine,
+            )
         } else {
-            Vec::new()
+            (Vec::new(), None)
         };
         Evidence {
             thread,
@@ -259,6 +272,7 @@ impl<'a> Evidence<'a> {
             folder: read::folder(&artifacts, slug),
             main: main.to_path_buf(),
             deciders,
+            machine,
         }
     }
 }
@@ -313,7 +327,13 @@ pub fn standing(
                 evidence.ours.iter().any(|ours| ours == task)
             }),
             PICTURES => read::pictures(evidence.thread, tip, &evidence.folder),
-            OWNER => read::owner_at_by(evidence.thread, tip, &evidence.main, &evidence.deciders),
+            OWNER => read::owner_at_by(
+                evidence.thread,
+                tip,
+                &evidence.main,
+                &evidence.deciders,
+                evidence.machine.as_ref(),
+            ),
             _ => continue,
         };
         if reading.met {

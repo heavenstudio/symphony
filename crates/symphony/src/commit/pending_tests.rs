@@ -140,10 +140,22 @@ fn an_owners_entry_names_no_one_and_an_agents_names_its_session() {
     assert_eq!(serde_json::from_str::<Delivery>(&written).unwrap(), agent);
 }
 
+/// `name` as a person a board named asks a save.
+fn person(name: &str) -> symphony_plugin::Actor {
+    let sender = symphony_plugin::Sender::new(name, name, Vec::new());
+    symphony_plugin::Actor::new(sender, symphony_board::workflow::person(name))
+}
+
+/// The person at the machine asking a save under `name`.
+fn machines(name: &str) -> symphony_plugin::Actor {
+    let sender = symphony_plugin::Sender::new(name, name, Vec::new());
+    symphony_plugin::Actor::new(sender, symphony_board::workflow::local_owner())
+}
+
 #[test]
 fn a_persons_entry_names_them_and_the_owners_or_any_word_no_short_name_names_no_one() {
     let tree = repository();
-    let ana = Delivery::saved_by(&tree.root, "ana");
+    let ana = Delivery::saved_by(&tree.root, &person("ana"));
     assert_eq!((ana.acting(), ana.whose().as_str()), ("ana", "ana's"));
     let written = serde_json::to_string(&ana).unwrap();
     assert!(written.contains("\"person\":\"ana\""), "{written}");
@@ -151,7 +163,7 @@ fn a_persons_entry_names_them_and_the_owners_or_any_word_no_short_name_names_no_
     // The machine's person, and a word that is no short name (a session's handle, a reserved
     // word, a capital), stand as the owner's save did before a board named anyone.
     for none in ["owner", " owner ", "fox-12", "board", "Ana", ""] {
-        let saved = Delivery::saved_by(&tree.root, none);
+        let saved = Delivery::saved_by(&tree.root, &machines(none));
         assert_eq!(
             (saved.acting(), saved.whose().as_str()),
             ("owner", "the owner's"),
@@ -159,8 +171,37 @@ fn a_persons_entry_names_them_and_the_owners_or_any_word_no_short_name_names_no_
         );
         let written = serde_json::to_string(&saved).unwrap();
         assert!(!written.contains("person"), "{none:?}: {written}");
+        assert!(!written.contains("machine"), "{none:?}: {written}");
     }
-    assert_eq!(Delivery::saved_by(&tree.root, " ana ").acting(), "ana");
+    assert_eq!(
+        Delivery::saved_by(&tree.root, &person(" ana ")).acting(),
+        "ana"
+    );
+    assert!(!written_of(&Delivery::saved_by(&tree.root, &person("ana"))).contains("machine"));
+}
+
+fn written_of(delivery: &Delivery) -> String {
+    serde_json::to_string(delivery).unwrap()
+}
+
+/// The person at the machine under the name they gave themselves: their save is theirs by that
+/// name, and kept as the machine's person's, so its task is filed with the principal the owner's
+/// always took, after a restart too.
+#[test]
+fn the_machines_persons_save_under_their_name_is_kept_as_theirs_and_the_machines() {
+    let tree = repository();
+    let saved = Delivery::saved_by(&tree.root, &machines("stefano"));
+    assert_eq!(
+        (saved.acting(), saved.whose().as_str(), saved.machine),
+        ("stefano", "stefano's", true)
+    );
+    let written = written_of(&saved);
+    assert!(written.contains("\"machine\":true"), "{written}");
+    let read: Delivery = serde_json::from_str(&written).unwrap();
+    assert_eq!(read, saved);
+    // An entry from before the mark was kept reads as a person a board named.
+    let older: Delivery = serde_json::from_str(&written.replace(",\"machine\":true", "")).unwrap();
+    assert!(!older.machine);
 }
 
 #[test]

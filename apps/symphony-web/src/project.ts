@@ -11,6 +11,7 @@ import {
   FILE_QUERY,
   type NavItem,
   PAGE_NAMES,
+  type PersonName,
   PROJECT_ELEMENT,
   type ProjectView,
   SYMPHONY_ROUTES,
@@ -271,6 +272,36 @@ export function project(): ProjectView {
     current = readView(parsed);
   }
   return current;
+}
+
+/** A writer as a line draws them: the words shown, and the name the line carries where it differs. */
+export interface Drawn {
+  text: string;
+  title?: string;
+}
+
+/**
+ * The writer `name` of a person's line as a page draws it: the person at the machine (`machine`)
+ * by how they are shown, for a line under `owner` or under the short name they gave themselves,
+ * titled with the name the line carries; any other name, and every name while the person at the
+ * machine gave none, as it is written. What is written stays as it is.
+ */
+export function drawnName(name: string, machine: PersonName | null | undefined): Drawn {
+  const theirs = machine != null && (name === "owner" || name === machine.name);
+  return theirs && machine.shown !== name ? { text: machine.shown, title: name } : { text: name };
+}
+
+/** `name`, the writer a line or a row carries, as this page's project draws it (`drawnName`). */
+export function writer(name: string): Drawn {
+  return drawnName(name, project().machine);
+}
+
+/**
+ * The person at the machine as they now name themselves (`you`), from a page that wrote it: the
+ * header and every thread drawn after it name them so, as a page served after it does.
+ */
+export function named(you: PersonName): void {
+  current = { ...project(), you, machine: you };
 }
 
 /**

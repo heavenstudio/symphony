@@ -121,6 +121,10 @@ fn writable(given: &Given, writer: Writer) -> Result<Given, Stopped> {
         .map_err(|why| Stopped::Refused(format!("{why}: nothing was written")))
 }
 
+/// Why the person at the machine's profile holds no sign-in: they are known by where they are.
+const KNOWN_BY_WHERE: &str =
+    "the person at the machine is known by where they are, never by a sign-in";
+
 /// Who writes a profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Writer {
@@ -264,7 +268,9 @@ pub fn add(
 /// whether it changed. Refused, with nothing written: a name no board could give a person
 /// ([`super::refused_person_name`]), a profile not the writer's
 /// ([`Writer::Other`]), a sign-in from anyone but the person at the machine, an address or a way
-/// its rule refuses ([`ways`]), and a sign-in another profile holds, read under the lock.
+/// its rule refuses ([`ways`]), and, read under the lock, a sign-in another profile holds and one
+/// for the person at the machine's own profile ([`Profiles::machine`]), as [`name_machine`] refuses
+/// it: a login under their name would write as them with another's powers.
 pub fn profile(dir: &Path, name: &str, given: &Given, writer: Writer) -> Result<bool, Stopped> {
     if let Some(why) = super::refused_person_name(name) {
         return Err(Stopped::Refused(format!("{why}: nothing was written")));
@@ -285,6 +291,11 @@ pub fn profile(dir: &Path, name: &str, given: &Given, writer: Writer) -> Result<
     }
     let given = &writable(given, writer)?;
     Profiles::change(dir, |profiles| {
+        if !given.signins.is_empty() && profiles.machine.as_deref() == Some(name) {
+            return Ok(Err(format!(
+                "{KNOWN_BY_WHERE}: {name}'s profile takes none, so nothing was written"
+            )));
+        }
         if let Err(why) = taken_signins(profiles, name, &given.signins) {
             return Ok(Err(why));
         }
@@ -301,11 +312,137 @@ pub fn profile(dir: &Path, name: &str, given: &Given, writer: Writer) -> Result<
     .map_err(Stopped::Refused)
 }
 
+/// What a board the machine serves holds under a name ([`name_machine`]'s `held`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Held {
+    /// A person of that name: theirs where the machine's profile of the name is.
+    Person,
+    /// A group of that name: never a person's.
+    Group,
+}
+
+/// Gives the person at the machine their own profile, `name` its short name, `given` its display
+/// name and git handles, in the machine folder `dir` (docs/product/analysis/users-and-identity.md,
+/// "How a person's name is written"): from then on every line they write, on every board the
+/// machine serves, carries `name` where it carried `owner`. Only the person at the machine asks
+/// it (the People page's You, behind the gate's own judgement of who they are), and it is said
+/// once: a name once used is never given to another, so it is never changed.
+///
+/// A profile of `name` that holds no sign-in is taken as theirs, with what it holds: only they, or
+/// a board's admin adding someone the machine gives no sign-in yet, made it, and no visitor ever
+/// wrote under it, as nobody reaches a board as a profile with no sign-in. So the person at the
+/// machine who added themselves to a board before naming themselves takes that name, and a row a
+/// board holds of it is theirs. One with a sign-in is someone's who reaches the boards, and is
+/// refused.
+///
+/// `held` says what a board the machine serves holds under `name` (a person, a group, nothing),
+/// asked under the profiles' lock, which a group's add takes too ([`add_group`]): a group is
+/// refused, and a person where the machine holds no profile of the name, as they are someone a
+/// board named on another machine; a board that cannot be read fails it with nothing written.
+///
+/// Refused, with nothing written: a name no board could give a person
+/// ([`super::refused_person_name`]), a profile someone signs in as, a second name, and a sign-in,
+/// as the person at the machine is known by where they are, never by a service.
+pub fn name_machine(
+    dir: &Path,
+    name: &str,
+    given: &Given,
+    held: impl FnOnce(&str) -> Result<Option<Held>, Stopped>,
+) -> Result<(), Stopped> {
+    let name = name.trim();
+    if let Some(why) = super::refused_person_name(name) {
+        return Err(Stopped::Refused(format!("{why}: nothing was written")));
+    }
+    if !given.signins.is_empty() {
+        return Err(Stopped::Refused(format!(
+            "{KNOWN_BY_WHERE}: give yourself a name with none, so nothing was written"
+        )));
+    }
+    let written = Profiles::change(dir, |profiles| {
+        if let Some(already) = profiles.machine() {
+            return Ok(Err(Stopped::Refused(format!(
+                "you write as {} already, and a short name once given is never changed: \
+                 nothing was written",
+                already.name
+            ))));
+        }
+        let profile = profiles.get(name);
+        if profile.is_some_and(|profile| !profile.signins.is_empty()) {
+            return Ok(Err(Stopped::Refused(format!(
+                "{name} is the profile of someone who signs in, and a name once used is never \
+                 given to another: choose another name, so nothing was written"
+            ))));
+        }
+        match held(name) {
+            Err(stopped) => return Ok(Err(stopped)),
+            Ok(Some(Held::Group)) => {
+                return Ok(Err(Stopped::Refused(format!(
+                    "{name} is a group's name on a board of this machine, and a person's name and \
+                     a group's never meet: choose another name, so nothing was written"
+                ))));
+            }
+            Ok(Some(Held::Person)) if profile.is_none() => {
+                return Ok(Err(Stopped::Refused(format!(
+                    "{name} is a person on a board of this machine whom it holds no profile of, \
+                     someone named elsewhere: choose another name, so nothing was written"
+                ))));
+            }
+            Ok(Some(Held::Person) | None) => {}
+        }
+        fill(profiles, name, given);
+        profiles.machine = Some(name.into());
+        Ok(Ok(()))
+    });
+    written.map_err(|why| {
+        Stopped::Failed(Failure::new(
+            "the machine's profiles could not be locked, read or written, so nothing was written",
+            why,
+        ))
+    })?
+}
+
+/// Makes the group `name` on the board of `store` with `powers`, as `by`'s change
+/// ([`Store::add_group`]), refused where a profile of the machine is named `name`: a person's name
+/// and a group's never meet, and a profile's person can be on any board, the person at the
+/// machine on every one, so a line under the name never reads as the group's. The profiles' lock
+/// is held from the read through the board's change, as [`name_machine`] holds it, so the two
+/// never both take one name.
+pub fn add_group(
+    store: &Store,
+    dir: &Path,
+    name: &str,
+    powers: &[Power],
+    by: &str,
+) -> Result<Change, Stopped> {
+    Profiles::change(dir, |profiles| {
+        if profiles.get(name).is_some() {
+            return Ok(Err(Stopped::Refused(format!(
+                "{name} is a person's name on this machine, and a person's name and a group's \
+                 never meet: name the group otherwise, so nothing was written"
+            ))));
+        }
+        Ok(store.add_group(name, powers, by).map_err(Stopped::from))
+    })
+    .map_err(|why| {
+        Stopped::Failed(Failure::new(
+            "the machine's profiles could not be locked or read, so nothing was written",
+            why,
+        ))
+    })?
+}
+
 /// Why `writer` may not add `name` with `given` to a board over `profiles`: none where they may.
-/// Anyone but the person at the machine adds as the board's admin: they give no sign-in, which
-/// would decide who acts as `name` on every board holding it, now or later, and make a profile
-/// only for a person who has none. Their refusals name no profile and no other person.
+/// Nobody adds the person at the machine, who is on every board with every power and no row. Anyone
+/// but the person at the machine adds as the board's admin: they give no sign-in, which would
+/// decide who acts as `name` on every board holding it, now or later, and make a profile only for
+/// a person who has none. Their refusals name no profile and no other person.
 fn addable(profiles: &Profiles, name: &str, given: &Given, writer: Writer) -> Result<(), String> {
+    if profiles.machine.as_deref() == Some(name) {
+        return Err(format!(
+            "{name} is the person at the machine, on every board with every power, and no row \
+             adds them: nothing was written"
+        ));
+    }
     if writer == Writer::Machine {
         return taken_signins(profiles, name, &given.signins);
     }

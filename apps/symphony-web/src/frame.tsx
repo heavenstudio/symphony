@@ -280,6 +280,27 @@ function Brand({ view }: { view: ProjectView }) {
   );
 }
 
+/**
+ * Who reads the page, as the server named them in its view (`ProjectView.you`), at the header
+ * row's end: their shown name, `owner` for the person at the machine before they give themselves
+ * one, linking to where the server says they write their profile (`ProjectView.profile`). Nothing
+ * for a page served for nobody.
+ */
+export function You({ view }: { view: ProjectView }) {
+  const you = view.you;
+  return (
+    you != null && (
+      <a
+        className="app-you"
+        href={href(view.profile ?? "")}
+        aria-label={`${you.shown}, your profile`}
+      >
+        {you.shown}
+      </a>
+    )
+  );
+}
+
 /** The Symphony's own pages, which stay the global view's on a branch's document. */
 const GLOBAL = ["/", "/queue", "/tasks", "/reports", "/settings", "/people", "/runs", "/agents"];
 
@@ -381,6 +402,7 @@ export function Frame({ route, children }: FrameProps) {
               {/* An image role names the dot: a plain span's label is no name a reader gives. */}
               {unread() && <span className="dot ok" role="img" aria-label="Unread activity" />}
             </Button>
+            <You view={view} />
           </header>
           <div className="frame-page">{children}</div>
           {/* The bar the floating controls sit in (frame.css): the page scrolls clear of it. */}

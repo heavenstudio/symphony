@@ -19,6 +19,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "./button";
 import { Input } from "./input";
 import { useMount } from "./mount";
+import { writer } from "./project";
 import { Failure, getJson, post, said } from "./request";
 import { SelectField } from "./select";
 import { field } from "./shared";
@@ -313,7 +314,7 @@ export function openingText(setting: Setting): string {
 
 /** A change of the store's entry, as its record says it: when, by whom, from what to what. */
 export function changeLine(change: StoredChange): string {
-  return `${change.at} · ${change.by}: ${change.before ?? "none"} → ${change.after ?? "removed"}`;
+  return `${change.at} · ${writer(change.by).text}: ${change.before ?? "none"} → ${change.after ?? "removed"}`;
 }
 
 /** What the store's entry for a setting says beside it: its value, and whether it is in force. */

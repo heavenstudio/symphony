@@ -31,7 +31,7 @@ import {
   titleLength,
   trimmed,
 } from "./panel-model";
-import { href, project, readmeRoute, scoped, strip } from "./project";
+import { href, project, readmeRoute, scoped, strip, writer } from "./project";
 import { Failure, getJson, post, said } from "./request";
 import type { Route } from "./route";
 import { SelectField } from "./select";
@@ -288,7 +288,9 @@ export function QuickThread({ draft, shown, readError, checking, created }: Quic
             <>
               {shown.ask.messages.map((message) => (
                 <article className="quick-message" key={message.seq}>
-                  <p className="by">{message.by}</p>
+                  <p className="by" title={writer(message.by).title}>
+                    {writer(message.by).text}
+                  </p>
                   <BlocksView blocks={message.blocks ?? []} />
                 </article>
               ))}

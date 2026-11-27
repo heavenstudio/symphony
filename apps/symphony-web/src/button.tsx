@@ -4,16 +4,9 @@
 
 import type { ButtonHTMLAttributes } from "react";
 
-export type ButtonVariant = "primary" | "secondary" | "destructive" | "outline" | "ghost" | "link";
-export type ButtonSize =
-  | "xs"
-  | "sm"
-  | "default"
-  | "lg"
-  | "icon"
-  | "icon-xs"
-  | "icon-sm"
-  | "icon-lg";
+// The variants and sizes the pages use, each one its sheet styles (styles/button.css).
+export type ButtonVariant = "primary" | "destructive" | "outline" | "ghost";
+export type ButtonSize = "xs" | "sm" | "default";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;

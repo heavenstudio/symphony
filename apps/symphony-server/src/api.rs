@@ -399,7 +399,7 @@ fn arguments(asked: &Asked, request: &Request) -> Result<(), Box<Response>> {
 /// The reads that never touch the board, answered from the hub as it is, warm or not: `Ok(None)`
 /// for any other route. An argument is refused before the hub is asked for, as it was.
 async fn off_board(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     path: &str,
     request: &Request,
 ) -> Result<Option<Response>, Box<Response>> {
@@ -840,7 +840,8 @@ async fn board_read(
         let read = match path {
             "/api/task-offer" => store.get(&slug).map_err(task_failure).and_then(|_| {
                 let plugins = symphony::plugins::Plugins::of(&root);
-                symphony::taskview::owner_offer(&store, &plugins, &slug, &root)
+                let machine = hub.gates.machine_person();
+                symphony::taskview::owner_offer(&store, &plugins, &slug, &root, machine.as_ref())
                     .map(|offer| no_store(Json(offer)))
                     .map_err(|e| unavailable(&e, ""))
             }),

@@ -138,6 +138,66 @@ async fn each_person_reads_the_cards_they_decide_and_the_person_at_the_machine_e
     assert_eq!(postponed, json!(["new-build"]));
 }
 
+/// The person at the machine, once they named themselves `stefano` and with the board naming
+/// `stefano` of design too, is told every card by where they read from, never by the name they
+/// write under: a reader the board named so would be told design's card alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_at_the_machine_under_their_name_reads_every_card() {
+    use symphony_board::people::{Profile, Profiles};
+    let tree = Tree::new();
+    let root = project(&tree);
+    let _board = named(&root);
+    let store = Board::store(&root);
+    (store.add_person("stefano", &["design".into()], &[], "owner")).unwrap();
+    let machine = tree.path("machine");
+    let profiles = Profiles {
+        people: vec![Profile {
+            name: "stefano".into(),
+            display: "Stefano".into(),
+            ..Profile::default()
+        }],
+        machine: Some("stefano".into()),
+    };
+    profiles.write(&machine).unwrap();
+    let gate = crate::testing::laptop_with(Arc::new(|_: &Path, _: &crate::gate::Visitor| None))
+        .with_machine(machine);
+    assert_eq!(
+        gate.person().name(),
+        "stefano",
+        "they write under their name"
+    );
+    let shared = with_hub(Shared::new(1, 8123, &root, None, gate), &root);
+    let hub = shared.api.get().unwrap();
+    hub.refresh_page("", &root).unwrap();
+    hub.people_read(&store);
+    let named = hub.main_board(Some("stefano")).unwrap();
+    assert_eq!(
+        slugs(&json!(named.next)),
+        ["new-palette"],
+        "a reader named so"
+    );
+    let (status, board) = read(&shared, MACHINE, "/api/board").await;
+    assert_eq!(status, StatusCode::OK, "{board}");
+    assert_eq!(board["counts"]["waiting"], 2);
+    let (_, queue) = read(&shared, MACHINE, "/api/queue").await;
+    let mut all = slugs(&queue["waiting"]);
+    symphony_board::order::sort_by(&mut all, &Ord::cmp);
+    assert_eq!(all, ["new-build", "new-palette"]);
+    let (_, pending) = read(&shared, MACHINE, "/api/pending").await;
+    assert_eq!(pending["items"].as_array().unwrap().len(), 2, "{pending}");
+    let (_, folder) = read(&shared, MACHINE, "/api/folder?path=docs").await;
+    let waiting = |path: &str| {
+        (folder["entries"].as_array().unwrap().iter())
+            .find(|entry| entry["path"].as_str().unwrap().ends_with(path))
+            .map(|entry| entry["waiting"].clone())
+            .unwrap()
+    };
+    assert_eq!(
+        (waiting("docs/design"), waiting("docs/engineering")),
+        (json!(1), json!(1))
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_later_its_undo_and_a_visit_are_refused_to_one_not_of_the_cards_owner_and_write_nothing()
 {

@@ -93,6 +93,7 @@ export const CASES = cases as unknown as {
     emptySettings: unknown;
     people: unknown;
     emptyPeople: unknown;
+    namedPeople: unknown;
     queue: unknown;
     emptyQueue: unknown;
     board: unknown;

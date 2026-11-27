@@ -1,14 +1,4 @@
 /* Shared media: frames reserve their native aspect, pictures their dimensions. */
-.media-content {
-  display: contents;
-}
-.fragment-block {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 160px;
-}
-.fragment-block[data-deferred="true"] {
-  min-height: 160px;
-}
 .picture-shell {
   display: block;
   width: 100%;
@@ -43,9 +33,6 @@
   aspect-ratio: 1;
   object-fit: contain;
   background: #0b0b10;
-}
-.media-embed {
-  display: contents;
 }
 .mockup {
   display: block;

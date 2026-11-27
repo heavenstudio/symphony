@@ -29,6 +29,7 @@
 // `task_timeline.rs`, gone with its task page), moved here with its tests case for case and held to
 // it by the browser tests.
 
+import { writer } from "./project";
 import { field } from "./shared";
 import { type Carried, carriedFigure, carriedWords } from "./timeline-cost";
 import { type Cut, Cuts } from "./timeline-cut";
@@ -402,7 +403,7 @@ export function closed(stage: Pick<Stage, "status">): boolean {
 
 /** `label`, then " · `by`" when someone is named. */
 function withBy(label: string, by: string | null | undefined): string {
-  return by === null || by === undefined || by === "" ? label : `${label} · ${by}`;
+  return by === null || by === undefined || by === "" ? label : `${label} · ${writer(by).text}`;
 }
 
 /** The bytes `char` takes in UTF-8. */
@@ -676,7 +677,7 @@ function stageRow(
   const to = stage.to ?? null;
   const until = to === null ? " until now" : ` to ${clockOf(timeline, to)}`;
   const by = stage.by ?? null;
-  const moved = by === null ? "" : `, moved there by ${by}`;
+  const moved = by === null ? "" : `, moved there by ${writer(by).text}`;
   const title = `${label}: from ${clockOf(timeline, stage.from)}${until}${moved}${cost.words}`;
   const length = ended ? null : took(seconds);
   return {
@@ -859,7 +860,7 @@ function stretchTitle(stretch: PlaceStretch, length: string, clock: (at: number)
   const how = stretch.edge === null ? "" : ` (${stretch.edge.replaceAll("_", " ")})`;
   return (
     `${stretch.label} ${length}, from ${clock(stretch.from)} to ${clock(stretch.to)}, ` +
-    `moved there by ${stretch.by}${how}`
+    `moved there by ${writer(stretch.by).text}${how}`
   );
 }
 
@@ -1622,7 +1623,7 @@ function roundSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
     const after: [Fit, string, Room] | null =
       verdict === null || word === null ? null : [word, verdictTone(verdict), room];
     const name = `round ${round.round}`;
-    const by = round.by ?? "nobody yet";
+    const by = round.by == null ? "nobody yet" : writer(round.by).text;
     const wait = took((taken ?? to) - round.from);
     const said = verdict === null ? "" : `, ${verdictWord(verdict)}`;
     const title =
@@ -1771,7 +1772,7 @@ export function lanes(
   const executors = eachOnce(timeline.claims.map((claim) => claim.by));
   const reviewers = eachOnce(
     timeline.rounds.flatMap((round) =>
-      round.by === undefined || round.by === null ? [] : [round.by],
+      round.by === undefined || round.by === null ? [] : [writer(round.by).text],
     ),
   );
   const one = !executors.includes(", ");

@@ -530,6 +530,7 @@ impl Store {
             authority: None,
             reader: false,
             person: None,
+            machine: false,
         }
     }
 

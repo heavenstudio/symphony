@@ -23,6 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use symphony_board::people::MachinePerson;
 use symphony_board::waits_on::{Blocked, Thing};
 use symphony_board::{Board, Message, Store};
 
@@ -141,32 +142,33 @@ pub fn word(lines: &[OwnerLine], since: f64) -> Word<'_> {
 }
 
 /// Why a block on card `name` ended, as its line says it: `the owner decided NAME (approve)`, or
-/// `ana decided NAME (approve)` for a person `by` names.
-pub fn decided_why(name: &str, word: &str, by: &str) -> String {
-    format!("{} decided {name} ({word})", whose(by))
+/// `ana decided NAME (approve)` for a person `by` names, the person at the machine (`machine`) by
+/// how they are shown once they gave themselves a name ([`MachinePerson::said`]).
+pub fn decided_why(name: &str, word: &str, by: &str, machine: Option<&MachinePerson>) -> String {
+    format!(
+        "{} decided {name} ({word})",
+        MachinePerson::said(by, machine)
+    )
 }
 
-/// A line's writer `by` as a line telling of it says them: `the owner` for the person at the
-/// machine, a person by their short name.
-fn whose(by: &str) -> String {
-    if by == crate::Who::Owner.as_str() {
-        "the owner".to_string()
-    } else {
-        by.to_string()
+/// Why a block on the owner's approve ended, by the approve of `by` naming `tip`, `the owner
+/// approved 1a2b3c4`, or of the cards `cards` the task's branch posted, `tip` that branch's,
+/// `ana approved card NAME, at 1a2b3c4`: the person at the machine (`machine`) by how they are
+/// shown once they gave themselves a name ([`MachinePerson::said`]).
+pub fn approved_why(
+    by: &str,
+    cards: &[String],
+    tip: &str,
+    machine: Option<&MachinePerson>,
+) -> String {
+    let who = MachinePerson::said(by, machine);
+    match cards {
+        [] => format!("{who} approved {}", short(tip)),
+        cards => {
+            let named = symphony_board::stamps::read::on(cards);
+            format!("{who} approved {named}, at {}", short(tip))
+        }
     }
-}
-
-/// Why a block on the owner's approve ended, `tip` the commit it named: `the owner approved
-/// 1a2b3c4`.
-pub fn approved_why(tip: &str) -> String {
-    format!("the owner approved {}", short(tip))
-}
-
-/// Why a block on the owner's approve ended by the owner's approve of the cards `cards` the task's
-/// branch posted, `tip` that branch's: `the owner approved card NAME, at 1a2b3c4`.
-pub fn approved_cards_why(cards: &[String], tip: &str) -> String {
-    let named = symphony_board::stamps::read::on(cards);
-    format!("the owner approved {named}, at {}", short(tip))
 }
 
 /// A commit as a line says it: its first seven hex digits, as the land's hold names it.
@@ -178,8 +180,9 @@ fn short(commit: &str) -> &str {
 const WORDS: usize = 300;
 
 /// The line that tells a task's orchestrator what the owner said on card `name` that leaves its
-/// block, and the key it is said once under on the task's thread.
-pub fn told(name: &str, line: &OwnerLine) -> (String, String) {
+/// block, its writer the person at the machine (`machine`) by how they are shown once named, and
+/// the key it is said once under on the task's thread, which their name leaves as it was.
+pub fn told(name: &str, line: &OwnerLine, machine: Option<&MachinePerson>) -> (String, String) {
     let words = match (line.verdict.as_deref(), line.text.as_str()) {
         (Some(verdict), "") => verdict.to_string(),
         (Some(verdict), text) => format!("{verdict} — {text}"),
@@ -192,7 +195,7 @@ pub fn told(name: &str, line: &OwnerLine) -> (String, String) {
     let text = format!(
         "{} on card {name} [{}] ({}#{name}), deciding nothing, so it stays blocked on \
          decision:{name}: {words}",
-        whose(&line.by),
+        MachinePerson::said(&line.by, machine),
         line.stamp,
         line.page
     );
@@ -217,26 +220,21 @@ fn fnv(text: &str) -> u64 {
 
 /// Why the land's `owner` stamp stands on `tip`, read from the task's `thread` and the cards its
 /// branch posted in the main checkout `root` as the land reads it, `deciders` the people of the
-/// task's owner who hold decide ([`symphony_board::stamps::read::owner_at_by`]): [`approved_why`] or
-/// [`approved_cards_why`]; none while it does not.
-pub fn approves(thread: &[Message], tip: &str, root: &Path, deciders: &[String]) -> Option<String> {
-    let reading = symphony_board::stamps::read::owner_at_by(thread, tip, root, deciders);
-    // A decider's approve is said as theirs: `ana approved 1a2b3c4`.
-    let decider = reading
-        .by
-        .as_deref()
-        .filter(|by| *by != crate::postpone::OWNER);
-    reading
-        .met
-        .then(|| match (decider, reading.cards.as_slice()) {
-            (None, []) => approved_why(tip),
-            (None, cards) => approved_cards_why(cards, tip),
-            (Some(by), []) => format!("{by} approved {}", short(tip)),
-            (Some(by), cards) => {
-                let named = symphony_board::stamps::read::on(cards);
-                format!("{by} approved {named}, at {}", short(tip))
-            }
-        })
+/// task's owner who hold decide, the person at the machine (`machine`) among them once named
+/// ([`symphony_board::stamps::read::owner_at_by`]): [`approved_why`], the approve's giver named;
+/// none while it does not.
+pub fn approves(
+    thread: &[Message],
+    tip: &str,
+    root: &Path,
+    deciders: &[String],
+    machine: Option<&MachinePerson>,
+) -> Option<String> {
+    let reading = symphony_board::stamps::read::owner_at_by(thread, tip, root, deciders, machine);
+    // A decider's approve is said as theirs, `ana approved 1a2b3c4`, and the person at the
+    // machine's by how they are shown once they gave themselves a name.
+    let by = reading.by.as_deref().unwrap_or(crate::postpone::OWNER);
+    (reading.met).then(|| approved_why(by, &reading.cards, tip, machine))
 }
 
 /// The tip of the branch of the task `slug` in the checkout at `root`, as the land reads it.
@@ -269,6 +267,9 @@ impl Kept {
     /// One look at the blocked tasks of `board`, the board on `store` as this tick read it, against
     /// the owner's lines `said` that the pages hold of the project at `root`, at `now`: each block
     /// the owner's word ended moved back, and each line of the owner's that leaves one told once.
+    /// The person at the machine (`machine`), once they gave themselves a name, ends a block by an
+    /// approve under that name as under `owner`, and the line that moves it back names them by
+    /// how they are shown.
     pub fn look(
         &mut self,
         store: &Store,
@@ -276,6 +277,7 @@ impl Kept {
         board: &Board,
         said: &Said,
         now: f64,
+        machine: Option<&MachinePerson>,
     ) -> Looked {
         let mut looked = Looked::default();
         let mut held = BTreeSet::new();
@@ -288,12 +290,12 @@ impl Kept {
                     let lines = said.get(name).map_or(&[][..], Vec::as_slice);
                     match word(lines, block.at) {
                         Word::Decided(word, by) => {
-                            let why = decided_why(name, word, by);
+                            let why = decided_why(name, word, by, machine);
                             resume(store, &task.slug, &block, &why, &mut looked);
                         }
                         Word::Said(lines) => {
                             for line in lines {
-                                self.tell(store, &task.slug, name, line, &mut looked);
+                                self.tell(store, &task.slug, name, line, machine, &mut looked);
                             }
                         }
                     }
@@ -301,7 +303,7 @@ impl Kept {
                 Some(Thing::Check(symphony_board::land::needs::OWNER)) => {
                     held.insert(task.slug.clone());
                     if self.due(&task.slug, board.latest_message, now) {
-                        approve(store, root, &task.slug, &block, &mut looked);
+                        approve(store, root, &task.slug, &block, machine, &mut looked);
                     }
                 }
                 _ => {}
@@ -332,9 +334,10 @@ impl Kept {
         slug: &str,
         name: &str,
         line: &OwnerLine,
+        machine: Option<&MachinePerson>,
         looked: &mut Looked,
     ) {
-        let (text, key) = told(name, line);
+        let (text, key) = told(name, line, machine);
         let id = (slug.to_string(), key);
         if self.told.contains(&id) {
             return;
@@ -356,14 +359,21 @@ impl Kept {
 
 /// The task `slug`, held on the owner's approve as `block`, moved back once the land's `owner` stamp
 /// stands on the tip of its branch in the checkout at `root` ([`approves`]).
-fn approve(store: &Store, root: &Path, slug: &str, block: &Blocked, looked: &mut Looked) {
+fn approve(
+    store: &Store,
+    root: &Path,
+    slug: &str,
+    block: &Blocked,
+    machine: Option<&MachinePerson>,
+    looked: &mut Looked,
+) {
     let Some(tip) = tip(root, slug) else {
         return;
     };
-    match store
-        .thread(slug)
-        .map(|thread| approves(&thread, &tip, root, &store.task_deciders_of(slug)))
-    {
+    match store.thread(slug).map(|thread| {
+        let deciders = symphony_board::people::with_machine(store.task_deciders_of(slug), machine);
+        approves(&thread, &tip, root, &deciders, machine)
+    }) {
         Ok(Some(why)) => resume(store, slug, block, &why, looked),
         Ok(None) => {}
         Err(error) => looked

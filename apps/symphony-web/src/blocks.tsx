@@ -8,9 +8,9 @@
 
 import { createContext, type ReactNode, useContext, useState } from "react";
 import { Button } from "./button";
-import { byline } from "./byline";
+import { entryWriter } from "./byline";
 import { DocumentPicture, MediaView, writtenStyle } from "./media";
-import { href } from "./project";
+import { href, project } from "./project";
 import { NearViewport, useVisibility } from "./viewport";
 import type {
   Block,
@@ -768,16 +768,17 @@ function CellView({ cell }: { cell: Cell }) {
   );
 }
 
-/** A card's history: each entry's time, who said it when a person a board named did, its verdict
- * and words, then whether a person waits. */
+/** A card's history: each entry's time, who said it when a person did and is named (`entryWriter`),
+ * its verdict and words, then whether a person waits. */
 function ThreadView({ entries }: { entries: ThreadEntry[] }) {
   const last = entries[entries.length - 1];
   const awaiting = last !== undefined && last.who === "owner" && last.verdict == null;
+  const machine = project().machine;
   return (
     <>
       <ul className="history">
         {entries.map((entry, at) => {
-          const [name, blocks] = byline(entry);
+          const [writer, blocks] = entryWriter(entry, machine);
           return (
             // biome-ignore lint/suspicious/noArrayIndexKey: an entry has no identity but its place
             <li key={at} className={`entry ${entry.who}`}>
@@ -787,7 +788,11 @@ function ThreadView({ entries }: { entries: ThreadEntry[] }) {
                     <time>{entry.timestamp}</time>{" "}
                   </>
                 )}
-                {name !== null && <span className="from">{name}</span>}
+                {writer !== null && (
+                  <span className="from" title={writer.title}>
+                    {writer.text}
+                  </span>
+                )}
                 {entry.verdict != null && (
                   <>
                     <b className="entry-verdict">{entry.verdict}</b>{" "}

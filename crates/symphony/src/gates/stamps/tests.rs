@@ -162,7 +162,7 @@ fn read_posted(
         tip,
         cards,
     };
-    read_deciding(record, &read, catalogue, &[], &approval)
+    read_deciding(record, &read, catalogue, &[], None, &approval)
 }
 
 /// What a case's gates are read from.
@@ -179,6 +179,7 @@ fn read_deciding(
     read: &Reads<'_>,
     catalogue: &Catalogue,
     deciders: &[String],
+    machine: Option<&symphony_board::people::MachinePerson>,
     posted: &dyn Fn(&str) -> Approval,
 ) -> Vec<Gate> {
     let Reads {
@@ -197,6 +198,7 @@ fn read_deciding(
         tip,
         cards,
         deciders,
+        machine,
         posted,
     };
     stamps(record, catalogue, &evidence)
@@ -748,7 +750,7 @@ fn a_deciders_approve_meets_the_owner_gate_on_the_thread_and_on_the_cards() {
                 tip: Some(TIP),
                 cards: &[],
             };
-            let gates = read_deciding(&record, &read, &catalogue, deciders, posted);
+            let gates = read_deciding(&record, &read, &catalogue, deciders, None, posted);
             let owner = gates.into_iter().find(|gate| gate.name == "owner").unwrap();
             (owner.state, owner.detail)
         };
@@ -770,6 +772,56 @@ fn a_deciders_approve_meets_the_owner_gate_on_the_thread_and_on_the_cards() {
             "Approved by ana on card look, at 4be91c2".to_string()
         )
     );
+}
+
+/// The person at the machine, once named, meets the task's `owner` gate by an approve under their
+/// name, and the gate names them by how they are shown, waiting and met.
+#[test]
+fn the_owner_gate_names_the_machines_person_by_how_they_are_shown() {
+    let record = task("review", Some(assessed(&["owner"], Some(TIP))));
+    let catalogue = Catalogue::symphony();
+    let stefano = symphony_board::people::MachinePerson {
+        name: "stefano".into(),
+        shown: "Stefano".into(),
+    };
+    let deciders = symphony_board::people::with_machine(Vec::new(), Some(&stefano));
+    let nothing = |_: &str| Approval {
+        posted: Posted::Nothing,
+        by: "owner".into(),
+    };
+    let owner_gate = |thread: &[Message]| {
+        let read = Reads {
+            thread,
+            runs: &[],
+            tip: Some(TIP),
+            cards: &[],
+        };
+        let gates = read_deciding(
+            &record,
+            &read,
+            &catalogue,
+            &deciders,
+            Some(&stefano),
+            &nothing,
+        );
+        let owner = gates.into_iter().find(|gate| gate.name == "owner").unwrap();
+        (owner.state, owner.detail)
+    };
+    assert_eq!(
+        owner_gate(&[]),
+        (
+            GateState::Held,
+            "Waits on Stefano's approve of 4be91c2".to_string()
+        )
+    );
+    for by in ["owner", "stefano"] {
+        let theirs = [line(4, "msg", by, &format!("approve {TIP}"))];
+        assert_eq!(
+            owner_gate(&theirs),
+            (GateState::Met, "Approved by Stefano at 4be91c2".to_string()),
+            "{by}"
+        );
+    }
 }
 
 #[test]

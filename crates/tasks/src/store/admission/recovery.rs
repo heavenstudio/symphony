@@ -166,7 +166,10 @@ impl Store {
             )
             .map_err(refusal)?;
             let slots = self.recovery_slots(&decided, &recovery, &principal)?;
-            let vars = vars(&decided, &recovery, holder, role, seen, slots, by, at);
+            let person = self.is_person(by);
+            let vars = vars(
+                &decided, &recovery, holder, role, seen, slots, by, person, at,
+            );
             let guarded = !vars["slots"].as_array().is_none_or(Vec::is_empty);
             self.written(applied(guarded), vars, slug)?;
             Ok(recovery.transition)
@@ -238,7 +241,9 @@ pub(super) fn applied(guarded: bool) -> Statement<'static> {
 
 /// The write's variables: the roles the holder held that it relies on (none for an attempt's
 /// ending, which names no holder, `""`), those it drops, its transition, if any, and its line, said
-/// by `by`, the session the write checks is still there unless it is the owner or the board.
+/// by `by`, the session the write checks is still there unless it is a person (`person`: the
+/// owner, the person at the machine under their name, a person a board named, whose line is then
+/// marked theirs) or the board.
 #[expect(
     clippy::too_many_arguments,
     reason = "one write's variables, each read once"
@@ -251,6 +256,7 @@ pub(super) fn vars(
     seen: Vec<Value>,
     slots: Vec<Value>,
     by: &str,
+    person: bool,
     at: f64,
 ) -> Value {
     let pair = |(h, r): &(String, String)| json!({"handle": h, "role": r});
@@ -262,7 +268,7 @@ pub(super) fn vars(
     crate::order::sort_by(&mut holding, &Ord::cmp);
     holding.dedup();
     let status = (recovery.transition.as_ref()).map_or(&decided.task.status, |t| &t.status);
-    json!({
+    let mut vars = json!({
         "slug": decided.task.slug,
         "version": decided.task.version,
         "generation": decided.active.generation,
@@ -274,8 +280,8 @@ pub(super) fn vars(
         "seen": seen,
         "receipt": null,
         "receipt_body": null,
-        // The owner and the board itself are no sessions the write could check is still there.
-        "actor": (by != crate::store::work::OWNER && by != crate::store::messages::BOARD)
+        // A person and the board itself are no sessions the write could check is still there.
+        "actor": (!person && by != crate::store::work::OWNER && by != crate::store::messages::BOARD)
             .then_some(by),
         "transition": recovery.transition,
         "position": recovery.transition.as_ref().map(Transition::position),
@@ -284,7 +290,12 @@ pub(super) fn vars(
         "said": said(recovery, holder),
         "now": at,
         "slots": slots,
-    })
+    });
+    // Its line marked a person's, as every write a person makes is (`Store::acting`).
+    if person && by != crate::store::work::OWNER {
+        vars["by_person"] = by.into();
+    }
+    vars
 }
 
 /// The recovery's line on the task's thread: the holder's exit, or the attempt's ending, it

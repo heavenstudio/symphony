@@ -4528,7 +4528,10 @@
       ],
       "revision": 5,
       "administers": true,
-      "machine": true
+      "machine": true,
+      "mine": {},
+      "signins": ["tailscale"],
+      "signed_words": true
     },
     "emptyPeople": {
       "people": [],
@@ -4536,7 +4539,18 @@
       "log": [],
       "revision": 0,
       "administers": true,
-      "machine": true
+      "machine": true,
+      "mine": {}
+    },
+    "namedPeople": {
+      "people": [],
+      "groups": [],
+      "log": [],
+      "revision": 0,
+      "administers": true,
+      "machine": true,
+      "mine": { "name": "stefano", "display": "Stefano", "git": ["stefano-b"] },
+      "signins": ["tailscale"]
     },
     "taskTokens": {
       "total": {

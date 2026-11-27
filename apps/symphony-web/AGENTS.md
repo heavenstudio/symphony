@@ -59,7 +59,9 @@ What the kinds share:
   draws the whole board over it, is `board-page.tsx`. The tests fake it with
   `testing.ts`'s `feeds` and `say`.
 - **Reads** (`request.ts`), **routes** (`route.ts`), **the project's base and keys**
-  (`project.ts`, `storage.ts`), **async work's signal** (`mount.ts`).
+  (`project.ts`, `storage.ts`), **async work's signal** (`mount.ts`). A line's writer is drawn by
+  `project.ts`'s `writer`, one rule for every page: `owner`, and the short name the person at the
+  machine gave themselves, are drawn as the name they are shown by, the stored word as its title.
 - **The device cache** (`cache.ts`, `cache-document.ts`;
   [the client cache](../../docs/engineering/analysis/client-cache.md)) and a page's parts, each a read of its
   own (`parts.ts`;

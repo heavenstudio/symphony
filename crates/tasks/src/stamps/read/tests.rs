@@ -594,7 +594,7 @@ fn a_deciders_approve_on_the_thread_meets_the_owners_stamp_and_only_while_they_d
         &post(7, "msg", "owner", &format!("approve {TIP}")),
         &deciders
     ));
-    let met = owner_by(std::slice::from_ref(&theirs), TIP, &deciders);
+    let met = owner_by(std::slice::from_ref(&theirs), TIP, &deciders, None);
     assert_eq!(
         met,
         Reading {
@@ -607,17 +607,17 @@ fn a_deciders_approve_on_the_thread_meets_the_owners_stamp_and_only_while_they_d
             ..Reading::default()
         }
     );
-    let stale = owner_by(std::slice::from_ref(&theirs), LATER, &deciders);
+    let stale = owner_by(std::slice::from_ref(&theirs), LATER, &deciders, None);
     assert_eq!(
         (stale.met, stale.detail.as_str()),
         (false, "ana approved 4be91c2, not the tip 7c0ffee")
     );
-    let unnamed = owner_by(&[post(8, "msg", "ana", "approve")], TIP, &deciders);
+    let unnamed = owner_by(&[post(8, "msg", "ana", "approve")], TIP, &deciders, None);
     assert_eq!(
         unnamed.detail,
         "ana approved naming no commit, not the tip 4be91c2"
     );
-    let waits = owner_by(&[], TIP, &deciders);
+    let waits = owner_by(&[], TIP, &deciders, None);
     assert_eq!(
         (waits.met, waits.detail.as_str()),
         (
@@ -626,11 +626,11 @@ fn a_deciders_approve_on_the_thread_meets_the_owners_stamp_and_only_while_they_d
         )
     );
     assert_eq!(
-        owner_by(std::slice::from_ref(&theirs), TIP, &[]),
+        owner_by(std::slice::from_ref(&theirs), TIP, &[], None),
         owner(std::slice::from_ref(&theirs), TIP)
     );
     // Her approve of the cards, read for a board where she decides, is named hers.
-    let cards = owner_with_by(&[], TIP, &deciders, || Approval {
+    let cards = owner_with_by(&[], TIP, &deciders, None, || Approval {
         posted: Posted::Approved {
             cards: strings(&["layout"]),
         },
@@ -644,7 +644,7 @@ fn a_deciders_approve_on_the_thread_meets_the_owners_stamp_and_only_while_they_d
             "Approved by ana on card layout, at 4be91c2"
         )
     );
-    let changed = owner_with_by(&[], TIP, &deciders, || Approval {
+    let changed = owner_with_by(&[], TIP, &deciders, None, || Approval {
         posted: Posted::Changed {
             cards: strings(&["layout"]),
             commit: LATER.into(),
@@ -660,8 +660,8 @@ fn a_deciders_approve_on_the_thread_meets_the_owners_stamp_and_only_while_they_d
         changed.detail
     );
     let nowhere = std::path::Path::new("/nowhere");
-    assert!(owner_at_by(std::slice::from_ref(&theirs), TIP, nowhere, &deciders).met);
-    assert!(!owner_at_by(std::slice::from_ref(&theirs), TIP, nowhere, &[]).met);
+    assert!(owner_at_by(std::slice::from_ref(&theirs), TIP, nowhere, &deciders, None).met);
+    assert!(!owner_at_by(std::slice::from_ref(&theirs), TIP, nowhere, &[], None).met);
 }
 
 /// The one reader of the `owner` stamp: the thread's approve of the tip first, the cards the branch
@@ -718,4 +718,66 @@ fn the_owners_stamp_is_met_by_the_thread_or_else_by_the_cards_the_branch_posted(
     let nowhere = std::path::Path::new("/nowhere");
     assert_eq!(owner_at(&[], TIP, nowhere), owner(&[], TIP));
     assert!(owner_at(&approve, TIP, nowhere).met);
+}
+
+/// The person at the machine, once named, is named by how they are shown in every sentence the
+/// `owner` stamp's reading says of their approve, written under `owner` or under their name; it
+/// waits on their approve by that name while nobody else decides, and on nobody named while others
+/// do.
+#[test]
+fn the_owner_stamp_names_the_machines_person_by_how_they_are_shown() {
+    let stefano = crate::people::MachinePerson {
+        name: "stefano".into(),
+        shown: "Stefano".into(),
+    };
+    let machine = Some(&stefano);
+    let alone = strings(&["stefano"]);
+    for by in ["owner", "stefano"] {
+        let theirs = [post(4, "msg", by, &format!("approve {TIP}"))];
+        let met = owner_by(&theirs, TIP, &alone, machine);
+        assert_eq!(
+            (met.met, met.by.as_deref(), met.detail.as_str()),
+            (true, Some(by), "Approved by Stefano at 4be91c2")
+        );
+        let stale = owner_by(&theirs, LATER, &alone, machine);
+        assert_eq!(
+            stale.detail,
+            "Stefano approved 4be91c2, not the tip 7c0ffee"
+        );
+    }
+    assert_eq!(
+        owner_by(&[], TIP, &alone, machine).detail,
+        "Waits on Stefano's approve of 4be91c2"
+    );
+    assert_eq!(
+        owner_by(&[], TIP, &strings(&["ana", "stefano"]), machine).detail,
+        "Waits on an approve of the owner's or a decider's of 4be91c2"
+    );
+    assert_eq!(
+        owner_by(&[], TIP, &[], None).detail,
+        "Waits on the owner's approve of 4be91c2",
+        "while they gave no name, as before"
+    );
+    let cards = owner_with_by(&[], TIP, &alone, machine, || Approval {
+        posted: Posted::Approved {
+            cards: strings(&["layout"]),
+        },
+        by: "owner".into(),
+    });
+    assert_eq!(
+        cards.detail,
+        "Approved by Stefano on card layout, at 4be91c2"
+    );
+    let changed = owner_with_by(&[], TIP, &alone, machine, || Approval {
+        posted: Posted::Changed {
+            cards: strings(&["layout"]),
+            commit: LATER.into(),
+        },
+        by: "owner".into(),
+    });
+    assert!(
+        changed.detail.ends_with("; Stefano's approve of card layout came before 7c0ffee, which changes more than the owner's lines"),
+        "{}",
+        changed.detail
+    );
 }

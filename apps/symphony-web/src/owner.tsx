@@ -12,6 +12,7 @@
 import { createContext, useState } from "react";
 import { useMount } from "./mount";
 import { readOwner } from "./owner-read";
+import { writer } from "./project";
 import { said } from "./request";
 import { SelectField } from "./select";
 import { field, STALE, useStore } from "./shared";
@@ -44,14 +45,17 @@ export function ownerLabel(owner: Owner): string {
   return owner.kind === "group" ? "group" : "person";
 }
 
-/** What handing a thing to `to` by `hand` says once it is over: that it was, or its refusal. */
+/**
+ * What handing a thing to `to` by `hand` says once it is over: that it was, the person at the
+ * machine named as a line draws them (`writer`), or its refusal.
+ */
 export async function handOver(
   to: string,
   hand: (to: string) => Promise<unknown>,
 ): Promise<string> {
   try {
     await hand(to);
-    return `Handed to ${to}`;
+    return `Handed to ${writer(to).text}`;
   } catch (error) {
     return said(error);
   }
@@ -66,8 +70,9 @@ export interface OwnerLineProps {
 }
 
 /**
- * Whose a thing is and what gave it, then for one who may hand it on, a select of whom to. A
- * hand-over waits while the page may show what is out of date.
+ * Whose a thing is and what gave it, then for one who may hand it on, a select of whom to, the
+ * person at the machine named in each as a line draws them (`writer`) while `owner` is what is
+ * written. A hand-over waits while the page may show what is out of date.
  */
 export function OwnerLine({ owner, id, hand }: OwnerLineProps) {
   const mount = useMount();
@@ -86,7 +91,7 @@ export function OwnerLine({ owner, id, hand }: OwnerLineProps) {
   };
   return (
     <span className="owner" data-by={owner.by}>
-      <span className="owner-name">{`${ownerLabel(owner)}: ${owner.name}`}</span>
+      <span className="owner-name">{`${ownerLabel(owner)}: ${writer(owner.name).text}`}</span>
       <small className="owner-by">{owner.said}</small>
       {names.length > 0 && (
         <SelectField
@@ -95,7 +100,10 @@ export function OwnerLine({ owner, id, hand }: OwnerLineProps) {
           value=""
           disabled={busy || stale}
           onChange={(to) => void choose(to)}
-          options={[["", "Hand to…"], ...names.map((name): [string, string] => [name, name])]}
+          options={[
+            ["", "Hand to…"],
+            ...names.map((name): [string, string] => [name, writer(name).text]),
+          ]}
         />
       )}
       {result !== "" && <span role="status">{result}</span>}

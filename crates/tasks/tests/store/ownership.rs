@@ -264,6 +264,41 @@ fn the_person_at_the_machine_hands_any_open_task_and_none_closed() {
     assert!(why.contains("only an open task is handed on"), "{why}");
 }
 
+/// The person at the machine, once they gave themselves a name, hands on what is no group of
+/// theirs under that name, as they did as `owner`: a store writing for a person a board named by
+/// the same name is no member and is refused.
+#[test]
+fn the_person_at_the_machine_hands_on_under_the_name_they_gave_themselves() {
+    let f = board();
+    f.task("app/x");
+    let stefano = f.other().for_machine("stefano");
+    stefano
+        .hand_task("app/x", "design", "stefano")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        newest_line(&f, "app/x"),
+        "stefano handed it to design (it was engineering, from the area app)"
+    );
+    let card = Thing::Card {
+        slug: "new-palette".into(),
+        route: "docs/design/palette.md".into(),
+    };
+    let line = stefano
+        .hand_card(&card, Some("engineering"), MACHINE, "stefano")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (line.by.as_str(), line.name.as_deref(), line.from.as_deref()),
+        ("stefano", Some(MACHINE), Some("engineering"))
+    );
+    let why = refused(person(&f, "stefano").hand_task("app/x", "engineering", "stefano"));
+    assert!(
+        why.contains("stefano is no member of the group design"),
+        "{why}"
+    );
+}
+
 #[test]
 fn a_card_is_handed_by_a_member_and_the_board_keeps_who_did() {
     let f = board();

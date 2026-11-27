@@ -272,6 +272,10 @@ struct Shared {
     documents: HashMap<String, serde_json::Value>,
     /// HTML documents by their route ([`Site::set_html_page`]).
     html_pages: HashMap<String, Body>,
+    /// The build's shell, and the page served for the app's routes in place of the one for nobody
+    /// in particular, once a test names who reads it ([`Site::serve_to`]).
+    shell: String,
+    reader_page: Option<Body>,
 }
 
 /// One ordinary card for generic page tests, in the stage their view opens.
@@ -371,6 +375,7 @@ impl Site {
         );
         files.insert("/".into(), File::Made(page.clone()));
         files.insert("/index.html".into(), File::Made(page));
+        let shell = shell.clone();
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
         let addr = listener.local_addr().unwrap();
         let files = Arc::new(files);
@@ -404,6 +409,8 @@ impl Site {
             retired: BTreeSet::new(),
             documents: HashMap::new(),
             html_pages: HashMap::new(),
+            shell,
+            reader_page: None,
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let released = Arc::new(Condvar::new());
@@ -520,6 +527,21 @@ impl Site {
             path.into(),
             body(html.as_bytes().to_vec(), content_type(path), "no-cache"),
         );
+    }
+
+    /// Serve the app's pages to `you`, as the server serves them to a reader: the view names them
+    /// and where they write their profile (`ProjectView::you`, `::profile`).
+    pub fn serve_to(&self, you: symphony_api::PersonName, profile: &str) {
+        let mut shared = self.shared.lock().unwrap();
+        let page = crate::common::served_shell_with(&shared.shell, |view| {
+            view.you = Some(you);
+            view.profile = profile.into();
+        });
+        shared.reader_page = Some(body(
+            page.into_bytes(),
+            content_type("index.html"),
+            "no-cache",
+        ));
     }
 
     pub fn set_file(&self, path: &str, bytes: Vec<u8>, mime: &'static str) {
@@ -1502,20 +1524,26 @@ fn serve(
         } else if shared.lock().unwrap().retired.contains(&path) {
             None
         } else {
-            files
-                .get(&path)
-                .or_else(|| {
-                    // A route of the app, not a file: the shell, as the server's fallback serves it.
-                    let last = path.rsplit('/').next().unwrap_or("");
-                    (!path.starts_with("/api/")
-                        && (!last.contains('.')
-                            || path.starts_with("/docs/")
-                                && (path.ends_with(".md")
-                                    || !file_asked && symphony_api::is_html(&path))))
-                    .then(|| files.get("/"))
-                    .flatten()
-                })
-                .map(File::body)
+            // A route of the app, not a file: the shell, as the server's fallback serves it.
+            let last = path.rsplit('/').next().unwrap_or("");
+            let route = !path.starts_with("/api/")
+                && (!last.contains('.')
+                    || path.starts_with("/docs/")
+                        && (path.ends_with(".md") || !file_asked && symphony_api::is_html(&path)));
+            let shell = route || path == "/index.html";
+            match shell
+                .then(|| shared.lock().unwrap().reader_page.clone())
+                .flatten()
+            {
+                Some(page) => {
+                    html_page = page;
+                    Some(&html_page)
+                }
+                None => files
+                    .get(&path)
+                    .or_else(|| route.then(|| files.get("/")).flatten())
+                    .map(File::body),
+            }
         };
         let written = match found {
             None => {
