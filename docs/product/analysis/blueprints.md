@@ -254,6 +254,7 @@ wait until a repository first needs such projects
 
     None decides this.
   [2026-11-27 07:46] owner · approved — should be a setting config. Multiple projects could have different settings, so it would keep 1 project per blueprint.
+  [2026-11-27 07:47] agent — Understood: the record is a setting of the project, in its settings file, one blueprint for each project, and no submodule. Filed as `docs/blueprint-record-setting`, which rewrites this analysis to say so; anything your words leave open (where the list of what the blueprint put is kept) comes back as a card of its own, not as a choice of ours.
 
 ## Where blueprints live
 
