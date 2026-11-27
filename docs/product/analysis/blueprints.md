@@ -173,7 +173,7 @@ The two ways set aside: the same with a fresh reviewer reading the changes in ea
 they land, which costs a review for each version in each project; and an update only when a
 person asks, under which projects fall behind until someone does.
 
-- [x] **blueprint-following** — A blueprint would work as you described: a starter whose later versions keep arriving while the project leaves alone what the blueprint put there. A project that changes one becomes its own version, and asks for later changes as an agent's task. That leaves one thing open: how a new version reaches a project that still follows. A: by itself. Symphony files the update when the blueprint has a newer tag, runs the project's own checks, and lands it once they pass, with no reviewer. B: by itself, read first. As A, and a reviewer agent reads the changes before it lands. C: when asked. The project's page says a newer version exists, and nothing happens until you ask. Recommended: A. Approve and say A, B or C in the note, or comment. *Replaces:* blueprint-shape. [[analysis/blueprints#How a new version arrives]]
+- [r] **blueprint-following** — A blueprint would work as you described: a starter whose later versions keep arriving while the project leaves alone what the blueprint put there. A project that changes one becomes its own version, and asks for later changes as an agent's task. That leaves one thing open: how a new version reaches a project that still follows. A: by itself. Symphony files the update when the blueprint has a newer tag, runs the project's own checks, and lands it once they pass, with no reviewer. B: by itself, read first. As A, and a reviewer agent reads the changes before it lands. C: when asked. The project's page says a newer version exists, and nothing happens until you ask. Recommended: A. Approve and say A, B or C in the note, or comment. *Replaces:* blueprint-shape. [[analysis/blueprints#How a new version arrives]]
   [2026-11-23 11:23] agent — Posted for the board task `app/blueprints`, from your note on **blueprint-shape**: "have it be and starter but that allows future changes to continue to propagate, as long as the project does not change settings that the blueprint puts in place".
 
     **Base.** Nothing is built. Your shape is written up as the design, above this card: what "the blueprint put" is recorded when a project takes it, key by key and file by file.
@@ -187,6 +187,7 @@ person asks, under which projects fall behind until someone does.
     **Earlier verdicts checked.** Your note on **blueprint-shape** gives the shape and does not say what starts an update or whether anyone reads it. **settings-page-shape** keeps settings that run commands off the page's saves; a blueprint's version is a commit under every option here, so it does not decide this. **blueprint-home** (B) says where a version comes from, not how it lands.
   [2026-11-23 12:21] owner · approved — A
   [2026-11-23 12:22] agent — Recorded: A. A new version reaches a project that follows by itself: Symphony files the update when the blueprint has a newer tag, runs the project's own checks and lands it once they pass, with no reviewer. An update whose checks fail does not land and stays on the project's board. The section above this card now says so.
+  [2026-11-27 07:42] agent · resolved
 
 ### What the project holds of its blueprint
 
@@ -276,7 +277,7 @@ The two homes set aside: the Symphony's own repository, shipped in each release,
 fetching and covers no private blueprint; and another project's checkout on the machine, which
 copies what is that project's alone together with what is shareable.
 
-- [x] **blueprint-home** — Where blueprints are kept, and what a version of one is. This decides who can make a blueprint and how far a project has to trust it. A: in Symphony's own repository, shipped in each release beside the skills; a blueprint's version is the release, and a blueprint is made or changed only by work that lands here. B: each blueprint a Git repository of its own, named by its address and a tag; anyone can publish one, and Symphony fetches it. C: another project on the machine is the blueprint; a project takes its setup from that project's checkout. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/blueprints#Where blueprints live]]
+- [r] **blueprint-home** — Where blueprints are kept, and what a version of one is. This decides who can make a blueprint and how far a project has to trust it. A: in Symphony's own repository, shipped in each release beside the skills; a blueprint's version is the release, and a blueprint is made or changed only by work that lands here. B: each blueprint a Git repository of its own, named by its address and a tag; anyone can publish one, and Symphony fetches it. C: another project on the machine is the blueprint; a project takes its setup from that project's checkout. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/blueprints#Where blueprints live]]
   [2026-11-20 06:25] agent — Posted for the board task `app/blueprints`.
 
     **Base.** Today the only setup Symphony hands a project is the skills and recipes its release ships.
@@ -288,6 +289,7 @@ copies what is that project's alone together with what is shareable.
     **Earlier verdicts checked.** **release-delivery** decides how a release reaches a machine, and **consumer-contract-versioning** (B) what a project links of Symphony. Neither says where a shared setup is kept.
   [2026-11-23 11:15] owner · approved — B. Could use submodules to add it to a symphony project (inside the project repo?)
   [2026-11-23 11:30] agent — Recorded: B. Each blueprint is a Git repository of its own, named in the project by its address and a tag, and Symphony's repository holds none. What follows is in the section above: a version is a tag recorded with its commit, a project trusts the address as a dependency, and a blueprint says the oldest Symphony release that reads it. On the submodule: it can hold the blueprint inside the project's repository, but the files still have to be copied to where each is read, and every clone and every task's worktree would have to fetch it. That is a choice of yours, so it is a card of its own: **blueprint-in-project**.
+  [2026-11-27 07:42] agent · resolved
 
 ## Which one first
 
@@ -299,7 +301,7 @@ Rust web, then Godot, then the personal assistant.
 | **Godot, from the first consuming project** | That project's checkout is read-only to agents here, so the split is filed as work on its board and done by its agents; the result becomes a blueprint's repository. | A project that is not Rust, with generators and a look. It is the case the idea came from. |
 | **Personal assistant** | A calendar plugin and a to-do plugin, neither written, and a board for work with no branch. | The most, and most of it is not about blueprints. |
 
-- [x] **blueprint-first** — Which blueprint is built first. The first one proves the mechanism, so it decides how soon it works and where. A: Rust web, taken from this repository's own setup (its rules, its checks, its lint and test recipes), with this repository as the first project on it. B: Godot, taken from the first consuming project's setup. C: the personal assistant. Recommended: A, then B, then C. Approve and say A, B or C in the note, or comment. [[analysis/blueprints#Which one first]]
+- [r] **blueprint-first** — Which blueprint is built first. The first one proves the mechanism, so it decides how soon it works and where. A: Rust web, taken from this repository's own setup (its rules, its checks, its lint and test recipes), with this repository as the first project on it. B: Godot, taken from the first consuming project's setup. C: the personal assistant. Recommended: A, then B, then C. Approve and say A, B or C in the note, or comment. [[analysis/blueprints#Which one first]]
   [2026-11-20 06:25] agent — Posted for the board task `app/blueprints`.
 
     **Base.** No blueprint exists. Each of the three would be pulled out of something: two out of a working project, one out of nothing yet.
@@ -312,6 +314,7 @@ Rust web, then Godot, then the personal assistant.
   [2026-11-23 11:18] owner · approved — A
   [2026-11-23 11:18] owner · approved — Agree with A -> B -> C rollout
   [2026-11-23 11:30] agent — Recorded: A, and the order Rust web, then Godot, then the personal assistant. With **blueprint-home** answered B, the Rust web blueprint is taken from this repository's setup into a repository of its own, and this repository is the first project on it. Its build is filed once **blueprint-following** and **blueprint-in-project** are answered; making that new repository is yours to ask for then.
+  [2026-11-27 07:42] agent · resolved
 
 ## The personal assistant
 
