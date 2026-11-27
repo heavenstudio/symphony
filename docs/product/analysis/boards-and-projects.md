@@ -32,7 +32,8 @@ modules and documents read. A fact marked *inferred* was reasoned from them and 
   keep two boards today, counted apart, until the central board every machine reaches. That board
   is the project's one.
 - **What the three concepts read** ([below](#what-the-three-concepts-read)). People, groups and
-  powers are each project's board's. A blueprint attaches to a project, with one record for each.
+  powers are each project's board's. A blueprint attaches to a project, which names it in its own
+  settings, one for each project.
   The desktop app lists each server's projects, each one board, as it does.
 
 ## What the Symphony has today
@@ -365,8 +366,9 @@ What building it takes, when a repository first needs it:
 
 **Blueprints** ([its analysis](blueprints.md#what-the-project-holds-of-its-blueprint)).
 
-- A blueprint attaches to a project, with one record for each project. The card on how a project
-  records its blueprint can be asked again on that ground.
+- A blueprint attaches to a project: the project names it, its address and its version, in its
+  own settings, so each project names one. Two projects over the same folders each name theirs
+  wherever such a project keeps its own settings, the later round below.
 - A project has one blueprint, so one project never has two blueprints writing its skills folder
   or its justfile. A second template is a second project over folders of its own, its
   blueprint's files inside them. Two projects over the same folders share those files; which of
