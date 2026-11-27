@@ -201,7 +201,7 @@ impl Store {
             &placed.position,
         );
         let request = OperationRequest {
-            project: self.database().database().to_string(),
+            project: self.board_id().to_string(),
             task: task.slug.clone(),
             edge: edge.id.clone(),
             input_revisions: BTreeMap::new(),
@@ -299,7 +299,7 @@ impl Store {
             }
         }
         let request = OperationRequest {
-            project: self.database().database().to_string(),
+            project: self.board_id().to_string(),
             task: slug.to_string(),
             edge: edge.to_string(),
             input_revisions,

@@ -257,7 +257,7 @@ impl Store {
         attestations: &[Signed],
         answered: Option<&crate::workflow::Recovered>,
     ) -> Result<OperationResult, Error> {
-        let board = self.database().database();
+        let board = self.board_id();
         if request.project != board {
             return Err(Error::Refused(
                 Refusal::new(

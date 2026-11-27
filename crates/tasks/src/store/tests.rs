@@ -226,6 +226,20 @@ fn the_command_back_to_a_board_names_its_recipe_its_database_and_a_named_server(
     }
 }
 
+/// A local store is named by its database and counts its requests in its database's one log, as
+/// its readers found them on [`Store::database`] before the store answered either itself.
+#[test]
+fn a_local_store_is_named_by_its_database_and_counts_in_its_databases_log() {
+    use crate::sweep::trigger::now;
+    let f = crate::store_fixture::Fixture::new(crate::store_fixture::Seed::default());
+    assert_eq!(f.store.board_id(), f.store.database().database());
+    let log = f.store.query_log();
+    assert!(std::sync::Arc::ptr_eq(&log, &f.store.database().queries()));
+    let before = log.report(now()).0.count;
+    f.store.board().unwrap();
+    assert!(log.report(now()).0.count > before);
+}
+
 /// A task's row as a reader that keeps a number's text holds it, its floats past their shortest
 /// form: it reads beside the record's version in every build, handed only the fields it names (a
 /// field the record holds beside them, a computed one say, is not its to refuse), and a record

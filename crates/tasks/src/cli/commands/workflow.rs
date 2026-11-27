@@ -227,7 +227,7 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let key = (c.parsed.get("key").map(str::to_string))
         .unwrap_or_else(|| format!("{slug}@{revision}:{edge}"));
     let request = OperationRequest {
-        project: store.database().database().to_string(),
+        project: store.board_id().to_string(),
         task: slug.clone(),
         edge,
         expected: snapshot,

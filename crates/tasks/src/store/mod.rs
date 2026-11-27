@@ -322,9 +322,22 @@ impl Store {
         )
     }
 
-    /// The database the board is in.
+    /// The database the board is in. A hosted board is in none of its own: what names it is
+    /// [`Store::board_id`], and its telemetry [`Store::query_log`].
     pub fn database(&self) -> &Database {
         self.db.local()
+    }
+
+    /// What names this board in an operation, a scope and a binding: the database of a board on
+    /// a local server, a hosted board's label, which says nothing of its endpoint, database or
+    /// login.
+    pub fn board_id(&self) -> &str {
+        self.db.database()
+    }
+
+    /// The board's request and write telemetry, shared by every client of it, local or hosted.
+    pub fn query_log(&self) -> std::sync::Arc<crate::board_health::QueryLog> {
+        self.db.queries()
     }
 
     /// Transfer a preliminary version reader's connection to its command's full opening.

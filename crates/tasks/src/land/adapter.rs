@@ -63,7 +63,7 @@ impl DefaultLand<'_> {
     pub fn bindings(&self, slug: &str, head: &str) -> Result<Bindings, String> {
         let common = crate::git::common_dir(self.main).map_err(|e| e.to_string())?;
         Ok(Bindings {
-            project: self.store.database().database().into(),
+            project: self.store.board_id().into(),
             task: slug.into(),
             repository: common.display().to_string(),
             pull: None,

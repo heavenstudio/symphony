@@ -331,7 +331,7 @@ impl Hub {
             self.keep_asks(store);
         }
         self.note_asks(store);
-        self.health.reading(store.database().queries());
+        self.health.reading(store.query_log());
         let now = self.now();
         // After a sleep, nothing judges the sessions until the idle sweep has looked at their
         // listeners again ([`super::presence`]): not the dispatch, not the give.

@@ -76,6 +76,35 @@ fn a_hosted_board_is_made_by_its_migration_alone_and_then_opens_to_every_writer(
     }
 }
 
+/// A hosted store has no database of its own to give out ([`Store::database`] panics on one):
+/// what names it in a scope, an operation or a binding is its label, and what it sent is counted
+/// in the board's one log, the one each of its clients counts in.
+#[test]
+fn a_hosted_store_is_named_by_its_label_and_counts_its_requests_without_a_local_database() {
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        let store = opened(&project, &Opening::write().migrating()).unwrap();
+        let client = project.client("web");
+        assert_eq!(store.board_id(), client.label(), "PostgreSQL {major}");
+        for said in [&project.name, &project.password] {
+            assert!(!store.board_id().contains(said.as_str()), "{said} said");
+        }
+        let scope = symphony_board::execution::board_scope("symphony", &store);
+        assert_eq!(
+            (scope.project.as_str(), scope.board.as_str()),
+            ("symphony", client.label())
+        );
+
+        let log = store.query_log();
+        assert!(std::sync::Arc::ptr_eq(&log, &client.queries()));
+        let sent = || log.report(symphony_board::sweep::trigger::now()).0.count;
+        let before = sent();
+        store.board().unwrap();
+        let after = sent();
+        assert!(after > before, "PostgreSQL {major}: {before} -> {after}");
+    }
+}
+
 #[test]
 fn a_database_that_holds_anothers_objects_is_never_taken_for_an_empty_board() {
     for major in MAJORS {

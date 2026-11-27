@@ -147,7 +147,7 @@ impl Store {
         bindings: &Bindings,
     ) -> Result<Intent, Error> {
         let name = registered(host, adapter)?;
-        let board = self.database().database();
+        let board = self.board_id();
         let slug = request.task.as_str();
         if request.project != board || bindings.project != board || bindings.task != slug {
             return Err(refused(
@@ -513,7 +513,7 @@ impl Store {
             inputs.insert("receipt".to_string(), InputValue::Revision(receipt.into()));
         }
         let request = OperationRequest {
-            project: self.database().database().into(),
+            project: self.board_id().into(),
             task: intent.slug.clone(),
             edge: edge.id.clone(),
             expected: PositionSnapshot {
