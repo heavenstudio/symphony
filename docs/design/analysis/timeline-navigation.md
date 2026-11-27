@@ -188,6 +188,7 @@ keeps its own bar at its recorded start and end:
 
     Neither decides this.
   [2026-11-27 07:45] owner · approved — B
+  [2026-11-27 07:46] agent — Filed as `app/timeline-run-words-contrast` and staffed: each build and test bar in its full colour, the words as they are, measured at 4.5 to 1 or more on both pages before it lands.
 
 ### Message marks
 
