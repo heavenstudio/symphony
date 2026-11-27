@@ -36,8 +36,34 @@ const preloadHelper = {
   resolveId: (id: string) => (id === PRELOAD_HELPER ? SHARED_MODULE : null),
 };
 
+// React ships CommonJS alone, so Rolldown calls each name a module imports of it as a property of
+// the `require`'s exports, `(0,J.jsx)(` at every element the JSX runtime makes. In the build the
+// client's sources import the runtime from a module of this file's instead, whose exports are
+// bindings of its own, each read once from React's, so an element is `j(`. Its imports are named,
+// which Rolldown reads off the exports as they are: a namespace import (`* as`) would bring its
+// `__toESM` helper into the chunk every page shares, larger gzipped than the calls it saves. Only
+// the sources under `src/` are given it, never a package's `require`, which keeps React's own
+// module whole. React's hooks are left to the interop: bound the same way they take fewer bytes
+// off a page than their exports add, gzipped, to the chunk every page shares.
+const JSX_RUNTIME = "react/jsx-runtime";
+const JSX_BINDINGS = "\0symphony:jsx-runtime";
+/** The client's sources, `src/` beside this file. */
+const SOURCES = decodeURIComponent(new URL("./src/", import.meta.url).pathname);
+const jsxBindings = {
+  name: "symphony:jsx-bindings",
+  apply: "build" as const,
+  enforce: "pre" as const,
+  resolveId: (id: string, importer?: string) =>
+    id === JSX_RUNTIME && importer?.startsWith(SOURCES) ? JSX_BINDINGS : null,
+  load: (id: string) =>
+    id === JSX_BINDINGS
+      ? `import { jsx as j, jsxs as s, Fragment as f } from "${JSX_RUNTIME}";
+export const jsx = j, jsxs = s, Fragment = f;`
+      : null,
+};
+
 export default defineConfig({
-  plugins: [preloadHelper],
+  plugins: [preloadHelper, jsxBindings],
   // No public folder: the server serves the files package.sh publishes (the dev server's own
   // settings, src/dev-server.ts, go over these).
   publicDir: false,
