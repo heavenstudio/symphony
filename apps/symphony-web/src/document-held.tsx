@@ -3,9 +3,10 @@
 // kept on the board until someone who may passes it on. The page reads them with itself, again as
 // its feed says one was held or passed on (`held`, document-live.ts), and again as its document's
 // copy moves while it holds any. It draws each where the server says its pass writes it, after the
-// block it was left after or, that block changed, at the end of its section: a callout under the
-// section of its key, else under the section that ends on its line, else at the document's end; a
-// card's message in its card. Each says who wrote it, its kind, "held" and its words, and for one
+// block it was left after (where its words stand twice, the copy nearest the line it was left
+// after) or, that block changed, at the end of its section: a callout under the section of its
+// key, else under the section that ends on its line, else at the document's end; a card's message
+// in its card. Each says who wrote it, its kind, "held" and its words, and for one
 // who may pass it on (`passes`) Pass on, which writes it into the file as its author's; the next
 // read leaves it out.
 

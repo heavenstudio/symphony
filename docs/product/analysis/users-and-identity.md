@@ -909,6 +909,7 @@ and may not direct agents. A person who may direct agents writes as the owner do
     Neither decides this.
   [2026-11-27 07:47] owner · approved — B
   [2026-11-27 07:48] agent — Filed as `app/held-comment-block-twice` and staffed: a held comment whose block stands twice is drawn and passed on after the copy nearest the line it was left after, so no Pass on is refused for it.
+  [2026-11-27 08:20] agent — Built as B by `app/held-comment-block-twice`: a held comment whose block stands twice, under its heading or elsewhere and nowhere under it, is drawn and passed on after the copy nearest the line it was left after, the first of two as near. No Pass on is refused for it, from the first press on.
 
 What follows:
 
@@ -1592,9 +1593,9 @@ Each step can ship alone, and a machine with one person sees none of them.
    document's page, told to those who may pass it on and listed for them and the person at the
    machine in the review queue's group of held comments until it is passed on, an agent's queue
    listing none ([its card](#held-on-document-waits-where)), and passed on with one press under
-   both names, as an ask, after its block found again, else at the end of its section
-   ([its card](#held-callout-block-changed)), or refused with nothing written where it stands twice,
-   which [its card](#held-callout-block-twice) asks of the owner
+   both names, as an ask, after its block found again, after the copy nearest the line it was left
+   after where its words stand twice ([its card](#held-callout-block-twice)), else at the end of
+   its section ([its card](#held-callout-block-changed))
    ([TASKS](../../workflow/TASKS.md#words-held-for-people), [QUEUE](../QUEUE.md#what-it-shows));
    and the note beside a verdict written with it, by one who may decide and not direct agents.
    Their ask stays refused, never held ([its card](#held-ask), A): such a person asks about a place
