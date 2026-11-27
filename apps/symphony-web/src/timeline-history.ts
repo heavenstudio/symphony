@@ -3,11 +3,13 @@ import { field } from "./shared";
 import type { History, MessageEndpoint, TaskEntry, TimelineMessage } from "./wire";
 
 const number = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
-const text = (v: unknown): v is string => typeof v === "string";
+/** Whether `v` is a string: the readers' guard, the timeline's reader's too (timeline-layout.ts). */
+export const isText = (v: unknown): v is string => typeof v === "string";
 const optional = (v: unknown) => v === null || number(v);
 const list = (v: unknown, check: (v: unknown) => boolean) => Array.isArray(v) && v.every(check);
-const candidate = (v: unknown) => ["role", "by", "source"].every((k) => text(field(v, k)));
-const endpoint = (v: unknown) => text(field(v, "state")) && list(field(v, "candidates"), candidate);
+const candidate = (v: unknown) => ["role", "by", "source"].every((k) => isText(field(v, k)));
+const endpoint = (v: unknown) =>
+  isText(field(v, "state")) && list(field(v, "candidates"), candidate);
 
 /** Fail unreadable metadata as a read, preserve future endpoint/source states as unknown. */
 export function readHistory(value: unknown): History | null {
@@ -16,8 +18,8 @@ export function readHistory(value: unknown): History | null {
     !list(
       field(value, "sources"),
       (v) =>
-        text(field(v, "slug")) &&
-        text(field(v, "state")) &&
+        isText(field(v, "slug")) &&
+        isText(field(v, "state")) &&
         ["first_id", "last_id", "before"].every((k) => optional(field(v, k))),
     ) ||
     !list(
@@ -35,9 +37,9 @@ export function readHistory(value: unknown): History | null {
       (v) =>
         number(field(v, "id")) &&
         number(field(v, "at")) &&
-        text(field(v, "sender")) &&
-        (field(v, "recipient") === null || text(field(v, "recipient"))) &&
-        text(field(v, "kind")) &&
+        isText(field(v, "sender")) &&
+        (field(v, "recipient") === null || isText(field(v, "recipient"))) &&
+        isText(field(v, "kind")) &&
         endpoint(field(v, "from")) &&
         endpoint(field(v, "to")) &&
         (field(v, "after_close") === null || typeof field(v, "after_close") === "boolean"),

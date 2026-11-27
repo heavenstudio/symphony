@@ -81,6 +81,7 @@ import {
   trimmed,
   verdictTone,
   verdictWord,
+  WIDTH_RULES,
   WIDTHS,
   waited,
   widthFor,
@@ -1751,15 +1752,19 @@ describe("a task's timeline laid out", () => {
     expect(CSS).toContain(
       "@media not (prefers-color-scheme: dark) {\n  .tl-seg {\n    color: var(--foreground);\n  }\n}",
     );
-    // Each width a word is weighed at shows it from there, and its shorter one below.
+    // Each width a word is weighed at shows it from there, and its shorter one below: two rules a
+    // width, written once from WIDTHS (the sheet writes none of its own) and nothing else.
     for (const width of WIDTHS) {
-      expect(CSS).toContain(
-        `@container (max-width: ${width - 1}.5px) {\n  .tl-from-${width} {\n    display: none;\n  }\n}`,
+      expect(WIDTH_RULES).toContain(
+        `@container (width<=${width - 1}.5px){.tl-from-${width}{display:none}}`,
       );
-      expect(CSS).toContain(
-        `@container (min-width: ${width}px) {\n  .tl-to-${width} {\n    display: none;\n  }\n}`,
+      expect(WIDTH_RULES).toContain(
+        `@container (width>=${width}px){.tl-to-${width}{display:none}}`,
       );
     }
+    expect(WIDTH_RULES.match(/@container /g)).toHaveLength(2 * WIDTHS.length);
+    expect(WIDTH_RULES.match(/\{display:none\}\}/g)).toHaveLength(2 * WIDTHS.length);
+    expect(CSS).not.toContain("@container");
     // Every gate state has a pattern of its own besides its colour.
     for (const [state, pattern] of [
       ["missing", "dotted"],

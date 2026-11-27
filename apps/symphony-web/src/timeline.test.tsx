@@ -30,7 +30,15 @@ import {
 } from "./timeline";
 import { readTaskTokens, totalWords } from "./timeline-cost";
 import { BAND_SHARE } from "./timeline-cut";
-import { failed, lanes, nextRead, readTimeline, stops, type View } from "./timeline-layout";
+import {
+  failed,
+  lanes,
+  nextRead,
+  readTimeline,
+  stops,
+  type View,
+  WIDTH_RULES,
+} from "./timeline-layout";
 import {
   type Heard,
   handoff,
@@ -952,8 +960,9 @@ describe("the timeline measured", () => {
     expect(head).toHaveLength(2);
     expect(head[0]).toMatchObject({ tag: "style", id: "timeline-style" });
     expect(head[1]).toBe(theme);
-    // Its text is the sheet's, which Vitest empties.
-    expect(typeof head[0]?.textContent).toBe("string");
+    // Its text is the sheet's, which Vitest empties, then the width steps, in the one element put
+    // in the page in the layout effect, so they hold from the timeline's first paint.
+    expect(head[0]?.textContent).toBe(WIDTH_RULES);
   });
 
   it("draws a clipped list from its end, all of it once asked, and neither else", () => {
