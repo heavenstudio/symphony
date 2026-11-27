@@ -172,7 +172,7 @@ keeps its own bar at its recorded start and end:
   from the task's start to the first run kept, labelled "not kept before 11-19 11:09". This
   takes the place of the sentence above the lanes. That time is unknown, not empty.
 
-- [ ] **timeline-run-words-contrast** — The words inside a build or test bar on a task's timeline, such as "verify · 24 m", are hard to read on a light page. As built from the approved mockup, they are white on the bar's colour: about 2.9 to 1 on a green bar, 3.4 to 1 on a red one and 3.0 to 1 on a grey one, under the 4.5 to 1 that small text needs. On a dark page they read 3.6 to 4.6 to 1. A: keep the mockup's colours. B: draw each bar in its full colour, the words as they are: 5 to 1 or more on both pages, the bars darker on a light page and brighter on a dark one. C: the page's text colour for the words on a light page, as a stage's words already are, 5 to 1 or more there; a dark page stays as built, its red and grey bars still under 4.5 to 1. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#Builds and tests on their own times]]
+- [x] **timeline-run-words-contrast** — The words inside a build or test bar on a task's timeline, such as "verify · 24 m", are hard to read on a light page. As built from the approved mockup, they are white on the bar's colour: about 2.9 to 1 on a green bar, 3.4 to 1 on a red one and 3.0 to 1 on a grey one, under the 4.5 to 1 that small text needs. On a dark page they read 3.6 to 4.6 to 1. A: keep the mockup's colours. B: draw each bar in its full colour, the words as they are: 5 to 1 or more on both pages, the bars darker on a light page and brighter on a dark one. C: the page's text colour for the words on a light page, as a stage's words already are, 5 to 1 or more there; a dark page stays as built, its red and grey bars still under 4.5 to 1. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#Builds and tests on their own times]]
   [2026-11-26 15:53] agent — Posted for the board task `app/timeline-label-width-estimate`, from the review of `app/timeline-navigation`; nothing is built. Each picture is the pictures' task's builds and tests at 1280 wide, light above dark, drawn at twice their size, with one test made red and one grey so that every colour a run's words sit on shows. A, as built: ![The bars as built, light above dark, under A](timeline-navigation/run-words-a.webp) B, each bar in its full colour: ![Each bar in its full colour, light above dark, under B](timeline-navigation/run-words-b.webp) C, the page's text colour on a light page: ![The page's text colour on a light page, light above dark, under C](timeline-navigation/run-words-c.webp)
 
     **How each reads**, green, red and grey bars, against the 4.5 to 1 small text needs:
@@ -187,6 +187,7 @@ keeps its own bar at its recorded start and end:
     - **task-timeline-as-built** (approved) put a stage's words in the page's text colour on a light page for this same reason. That was a stage's pale fill, not a run's strong one, and on a dark page its answer does not reach 4.5 to 1 here.
 
     Neither decides this.
+  [2026-11-27 07:45] owner · approved — B
 
 ### Message marks
 
