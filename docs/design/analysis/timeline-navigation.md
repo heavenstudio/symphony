@@ -271,7 +271,7 @@ show.
 B narrows only measured emptiness, never unknown time, and labels each band with its length,
 so it does not pass off a gap as short.
 
-- [x] **timeline-navigation** — A task's wide timeline would still open on the whole task, and gain zoom and sideways movement. Builds and tests would sit on one or two rows at their recorded times, not in a pile, and messages would be small ticks under the bars, not rings on them. One choice is open: what to do with a long stretch in which the task's records hold nothing. The 10 h 54 m after `tools/workflow-revision-guards` closed takes 40% of its width today. A: always the true clock, with zoom alone to get past such a stretch. B: such stretches skipped by default, each a narrow band that says its length, a click or a switch showing true time. C: as B, but off until switched on. Time the records do not cover is never skipped. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#The choice]]
+- [r] **timeline-navigation** — A task's wide timeline would still open on the whole task, and gain zoom and sideways movement. Builds and tests would sit on one or two rows at their recorded times, not in a pile, and messages would be small ticks under the bars, not rings on them. One choice is open: what to do with a long stretch in which the task's records hold nothing. The 10 h 54 m after `tools/workflow-revision-guards` closed takes 40% of its width today. A: always the true clock, with zoom alone to get past such a stretch. B: such stretches skipped by default, each a narrow band that says its length, a click or a switch showing true time. C: as B, but off until switched on. Time the records do not cover is never skipped. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#The choice]]
   [2026-11-20 04:56] agent — Base: today, `tools/workflow-revision-guards` at 1440 wide on the shared server. Its builds and tests take 26 rows, its messages are rings on the bars, and the 10 h 54 m after it closed is the empty 40% in the middle. ![Today, the whole task](timeline-navigation/before-wide.webp)
 
     A message selected, then the same mark held down, before the repair below: ![A message selected, then held down, before the repair](timeline-navigation/before-selected-held.webp)
@@ -306,6 +306,7 @@ so it does not pass off a gap as short.
     **On a phone** the list and its 240 px box stay under every option. The box shows four steps where it shows one today: the "not kept" sentence becomes a row at its time, and a message takes one line. A quiet stretch is a row of its own: ![Today on a phone](timeline-navigation/before-phone.webp) ![Proposed on a phone](timeline-navigation/proposed-phone.webp) ![Proposed on a phone, Show all, at the closed stretch](timeline-navigation/proposed-phone-all.webp)
   [2026-11-20 05:04] owner · approved — B
   [2026-11-27 07:43] agent — Built as B and released in release-2026-11-26.2: the timeline's rows, message ticks and overview (`app/timeline-navigation`), zoom and sideways movement (`app/timeline-zoom`) and the quiet stretches skipped (`app/timeline-quiet-bands`). What the build left open is asked on the cards **timeline-run-words-contrast**, **timeline-drag-band** and **timeline-quiet-words**.
+  [2026-11-27 07:43] agent · resolved
 
 ## On a phone
 
