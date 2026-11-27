@@ -191,6 +191,29 @@ keeps its own bar at its recorded start and end:
   [2026-11-27 07:46] agent — Filed as `app/timeline-run-words-contrast` and staffed: each build and test bar in its full colour, the words as they are, measured at 4.5 to 1 or more on both pages before it lands.
   [2026-11-27 07:54] agent — Built as B in `app/timeline-run-words-contrast`: a finished build or test bar is its tone's full colour, its words the card's colour as before, in the runs lane's rule of `apps/symphony-web/src/timeline.css`. Green, red and grey bars read 5.05, 5.94 and 5.47 to 1 on a light page and 8.09, 5.94 and 5.94 on a dark one, held by the timeline's browser test `a_runs_words_read_at_four_and_a_half_to_one_on_its_bar_in_both_schemes`.
 
+- [ ] **timeline-running-words-contrast** — The words inside a build or test bar that is still running, such as "certificate verify · 18 m", are hard to read. They are the page's text colour on the bar's blue stripes, and on the stronger stripe they read 3.6 to 1 on a light page and 2.5 to 1 on a dark one, under the 4.5 to 1 that small text needs. Your B on **timeline-run-words-contrast** mended a finished run's green, red and grey bars, not this one. A: paler stripes, the words as they are: 7.5 to 1 light and 4.9 dark. B: the words on a small label of the card's colour, as the "not kept" words are: 17 and 13.4 to 1, but the label hides the stripes wherever the words fill the bar. C: a running bar solid blue, its words the card's colour, as a finished bar is: 6.6 and 6.9 to 1, the stripes gone from the wide lanes. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#Builds and tests on their own times]]
+  [2026-11-27 08:20] agent — Posted for the board task `docs/timeline-running-bar-contrast-card`, from the build and review of `app/timeline-run-words-contrast`; nothing is built. Each picture is the pictures' task at 1280 wide, light above dark, drawn at three times its size: the right half of its Tests lane, its last test still running, and the legend under the lanes. Each option is a style laid on that page for its picture. Today: ![A running bar today, light above dark](timeline-navigation/running-words-today.webp) A, paler stripes: ![Paler stripes, light above dark, under A](timeline-navigation/running-words-a.webp) B, a label under the words: ![The words on a label, light above dark, under B](timeline-navigation/running-words-b.webp) C, a solid bar: ![A solid running bar, light above dark, under C](timeline-navigation/running-words-c.webp)
+
+    **How each reads**, against the 4.5 to 1 small text needs:
+    - **Today:** on the stronger stripe 3.6 to 1 light and 2.5 dark; on the paler one 12.7 and 9.5.
+    - **A:** on the stronger stripe 7.5 light and 4.9 dark; on the paler one as today.
+    - **B:** on the label 17.0 light and 13.4 dark.
+    - **C:** on the bar 6.6 light and 6.9 dark.
+
+    **What each changes.**
+    - **A:** the stronger stripe goes from 85% of the blue to 50%, one value in the timeline's style sheet. Every striped mark goes paler with it, so they stay alike: a running bar, the legend's "running now" key and a phone's striped rows. The stripes still show on both pages.
+    - **B:** a label behind a running bar's words. A bar no wider than its words, as here, shows no stripes at all, so it no longer looks like it is running. A wider bar shows them after its words.
+    - **C:** a running bar is drawn as a finished one is, in blue. It then looks like the legend's "worked or ran" key, and nothing on the wide lanes matches "running now". Only its colour and its hover tell it from a finished run.
+
+    **Why A.** It is the one option that keeps a running bar striped, as the approved mockup and the legend draw it, with its words as they are, and it reads 4.5 to 1 or more on both pages. B and C each lose the stripes.
+
+    **Earlier verdicts checked.**
+    - **timeline-run-words-contrast** (B) drew each finished bar in its full colour, its words the card's. It asked about green, red and grey bars, not a running one, and no option here changes those bars. C carries its rule over to a running bar; A and B leave it as built.
+    - **timeline-quiet-words** (approved) is the words of a quiet stretch, in the range readout and a phone's row. No option touches them.
+    - **timeline-drag-band** (approved) is the band a drag draws, with the bars showing through it. No option changes the band.
+
+    None of them decides this.
+
 ### Message marks
 
 A message is a 2 × 8 px tick on a dotted line along the foot of its sender's lane, under the
