@@ -238,6 +238,15 @@ impl Board {
         }
     }
 
+    /// The board's request and write telemetry, shared by every client of it.
+    pub(super) fn queries(&self) -> std::sync::Arc<crate::board_health::QueryLog> {
+        match self {
+            Board::Local(db) => db.queries(),
+            #[cfg(feature = "hosted-postgresql")]
+            Board::Hosted(client) => client.queries(),
+        }
+    }
+
     /// A refusal of this board's schema, `why`, as its reader takes it: the commands it names
     /// make and move a local board, and a hosted one is its deployment's migration's.
     pub(super) fn refusal(&self, why: String) -> String {

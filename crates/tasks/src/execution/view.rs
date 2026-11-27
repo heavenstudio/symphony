@@ -10,7 +10,7 @@ use serde::Serialize;
 /// database. Every host of the board's attempts (the server, `tasks api`, a launcher) admits,
 /// reads and controls them under this one, so none refuses another's as a different board's.
 pub fn board_scope(project: &str, store: &Store) -> Scope {
-    Scope::new(project.to_string(), store.database().database().to_string())
+    Scope::new(project.to_string(), store.board_id().to_string())
 }
 
 /// The snake-case word serde writes for `value`, a unit variant of the record's enums.

@@ -170,7 +170,7 @@ impl Store {
         match proposal {
             Proposal::Edge { edge, answered } => Ok(Next::Take {
                 request: OperationRequest {
-                    project: self.database().database().into(),
+                    project: self.board_id().into(),
                     task: slug.into(),
                     edge,
                     expected: PositionSnapshot {

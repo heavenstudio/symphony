@@ -726,7 +726,7 @@ async fn workflow(hub: Arc<Hub>, path: &str, request: &Request) -> Response {
                 .workflow_read()
                 .map(|workflow| {
                     no_store(Json(symphony_api::workflow::BoardWorkflow {
-                        project: store.database().database().to_string(),
+                        project: store.board_id().to_string(),
                         workflow,
                     }))
                 })
