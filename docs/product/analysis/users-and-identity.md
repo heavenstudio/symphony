@@ -879,6 +879,7 @@ and may not direct agents. A person who may direct agents writes as the owner do
 
     Neither decides this.
   [2026-11-26 08:08] owner · approved — B
+  [2026-11-27 07:43] agent — Built as B by `app/held-comment-block-changed`: a held comment whose block changed or is gone is passed on at its section's end. A block whose words stand twice is asked on **held-callout-block-twice**.
 
 - [ ] **held-callout-block-twice** — A held comment is written after the block it was left on when it is passed on. Where that block's words stand twice, under its heading or twice elsewhere and nowhere under it, every Pass on is refused until one copy goes, so the comment can wait for good. Where should it go? A: at the end of its section, as a changed block's does. B: after the copy nearest the line it was left after. C: where it was left, with no Pass on while its block stands twice. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
   [2026-11-26 09:46] agent — Posted for the board task `app/held-comment-block-follow-ups`, a question **held-callout-block-changed** leaves open once a block's words stand twice. Nothing that depends on it is built.
@@ -977,6 +978,7 @@ What follows:
 
     Neither decides this.
   [2026-11-26 08:05] owner · approved — A
+  [2026-11-27 07:43] agent — Kept as A: an agent sees nothing of a held comment until it is passed on, the agent's queue included, which `app/held-comments-in-review-queue` tests.
 
 - [x] **held-on-document-waits-where** — When someone who may not direct agents comments on a document, their words wait for someone to pass them on. Where do you see them waiting? A: on the document's page alone, and those who may pass them on are sent a notice. B: also in the review queue, beside the cards waiting for you. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
   [2026-11-24 21:40] agent — Posted for the board task `app/held-words-on-documents`, a question your A on **words-without-agent-reach** leaves open for documents. Nothing that depends on it is built.
@@ -999,6 +1001,7 @@ What follows:
 
     Neither decides this.
   [2026-11-26 08:14] owner · approved — B
+  [2026-11-27 07:43] agent — Built as B by `app/held-comments-in-review-queue`: a held comment is in the review queue of those who may pass it on, and leaves it once passed on.
 
 ### The note beside a verdict
 
@@ -1251,6 +1254,7 @@ What is not settled is the person at the machine once others are named: they kee
 
     None of them decides this.
   [2026-11-26 08:03] owner · approved — C
+  [2026-11-27 07:43] agent — Built as C with your notes of 2026-11-24 by `app/machine-person-name`: your lines carry your name on every board, the role where there is none, and the People page has a profile to edit. It waits for your approve on its task page before it lands.
 
 - [r] **person-name-on-lines** — Once several people are on a board, each line a person writes on a card carries their short name where it says `owner` today. The choice is how it is written. A: the name takes the owner's place, `ana · approved — A`; a person's line is any line that is not an agent's, and `agent` and `owner` are never anyone's name. B: the word stays and the name follows, `owner ana · approved — A`. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#How a person's name is written]]
   [2026-11-23 00:52] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
@@ -1459,6 +1463,7 @@ round's](#later-rounds).
 
     None of them decides this.
   [2026-11-26 08:06] owner · approved — A
+  [2026-11-27 07:43] agent — Built as A by `app/personal-agents`, which landed.
 
 Left for a later round: who hosts a board's shared agents and what a host may limit, beside the
 proposed execution providers, where a project's provider owns its runtime identity and
@@ -1637,6 +1642,7 @@ Each step can ship alone, and a machine with one person sees none of them.
 
     Neither decides this.
   [2026-11-26 08:04] owner · approved — A
+  [2026-11-27 07:43] agent — Kept as A by `app/held-asks-on-documents`: an ask stays refused to a person who may not direct agents, and no control for it is drawn.
 
 6. **The signed word verified.** The core's check of a sign-in service's signed data, and hosted
    saves through the same writes as local ones. Then the Symphony's own sign-in service, a

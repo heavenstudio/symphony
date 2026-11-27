@@ -133,6 +133,7 @@ of its own, and each board moves by itself.
 
     **Earlier verdicts checked.** [`board-pg-cutover`](#board-pg-cutover) (B) decided when a live board may first move. The order posted with it said this board "runs a few days" before the next, and A shortens that, so it is asked. Neither that card nor your words of 2026-11-22 say when SurrealDB leaves the code, which step 5 above keeps for a later decision.
   [2026-11-22 19:55] owner · approved — A
+  [2026-11-27 07:43] agent — Done as A: `tools/surrealdb-code-removed` and `tools/surrealdb-removed` landed; no SurrealDB code is left in the Symphony. The kept store and the snapshots on this machine are untouched.
 
 ## One board's move
 

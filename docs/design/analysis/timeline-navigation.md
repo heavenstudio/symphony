@@ -305,6 +305,7 @@ so it does not pass off a gap as short.
 
     **On a phone** the list and its 240 px box stay under every option. The box shows four steps where it shows one today: the "not kept" sentence becomes a row at its time, and a message takes one line. A quiet stretch is a row of its own: ![Today on a phone](timeline-navigation/before-phone.webp) ![Proposed on a phone](timeline-navigation/proposed-phone.webp) ![Proposed on a phone, Show all, at the closed stretch](timeline-navigation/proposed-phone-all.webp)
   [2026-11-20 05:04] owner · approved — B
+  [2026-11-27 07:43] agent — Built as B and released in release-2026-11-26.2: the timeline's rows, message ticks and overview (`app/timeline-navigation`), zoom and sideways movement (`app/timeline-zoom`) and the quiet stretches skipped (`app/timeline-quiet-bands`). What the build left open is asked on the cards **timeline-run-words-contrast**, **timeline-drag-band** and **timeline-quiet-words**.
 
 ## On a phone
 
