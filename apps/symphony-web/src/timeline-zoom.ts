@@ -12,7 +12,16 @@
 // with no toolbar.
 
 import { type Cut, Cuts } from "./timeline-cut";
-import { clockOf, dateOf, resultTone, Scale, statusTone, took, type View } from "./timeline-layout";
+import {
+  clamp,
+  closed,
+  resultTone,
+  Scale,
+  stampOf,
+  statusTone,
+  took,
+  type View,
+} from "./timeline-layout";
 import type { TaskTimeline } from "./wire";
 
 /** The least part of the hours a zoom shows, in seconds: five minutes. */
@@ -29,9 +38,6 @@ const SWIPE_PX = 6;
 /** How much of the hours shown an arrow key moves the overview's window by. */
 const KEY_MOVE = 0.1;
 
-/** The statuses a task ends in, which the stage lane draws as instants (timeline-layout.ts). */
-const CLOSED = ["done", "cancelled"];
-
 /** The whole hours the lanes draw for `timeline`, as a view. */
 export function wholeOf(timeline: TaskTimeline): View {
   const scale = new Scale(timeline);
@@ -41,10 +47,6 @@ export function wholeOf(timeline: TaskTimeline): View {
 /** Whether the whole hours are longer than a zoom's least, so zooming can show less of them. */
 export function zoomable(whole: View): boolean {
   return whole.to - whole.from > LEAST_SHOWN;
-}
-
-function clamp(x: number, least: number, most: number): number {
-  return Math.min(Math.max(x, least), most);
 }
 
 /**
@@ -335,11 +337,11 @@ export function windowKey(key: string, view: View, whole: View, cut?: Cut | null
 export function readout(timeline: TaskTimeline, view: View | null, cut?: Cut | null): string {
   const whole = wholeOf(timeline);
   const shown = view ?? whole;
-  const at = (time: number) => `${dateOf(timeline, time)} ${clockOf(timeline, time)}`;
   const of = view === null ? "" : ` of ${took(whole.to - whole.from)}`;
   const skipped = new Cuts(whole, cut).skippedIn(shown.from, shown.to);
   const said = skipped < 30 ? "" : ` · ${took(skipped)} skipped`;
-  return `${at(shown.from)} → ${at(shown.to)} · ${took(shown.to - shown.from)}${of}${said}`;
+  const [from, to] = [stampOf(timeline, shown.from), stampOf(timeline, shown.to)];
+  return `${from} → ${to} · ${took(shown.to - shown.from)}${of}${said}`;
 }
 
 /** A mark of the overview, in percent of the whole hours. */
@@ -364,7 +366,7 @@ export function overview(timeline: TaskTimeline, view: View, cut?: Cut | null): 
   const scale = new Scale(timeline, null, cut);
   const stages = timeline.stages.flatMap((stage): Mark[] => {
     const to = stage.to ?? scale.now;
-    if (CLOSED.includes(stage.status) || !scale.spans(stage.from, to)) return [];
+    if (closed(stage) || !scale.spans(stage.from, to)) return [];
     const { left, width } = scale.place(stage.from, to);
     return [{ left, width, tone: statusTone(stage.status) }];
   });
