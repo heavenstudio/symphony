@@ -220,6 +220,7 @@ fn saved(hub: &Arc<Hub>, payload: Value) -> (u16, Value) {
         .build()
         .unwrap();
     runtime.block_on(async {
+        let request = crate::testing::at_the_machine(&shared, request);
         let response = crate::write::answer(&shared, request).await;
         let status = response.status().as_u16();
         let bytes = to_bytes(response.into_body(), 1_000_000).await.unwrap();

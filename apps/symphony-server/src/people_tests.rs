@@ -861,6 +861,24 @@ async fn a_hosted_visitor_reads_no_one_and_changes_no_one() {
     assert_eq!(served.profiles().people, [anas()], "her profile as it was");
 }
 
+/// A read of the people no gate marked is no one's, and refused before the board is asked for.
+#[tokio::test]
+async fn a_read_no_gate_marked_is_refused_before_the_board_is_asked_for() {
+    let tree = Tree::new();
+    let root = crate::testing::repository(&tree);
+    let shared = Shared::new(1, 1234, &root, None, crate::testing::open_gate());
+    let request = Request::get(PEOPLE_PATH).body(()).unwrap();
+    let response = read(&shared, &request).await;
+    let said = |response: Response| async {
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await;
+        (status, body.unwrap())
+    };
+    assert_eq!(said(response).await, said(crate::front::unmarked()).await);
+    assert!(shared.api.get().is_none(), "no hub was started");
+    shared.stop();
+}
+
 /// A change the board refuses is a 400 in the board's words, and profiles that cannot be had (a
 /// folder where their lock goes) are a 503 to an add and to a profile's write: nothing is
 /// written, on the board or in the machine folder.

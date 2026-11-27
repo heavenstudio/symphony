@@ -38,16 +38,16 @@ fn peer<B>(request: &axum::http::Request<B>) -> Option<IpAddr> {
 }
 
 /// Whether `request` came from this machine ([`crate::gate::Gate::is_this_machine`]); one whose
-/// address is unknown did not, nor one from a visitor who is not the person at the machine: a
-/// signed visitor whose sign-in service runs on this machine reaches it by loopback. The address
+/// address is unknown did not, nor one from a visitor who is not the person at the machine, a
+/// hosted visitor included: a signed visitor whose sign-in service runs on this machine reaches it
+/// by loopback. The address
 /// is read before the answer is awaited, so the wait holds no borrow of the request (whose body is
 /// not `Sync`).
 pub(crate) fn local<B>(
     shared: &Arc<Shared>,
     request: &axum::http::Request<B>,
 ) -> impl std::future::Future<Output = bool> + Send + 'static {
-    let elsewhere = crate::hosted::admission(request).is_some()
-        || !crate::front::Admitted::machine(request.extensions());
+    let elsewhere = !crate::front::Admitted::machine(request.extensions());
     let ip = peer(request);
     let shared = shared.clone();
     async move {

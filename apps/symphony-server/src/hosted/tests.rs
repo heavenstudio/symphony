@@ -762,10 +762,10 @@ async fn redirects_are_relative_or_exactly_on_the_configured_origin() {
     }
 }
 
-/// An admission the fixture host verified, for a test that hands it to a native route as hosted
-/// admission would have let the request in.
-pub(crate) async fn admitted() -> Admission {
-    lease(&Fake::new()).await
+/// The mark of an admission the fixture host verified, for a test that hands it to a native route
+/// as hosted admission would have let the request in.
+pub(crate) async fn admitted() -> crate::front::Admitted {
+    crate::front::Admitted::Hosted(Box::new(lease(&Fake::new()).await))
 }
 
 async fn lease(fake: &Arc<Fake>) -> Admission {
@@ -924,7 +924,8 @@ async fn native_router_keeps_local_gate_and_hosted_requests_have_no_machine_priv
     req.extensions_mut().insert(axum::extract::ConnectInfo(
         "127.0.0.1:1234".parse::<std::net::SocketAddr>().unwrap(),
     ));
-    req.extensions_mut().insert(lease(&fake).await);
+    req.extensions_mut()
+        .insert(crate::front::Admitted::Hosted(Box::new(lease(&fake).await)));
     assert!(!crate::session_go::local(&shared, &req).await);
     assert!(
         router(
@@ -960,7 +961,8 @@ async fn next_actions_are_the_local_owners_never_a_hosted_visitors() {
         "/api/workflow-guards?slug=tools/x",
     ] {
         let mut req = axum::http::Request::builder().uri(uri).body(()).unwrap();
-        req.extensions_mut().insert(lease(&fake).await);
+        req.extensions_mut()
+            .insert(crate::front::Admitted::Hosted(Box::new(lease(&fake).await)));
         let response = crate::api::answer(&shared, req).await.unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
     }

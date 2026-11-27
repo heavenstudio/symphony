@@ -5,9 +5,11 @@
 //! and claims, supply current project grants and validate session/project-bound CSRF. A visitor
 //! assertion alone is never transport proof. Errors are deliberately finite and nonsecret.
 //!
-//! Native read-only surfaces use the admitted project. Mutations and plugin routes go only to
-//! [`Host::dispatch`], with verified context, never to the saves of the person the local gate
-//! admits (`crate::write`), which refuse a hosted request: a write's actor
+//! Native read-only surfaces use the admitted project. Admission marks each request it lets in as
+//! a hosted visitor's (`crate::front::Admitted::Hosted`): never the person at the machine's,
+//! wherever it came from, and with no actor or power of a board's. Mutations and plugin routes go
+//! only to [`Host::dispatch`], with verified context, never to the saves of the person the local
+//! gate admits (`crate::write`), which refuse a hosted request first: a write's actor
 //! (`symphony_plugin::Actor`) is made from the verified [`Actor`] by the host that dispatches it,
 //! never by the local saves. Worktree selection and machine operations are excluded. No machine
 //! registry is consulted.
@@ -31,8 +33,7 @@ mod canonical;
 mod json;
 mod lease;
 mod projection;
-use lease::Admission;
-pub(crate) use lease::admission;
+pub(crate) use lease::{Admission, admission};
 pub(crate) use projection::{project_agents, project_feed, project_page};
 
 /// A principal from a verified assertion; neither a display name nor a payload actor.
@@ -326,7 +327,8 @@ async fn admitted(boundary: Boundary, request: Request, next: Next) -> Result<Re
             admission.check().await?;
             let mut request = Request::from_parts(head, body);
             canonical::strip_credentials(request.headers_mut());
-            request.extensions_mut().insert(admission.clone());
+            let mark = crate::front::Admitted::Hosted(Box::new(admission.clone()));
+            request.extensions_mut().insert(mark);
             Ok(next.run(request).await)
         }
     };

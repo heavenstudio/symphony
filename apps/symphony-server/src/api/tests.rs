@@ -63,6 +63,7 @@ async fn a_listing_status_no_listing_selects_is_refused_before_the_board_is_read
         let said = status_argument_of(&request);
         assert_eq!(said.is_err(), refused, "{status}: {said:?}");
         if refused {
+            let request = crate::testing::at_the_machine(&shared, request);
             let response = answer(&shared, request).await.unwrap();
             assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{status}");
             let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -108,6 +109,7 @@ async fn next_actions_that_name_no_task_are_refused_before_the_board_is_read() {
             .header("Host", "localhost:1234")
             .body(())
             .unwrap();
+        let request = crate::testing::at_the_machine(&shared, request);
         let response = answer(&shared, request).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
     }

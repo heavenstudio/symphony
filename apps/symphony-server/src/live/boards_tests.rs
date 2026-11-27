@@ -680,6 +680,7 @@ impl Gitless {
     fn past_the_check(&self, request: Request<Body>) -> (u16, Value) {
         let shared = Shared::new(1, 1234, &self.inner.root, None, crate::testing::open_gate());
         assert!(shared.api.set(self.inner.hub.clone()).is_ok());
+        let request = crate::testing::at_the_machine(&shared, request);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

@@ -223,7 +223,7 @@ async fn the_route_answers_from_the_hubs_machine_folder_once_there_is_a_hub() {
             .header("Host", "localhost:1234")
             .body(())
             .unwrap();
-        crate::api::answer(&shared, request)
+        crate::api::answer(&shared, crate::testing::at_the_machine(&shared, request))
     };
     let response = ask().await.unwrap();
     assert_eq!(

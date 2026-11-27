@@ -434,11 +434,13 @@ async fn a_signed_visitor_from_loopback_is_not_this_machine_for_a_pane() {
         request.extensions_mut().insert(axum::extract::ConnectInfo(
             HERE.parse::<SocketAddr>().unwrap(),
         ));
-        request.extensions_mut().insert(crate::front::Admitted {
-            actor: symphony_board::workflow::local_actor(),
-            machine,
-            origin,
-        });
+        let actor = symphony_board::workflow::local_actor();
+        let mark = if machine {
+            crate::front::Admitted::Machine(actor)
+        } else {
+            crate::front::Admitted::Named { actor, origin }
+        };
+        request.extensions_mut().insert(mark);
         request
     };
     let signed = asked(false, Some(SignIn::ORIGIN.into()));
