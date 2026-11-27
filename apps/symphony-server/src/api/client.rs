@@ -75,8 +75,16 @@ pub(super) async fn static_response(shared: &Shared, path: &str, request: &Reque
         {
             preload::page(shared, kind, &mut shell).await;
         }
-        let actor = crate::front::Admitted::actor(shared, request.extensions());
-        let reader = crate::shell::Reader::of(&actor, shared.gate.machine_person());
+        // A hosted visitor, whom no board names, and a request no gate marked are served the page
+        // for nobody in particular, the person at the machine's lines still drawn by their name.
+        let machine = shared.gate.machine_person();
+        let reader = match crate::front::Admitted::actor(request.extensions()) {
+            Some(actor) => crate::shell::Reader::of(&actor, machine),
+            None => crate::shell::Reader {
+                machine,
+                ..crate::shell::Reader::default()
+            },
+        };
         bytes = Bytes::from(crate::shell::page_for(
             &shell,
             &shared.root,

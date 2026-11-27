@@ -172,7 +172,7 @@ keeps its own bar at its recorded start and end:
   from the task's start to the first run kept, labelled "not kept before 11-19 11:09". This
   takes the place of the sentence above the lanes. That time is unknown, not empty.
 
-- [ ] **timeline-run-words-contrast** — The words inside a build or test bar on a task's timeline, such as "verify · 24 m", are hard to read on a light page. As built from the approved mockup, they are white on the bar's colour: about 2.9 to 1 on a green bar, 3.4 to 1 on a red one and 3.0 to 1 on a grey one, under the 4.5 to 1 that small text needs. On a dark page they read 3.6 to 4.6 to 1. A: keep the mockup's colours. B: draw each bar in its full colour, the words as they are: 5 to 1 or more on both pages, the bars darker on a light page and brighter on a dark one. C: the page's text colour for the words on a light page, as a stage's words already are, 5 to 1 or more there; a dark page stays as built, its red and grey bars still under 4.5 to 1. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#Builds and tests on their own times]]
+- [x] **timeline-run-words-contrast** — The words inside a build or test bar on a task's timeline, such as "verify · 24 m", are hard to read on a light page. As built from the approved mockup, they are white on the bar's colour: about 2.9 to 1 on a green bar, 3.4 to 1 on a red one and 3.0 to 1 on a grey one, under the 4.5 to 1 that small text needs. On a dark page they read 3.6 to 4.6 to 1. A: keep the mockup's colours. B: draw each bar in its full colour, the words as they are: 5 to 1 or more on both pages, the bars darker on a light page and brighter on a dark one. C: the page's text colour for the words on a light page, as a stage's words already are, 5 to 1 or more there; a dark page stays as built, its red and grey bars still under 4.5 to 1. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#Builds and tests on their own times]]
   [2026-11-26 15:53] agent — Posted for the board task `app/timeline-label-width-estimate`, from the review of `app/timeline-navigation`; nothing is built. Each picture is the pictures' task's builds and tests at 1280 wide, light above dark, drawn at twice their size, with one test made red and one grey so that every colour a run's words sit on shows. A, as built: ![The bars as built, light above dark, under A](timeline-navigation/run-words-a.webp) B, each bar in its full colour: ![Each bar in its full colour, light above dark, under B](timeline-navigation/run-words-b.webp) C, the page's text colour on a light page: ![The page's text colour on a light page, light above dark, under C](timeline-navigation/run-words-c.webp)
 
     **How each reads**, green, red and grey bars, against the 4.5 to 1 small text needs:
@@ -187,6 +187,33 @@ keeps its own bar at its recorded start and end:
     - **task-timeline-as-built** (approved) put a stage's words in the page's text colour on a light page for this same reason. That was a stage's pale fill, not a run's strong one, and on a dark page its answer does not reach 4.5 to 1 here.
 
     Neither decides this.
+  [2026-11-27 07:45] owner · approved — B
+  [2026-11-27 07:46] agent — Filed as `app/timeline-run-words-contrast` and staffed: each build and test bar in its full colour, the words as they are, measured at 4.5 to 1 or more on both pages before it lands.
+  [2026-11-27 07:54] agent — Built as B in `app/timeline-run-words-contrast`: a finished build or test bar is its tone's full colour, its words the card's colour as before, in the runs lane's rule of `apps/symphony-web/src/timeline.css`. Green, red and grey bars read 5.05, 5.94 and 5.47 to 1 on a light page and 8.09, 5.94 and 5.94 on a dark one, held by the timeline's browser test `a_runs_words_read_at_four_and_a_half_to_one_on_its_bar_in_both_schemes`.
+
+- [ ] **timeline-running-words-contrast** — The words inside a build or test bar that is still running, such as "certificate verify · 18 m", are hard to read. They are the page's text colour on the bar's blue stripes, and on the stronger stripe they read 3.6 to 1 on a light page and 2.5 to 1 on a dark one, under the 4.5 to 1 that small text needs. Your B on **timeline-run-words-contrast** mended a finished run's green, red and grey bars, not this one. A: paler stripes, the words as they are: 7.5 to 1 light and 4.9 dark. B: the words on a small label of the card's colour, as the "not kept" words are: 17 and 13.4 to 1, but the label hides the stripes wherever the words fill the bar. C: a running bar solid blue, its words the card's colour, as a finished bar is: 6.6 and 6.9 to 1, the stripes gone from the wide lanes. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#Builds and tests on their own times]]
+  [2026-11-27 08:20] agent — Base: today, the pictures' task at 1280 wide, light above dark, drawn at three times its size: the right half of its Tests lane, its last test still running, and the legend under the lanes. ![A running bar today, light above dark](timeline-navigation/running-words-today.webp)
+  [2026-11-27 08:20] agent — Posted for the board task `docs/timeline-running-bar-contrast-card`, from the build and review of `app/timeline-run-words-contrast`; nothing is built. The same view under each option, each a style laid on that page for its picture. A, paler stripes: ![Paler stripes, light above dark, under A](timeline-navigation/running-words-a.webp) B, a label under the words: ![The words on a label, light above dark, under B](timeline-navigation/running-words-b.webp) C, a solid bar: ![A solid running bar, light above dark, under C](timeline-navigation/running-words-c.webp)
+
+    **How each reads**, against the 4.5 to 1 small text needs:
+    - **Today:** on the stronger stripe 3.6 to 1 light and 2.5 dark; on the paler one 12.7 and 9.5.
+    - **A:** on the stronger stripe 7.5 light and 4.9 dark; on the paler one as today.
+    - **B:** on the label 17.0 light and 13.4 dark.
+    - **C:** on the bar 6.6 light and 6.9 dark.
+
+    **What each changes.**
+    - **A:** the stronger stripe goes from 85% of the blue to 50%, one value in the timeline's style sheet. Every striped mark goes paler with it, so they stay alike: a running bar, the legend's "running now" key and a phone's striped rows. The stripes still show on both pages.
+    - **B:** a label behind a running bar's words. A bar no wider than its words, as here, shows no stripes at all, so it no longer looks like it is running. A wider bar shows them after its words.
+    - **C:** a running bar is drawn as a finished one is, in blue. It then looks like the legend's "worked or ran" key, and nothing on the wide lanes matches "running now". Only its colour and its hover tell it from a finished run.
+
+    **Why A.** It is the one option that keeps a running bar striped, as the approved mockup and the legend draw it, with its words as they are, and it reads 4.5 to 1 or more on both pages. B and C each lose the stripes.
+
+    **Earlier verdicts checked.**
+    - **timeline-run-words-contrast** (B) drew each finished bar in its full colour, its words the card's. It asked about green, red and grey bars, not a running one, and no option here changes those bars. C carries its rule over to a running bar; A and B leave it as built.
+    - **timeline-quiet-words** (approved) is the words of a quiet stretch, in the range readout and a phone's row. No option touches them.
+    - **timeline-drag-band** (approved) is the band a drag draws, with the bars showing through it. No option changes the band.
+
+    None of them decides this.
 
 ### Message marks
 
@@ -271,7 +298,7 @@ show.
 B narrows only measured emptiness, never unknown time, and labels each band with its length,
 so it does not pass off a gap as short.
 
-- [x] **timeline-navigation** — A task's wide timeline would still open on the whole task, and gain zoom and sideways movement. Builds and tests would sit on one or two rows at their recorded times, not in a pile, and messages would be small ticks under the bars, not rings on them. One choice is open: what to do with a long stretch in which the task's records hold nothing. The 10 h 54 m after `tools/workflow-revision-guards` closed takes 40% of its width today. A: always the true clock, with zoom alone to get past such a stretch. B: such stretches skipped by default, each a narrow band that says its length, a click or a switch showing true time. C: as B, but off until switched on. Time the records do not cover is never skipped. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#The choice]]
+- [r] **timeline-navigation** — A task's wide timeline would still open on the whole task, and gain zoom and sideways movement. Builds and tests would sit on one or two rows at their recorded times, not in a pile, and messages would be small ticks under the bars, not rings on them. One choice is open: what to do with a long stretch in which the task's records hold nothing. The 10 h 54 m after `tools/workflow-revision-guards` closed takes 40% of its width today. A: always the true clock, with zoom alone to get past such a stretch. B: such stretches skipped by default, each a narrow band that says its length, a click or a switch showing true time. C: as B, but off until switched on. Time the records do not cover is never skipped. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#The choice]]
   [2026-11-20 04:56] agent — Base: today, `tools/workflow-revision-guards` at 1440 wide on the shared server. Its builds and tests take 26 rows, its messages are rings on the bars, and the 10 h 54 m after it closed is the empty 40% in the middle. ![Today, the whole task](timeline-navigation/before-wide.webp)
 
     A message selected, then the same mark held down, before the repair below: ![A message selected, then held down, before the repair](timeline-navigation/before-selected-held.webp)
@@ -305,6 +332,8 @@ so it does not pass off a gap as short.
 
     **On a phone** the list and its 240 px box stay under every option. The box shows four steps where it shows one today: the "not kept" sentence becomes a row at its time, and a message takes one line. A quiet stretch is a row of its own: ![Today on a phone](timeline-navigation/before-phone.webp) ![Proposed on a phone](timeline-navigation/proposed-phone.webp) ![Proposed on a phone, Show all, at the closed stretch](timeline-navigation/proposed-phone-all.webp)
   [2026-11-20 05:04] owner · approved — B
+  [2026-11-27 07:43] agent — Built as B and released in release-2026-11-26.2: the timeline's rows, message ticks and overview (`app/timeline-navigation`), zoom and sideways movement (`app/timeline-zoom`) and the quiet stretches skipped (`app/timeline-quiet-bands`). What the build left open is asked on the cards **timeline-run-words-contrast**, **timeline-drag-band** and **timeline-quiet-words**.
+  [2026-11-27 07:43] agent · resolved
 
 ## On a phone
 

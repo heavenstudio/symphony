@@ -44,6 +44,21 @@ pub fn open_gate() -> crate::gate::Gate {
     )
 }
 
+/// `request` marked as from the person at the machine `shared`'s gate admits, as a test that hands
+/// a route a request past every gate says who it is from: a request no gate marked is no one's,
+/// and every route refuses it ([`crate::front::Admitted`]).
+pub fn at_the_machine<B>(
+    shared: &crate::front::Shared,
+    mut request: axum::http::Request<B>,
+) -> axum::http::Request<B> {
+    let person = (shared.gate)
+        .member(&shared.root, &crate::gate::Visitor::Machine)
+        .expect("the person at the machine is on every board");
+    let mark = crate::front::Admitted::Machine(person);
+    request.extensions_mut().insert(mark);
+    request
+}
+
 /// What the API answers a GET of `uri` asked of `shared` from this machine, as the server on port
 /// 1234 a fixture stands for: its status and its body read as JSON.
 pub async fn get_json(
@@ -55,6 +70,7 @@ pub async fn get_json(
         .header("Host", "localhost:1234")
         .body(())
         .unwrap();
+    let request = at_the_machine(shared, request);
     let response = crate::api::answer(shared, request).await.unwrap();
     let status = response.status();
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)

@@ -83,6 +83,7 @@ async fn a_request_holding_a_retired_projects_state_is_refused_after_the_last_cl
         .unwrap();
     let old = beta.shared.clone();
     drop(beta);
+    let request = crate::testing::at_the_machine(&old, request);
     let pending = tokio::spawn(async move { crate::write::answer(&old, request).await });
     reading.await.unwrap();
     machine.tree.write(

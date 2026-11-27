@@ -1279,6 +1279,7 @@ async fn the_health_route_answers_from_the_hubs_memory() {
             .header("Host", "localhost:1234")
             .body(())
             .unwrap();
+        let request = crate::testing::at_the_machine(&shared, request);
         let response = crate::api::answer(&shared, request).await.unwrap();
         let status = response.status();
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)

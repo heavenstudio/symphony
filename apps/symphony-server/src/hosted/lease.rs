@@ -14,8 +14,13 @@ pub(crate) struct Admission {
     deadline: tokio::time::Instant,
 }
 
+/// The admission of a request hosted admission let in, as its mark holds it
+/// (`crate::front::Admitted::Hosted`); none for a request another gate marked, or none did.
 pub(crate) fn admission<B>(request: &Request<B>) -> Option<&Admission> {
-    request.extensions().get()
+    match request.extensions().get::<crate::front::Admitted>()? {
+        crate::front::Admitted::Hosted(admission) => Some(admission),
+        _ => None,
+    }
 }
 
 impl Admission {

@@ -401,11 +401,12 @@ mod tests {
     fn a_signed_visitors_socket_is_from_the_origin_their_word_was_made_for() {
         let signed = |headers: &[(header::HeaderName, &str)]| {
             let mut request = request(headers);
-            request.extensions_mut().insert(crate::front::Admitted {
-                actor: symphony_board::workflow::local_actor(),
-                machine: false,
-                origin: Some("https://board.example.com".into()),
-            });
+            request
+                .extensions_mut()
+                .insert(crate::front::Admitted::Named {
+                    actor: symphony_board::workflow::local_actor(),
+                    origin: Some("https://board.example.com".into()),
+                });
             own_origin(&request)
         };
         let service = (header::HOST, "board.example.com");

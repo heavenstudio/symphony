@@ -58,7 +58,11 @@ not hold, in no list, and each path under its id answers as an id nobody registe
 bytes. `/api/front` and the list's installation id are the machine's, answered to the person at
 it alone. A server of its own refuses a visitor its board has not added, as an address the gate
 refuses. A project's router takes the visitor's actor with the request, and every save, workflow
-action and attempt control is that actor's.
+action and attempt control is that actor's. Every request carries who it is from, as the gate that
+let it in marked it (`front::Admitted`): the person at the machine, a person a board named (a
+signed visitor with the origin their word was made for), or a hosted visitor
+([Hosted admission](#hosted-admission)). A request no gate marked is no one's, and every read and
+every save refuses it.
 
 A write from anyone but the person at the machine is checked against that board's people as it
 arrives, before its body is read (`src/powers.rs`, the table of what each route needs, and
@@ -104,9 +108,12 @@ The first profile refuses worktree selectors, machine diagnostics/controls, pane
 and actorless plugin dispatch. Saves and `/x/` routes go only to `Host::dispatch`, whose default
 is deny, with verified `Context` and canonical input, without credential headers. An adapter
 resolves any domain-specific references and rechecks authority before state or provider I/O.
-It must not forward hosted mutations into the local owner's save/plugin APIs, and those saves
-refuse a request the hosted admission holds: each save is the person the local gate admits. Binary upload
-and storage integration need their own actor-aware adapter; a local upload URL is no grant.
+It must not forward hosted mutations into the local owner's save/plugin APIs. Admission marks
+each request it lets in as a hosted visitor's: never the person at the machine, wherever it came
+from, and with no actor or power of a board's; the local gate leaves a marked request as it is.
+The local saves (`write::ROUTES` beside the app's) refuse a hosted visitor's request before
+anything else, the upload and the agent focus included: each save is the person the local gate
+admits. Binary upload and storage integration need their own actor-aware adapter; a local upload URL is no grant.
 Redirects stay relative or on the configured origin, with no login redirects for refusals.
 
 This seam and its fake-host tests do not constitute hosted deployment acceptance. The

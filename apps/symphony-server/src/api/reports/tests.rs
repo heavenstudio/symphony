@@ -875,6 +875,7 @@ async fn the_route_refuses_a_bad_ask_first_and_answers_the_hubs_folders_at_its_c
         }
         let request = request.body(()).unwrap();
         async move {
+            let request = crate::testing::at_the_machine(&shared, request);
             let response = crate::api::answer(&shared, request).await.unwrap();
             let status = response.status();
             let tag = response

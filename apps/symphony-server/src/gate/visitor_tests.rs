@@ -554,6 +554,6 @@ fn a_signed_word_for_the_person_at_the_machines_profile_is_never_them() {
         .unwrap();
     assert!(matches!(visitor, Visitor::Signed(_)), "{visitor:?}");
     let admitted = crate::front::Admitted::of(&visitor, gate.person());
-    assert!(!admitted.machine);
+    assert!(matches!(admitted, crate::front::Admitted::Named { .. }));
     assert_eq!(gate.member(Path::new("/alpha"), &visitor), None);
 }

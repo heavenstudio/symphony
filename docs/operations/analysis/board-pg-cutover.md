@@ -107,7 +107,7 @@ of its own, and each board moves by itself.
 5. **SurrealDB stays in the code** until a later decision removes it. That is what keeps the way
    back open.
 
-- [x] **surrealdb-leaves-the-code** — SurrealDB is still in the Symphony's code because two other projects' boards still run on it and this repository's board can still be moved back to it. Once both boards have moved to PostgreSQL and the way back closes, the code can go. On 2026-11-22 you said: "move the remaining queue tasks to ready. The surrealdb one should be done with everything else". How soon do the two boards move, and when does the way back close? A: now, and the code goes once both have moved. B: at the plan's pace, a few days between moves, and the code goes about a week later. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/board-pg-cutover#The order]]
+- [r] **surrealdb-leaves-the-code** — SurrealDB is still in the Symphony's code because two other projects' boards still run on it and this repository's board can still be moved back to it. Once both boards have moved to PostgreSQL and the way back closes, the code can go. On 2026-11-22 you said: "move the remaining queue tasks to ready. The surrealdb one should be done with everything else". How soon do the two boards move, and when does the way back close? A: now, and the code goes once both have moved. B: at the plan's pace, a few days between moves, and the code goes about a week later. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/board-pg-cutover#The order]]
   [2026-11-22 19:40] agent — Posted for the board task `tools/surrealdb-code-removed`, which removes nothing until you answer.
 
     **Where things stand**, read 2026-11-22:
@@ -133,6 +133,8 @@ of its own, and each board moves by itself.
 
     **Earlier verdicts checked.** [`board-pg-cutover`](#board-pg-cutover) (B) decided when a live board may first move. The order posted with it said this board "runs a few days" before the next, and A shortens that, so it is asked. Neither that card nor your words of 2026-11-22 say when SurrealDB leaves the code, which step 5 above keeps for a later decision.
   [2026-11-22 19:55] owner · approved — A
+  [2026-11-27 07:43] agent — Done as A: `tools/surrealdb-code-removed` and `tools/surrealdb-removed` landed; no SurrealDB code is left in the Symphony. The kept store and the snapshots on this machine are untouched.
+  [2026-11-27 07:43] agent · resolved
 
 ## One board's move
 

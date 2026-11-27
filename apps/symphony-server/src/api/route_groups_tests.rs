@@ -127,7 +127,8 @@ async fn before_the_hub_the_reads_off_the_board_say_the_server_is_starting() {
         format!("{}?run=r1", symphony_api::RUN_PATH),
         symphony_api::SETTINGS_PATH.to_string(),
     ] {
-        let response = answer(&shared, get(&route)).await.unwrap();
+        let request = crate::testing::at_the_machine(&shared, get(&route));
+        let response = answer(&shared, request).await.unwrap();
         assert_eq!(sent(response).await, starting, "{route}");
     }
     for (route, said) in [
@@ -150,7 +151,8 @@ async fn before_the_hub_the_reads_off_the_board_say_the_server_is_starting() {
             Some("run is required: a run's id"),
         ),
     ] {
-        let (status, cache, body) = sent(answer(&shared, get(&route)).await.unwrap()).await;
+        let request = crate::testing::at_the_machine(&shared, get(&route));
+        let (status, cache, body) = sent(answer(&shared, request).await.unwrap()).await;
         assert_eq!(
             (status, cache.as_str()),
             (StatusCode::BAD_REQUEST, "no-store"),

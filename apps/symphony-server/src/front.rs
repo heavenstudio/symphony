@@ -449,10 +449,11 @@ async fn head(mut request: Request, next: Next) -> Response {
     )
 }
 
-/// Every request, before any route: a visitor on this project's board ([`admitted`]), or one the
-/// one server's dispatch let in to it already, and no repository metadata, whether the path would
-/// reach a native file handler or the legacy app. A visitor the board has not added is refused as
-/// an address the gate refuses: a server of its own holds no other project to answer as.
+/// Every request, before any route: a visitor on this project's board ([`admitted`]), or one a
+/// gate marked already, the one server's dispatch or hosted admission ([`Admitted`]), and no
+/// repository metadata, whether the path would reach a native file handler or the legacy app. A
+/// visitor the board has not added is refused as an address the gate refuses: a server of its own
+/// holds no other project to answer as.
 async fn judge(
     State(shared): State<Arc<Shared>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -462,9 +463,7 @@ async fn judge(
     // The peer as judged, for the routes that ask where a request came from: the extractor reads
     // a connection's address or a test's mock alike, a plain extension read only the first.
     request.extensions_mut().insert(ConnectInfo(peer));
-    if crate::hosted::admission(&request).is_none()
-        && request.extensions().get::<Admitted>().is_none()
-    {
+    if request.extensions().get::<Admitted>().is_none() {
         let admitted = match admitted(&shared, peer.ip(), request.headers()).await {
             Ok(admitted) => admitted,
             Err(refused) => return *refused,
@@ -506,56 +505,76 @@ async fn judge(
     next.run(request).await
 }
 
-/// Who the gate let a request in as. The first gate that judges a request puts it there: the one
-/// server's dispatch for a project's routes, else the project's own [`judge`].
-#[derive(Clone, Debug)]
-pub(crate) struct Admitted {
-    /// The actor every save it asks takes, and whose principal its reads of what it may do ask
-    /// as: the visitor's on the board ([`Gate::member`]).
-    pub actor: symphony_plugin::Actor,
-    /// Whether the visitor is the person at the machine, to whom alone what is the machine's is
-    /// said ([`crate::gate::Visitor::Machine`]).
-    pub machine: bool,
-    /// The origin a signed visitor's word was made for, which their Host and Origin may name
-    /// ([`crate::gate::Visitor::origin`]); none for any other visitor.
-    pub origin: Option<String>,
+/// Who a request is from, as the gate that let it in marked it. The first gate that judges a
+/// request puts its mark there: the one server's dispatch for a project's routes, else the
+/// project's own [`judge`], and hosted admission for a visitor its host verified
+/// ([`crate::hosted`]). There is no default: a request no gate marked has no actor and is not the
+/// machine's, and every route refuses it ([`unmarked`]).
+#[derive(Clone)]
+pub(crate) enum Admitted {
+    /// The person at the machine ([`crate::gate::Visitor::Machine`]), who holds every power, as
+    /// the actor their saves take: to them alone what is the machine's is said.
+    Machine(symphony_plugin::Actor),
+    /// A person a board named ([`Gate::member`]): another login's, a node's a board added, or the
+    /// person a sign-in service's word names, never the person at the machine.
+    Named {
+        /// The actor every save they ask takes, and whose principal their reads of what they may
+        /// do ask as.
+        actor: symphony_plugin::Actor,
+        /// The origin a signed visitor's word was made for, which their Host and Origin may name
+        /// ([`crate::gate::Visitor::origin`]); none for any other visitor.
+        origin: Option<String>,
+    },
+    /// A visitor hosted admission let in, with what its host verified: never the person at the
+    /// machine, wherever the request came from, and no actor or power of a board's.
+    Hosted(Box<crate::hosted::Admission>),
 }
 
 impl Admitted {
     /// `visitor`, on a board as `actor`.
     pub(crate) fn of(visitor: &crate::gate::Visitor, actor: symphony_plugin::Actor) -> Admitted {
-        Admitted {
-            actor,
-            machine: *visitor == crate::gate::Visitor::Machine,
-            origin: visitor.origin().map(str::to_string),
+        match visitor {
+            crate::gate::Visitor::Machine => Admitted::Machine(actor),
+            other => Admitted::Named {
+                actor,
+                origin: other.origin().map(str::to_string),
+            },
         }
     }
 
     /// The origin the signed word of a request whose extensions are `extensions` was made for:
-    /// none for a request with no signed word, and one handed to a route past every gate.
+    /// none for a request with no signed word, and for one no gate marked.
     pub(crate) fn origin(extensions: &axum::http::Extensions) -> Option<String> {
-        (extensions.get::<Admitted>()).and_then(|admitted| admitted.origin.clone())
+        match extensions.get::<Admitted>()? {
+            Admitted::Named { origin, .. } => origin.clone(),
+            Admitted::Machine(_) | Admitted::Hosted(_) => None,
+        }
     }
 
-    /// Who a request whose extensions are `extensions` was let in as: the actor a gate put on it,
-    /// else the person at the machine `shared`'s gate admits, for a request a test hands a route
-    /// itself, past every gate.
-    pub(crate) fn actor(
-        shared: &Shared,
-        extensions: &axum::http::Extensions,
-    ) -> symphony_plugin::Actor {
-        extensions
-            .get::<Admitted>()
-            .map_or_else(|| shared.gate.person(), |admitted| admitted.actor.clone())
+    /// The actor of a request whose extensions are `extensions`: the one every save it asks
+    /// takes, and whose principal its reads of what it may do ask as, the person at the machine's
+    /// or the named person's. None for a hosted visitor, whom no board names, and for a request no
+    /// gate marked.
+    pub(crate) fn actor(extensions: &axum::http::Extensions) -> Option<symphony_plugin::Actor> {
+        match extensions.get::<Admitted>()? {
+            Admitted::Machine(actor) | Admitted::Named { actor, .. } => Some(actor.clone()),
+            Admitted::Hosted(_) => None,
+        }
     }
 
-    /// Whether a request whose extensions are `extensions` is the person at the machine's: as a
-    /// gate admitted it, else, handed to a route past every gate, it is.
+    /// Whether a request whose extensions are `extensions` is the person at the machine's, to
+    /// whom alone what is the machine's is said: only as a gate marked it.
     pub(crate) fn machine(extensions: &axum::http::Extensions) -> bool {
-        extensions
-            .get::<Admitted>()
-            .is_none_or(|admitted| admitted.machine)
+        matches!(extensions.get::<Admitted>(), Some(Admitted::Machine(_)))
     }
+}
+
+/// What a route answers a request no gate marked ([`Admitted`]): it is no one's.
+pub(crate) fn unmarked() -> Response {
+    crate::api::error(
+        StatusCode::FORBIDDEN,
+        "Forbidden: no gate let this request in, so it is no one's",
+    )
 }
 
 /// Who a request from `ip` with the headers `headers` is from as `shared`'s gate judges it: by its
@@ -1813,6 +1832,9 @@ mod session_tests;
 
 #[cfg(test)]
 mod peers_tests;
+
+#[cfg(test)]
+mod every_route_tests;
 
 #[cfg(test)]
 pub(crate) mod test_clock;
