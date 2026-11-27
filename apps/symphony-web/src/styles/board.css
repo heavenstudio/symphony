@@ -68,7 +68,6 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .agents, .history, .facts { list-style:none; padding:0; }
 .column h2 .count { font-size:var(--fs-xs); font-weight:600; color:var(--muted-foreground); background:var(--muted); border-radius:var(--r-pill); padding:0 8px; letter-spacing:0; }
 .count { color:var(--muted-foreground); font-size:.8em; }
-/* apps/symphony-web/src/cardheight.ts repeats a column card's sizes (columns, padding, borders, faces, chips) to reserve its rows: change both together. */
 .taskcard, .ghost-card { padding:8px 10px; border:1px solid var(--border); border-radius:var(--r-md); margin:0 0 8px; background:var(--card); overflow-wrap:anywhere; box-shadow:0 1px 2px rgba(0,0,0,.04); font-size:var(--fs-sm); line-height:1.45; transition:box-shadow .12s ease; }
 /* A hover that moves or raises a thing is a pointer's: a tap would leave it raised. */
 @media (hover: hover) and (pointer: fine) { .taskcard:hover { box-shadow:var(--shadow-2); } }

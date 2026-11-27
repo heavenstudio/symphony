@@ -107,19 +107,40 @@ On a wide screen it is lanes over the same hours, with a line at now:
 | Lane | Draws |
 | --- | --- |
 | **Stage** | each stage the task was in, as long as it lasted, and its time and cost where they fit |
-| **Orchestrator**, **Executor**, **Reviewer** | when each agent held the role; a review's verdict after its bar |
-| Builds and tests | each recorded run, striped while it is going on; absent on a task with none |
-| **Other / task messages** | a mark for each message from a sender that holds no one role; a role holder's message is marked on that role's lane |
+| **Orchestrator**, **Executor**, **Reviewer** | when each agent held the role; a review's verdict after its bar; a tick under the bars for each message the role's holder sent |
+| **Board & others** | a tick for each message from a sender that holds no one role, such as the board or the owner |
+| **Builds**, **Tests** | each recorded run, a bar at its own times, its wait the lighter start of it, striped while it is going on, and what it ran and how long inside it where it is wide enough; runs one after another on one row, only runs at once on more; the lane's name says how many ran and how many went red (*42 runs · 12 red*); absent on a task with none |
 | **Gates** | a thin lane per gate, its pattern the state it was in: dotted missing, double held, solid met |
+
+Where the board no longer keeps a task's earliest builds and tests, the time before the first
+one kept is hatched over their lanes, *not kept before 11-19 11:09*.
 
 The arrow keys, a click or a tap pick a part, and the line under the lanes, where the legend
 was, says all of it: for a
 build or test its command, how long it waited and ran, how it ended, its commit, who ran it and
 where. A bar says when an agent held a role, not that it worked the whole time.
 
+A line above the lanes zooms into part of the hours: **Whole task**, **−** and **+**, each shown
+only where it can act, and the hours shown with their length (*11-19 10:53 → 11-19 12:01 · 1 h
+8 m of 1 d 3 h*). ⌘ or Ctrl
+with the wheel, or a trackpad's pinch, zooms about the pointer, and Shift with the wheel or a
+sideways swipe moves along the hours; a drag across the hours zooms to them, a double click on a
+stage zooms to the stage, and with the lanes focused + − and 0 zoom in, out and back to the whole
+task. On a touch screen two fingers pinch and one swipes sideways. While zoomed, a strip above
+the lanes shows the whole task and the part shown, which a drag moves or resizes. A part the
+arrow keys step to, or a message picked, comes into view. A task of five minutes or less is
+shown whole, with no zoom.
+
 **Messages, in send order**, under the lanes, picks one message, or steps through them with
 **Previous message** and **Next message**, and shows who sent it, to whom, and its text, with a
 link to its place in the thread. Over no message it is not drawn, and over one it has no steps.
+A click or a tap on a message's tick picks it too. The picked message's tick becomes a dot with
+an arrow to the lane it was addressed to, and the line of hours says its number, who sent it to
+whom and when; one sent within a lane is ringed instead.
+
+On a phone the timeline is a list of the same steps, newest in view. Each message is a line with
+its time, a diamond and who sent it to whom, picked by a tap anywhere on it, and *Builds and
+tests kept from here on* is a line at the time the board's earliest kept run starts.
 
 Times are the server's clock. The timeline is read again every minute while the task is open.
 

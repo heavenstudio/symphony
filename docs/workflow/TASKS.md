@@ -3765,7 +3765,9 @@ so each time reads on the server's local clock as it then stood, the thread's.
   say). None until the recorder keeps one for the task: the page then draws no
   builds or tests at all, and no machine time. Where the recorder's history no
   longer reaches back to the task's start, `runs_from` says since when it keeps
-  every run, and the page says so.
+  every run: wide, the time before it is hatched over the builds' and the tests'
+  lanes, "not kept before 11-19 11:09" where the words fit, and on a phone it is a
+  row at that time, "Builds and tests kept from here on".
 - **gates**: each gate's states from the [gates](#gates) answer, its past and its
   current, a lane each by name; a state taken before the task was made counts from
   its creation, and the review gate's from the task's first move to review. A stamp
@@ -3792,15 +3794,27 @@ stage with its start, its label, its length and a bar as long, the wait in it dr
 lighter; under each stage the builds, tests and gate changes that began in it (the
 review gate's are its rounds), a build or test named by its command, the machine's by
 what it ran and its commit; the verdict after a review's bar, and a striped bar for a
-run going on now; a stage left within half a minute has no row. From 900 px wide it
-draws lanes over the same hours: the stage, the executor, the reviewer, the builds and
-the tests, each a lane of its own (a row each for runs that overlap, or where one is
-queued so soon after another's end, half a percent of the hours drawn, that the two
-would read as one bar: no two runs are drawn as one; a lane that needs more than six
-rows, a burst of runs on a timeline of days, draws them thin with no words under them),
-and a thin row per gate, each state by its pattern as well as its colour (met solid,
-missing dotted, waived dashed, held double), with a line at now. A word in the lanes is drawn only where it fits; every
-part of them is said to assistive technology and reached by the arrow keys, and the
+run going on now; a stage left within half a minute has no row. A message is one line of
+28 px, its time, its diamond and who sent it to whom level, the whole row the press that
+picks it. From 900 px wide it
+draws lanes over the same hours: the stage, the orchestrator, the executor, the reviewer, the builds and
+the tests, each a lane of its own, and a thin row per gate, each state by its pattern as well as its colour (met solid,
+missing dotted, waived dashed, held double), with a line at now; the hour lines start
+where the tracks do. A run goes in the first row of its lane free when it is queued, so
+runs one after another share a row however near, and only runs that overlap take another
+(`runRows`). Each run is one 14 px bar at its recorded times, its wait the lighter dashed
+head of it, edged in the card's colour so two that meet stay two, with its distinguishing
+words (its command without `just` and its flags) and its length inside it once it is
+30 px wide, cut to fit; a runs lane's name says how many ran and how many went red ("42
+runs · 12 red"). Each message is a 2 × 8 tick on a dotted line at the foot of its sender's
+lane, under the bars, in a press area of 24 px; a message from or to no one role holder (the
+board, the owner, everyone) is on the 22 px line of **Board & others**. The selected message
+is a filled dot with one arrow from it to a ring on its addressed lane's line, its address
+and time on the hours line over a dashed guide down to it; one whose two ends are one lane
+is a ring around its dot, with no arrow. A word in the lanes is drawn only where it fits, weighed
+letter by letter at the widest of the faces the page's type names, so it is whole in each, and
+clear of a segment of a few minutes before it that is drawn wider than its time; every part of
+them is said to assistive technology and reached by the arrow keys, and the
 list stays for assistive technology beside them. A run's words name its command, its
 wait to start and its run time apart (to the second under a minute), how it ended, its
 commit, who ran it and where: a pointer resting on its part reads them; wide, its part
@@ -3809,6 +3823,32 @@ place, and on a phone its row a tap focused says them under its bar, growing upw
 a box that clips, the rows under it where they were. The pictures it follows are
 `docs/product/analysis/reports-timeline-phone.svg` and
 `docs/product/analysis/reports-timeline-wide.svg`.
+
+The lanes zoom into a part of the hours and move along them (`timeline-zoom.ts`, the
+arithmetic, and `timeline-navigate.tsx`, in the timeline's chunk), as
+[the timeline's analysis](../design/analysis/timeline-navigation.md) draws it. Each visit
+opens on the whole task, and a task no longer than five minutes, the least a zoom shows, draws
+as before, with nothing to zoom. A line above the lanes holds **Whole task**, **−** and **+**,
+each drawn only where it can act, its place kept so that nothing on the line moves (on the whole
+task + alone, at five minutes no +), a button that stops acting as it is pressed handing the focus
+to the one that now acts, and the hours shown with their length, "11-19 10:53 → 11-19 12:01 ·
+1 h 8 m of 1 d 3 h" zoomed. Zoomed, every lane is drawn over the hours shown, its words fitted to them and
+its hours marked down to the minute; a part outside them is not drawn but keeps its place among
+the arrow keys' stops, and one the keys step to, or a message chosen in the message list, comes
+into view at the same zoom. ⌘ or Ctrl with a wheel, as a trackpad's pinch sends it, zooms about
+the pointer, the instant under it staying there; Shift with a wheel, or a sideways wheel, moves
+while zoomed; a plain wheel scrolls the page. A mouse dragged across the tracks zooms to the
+hours dragged, a band drawn while it is held, and its release picks nothing; a double click on a
+stage's bar zooms to the stage. On a touch screen two fingers pinch, and one swiped sideways
+moves while zoomed, the page still scrolling up and down under it. With the focus in the lanes,
++ and − zoom and 0 shows the whole task. While zoomed, a strip over the tracks draws the whole
+task's stages and runs with the window shown, which a drag moves, a drag of its edge resizes,
+and its arrow keys, Page Up, Page Down, Home and End move. The height the box keeps for the next
+visit is the whole task's. A phone's list is not zoomed. Assistive technology hears the hours
+shown after a press or a key, never at each step of a wheel, a drag or a pinch.
+
+- [ ] **timeline-drag-band** — A mouse dragged across the hours of a task's wide timeline zooms to the hours dragged, and the mockup leaves open what the drag shows while the button is held. As built, a band in the accent colour, faint with a solid edge at each end, covers the hours dragged across every lane, the bars showing through it, and goes when the button is let go. Approve, or comment.
+  [2026-11-26 16:18] agent — Posted for the board task `app/timeline-zoom`, at 1440 wide, a drag held from 08:00 to 12:30. ![A drag held across the hours, light](../design/analysis/timeline-navigation/drag-band.webp) ![A drag held across the hours, dark](../design/analysis/timeline-navigation/drag-band-dark.webp)
 
 - [-] **timeline-burst-drawing** — A burst of runs, dozens of tests minutes apart in a task that lasted days, makes the task's wide timeline 12 px taller per run, with no limit: tools/board-token-usage's is 911 px tall, and its Tests lane is 37 thin rows that read as a dashed line, with no words. How should a lane draw a burst, every run kept its own and reachable? A: as it is, a thin row per run, the box growing. B: the same rows, the lane scrolling in a box of its own past 256 px, the height of six rows with words. C: each burst one mark that says how many runs and how many went red ("37 tests · 4 red"), opened in place to its runs by a click, a tap or Enter; on a phone, one row of the list the same way. Recommended: C. Approve and say A, B or C in the note, or comment. [[TASKS#The timeline]]
   [2026-11-17 00:43] agent — Posted for the board task `app/timeline-burst-drawing-card`, from the review of `app/timeline-builds-and-tests-apart`. tools/board-token-usage at 1280 wide, on a private server of main's build (the shared server runs a release from before builds and tests had lanes of their own): A as it is, then B and C drawn on that page by hand, not built. ![The burst wide, option A](../design/analysis/timeline-burst/a-wide.webp) ![The burst wide, option B](../design/analysis/timeline-burst/b-wide.webp) ![The burst wide, option C](../design/analysis/timeline-burst/c-wide.webp)
@@ -3830,6 +3870,28 @@ a box that clips, the rows under it where they were. The pictures it follows are
   [2026-11-17 12:28] agent — Time already runs horizontally on the wide timeline: each bar is positioned by its recorded times. The vertical pile comes from a layout rule that gives runs separate rows not only when they overlap, but also when they are close together (within 0.5% of the whole time range). Across five days that is 36 minutes, so even sequential short tests get stacked. That avoids bars visually joining, but creates the height problem this proposal then tries to hide. Your suggestion addresses the cause: keep sequential runs on the same horizontal time axis, reserve extra rows for actual overlap, and let a closer time view reveal short runs at their real duration. The proposal should explore that before folding bursts; A/B/C overlooked it. The phone view is a separate chronological list because of its narrower width.
   [2026-11-17 12:35] owner · rejected — yes. rework the proposal to be more horizontal based.
   [2026-11-17 12:35] agent — Revised proposal: keep Builds and Tests on a shared horizontal time axis. Sequential runs reuse the same row; only genuinely overlapping queued/running intervals need another row. Each run keeps its actual start, end and duration, with waiting distinguished from execution. For a dense period, zoom into that time range and pan horizontally, with a clear return to the whole task; every lane uses the same scale so comparisons remain meaningful. Selecting a run shows its full command, exact times and result without adding a row per run. Very short runs stay individually reachable by keyboard and selection, without stretching their duration to fit a label. This replaces the vertical stacking, inner scrolling and folded-burst proposals above. The earlier pictures illustrate rejected options, not this revision; the revised layout still needs visual validation, including a narrow-screen treatment consistent with your existing phone-height decision.
+
+A quiet stretch is an hour or more in which the task's records hold nothing (`timeline-quiet.ts`):
+measured between two records, never before the first or after the last, and only where its
+history is whole and from the time its runs are kept. Each run, claim, taken round, role held
+(the orchestrator's but at its start and its end), change of stage, ask for a round, message,
+gate state and place is a record. The wide lanes open with each one skipped, as
+[the timeline's analysis](../design/analysis/timeline-navigation.md#the-choice) chose: a band
+through every lane, 3.3 % of the track (36 px at 1440 wide, all of a task's bands 30 % at most;
+`timeline-cut.ts`), its edges zigzagged and its words down it ("quiet · task done, nothing
+recorded"), its length over it on the hours line ("+10 h 54 m") with the day it ends on after
+that where a day changed in it, the stretch's ends in its hover and its label, and its key in the
+legend; the work about it gets the width. No hour is marked in a band, an hour's line going with its label where that
+gives way to a band's words, and a verdict after a round stops before a band. The readout adds
+"· 10 h 54 m skipped" while a band is in view. A zoom halves the work a track holds and leaves a
+band as wide, and a move keeps the zoom across it. **Skip quiet stretches**, ticked after the
+readout as the page opens, says how many and how long ("1 · 10 h 54 m") and switches every
+stretch at once; a press on a band draws its stretch on the true clock, the focus it had going to
+the switch. A task with no quiet stretch draws neither. A phone's list says each as a row of its
+own: "10 h 54 m quiet, 14:03 → 11-20 00:57" over "Task done, nothing recorded".
+
+- [ ] **timeline-quiet-words** — The approved pictures leave two words of a quiet stretch to the build. As built, while a band is in view the range readout says the time skipped after the hours shown, "11-19 01:00 → 11-20 04:34 · 1 d 3 h · 10 h 54 m skipped", where the whole task's picture reads no more than its length. A phone's quiet row says under its length and its ends the band's own words, "Task done, nothing recorded", where its picture lists what the rule counts, "Task done. No role held, no run, message or change recorded.", which a page leaves to the product docs. Approve, or comment.
+  [2026-11-26 18:07] agent — Posted for the board task `app/timeline-quiet-bands`, the whole task with its quiet stretch skipped, at 1440 wide and on a phone. ![The readout with a band in view, light](../design/analysis/timeline-navigation/quiet-words.webp) ![The readout with a band in view, dark](../design/analysis/timeline-navigation/quiet-words-dark.webp) ![The quiet row on a phone, light](../design/analysis/timeline-navigation/quiet-row.webp) ![The quiet row on a phone, dark](../design/analysis/timeline-navigation/quiet-row-dark.webp)
 
 ## Links with the documents
 

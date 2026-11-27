@@ -63,6 +63,13 @@ fn desktop_tab_traversal_skips_phone_message_controls_and_restores_them_when_nar
     );
     assert_eq!(page.eval("document.querySelector('.tl-list').textContent.includes('first-orchestrator → @executor')"), json!(true));
     page.eval("(() => { const start = document.createElement('button'); start.id='timeline-tab-start'; start.textContent='Start'; document.getElementById('timeline').prepend(start); start.focus(); })()");
+    // The zoom line first, on the whole task its + alone (Whole task and − cannot act), then the
+    // lanes.
+    components::key(&mut page, "Tab", "Tab", 9);
+    assert_eq!(
+        page.eval("document.activeElement.getAttribute('aria-label')"),
+        json!("Zoom in")
+    );
     components::key(&mut page, "Tab", "Tab", 9);
     assert_eq!(page.eval("document.activeElement.id"), json!("tl-stop-0"));
     let marks = page
@@ -120,7 +127,7 @@ fn history_fixture() -> Value {
     t
 }
 
-fn thread(timeline: &Value, ids: &[i64], before: Option<i64>) -> Value {
+pub(super) fn thread(timeline: &Value, ids: &[i64], before: Option<i64>) -> Value {
     let entries: Vec<_> = timeline["history"]["messages"].as_array().unwrap().iter()
         .filter(|m| ids.contains(&m["id"].as_i64().unwrap()))
         .map(|m|json!({"message":{"id":m["id"],"slug":SLUG,"sender":m["sender"],"recipient":m["recipient"],"kind":"msg","ts":m["at"],"text":format!("Original body {}",m["id"])},"stamp":"11-11 10:00","blocks":[{"type":"paragraph","spans":[{"type":"text","text":format!("Original body {}",m["id"])}]}]}))
@@ -138,7 +145,7 @@ fn message_site(t: &Value) -> Site {
     site
 }
 
-fn pick(chrome: &mut crate::chrome::Chrome, id: i64) {
+pub(super) fn pick(chrome: &mut crate::chrome::Chrome, id: i64) {
     chrome.eval(&format!("(() => {{ const choice = document.getElementById('tl-message-choice'); choice.value='{id}'; choice.dispatchEvent(new Event('change',{{bubbles:true}})); }})()"));
     assert!(chrome.wait_for(&format!("document.querySelector('.tl-message-details h3')?.textContent.startsWith('Message #{id} ')"), SHOWN));
     chrome.frames();
@@ -435,19 +442,24 @@ fn mark_geometry(chrome: &mut crate::chrome::Chrome, id: i64) -> Value {
         r#"(() => {{
             const mark = document.querySelector('.tl-message-mark[data-message="{id}"]');
             const track = mark.parentElement.getBoundingClientRect(), m = mark.getBoundingClientRect();
+            const middle = b => b ? b.top + b.height / 2 : null;
+            const rail = mark.parentElement.querySelector('.tl-rail').getBoundingClientRect();
             const arrow = document.querySelector('.tl-address-arrow');
             const a = arrow?.getBoundingClientRect(), up = arrow?.classList.contains('tl-arrow-up');
-            const to = arrow && document.querySelector(`[data-lane="${{arrow.dataset.to}}"] .tl-track`).getBoundingClientRect();
+            const to = arrow && document.querySelector(`[data-lane="${{arrow.dataset.to}}"] .tl-rail`).getBoundingClientRect();
+            const ring = document.querySelector('.tl-address-ring')?.getBoundingClientRect();
             return {{
                 active: mark.matches(':active'), pressed: mark.getAttribute('aria-pressed'),
                 focused: document.activeElement === mark,
                 x: m.left + m.width / 2, y: m.top + m.height / 2,
                 time: track.left + parseFloat(mark.style.left) / 100 * track.width,
-                middle: track.top + track.height / 2,
+                middle: middle(rail),
                 line: a ? a.left + a.width / 2 : null,
                 sender: a ? (up ? a.bottom : a.top) : null,
                 recipient: a ? (up ? a.top : a.bottom) : null,
-                recipient_middle: to ? to.top + to.height / 2 : null,
+                recipient_middle: middle(to),
+                ring_x: ring ? ring.left + ring.width / 2 : null, ring_y: middle(ring),
+                around: document.querySelector('.tl-address-ring')?.classList.contains('tl-ring-around') ?? null,
             }};
         }})()"#
     ))
@@ -465,14 +477,19 @@ fn alike(geometry: &Value, pairs: &[(&str, &str)], what: &str) {
     }
 }
 
-/// The mark sits at its time, on its lane's middle.
+/// The tick sits at its time, on its lane's line.
 const AT_ITS_TIME: &[(&str, &str)] = &[("x", "time"), ("y", "middle")];
-/// The arrow's line runs through the mark's middle, from it to its recipient's lane's middle.
+/// The arrow's line runs through the tick's middle, from it to its recipient's line, where a ring
+/// marks its end.
 const MEETS: &[(&str, &str)] = &[
     ("line", "x"),
     ("sender", "y"),
     ("recipient", "recipient_middle"),
+    ("ring_x", "x"),
+    ("ring_y", "recipient_middle"),
 ];
+/// A message whose two ends are one lane draws no arrow: a ring around its tick.
+const RINGED: &[(&str, &str)] = &[("ring_x", "x"), ("ring_y", "y")];
 
 /// Message `id`'s mark, once its press's shrink or release has eased out.
 fn settled_mark(chrome: &mut crate::chrome::Chrome, id: i64) -> Value {
@@ -497,13 +514,10 @@ fn a_held_or_keyed_message_mark_stays_at_its_time_and_the_selected_arrow_meets_i
     for width in [1280, 960] {
         view(&mut page, width, false);
         if width != 1280 {
-            // The last message chosen at the wider view keeps its arrow on its mark as the lanes narrow.
+            // The last message chosen at the wider view keeps its ring on its tick as the lanes
+            // narrow.
             let kept = settled_mark(&mut page, 5);
-            alike(
-                &kept,
-                &[("line", "x"), ("sender", "y")],
-                &format!("{width}: #5 after narrowing"),
-            );
+            alike(&kept, RINGED, &format!("{width}: #5 after narrowing"));
         }
         // A pointer held on a mark sinks it about its middle, at its time; released, it is chosen.
         let at = page.eval("(() => { const e = document.querySelector('.tl-message-mark[data-message=\"2\"]'); e.scrollIntoView({block: 'center'}); const b = e.getBoundingClientRect(); return {x: b.left + b.width / 2, y: b.top + b.height / 2}; })()");
@@ -557,16 +571,18 @@ fn a_held_or_keyed_message_mark_stays_at_its_time_and_the_selected_arrow_meets_i
         );
         alike(&chosen, AT_ITS_TIME, &format!("{width}: #4 chosen"));
         alike(&chosen, MEETS, &format!("{width}: #4's arrow"));
-        // A message at the same instant, chosen from the chooser, is drawn at that instant too,
-        // and the arrow moves to its mark on its own lane.
+        // A message at the same instant, chosen from the chooser, is drawn at that instant too;
+        // from outside to everyone, its two ends are the board's and others' lane: no arrow, a
+        // ring around its tick.
         pick(&mut page, 5);
         let collided = mark_geometry(&mut page, 5);
         alike(&collided, AT_ITS_TIME, &format!("{width}: #5"));
-        alike(
-            &collided,
-            &[("line", "x"), ("sender", "y")],
-            &format!("{width}: #5's arrow"),
+        assert_eq!(
+            [&collided["line"], &collided["around"]],
+            [&Value::Null, &json!(true)],
+            "{width}: #5 draws no arrow: {collided}"
         );
+        alike(&collided, RINGED, &format!("{width}: #5's ring"));
         let other = mark_geometry(&mut page, 4);
         alike(
             &json!({"x": other["x"], "x5": collided["x"]}),

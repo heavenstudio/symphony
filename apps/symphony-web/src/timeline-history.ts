@@ -4,11 +4,13 @@ import { field } from "./shared";
 import type { History, MessageEndpoint, TaskEntry, TimelineMessage } from "./wire";
 
 const number = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
-const text = (v: unknown): v is string => typeof v === "string";
+/** Whether `v` is a string: the readers' guard, the timeline's reader's too (timeline-layout.ts). */
+export const isText = (v: unknown): v is string => typeof v === "string";
 const optional = (v: unknown) => v === null || number(v);
 const list = (v: unknown, check: (v: unknown) => boolean) => Array.isArray(v) && v.every(check);
-const candidate = (v: unknown) => ["role", "by", "source"].every((k) => text(field(v, k)));
-const endpoint = (v: unknown) => text(field(v, "state")) && list(field(v, "candidates"), candidate);
+const candidate = (v: unknown) => ["role", "by", "source"].every((k) => isText(field(v, k)));
+const endpoint = (v: unknown) =>
+  isText(field(v, "state")) && list(field(v, "candidates"), candidate);
 
 /** Fail unreadable metadata as a read, preserve future endpoint/source states as unknown. */
 export function readHistory(value: unknown): History | null {
@@ -17,8 +19,8 @@ export function readHistory(value: unknown): History | null {
     !list(
       field(value, "sources"),
       (v) =>
-        text(field(v, "slug")) &&
-        text(field(v, "state")) &&
+        isText(field(v, "slug")) &&
+        isText(field(v, "state")) &&
         ["first_id", "last_id", "before"].every((k) => optional(field(v, k))),
     ) ||
     !list(
@@ -36,9 +38,9 @@ export function readHistory(value: unknown): History | null {
       (v) =>
         number(field(v, "id")) &&
         number(field(v, "at")) &&
-        text(field(v, "sender")) &&
-        (field(v, "recipient") === null || text(field(v, "recipient"))) &&
-        text(field(v, "kind")) &&
+        isText(field(v, "sender")) &&
+        (field(v, "recipient") === null || isText(field(v, "recipient"))) &&
+        isText(field(v, "kind")) &&
         endpoint(field(v, "from")) &&
         endpoint(field(v, "to")) &&
         (field(v, "after_close") === null || typeof field(v, "after_close") === "boolean"),
@@ -73,6 +75,14 @@ export function messagesOf(
 export function address(message: TimelineMessage): string {
   const to = message.recipient == null ? "Everyone on task" : writer(message.recipient).text;
   return `${writer(message.sender).text} → ${to}`;
+}
+
+/** A selected message as the hours line says it at its instant, `clock`: its number, its two ends,
+ * its time and, for a verdict, that it is one: "#15396 · gilded-gecko-838 → @executor · 11:31 ·
+ * verdict". */
+export function addressAt(message: TimelineMessage, clock: string): string {
+  const kind = message.kind === "verdict" ? " · verdict" : "";
+  return `#${message.id} · ${address(message)} · ${clock}${kind}`;
 }
 
 /** Only a unique known role gets a role lane; ambiguity stays on Other. */

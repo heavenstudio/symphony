@@ -54,8 +54,11 @@
 }
 
 /* The steps: on a phone the box's height clips them, the latest in view, and "Show all" lets them
-   grow; wide the box holds them all. The box's foot holds what the bars mean. */
+   grow; wide the box holds them all. The box's foot holds what the bars mean. Wide, its name
+   column and its end margin are every layer's over the tracks: the lanes', the overview's. */
 .tl-body {
+  --name: 9rem;
+  --end: 5.5rem;
   position: relative;
   flex: 1;
   min-height: 0;
@@ -223,6 +226,24 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+/* A quiet stretch's row: a box of its own across the rail, its length and its ends, then why it
+   is quiet, in place of a scale the list does not have. */
+.tl-row.tl-quiet {
+  grid-template-columns: minmax(0, 1fr);
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--muted-foreground);
+  border-radius: 8px;
+  /* Over the rail: the muted tint is see-through, so it lies on the card's own colour. */
+  background: linear-gradient(var(--muted), var(--muted)) var(--card);
+}
+.tl-quiet b {
+  font-weight: 600;
+}
+.tl-quiet small {
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+}
 
 /* The page's + button floats over a phone's bottom right: what the timeline says keeps clear of
    its column. A list the box clips keeps its latest steps in view, its earliest cut at the top,
@@ -265,13 +286,197 @@
 }
 
 /* The wide lanes: a name column, then a track per lane over the same hours, the hours' lines and
-   now's behind them all. */
+   now's behind them all. The name column is var(--name) wide, padding and all, so every layer over
+   the tracks (the hours' lines, the selected message's arrow) starts where the tracks do. */
 .tl-lanes {
-  --name: 9rem;
-  --end: 5.5rem;
   display: none;
   position: relative;
 }
+/* A task long enough to zoom into: its lanes take a sideways finger and a pinch, the page still
+   scrolling up and down under one, and a drag across the hours selects no words. */
+.tl-zoomable {
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* A part outside the hours shown: kept for the keyboard, which brings it into view, unseen and
+   untouched until then. */
+.tl-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The toolbar line above the lanes: Whole task, − and + joined, then the range shown. Wide only,
+   as the lanes are. */
+.tl-zoom {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-sm);
+}
+.tl-zoom-group {
+  display: inline-flex;
+}
+.tl-zoom-group .dx-button + .dx-button {
+  margin-left: -1px;
+}
+/* A button that cannot act is not drawn, and keeps its place; the buttons drawn round their own
+   ends: + alone on the whole task, − the last at the least. */
+.tl-zoom-group .dx-button.tl-idle {
+  visibility: hidden;
+}
+.tl-zoom-group .dx-button:not(:last-child, :has(+ .tl-idle)) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.tl-zoom-group .dx-button:not(:first-child, .tl-idle + *) {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.tl-range {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+/* The range a press or a key showed, for assistive technology alone. */
+.tl-said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* The switch, drawn as the card's checkbox right after the readout: a box, ticked while the quiet
+   stretches are skipped, its words and how many and how long. */
+.tl-zoom .tl-skip {
+  gap: var(--sp-2);
+  margin-left: var(--sp-2);
+}
+.tl-skip-box {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--muted-foreground);
+  border-radius: 3px;
+}
+.tl-skip[aria-pressed="true"] .tl-skip-box {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+.tl-skip[aria-pressed="true"] .tl-skip-box::after {
+  content: "";
+  position: absolute;
+  left: 3.5px;
+  top: 0.5px;
+  width: 4px;
+  height: 8px;
+  box-sizing: border-box;
+  border: solid var(--primary-foreground);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.tl-skip-count {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* While zoomed, a strip above the hours: the whole task's stages and runs, the hours outside the
+   window dimmed, and the window, which a drag moves and a drag of an edge resizes. */
+.tl-overview {
+  display: none;
+  position: relative;
+  height: 30px;
+  margin: 0 var(--end) 6px var(--name);
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--muted);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.tl-ov-stage,
+.tl-ov-run,
+.tl-ov-break,
+.tl-ov-dim,
+.tl-ov-window {
+  position: absolute;
+}
+.tl-ov-stage {
+  top: 4px;
+  height: 7px;
+  min-width: 1px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--c) 55%, transparent);
+}
+.tl-ov-run {
+  top: 15px;
+  width: 1px;
+  height: 10px;
+  background: color-mix(in srgb, var(--c) 80%, transparent);
+}
+/* A band: the strip's own colour, its edges dashed, the work either side of it. */
+.tl-ov-break {
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  border-inline: 1px dashed var(--muted-foreground);
+  background: var(--card);
+}
+.tl-ov-dim {
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--background) 62%, transparent);
+}
+.tl-ov-window {
+  top: -1px;
+  bottom: -1px;
+  box-sizing: border-box;
+  min-width: 6px;
+  border: 2px solid var(--primary);
+  border-radius: 4px;
+  cursor: grab;
+  touch-action: none;
+}
+.tl-ov-window:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.tl-ov-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+}
+.tl-ov-start {
+  left: -6px;
+}
+.tl-ov-end {
+  right: -6px;
+}
+/* A drag across the hours: the band it zooms to, over every lane, from the tracks' own start. */
+.tl-band-track {
+  position: absolute;
+  left: var(--name);
+  right: var(--end);
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.tl-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  border-inline: 1px solid var(--primary);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
+/* The hours' lines, each shown at the track widths its label is (the layer is the tracks' width). */
 .tl-hours {
   position: absolute;
   left: var(--name);
@@ -279,6 +484,91 @@
   top: 22px;
   bottom: 0;
   pointer-events: none;
+  container-type: inline-size;
+}
+/* The quiet stretches skipped: a band each through every lane, over the bars that run through it,
+   in the card's colour, its edges zigzagged and its words down it; a press draws its stretch on
+   the true clock. Its layer is the tracks' width, so its words show at the widths that hold them. */
+.tl-breaks {
+  position: absolute;
+  left: var(--name);
+  right: var(--end);
+  top: 22px;
+  bottom: 0;
+  z-index: 2;
+  container-type: inline-size;
+  pointer-events: none;
+}
+.tl-zigzags {
+  position: absolute;
+}
+.tl-zigzag {
+  stroke: var(--muted-foreground);
+  stroke-width: 1.2;
+}
+.tl-break {
+  all: unset;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.tl-break:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .tl-break:hover {
+    color: var(--foreground);
+  }
+}
+.tl-edge {
+  position: absolute;
+  top: 0;
+  width: 6px;
+  height: 100%;
+}
+.tl-edge-start {
+  left: 0;
+}
+.tl-edge-end {
+  right: 0;
+}
+.tl-break > .tl-fit {
+  overflow: hidden;
+  max-height: calc(100% - 12px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+/* A band's length over it on the hours line, and the day it ends on after it. */
+.tl-break-length {
+  position: absolute;
+  top: 0;
+  padding: 0 4px;
+  transform: translateX(-50%);
+  color: var(--foreground);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The day a band ends on, said right after its length. */
+.tl-break-day {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  padding-left: 4px;
 }
 .tl-hour,
 .tl-now {
@@ -300,6 +590,7 @@
 }
 .tl-name {
   flex: 0 0 var(--name);
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -385,11 +676,12 @@
   outline-offset: 2px;
   z-index: 1;
 }
+/* A word after a segment (a review's verdict): its inset from its bar as drawn and its room are
+   the layout's (insetCss, roomCss), which weighs it by them. */
 .tl-after {
   position: absolute;
   top: 5px;
   box-sizing: border-box;
-  padding-left: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -398,34 +690,65 @@
   font-weight: 600;
   line-height: 26px;
 }
+/* A runs lane: a row per runs that overlap, each run one 14 px bar at its recorded times, at least
+   2 px wide, its queue the lighter head of it, a 1 px edge of the card's colour keeping two bars
+   apart, its words inside it where it is wide enough, cut to fit. */
 .tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-track {
-  height: calc(var(--rows) * 42px + 4px);
+  height: calc(var(--rows) * 20px + 16px);
 }
 .tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg {
-  top: calc(var(--row) * 42px + 4px);
-  height: 20px;
+  top: calc(var(--row) * 20px + 11px);
+  height: 14px;
   padding: 0;
-  border-radius: 3px;
-}
-/* A lane of more rows than its runs' words are drawn for (timeline-layout.ts WORDED_ROWS) draws
-   them thin: each run's words are in its hover, its focus and the list. */
-.tl-lane[data-dense] .tl-track {
-  height: calc(var(--rows) * 12px + 4px);
-}
-.tl-lane[data-dense] .tl-seg {
-  top: calc(var(--row) * 12px + 4px);
-  height: 8px;
+  border: 0;
   border-radius: 2px;
+  box-shadow: 0 0 0 1px var(--card);
+  background: color-mix(in srgb, var(--c) 70%, transparent);
+  color: var(--card);
+  font-size: 10.5px;
+  line-height: 14px;
 }
-.tl-under {
+.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg > .tl-fit {
+  padding: 0 4px;
+}
+.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg.tl-waiting {
+  border: 1px dashed color-mix(in srgb, var(--c) 55%, transparent);
+  background: color-mix(in srgb, var(--c) 10%, transparent);
+  color: var(--foreground);
+  line-height: 12px;
+}
+.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg.tl-running {
+  background: var(--stripes);
+  color: var(--foreground);
+}
+/* Where the recorder keeps no runs: hatched, unknown time, not empty, its words where they fit. */
+.tl-notkept {
   position: absolute;
-  top: calc(var(--row) * 42px + 27px);
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-right: 1px dashed var(--muted-foreground);
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--muted-foreground) 22%, transparent) 0 2px,
+    transparent 2px 7px
+  );
+}
+.tl-notkept > .tl-fit {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  max-width: calc(100% - 12px);
+  box-sizing: border-box;
+  padding: 0 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transform: translateY(-50%);
+  background: var(--card);
   color: var(--muted-foreground);
   font-size: var(--fs-xs);
-  line-height: 1.2;
 }
 .tl-gates-head {
   border-bottom: 0;
@@ -541,6 +864,13 @@
 .tl-key-work {
   background: var(--primary);
 }
+/* A band's key: its two edges, as the overview marks it. */
+.tl-key-quiet {
+  width: 8px;
+  height: 12px;
+  border-inline: 1.5px dashed var(--muted-foreground);
+  border-radius: 0;
+}
 .tl-key-wait {
   background: color-mix(in srgb, var(--primary) 28%, transparent);
 }
@@ -571,6 +901,12 @@
   .tl-lanes {
     display: block;
   }
+  .tl-overview {
+    display: block;
+  }
+  .tl-zoom {
+    display: flex;
+  }
   .tl-machine.tl-narrow {
     display: none;
   }
@@ -594,267 +930,29 @@
   }
 }
 
-/* A word in the lanes shows only at the track widths that hold it (timeline-layout.ts WIDTHS): a
-   tl-from-W from W pixels wide, a tl-to-W below W. */
-@container (max-width: 399.5px) {
-  .tl-from-400 {
-    display: none;
-  }
+/* A lane a message starts or ends at carries a dotted line at its foot, under its bars: each
+   message a 2 x 8 tick on its sender's line at its exact x, in a press area of 24 px of its own; a
+   separate chooser keeps ticks at one pixel apart. A tick is centred on its time by its margin,
+   not a transform, which a press's shrink would replace (styles/board.css), and is its own height
+   over a button's least, so it sits on its line, where an arrow meets a lane. */
+.tl-lane[data-rail] .tl-track {
+  height: 44px;
 }
-@container (min-width: 400px) {
-  .tl-to-400 {
-    display: none;
-  }
+.tl-lane[data-rail][data-lane="other"] .tl-track {
+  height: 22px;
 }
-@container (max-width: 449.5px) {
-  .tl-from-450 {
-    display: none;
-  }
+.tl-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 35.5px;
+  height: 0;
+  border-top: 1px dotted color-mix(in srgb, var(--muted-foreground) 45%, transparent);
 }
-@container (min-width: 450px) {
-  .tl-to-450 {
-    display: none;
-  }
-}
-@container (max-width: 499.5px) {
-  .tl-from-500 {
-    display: none;
-  }
-}
-@container (min-width: 500px) {
-  .tl-to-500 {
-    display: none;
-  }
-}
-@container (max-width: 549.5px) {
-  .tl-from-550 {
-    display: none;
-  }
-}
-@container (min-width: 550px) {
-  .tl-to-550 {
-    display: none;
-  }
-}
-@container (max-width: 599.5px) {
-  .tl-from-600 {
-    display: none;
-  }
-}
-@container (min-width: 600px) {
-  .tl-to-600 {
-    display: none;
-  }
-}
-@container (max-width: 649.5px) {
-  .tl-from-650 {
-    display: none;
-  }
-}
-@container (min-width: 650px) {
-  .tl-to-650 {
-    display: none;
-  }
-}
-@container (max-width: 699.5px) {
-  .tl-from-700 {
-    display: none;
-  }
-}
-@container (min-width: 700px) {
-  .tl-to-700 {
-    display: none;
-  }
-}
-@container (max-width: 749.5px) {
-  .tl-from-750 {
-    display: none;
-  }
-}
-@container (min-width: 750px) {
-  .tl-to-750 {
-    display: none;
-  }
-}
-@container (max-width: 799.5px) {
-  .tl-from-800 {
-    display: none;
-  }
-}
-@container (min-width: 800px) {
-  .tl-to-800 {
-    display: none;
-  }
-}
-@container (max-width: 849.5px) {
-  .tl-from-850 {
-    display: none;
-  }
-}
-@container (min-width: 850px) {
-  .tl-to-850 {
-    display: none;
-  }
-}
-@container (max-width: 899.5px) {
-  .tl-from-900 {
-    display: none;
-  }
-}
-@container (min-width: 900px) {
-  .tl-to-900 {
-    display: none;
-  }
-}
-@container (max-width: 949.5px) {
-  .tl-from-950 {
-    display: none;
-  }
-}
-@container (min-width: 950px) {
-  .tl-to-950 {
-    display: none;
-  }
-}
-@container (max-width: 999.5px) {
-  .tl-from-1000 {
-    display: none;
-  }
-}
-@container (min-width: 1000px) {
-  .tl-to-1000 {
-    display: none;
-  }
-}
-@container (max-width: 1049.5px) {
-  .tl-from-1050 {
-    display: none;
-  }
-}
-@container (min-width: 1050px) {
-  .tl-to-1050 {
-    display: none;
-  }
-}
-@container (max-width: 1099.5px) {
-  .tl-from-1100 {
-    display: none;
-  }
-}
-@container (min-width: 1100px) {
-  .tl-to-1100 {
-    display: none;
-  }
-}
-@container (max-width: 1149.5px) {
-  .tl-from-1150 {
-    display: none;
-  }
-}
-@container (min-width: 1150px) {
-  .tl-to-1150 {
-    display: none;
-  }
-}
-@container (max-width: 1199.5px) {
-  .tl-from-1200 {
-    display: none;
-  }
-}
-@container (min-width: 1200px) {
-  .tl-to-1200 {
-    display: none;
-  }
-}
-@container (max-width: 1249.5px) {
-  .tl-from-1250 {
-    display: none;
-  }
-}
-@container (min-width: 1250px) {
-  .tl-to-1250 {
-    display: none;
-  }
-}
-@container (max-width: 1299.5px) {
-  .tl-from-1300 {
-    display: none;
-  }
-}
-@container (min-width: 1300px) {
-  .tl-to-1300 {
-    display: none;
-  }
-}
-@container (max-width: 1349.5px) {
-  .tl-from-1350 {
-    display: none;
-  }
-}
-@container (min-width: 1350px) {
-  .tl-to-1350 {
-    display: none;
-  }
-}
-@container (max-width: 1399.5px) {
-  .tl-from-1400 {
-    display: none;
-  }
-}
-@container (min-width: 1400px) {
-  .tl-to-1400 {
-    display: none;
-  }
-}
-@container (max-width: 1449.5px) {
-  .tl-from-1450 {
-    display: none;
-  }
-}
-@container (min-width: 1450px) {
-  .tl-to-1450 {
-    display: none;
-  }
-}
-@container (max-width: 1499.5px) {
-  .tl-from-1500 {
-    display: none;
-  }
-}
-@container (min-width: 1500px) {
-  .tl-to-1500 {
-    display: none;
-  }
-}
-@container (max-width: 1549.5px) {
-  .tl-from-1550 {
-    display: none;
-  }
-}
-@container (min-width: 1550px) {
-  .tl-to-1550 {
-    display: none;
-  }
-}
-@container (max-width: 1599.5px) {
-  .tl-from-1600 {
-    display: none;
-  }
-}
-@container (min-width: 1600px) {
-  .tl-to-1600 {
-    display: none;
-  }
-}
-
-/* Message marks keep their exact x; a separate chooser retains colliding instants. A mark is
-   centred on its time by its margin, not a transform, which a press's shrink would replace
-   (styles/board.css), and is its own height over a button's least, so its dot sits on its lane's
-   middle, where an arrow meets a lane. */
 .tl-message-mark {
   position: absolute;
   z-index: 2;
-  top: 6px;
+  top: 24px;
   width: 24px;
   height: 24px;
   min-height: 0;
@@ -865,21 +963,30 @@
   color: var(--foreground);
   cursor: pointer;
 }
+.tl-lane[data-lane="other"] .tl-rail {
+  top: 13.5px;
+}
+.tl-lane[data-lane="other"] .tl-message-mark {
+  top: 2px;
+}
 .tl-message-mark::before {
   content: "";
   display: block;
-  width: 6px;
-  height: 6px;
-  margin: auto;
-  border: 2px solid currentColor;
-  background: var(--card);
-  border-radius: 50%;
+  width: 2px;
+  height: 8px;
+  margin: 8px auto;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--muted-foreground) 85%, transparent);
 }
 .tl-message-mark[aria-pressed="true"]::before {
+  width: 9px;
+  height: 9px;
+  margin: 7.5px auto;
+  border-radius: 50%;
   background: var(--foreground);
+  box-shadow: 0 0 0 1.5px var(--card);
 }
-.tl-message-mark:focus-visible,
-.tl-message-row:focus-visible {
+.tl-message-mark:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
@@ -892,17 +999,19 @@
   pointer-events: none;
   z-index: 3;
 }
-/* Its left is its line's middle. */
+/* The selected message's arrow: its left is its line's middle, a border of the card's colour so it
+   reads across the bars it passes, ending at a ring on its recipient's line. */
 .tl-address-arrow {
   position: absolute;
   margin-left: -1px;
   border-left: 2px solid var(--foreground);
+  box-shadow: 0 0 0 2px var(--card);
 }
 .tl-address-arrow::after {
   content: "";
   position: absolute;
   left: -6px;
-  bottom: 0;
+  bottom: 3px;
   width: 8px;
   height: 8px;
   border-bottom: 2px solid var(--foreground);
@@ -910,22 +1019,106 @@
   transform: rotate(45deg);
 }
 .tl-address-arrow.tl-arrow-up::after {
-  top: 0;
+  top: 3px;
   bottom: auto;
   transform: rotate(225deg);
 }
+/* Borders of whole pixels, as a screen draws a fraction of one as less: a ring's middle is its
+   place only where its margin is half of all it is drawn. */
+.tl-address-ring {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  margin: -4.5px 0 0 -4.5px;
+  border: 2px solid var(--foreground);
+  border-radius: 50%;
+  background: var(--card);
+}
+.tl-address-ring.tl-ring-around {
+  width: 16px;
+  height: 16px;
+  margin: -9px 0 0 -9px;
+  border-width: 1px;
+  background: transparent;
+}
+.tl-address-guide {
+  position: absolute;
+  border-left: 1px dashed var(--foreground);
+  opacity: 0.55;
+}
+/* The selected message's address and time on the hours line, over the hours' words. */
+.tl-address-said {
+  position: absolute;
+  top: 0;
+  z-index: 4;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: var(--fs-xs);
+  line-height: 18px;
+  white-space: nowrap;
+}
+/* A phone's message: one line of 28 px, its time, its diamond and its words level, in the muted
+   colour. Its button is the whole row, out over the row's padding, so a press anywhere on it, its
+   time and its diamond included, is the button's, also while a press shrinks it about its middle
+   (styles/board.css); the time and the diamond, drawn over it, let a press through. */
+.tl-message {
+  padding-top: 5px;
+  padding-bottom: 5px;
+  line-height: 18px;
+}
+.tl-message .tl-at {
+  top: 5px;
+  line-height: 18px;
+}
+.tl-message .tl-mark {
+  top: 14px;
+}
+.tl-message .tl-at,
+.tl-message .tl-mark {
+  pointer-events: none;
+}
 .tl-message-row {
+  grid-column: 1 / -1;
+  min-height: 0;
+  margin: -5px 0 -5px calc(-1 * (var(--rail) + 28px));
+  padding: 5px 0 5px calc(var(--rail) + 28px);
   text-align: left;
   border: 0;
+  border-radius: 6px;
   background: transparent;
-  padding: 0;
   font: inherit;
-  color: inherit;
+  color: var(--muted-foreground);
   cursor: pointer;
 }
+.tl-message-row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
 .tl-message-row[aria-pressed="true"] {
+  color: var(--foreground);
   font-weight: 700;
   text-decoration: underline;
+}
+/* The row from which builds and tests are kept: its mark the hatch of the time before it. */
+.tl-kept .tl-label {
+  color: var(--muted-foreground);
+}
+.tl-kept .tl-mark {
+  width: 14px;
+  height: 10px;
+  margin: -5px 0 0 -7px;
+  box-sizing: border-box;
+  border: 1px dashed var(--muted-foreground);
+  border-radius: 0;
+  transform: none;
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--muted-foreground) 45%, transparent) 0 2px,
+    transparent 2px 5px
+  );
 }
 .tl-message-panel {
   padding-top: var(--sp-3);

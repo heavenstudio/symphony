@@ -7,7 +7,6 @@ import {
   isFor,
   NO_WORK,
   phaseLabel,
-  phaseLabels,
   phases,
   placesAlike,
   readWork,
@@ -199,9 +198,11 @@ describe("a card's build and test phases", () => {
     expect(phases(aWork([aMachine("alpha", [unnamed, unnamed])]), "sim/a")).toHaveLength(2);
   });
 
-  // The labels a card's height is reserved from are the ones its phase chips show, in their
-  // order, read as disconnected while the feed is, and none for a task with no work.
+  // What a card's phase chips read (work-phases.tsx), in their order, read as disconnected while
+  // the feed is, and none for a task with no work.
   it("read as disconnected while the feed is, a machine's own and no other", () => {
+    const chips = (work: MachineWork, slug: string, connected: boolean) =>
+      shownPhases(work, slug, connected).map(phaseLabel);
     const work = aWork(
       [
         aMachine("alpha", [
@@ -211,18 +212,18 @@ describe("a card's build and test phases", () => {
       ],
       { unassigned: [anOperation(null, null, "test", "queued")] },
     );
-    expect(phaseLabels(work, "sim/a", true)).toEqual([
+    expect(chips(work, "sim/a", true)).toEqual([
       "Build running · alpha",
       "Test queued · alpha",
       "Observed Test queued · Machine unknown · unknown",
     ]);
-    expect(phaseLabels(work, "sim/a", false)).toEqual([
+    expect(chips(work, "sim/a", false)).toEqual([
       "Observed Build running · alpha · disconnected",
       "Observed Test queued · alpha · disconnected",
       "Observed Test queued · Machine unknown · unknown",
     ]);
     expect(shownPhases(work, "sim/a", false)[0]?.freshness).toBe("disconnected");
-    expect(phaseLabels(work, "sim/b", true)).toEqual([]);
+    expect(chips(work, "sim/b", true)).toEqual([]);
   });
 });
 

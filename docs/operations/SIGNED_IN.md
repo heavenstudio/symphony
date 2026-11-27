@@ -15,8 +15,9 @@ another program to sign one.
 
 The server checks the header on every request: reads and writes, on the one server and on a server
 of its own. A request whose header verifies is taken as the person whose sign-in it names. The
-Symphony's own sign-in service, which would sign it, is not built yet: the service in front is one
-you run. A hosted adapter's writes (`symphony_server::hosted`) do not go through this header.
+Symphony's own sign-in service signs it for a visitor Google or GitHub signed in
+([SIGN_IN_SERVICE](SIGN_IN_SERVICE.md)); any other service that signs it as below fits as well. A
+hosted adapter's writes (`symphony_server::hosted`) do not go through this header.
 
 ## Which services fit
 
@@ -24,6 +25,7 @@ The server holds one public key, named in its own settings, and fetches no key f
 
 **Fits:** any service that holds the matching private key and signs this header, as below, on
 each request it passes on. For example:
+- the Symphony's own, `symphony-sign-in` ([SIGN_IN_SERVICE](SIGN_IN_SERVICE.md));
 - a forward-auth service behind nginx `auth_request`, Caddy `forward_auth` or Traefik
   `ForwardAuth`, which signs the header and returns it for the proxy to copy onto the request;
 - a small program of your own in front.

@@ -115,6 +115,11 @@ none of the repositories around this one: its board runs on the machine's Postgr
   service in front of the server sends to say who a request is from: which services fit, the key
   and origin in the machine folder, the header's format and how to sign one, who it makes a
   request, and what is refused.
+- [The Symphony's own sign-in service](operations/SIGN_IN_SERVICE.md) — `symphony-sign-in`, a
+  program apart from the core that stands in front of the server, signs visitors in with Google or
+  GitHub and signs that header: setting it up from a Google client or a GitHub OAuth app to a
+  signed-in visitor, what it does with a request, how a visitor signs in, its cookies and sign-out,
+  and what is refused.
 - [Operating the board](operations/BOARD_OPERATIONS.md) — the board's store and the schema
   contract between its builds, which build moves a live board, who writes it, its server,
   snapshots and holds, what the command may write, stuck servers, a board that went back or was

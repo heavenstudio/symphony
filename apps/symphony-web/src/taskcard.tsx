@@ -4,13 +4,17 @@
 // chips are work-phases.tsx's, which a task's page draws without the card, and are named here too.
 
 import { memo, useEffect } from "react";
-import { linkName } from "./cardheight";
 import { href } from "./project";
 import type { MachineWork, Role, Task } from "./wire";
 import { NO_WORK, samePhases, shownPhases } from "./work";
 import { statusWords, WorkPhases } from "./work-phases";
 
 export { PhaseChips, statusWords, WorkPhases } from "./work-phases";
+
+/** The last part of a link's path: what its chip says. */
+export function linkName(link: string): string {
+  return link.slice(link.lastIndexOf("/") + 1);
+}
 
 /** The performance mark set once a task's card is first drawn. */
 const READY_MARK = "tasks-ready";

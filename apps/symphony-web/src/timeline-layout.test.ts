@@ -1,10 +1,15 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
+import GUARDS from "../../symphony-web-tests/tests/browser/timeline/revision-guards.json";
 import { carried } from "./timeline-cost";
+import { BAND_SHARE } from "./timeline-cut";
 import {
+  AFTER_PAD_PX,
+  advance,
   BAR_SPAN,
-  CHAR_PX,
+  BAR_WORDS_PX,
+  barFit,
   type Costs,
   capitalised,
   civil,
@@ -12,6 +17,7 @@ import {
   clockOf,
   date,
   dateOf,
+  END_PX,
   everySeconds,
   type Fit,
   failed,
@@ -21,8 +27,11 @@ import {
   GAP_PX,
   gateChanges,
   gateTone,
-  keptNote,
+  insetCss,
+  keptRow,
+  keptTitle,
   type Lane,
+  type Lanes,
   LONGEST_WAIT,
   label,
   lanes,
@@ -33,11 +42,13 @@ import {
   nextRead,
   offsetAt,
   PAD_PX,
+  past,
   placeRow,
   placeTotals,
   queuedSeconds,
+  quietSaid,
+  quietWhy,
   type Row,
-  RUN_GAP,
   ran,
   readTimeline,
   reason,
@@ -45,18 +56,24 @@ import {
   resultWord,
   roomCss,
   rows,
+  runCounts,
   runLabel,
   runRow,
   runRows,
   runTitle,
+  runWords,
   Scale,
-  short,
+  SEG_MIN_PX,
+  type Seg,
+  segIndentCss,
   shortCommit,
   showAll,
   stageSeconds,
   statusTone,
   stops,
   stretches,
+  TRACKS,
+  textPx,
   timelineEnd,
   took,
   totalParts,
@@ -64,11 +81,12 @@ import {
   trimmed,
   verdictTone,
   verdictWord,
+  WIDTH_RULES,
   WIDTHS,
-  WORDED_ROWS,
   waited,
   widthFor,
 } from "./timeline-layout";
+import { type Quiet, quietStretches } from "./timeline-quiet";
 import type { PlaceSpan, Run, RunResult, Stage, TaskTimeline, TokenRow } from "./wire";
 import { TIMELINE_EVERY } from "./wire";
 import { moment } from "./words";
@@ -426,12 +444,58 @@ describe("a task's timeline laid out", () => {
     ]);
     const closed = { ...pictures(), closed: pictures().now, rounds: [], bounces: 0, runs: [] };
     expect(totals(closed)).toEqual(["6 h 18 m in all · 0 review rounds · 0 bounces", null]);
-    expect(keptNote(pictures())).toBeNull();
+    expect(keptTitle(pictures())).toBeNull();
     const rotated = { ...pictures(), runs_from: at(83) };
-    expect(keptNote(rotated)).toBe("Builds and tests before 11-11 10:25 are no longer kept.");
+    expect(keptTitle(rotated)).toBe("Builds and tests before 11-11 10:25 are not kept");
     // One round, one bounce: each said once.
     const one = { ...pictures(), rounds: pictures().rounds.slice(0, 1) };
     expect(totals(one)[0]).toBe("6 h 18 m so far · 1 review round · 1 bounce");
+  });
+
+  it("the time no run is kept of is a row at its end in the list and a hatch over the runs lanes", () => {
+    const rotated = { ...pictures(), runs_from: at(86) };
+    // At the instant the build was queued: the row before it, under the stage it began in.
+    const listed = rows(rotated);
+    const kept = listed.findIndex((row) => row.kept);
+    expect(listed[kept]).toEqual({
+      start: at(86),
+      day: null,
+      at: "10:28",
+      sub: true,
+      event: true,
+      tone: "muted-foreground",
+      label: "Builds and tests kept from here on",
+      took: null,
+      bar: null,
+      word: null,
+      title: "Builds and tests before 11-11 10:28 are not kept",
+      kept: true,
+    });
+    expect(listed[kept + 1]?.label).toBe("Build, just lint-rs · queued 3 m");
+    expect(listed[kept - 1]?.label).toBe("In progress · quiet-wren");
+    expect(rows(pictures()).some((row) => row.kept)).toBe(false);
+    expect(keptRow(pictures())).toBeNull();
+    // Wide: from the task's making to it, its words where they fit, over both runs lanes.
+    const hatch = lanes(rotated).notKept;
+    expect(hatch?.left).toBeCloseTo((2 / 380) * 100, 10);
+    expect(hatch?.width).toBeCloseTo((86 / 380) * 100, 10);
+    // 27 characters weighed letter by letter and their padding, 189 px, in 23% of the track: from
+    // 850 px.
+    expect(hatch?.label).toEqual({ text: "not kept before 11-11 10:28", from: 850, to: null });
+    expect(hatch?.title).toBe("Builds and tests before 11-11 10:28 are not kept");
+    // Too narrow for its words: a hatch alone.
+    expect(lanes({ ...pictures(), runs_from: at(4) }).notKept?.label).toBeNull();
+    // None where every run is kept, where the task has no runs lane to hatch, or where the
+    // recorder's history begins at the task's making.
+    expect(lanes(pictures()).notKept).toBeNull();
+    // With no run kept at all, no runs lane to hatch: the list's row still says since when.
+    expect(lanes({ ...rotated, runs: [] }).notKept).toBeNull();
+    expect(
+      rows({ ...rotated, runs: [] })
+        .filter((row) => row.kept)
+        .map((row) => row.label),
+    ).toEqual(["Builds and tests kept from here on"]);
+    expect(lanes({ ...pictures(), runs_from: pictures().created }).notKept).toBeNull();
   });
 
   it("the phone list reads as the approved picture, each run and gate change under its stage", () => {
@@ -718,62 +782,154 @@ describe("a task's timeline laid out", () => {
   it("a word is drawn only at the track widths its room holds it", () => {
     // Room enough at every width, at some, at none.
     expect(widthFor("41 m", 50, PAD_PX)).toBeNull();
-    expect(widthFor("ready 41 m", 10, PAD_PX)).toBe(750);
+    expect(widthFor("ready 41 m", 10, PAD_PX)).toBe(800);
     expect(widthFor("ready 41 m", 0.5, PAD_PX)).toBeUndefined();
     expect(widthFor("", 50, PAD_PX)).toBeUndefined();
     expect(widthFor("41 m", 0, PAD_PX)).toBeUndefined();
-    // The long words where they fit, the short below that, nothing below the short's own.
+    // The long words where they fit, the short below that, nothing below the short's own: in a
+    // segment, inside its padding and border, "ready 41 m" needs 80.9 px, 10 % of 809.
     const fits = fitted("ready 41 m", "41 m", 10);
     expect(shown(fits, 1280)).toBe("ready 41 m");
-    expect(shown(fits, 750)).toBe("ready 41 m");
-    expect(shown(fits, 700)).toBe("41 m");
-    expect(shown(fits, 400)).toBe("41 m");
-    expect(shown(fits, 350)).toBe("");
-    expect(fitClass(fits[1] as Fit)).toBe("tl-fit tl-from-400 tl-to-750");
+    expect(shown(fits, 850)).toBe("ready 41 m");
+    expect(shown(fits, 800)).toBe("41 m");
+    expect(shown(fits, 450)).toBe("41 m");
+    expect(shown(fits, 400)).toBe("");
+    expect(fitClass(fits[1] as Fit)).toBe("tl-fit tl-from-450 tl-to-850");
     // A short word no narrower than the long one is never drawn beside it.
     expect(fitted("41 m", "41 m", 10)).toHaveLength(1);
     // The last label may run into the lanes' end margin.
-    const last = { room: 1, last: true };
-    expect(label("running 18 m", last)?.from).toBeNull();
+    const last = { room: 1, last: true, bar: 5 };
+    expect(label("approved", last)?.from).toBeNull();
     expect(roomCss(last)).toBe("calc(1.00% + var(--end))");
-    const between = { room: 1, last: false };
-    expect(label("running 18 m", between)).toBeNull();
+    const between = { room: 1, last: false, bar: 5 };
+    expect(label("approved", between)).toBeNull();
     expect(roomCss(between)).toBe("1.00%");
   });
 
+  it("a label after a bar is weighed by its words, its padding past the bar as drawn and its gap", () => {
+    expect([AFTER_PAD_PX, SEG_MIN_PX, GAP_PX]).toEqual([6, 14, 4]);
+    // "changes" beside a bar no narrower than drawn: 50.5 + 6 + 4 = 60.5 px, of 10 % from a 605 px
+    // track, so from 650; "approved", 66.6 px, from 700; "verdict", 52.2 px, from 550. Weighed
+    // without its padding (widthFor), "changes" would have shown from 550, and been cut.
+    const ten = { room: 10, last: false, bar: 5 };
+    expect(label("changes", ten)).toEqual({ text: "changes", from: 650, to: null });
+    expect(label("approved", ten)?.from).toBe(700);
+    expect(label("verdict", ten)?.from).toBe(550);
+    expect(widthFor("changes", 10, GAP_PX)).toBe(550);
+    // Ten letters, their padding and their gap take 79.7 px: that share of 400 shows from 400, a
+    // hair less from 450, and that share of 300 at every width.
+    const tenLetters = "a".repeat(10);
+    const share = (track: number) => ((textPx(tenLetters) + AFTER_PAD_PX + GAP_PX) * 100) / track;
+    expect(textPx(tenLetters) + AFTER_PAD_PX + GAP_PX).toBeCloseTo(79.74, 9);
+    expect(label(tenLetters, { room: share(400), last: false, bar: 50 })?.from).toBe(400);
+    expect(label(tenLetters, { room: share(400) - 0.01, last: false, bar: 50 })?.from).toBe(450);
+    expect(label(tenLetters, { room: share(300), last: false, bar: 50 })?.from).toBeNull();
+    expect(label(tenLetters, { room: share(300) - 0.01, last: false, bar: 50 })?.from).toBe(400);
+    // A bar narrower than its least drawn width pushes its label's words past it: a bar of no time
+    // is drawn 14 px wide, so 69.7 + 4 + 14 + 6 = 93.7 px, from 469, so 500. A bar of 2 % is 9 px
+    // at 450, its label 5 px further: 84.7 px of 90. At 400 it is 8 px, 6 further: 85.7 px of 80.
+    expect(label(tenLetters, { room: 20, last: false, bar: 0 })?.from).toBe(500);
+    expect(label(tenLetters, { room: 20, last: false, bar: 2 })?.from).toBe(450);
+    // A bar 14 px wide at 300 already takes the label's padding alone at every width.
+    expect(label(tenLetters, { room: 20, last: false, bar: 14 / 3 })?.from).toBe(400);
+    // The last label takes the end margin too: twenty letters need 139 + 4 + 6 − 88 = 61 px, 5 % of
+    // 1220 px, so from 1250; of 2 %, wider than the widest track.
+    expect(label("a".repeat(20), { room: 5, last: true, bar: 5 })?.from).toBe(1250);
+    expect(label("a".repeat(20), { room: 2, last: true, bar: 5 })).toBeNull();
+    // The last label of none at all still shows, as does a verdict at the very end after a bar of
+    // no time: 56.6 + 4 + 20 = 80.6 px of the margin's 88. Ten letters there (93.7 px) have no
+    // room, and are never drawn.
+    expect(label("", { room: 0, last: true, bar: 0 })).toEqual({ text: "", from: null, to: null });
+    expect(label("approved", { room: 0, last: true, bar: 0 })?.from).toBeNull();
+    expect(label(tenLetters, { room: 0, last: true, bar: 0 })).toBeNull();
+    // No room, or none to weigh, before the next: never drawn.
+    expect(label("approved", { room: 0, last: false, bar: 5 })).toBeNull();
+    expect(label("approved", { room: -1, last: false, bar: 5 })).toBeNull();
+    expect(label("approved", { room: Number.NaN, last: false, bar: 5 })).toBeNull();
+    expect(label("approved", { room: 50, last: false, bar: Number.NaN })).toBeNull();
+    // An accented word is as wide as its letters, not its bytes.
+    expect(label("é".repeat(8), ten)).toEqual({
+      ...(label("e".repeat(8), ten) as Fit),
+      text: "é".repeat(8),
+    });
+    // Its padding for the style sheet: the least of it, or past the bar's least drawn width.
+    expect(insetCss({ room: 1, last: false, bar: 2 })).toBe("max(6px, calc(20px - 2.00%))");
+    expect(insetCss({ room: 1, last: true, bar: 0.125 })).toBe("max(6px, calc(20px - 0.12%))");
+  });
+
+  it("a segment's words start past a few minutes' segment before it, drawn wider than its time", () => {
+    const at = (left: number, width: number) => ({ left, width, from: 0, to: 0, out: false });
+    // Two minutes before it, 0.1 % of the track: drawn 14 px wide on any track, so its words keep
+    // 3 px past it, indented 10 px less 0.1 % of the track past its padding, and never less.
+    expect(past(at(10, 0.1), at(10.1, 5))).toBeCloseTo(0.1, 12);
+    expect(segIndentCss(0.1)).toBe("max(0px, calc(10px - 0.10cqw))");
+    // None before it, one not drawn, or one that overlaps it in time: nothing to keep past.
+    expect(past(undefined, at(10, 5))).toBeUndefined();
+    expect(past({ ...at(10, 0.1), out: true }, at(10.1, 5))).toBeUndefined();
+    expect(past(at(10, 2), at(11, 5))).toBeUndefined();
+    // One far enough before it never comes within 3 px of its words on a 300 px track: 10 px.
+    expect(past(at(10, 0.1), at(10 + 10 / 3, 5))).toBeUndefined();
+    expect(past(at(10, 0.1), at(10 + 10 / 3 - 0.01, 5))?.toFixed(2)).toBe("3.32");
+    // "1 h 4 m" weighs 44.1 px, 58.1 with its padding and border: of 5 %, from 1200 alone; past a
+    // segment 0.1 % before it, which takes 10 px less 0.1 % more, from 1350; one 4 % before it,
+    // never near, changes nothing.
+    expect(fittedFirst(["1 h 4 m"], 5)).toEqual([{ text: "1 h 4 m", from: 1200, to: null }]);
+    expect(fittedFirst(["1 h 4 m"], 5, 0.1)).toEqual([{ text: "1 h 4 m", from: 1350, to: null }]);
+    expect(fittedFirst(["1 h 4 m"], 5, 4)).toEqual(fittedFirst(["1 h 4 m"], 5));
+    expect(fitted("1 h 4 m", "", 4.1, 0.2)).toEqual([{ text: "1 h 4 m", from: 1600, to: null }]);
+    // Where that leaves too little room on every track, it gives way.
+    expect(fittedFirst(["1 h 4 m"], 3.7)).toEqual([{ text: "1 h 4 m", from: 1600, to: null }]);
+    expect(fittedFirst(["1 h 4 m"], 3.7, 0.1)).toEqual([]);
+  });
+
   it("a word's room is weighed by its characters, and a room's width rounds a tie to even", () => {
-    // Weighed at exactly 300 px it shows at every width; a hair more, from 400.
-    expect(widthFor("ab", ((2 * CHAR_PX + PAD_PX) * 100) / 300, PAD_PX)).toBeNull();
-    expect(widthFor("ab", ((2 * CHAR_PX + PAD_PX) * 100) / 301, PAD_PX)).toBe(400);
+    // Each character by the widest face's advance in the lanes' type at 12 px, and half a pixel for
+    // the browser's rounding: "39 m" is the system face's "3" and "9", its space at weight 400 and
+    // Segoe UI's bold "m", 7.86 + 8.02 + 3.38 + 11.00.
+    expect(textPx("39 m")).toBeCloseTo((655 + 668 + 282 + 917) * 0.012 + 0.5, 9);
+    expect(textPx("")).toBe(0.5);
+    // A wide letter and a narrow one; a capital; a word's middle dot.
+    const px = [textPx("m"), textPx("i"), textPx("W"), textPx("·")].map((one) => one - 0.5);
+    for (const [at, one] of [11.004, 3.42, 12.06, 4.008].entries()) {
+      expect(px[at]).toBeCloseTo(one, 9);
+    }
+    // An accented letter weighs its letter; one the table has not, the whole size.
+    expect(textPx("é")).toBe(textPx("e"));
+    expect(textPx("→")).toBe(12.5);
+    // Weighed a hair under 300 px it shows at every width; a hair over, from 400.
+    expect(widthFor("ab", ((textPx("ab") + PAD_PX) * 100) / 299.9, PAD_PX)).toBeNull();
+    expect(widthFor("ab", ((textPx("ab") + PAD_PX) * 100) / 300.1, PAD_PX)).toBe(400);
     // An accented word is as wide as its letters, not its bytes.
     expect(widthFor("é".repeat(8), 10, PAD_PX)).toBe(widthFor("e".repeat(8), 10, PAD_PX));
     // A short word that fits where the long one never does shows wherever it fits.
-    // "2 m" needs 3 × 6 + 12 = 30 px, 3 % of a 1000 px track exactly.
+    // "2 m" weighs 22.4 px, 36.4 px with its padding and its border: 3 % of a 1,215 px track.
     expect(fitted("a very long word for one segment", "2 m", 3)).toEqual([
-      { text: "2 m", from: 1000, to: null },
+      { text: "2 m", from: 1250, to: null },
     ]);
     // A short word that fits only where the long one does is left out.
     expect(fitted("ab", "a", 0.5)).toEqual([]);
-    // "abc" needs 30 px of 3.2 %, a 937.5 px track: from 950; "ab" 24 px, from 750 to there.
+    // "abc" needs 36 px of 3.2 %, a 1,126 px track: from 1150; "ab" 29.1 px, a 909 px track, from
+    // 935 (a 1280 page's track, TRACKS) to there.
     expect(fitted("abc", "ab", 3.2)).toEqual([
-      { text: "abc", from: 950, to: null },
-      { text: "ab", from: 750, to: 950 },
+      { text: "abc", from: 1150, to: null },
+      { text: "ab", from: 935, to: 1150 },
     ]);
-    // No short word: the long one alone, from where it fits (36 px of 10 %, 360 px) or at every
-    // width (of 20 %, 180 px, below the narrowest track).
-    expect(fitted("long", "", 10)).toEqual([{ text: "long", from: 400, to: null }]);
+    // A segment's words keep clear of its padding and its 1 px border either side.
+    expect(SEG_MIN_PX).toBe(PAD_PX + 2);
+    // No short word: the long one alone, from where it fits (40.2 px of 10 %, 402 px) or at every
+    // width (of 20 %, 201 px, below the narrowest track).
+    expect(fitted("long", "", 10)).toEqual([{ text: "long", from: 450, to: null }]);
     expect(fitted("long", "", 20)).toEqual([{ text: "long", from: null, to: null }]);
     // Rust's `{:.2}`: a tie rounds to the even digit.
-    expect(roomCss({ room: 0.125, last: false })).toBe("0.12%");
-    expect(roomCss({ room: 0.375, last: true })).toBe("calc(0.38% + var(--end))");
-    // The last label of none at all still shows: it takes the end margin.
-    expect(label("", { room: 0, last: true })).toEqual({ text: "", from: null, to: null });
-    // Twenty characters past the end margin need 120 + 4 − 88 = 36 px: 5 % of 720 px, from 750;
-    // 2 % of 1800 px, wider than the widest track.
-    expect(label("a".repeat(20), { room: 5, last: true })?.from).toBe(750);
-    expect(label("a".repeat(20), { room: 2, last: true })).toBeNull();
+    expect(roomCss({ room: 0.125, last: false, bar: 1 })).toBe("0.12%");
+    expect(roomCss({ room: 0.375, last: true, bar: 1 })).toBe("calc(0.38% + var(--end))");
     expect(fitClass({ text: "x", from: null, to: 500 })).toBe("tl-fit tl-to-500");
-    expect(WIDTHS).toEqual(Array.from({ length: 25 }, (_, at) => 400 + 50 * at));
+    // Every 50 from 400 to 1600, and the tracks of a 1280, a 1440 and a 1600 or wider page.
+    expect(TRACKS).toEqual([935, 1095, 1158]);
+    expect(WIDTHS).toEqual([
+      400, 450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 935, 950, 1000, 1050, 1095, 1100, 1150,
+      1158, 1200, 1250, 1300, 1350, 1400, 1450, 1500, 1550, 1600,
+    ]);
   });
 
   it("the wide lanes read as the approved picture at its width, and mark the hours and now", () => {
@@ -797,9 +953,10 @@ describe("a task's timeline laid out", () => {
       ["Stage", "", 1],
       ["Executor", "quiet-wren", 1],
       ["Reviewer", "lucid-heron", 1],
-      // The builds and the tests each a lane of their own, never one.
-      ["Builds", "studio", 1],
-      ["Tests", "studio", 1],
+      // The builds and the tests each a lane of their own, never one, its name saying its counts;
+      // the tests one after another on one row.
+      ["Builds", "1 run · 0 red", 1],
+      ["Tests", "4 runs · 0 red", 1],
     ]);
     expect(texts("stage", 950)).toEqual([
       "ready 41 m",
@@ -809,18 +966,21 @@ describe("a task's timeline laid out", () => {
       "28 m",
       "waiting to land 1 h 15 m",
     ]);
-    // At the narrowest the lanes are drawn (a 900 px page), the shorter words.
+    // At the narrowest the lanes are drawn (a 900 px page), the shorter words; the 28 minutes'
+    // segment holds "28 m" as Helvetica draws it but not as the system face does, and says none.
     expect(texts("stage", 600)).toEqual([
       "41 m",
       "in progress 1 h 52 m",
-      "review 52 m",
+      "52 m",
       "1 h 10 m",
-      "28 m",
+      "",
       "1 h 15 m",
     ]);
     expect(lane("stage")?.segs[5]?.look).toBe("waiting");
     expect(texts("executor", 950)).toEqual(["claimed 1 h 52 m", "1 h 10 m"]);
-    expect(texts("reviewer", 950)).toEqual(["", "round 1", "", "round 2"]);
+    // "round 2", past its four minutes' wait, has 46 px there: each face draws it within that
+    // (the system face 45.3 px), but weighed a letter at a time at its widest face's it is 46.2.
+    expect(texts("reviewer", 950)).toEqual(["", "round 1", "", ""]);
     expect(texts("reviewer", 600)).toEqual(["", "", "", ""]);
     expect(
       lane("reviewer")
@@ -830,19 +990,32 @@ describe("a task's timeline laid out", () => {
       ["changes", "dislike"],
       ["approved", "like"],
     ]);
-    const unders = (key: string, px: number) =>
-      lane(key)
-        ?.segs.filter((seg) => seg.under !== null)
-        .map((seg) => shown([seg.under?.[0] as Fit], px));
-    expect(unders("builds", 950)).toEqual(["lint-rs 4 m"]);
-    expect(unders("tests", 950)).toEqual([
-      "verify 24 m",
-      "verify 23 m",
-      "certificate 24 m",
-      "running 18 m",
+    // A run's words go inside the part of its bar the keyboard stops at, once that part is
+    // BAR_WORDS_PX wide: its distinguishing words and its length. The four-minute build is 10 px on
+    // the picture's track, too narrow; its queue, and every test's, says nothing.
+    expect(texts("builds", 950)).toEqual(["", ""]);
+    expect(texts("tests", 950)).toEqual([
+      "",
+      "verify · 24 m",
+      "",
+      "verify · 23 m",
+      "",
+      "certificate verify · 24 m",
+      "",
+      "certificate verify · 18 m",
     ]);
-    // Alone in its lane, the build's label has room to the track's end on the narrowest track.
-    expect(unders("builds", 600)).toEqual(["lint-rs 4 m"]);
+    // On the narrowest track the run going on for 18 minutes is 28 px, under BAR_WORDS_PX.
+    expect(texts("tests", 600)).toEqual([
+      "",
+      "verify · 24 m",
+      "",
+      "verify · 23 m",
+      "",
+      "certificate verify · 24 m",
+      "",
+      "",
+    ]);
+    expect(lane("tests")?.segs.map((seg) => seg.row)).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
     const looks = lane("tests")?.segs.map((seg) => seg.look) ?? [];
     expect(looks.filter((look) => look === "running")).toHaveLength(1);
     expect(looks.at(-1)).toBe("running");
@@ -888,7 +1061,7 @@ describe("a task's timeline laid out", () => {
     expect(legendStates(drawn)).toEqual(["met", "missing", "waived"]);
   });
 
-  it("runs that overlap or meet take a row each, as many as they need, never one bar", () => {
+  it("only runs that overlap take a row each, as many as they need, never one bar", () => {
     const runs = [
       aRun("test", "just lint-rs", "a", [0, 10, 100]),
       aRun("test", "just verify", "a", [20, 30, 60]),
@@ -899,18 +1072,20 @@ describe("a task's timeline laid out", () => {
       aRun("test", "just verify", "d", [70, 75, 95]),
     ];
     expect(runRows(runs, 200)).toEqual([[0, 1, 2, 3, 1], 4]);
-    // Ten seconds after the second's end is far enough apart to share its row, nine is not.
-    expect(runRows(runs, 200, 10)).toEqual([[0, 1, 2, 3, 1], 4]);
-    expect(runRows(runs, 200, 11)).toEqual([[0, 1, 2, 3, 4], 5]);
     expect(runRows(runs.slice(0, 1), 200)).toEqual([[0], 1]);
     expect(runRows([], 200)).toEqual([[], 1]);
-    // One after another: one row, unless they meet within the gap.
+    // One after another, however near: one row; queued at the instant the one before ended too.
     const apart = [
       aRun("test", "just lint-rs", "a", [0, 10, 20]),
       aRun("test", "just verify", "a", [20, 30, 60]),
+      aRun("test", "just verify", "a", [60.5, 61, 62]),
     ];
-    expect(runRows(apart, 200)[0]).toEqual([0, 0]);
-    expect(runRows(apart, 200, 1)).toEqual([[0, 1], 2]);
+    expect(runRows(apart, 200)).toEqual([[0, 0, 0], 1]);
+    // Queued a second before the one before ended: they overlap.
+    expect(runRows([apart[0] as Run, aRun("test", "x", "a", [19, 30, 60])], 200)).toEqual([
+      [0, 1],
+      2,
+    ]);
     // One still running holds its row until now.
     const running = [
       aRun("test", "just verify", "a", [0, 10, null]),
@@ -918,6 +1093,14 @@ describe("a task's timeline laid out", () => {
     ];
     expect(runRows(running, 200)[0]).toEqual([0, 1]);
     expect(runRows(running, 100)[0]).toEqual([0, 0]);
+    // A run queued long before it started holds its row from its queue: one that ran meanwhile
+    // takes another.
+    const waiting = [
+      aRun("test", "just verify", "a", [0, 500, 600]),
+      aRun("test", "just lint-rs", "a", [100, 101, 200]),
+      aRun("test", "just lint-rs", "a", [600, 601, 700]),
+    ];
+    expect(runRows(waiting, 1000)).toEqual([[0, 1, 0], 2]);
     // Rows that free at once: each run its own while they overlap, the first freed taken after.
     const tied = [0, 1, 2, 3].map(() => aRun("test", "x", "a", [0, 1, 50]));
     expect(runRows(tied, 200)).toEqual([[0, 1, 2, 3], 4]);
@@ -926,19 +1109,16 @@ describe("a task's timeline laid out", () => {
     ]);
   });
 
-  it("a lane's runs are drawn a row each where they overlap or meet, a label room to the next", () => {
-    // Twenty thousand seconds drawn: runs a hundred seconds apart or nearer meet.
-    const gap = (20_000 * RUN_GAP) / 100;
-    expect(gap).toBe(100);
+  it("a lane's runs are drawn one bar each in the first row free when queued", () => {
     const tests = [
       aRun("test", "just verify", "a", [0, 100, 4000]),
       aRun("test", "just test-rs -p symphony-board", "a", [1000, 1100, 3000]),
       aRun("test", "just test-rs -p symphony-api", "b", [2000, 2100, 3500]),
       aRun("test", "just test-rs -p symphony-web-tests", "c", [2500, 2600, 3800]),
-      // Fifty seconds after the second's end: it meets it, so it takes a row of its own.
+      // Fifty seconds after the second's end: its row is free again.
       aRun("test", "just verify", "d", [3050, 3100, 5000]),
-      // A thousand after the first's: back in its row.
-      aRun("test", "just verify", "d", [5000, 5000, 6000]),
+      // At the first's end: back in its row.
+      aRun("test", "just verify", "d", [4000, 4000, 6000]),
     ];
     const build = aRun("build", "just lint-rs", "a", [0, 50, 6000]);
     const timeline = aTimeline({ now: 20_000, created: 0, runs: [build, ...tests] });
@@ -946,66 +1126,99 @@ describe("a task's timeline laid out", () => {
     const lane = (key: string) => drawn.lanes.find((one) => one.key === key) as Lane;
     // The build overlaps every test, and has a lane and a row of its own.
     expect([lane("builds").rows, lane("builds").segs.map((seg) => seg.row)]).toEqual([1, [0, 0]]);
-    expect(lane("tests").rows).toBe(5);
-    expect(lane("tests").segs.map((seg) => seg.row)).toEqual([0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 0, 0]);
-    // No two runs in one row are nearer than the gap: each is its own bar.
-    for (const row of [0, 1, 2, 3, 4]) {
-      const spans = tests
-        .filter((_, index) => lane("tests").segs[index * 2]?.row === row)
-        .map((run) => [run.queued, run.ended ?? 20_000] as const);
-      for (let at = 1; at < spans.length; at += 1) {
-        expect((spans[at]?.[0] as number) - (spans[at - 1]?.[1] as number)).toBeGreaterThanOrEqual(
-          gap,
-        );
-      }
-    }
-    // The first test's label has room up to the run after it in its row, the last to the end.
-    const rooms = lane("tests")
-      .segs.filter((seg) => seg.under !== null)
-      .map((seg) => [seg.under?.[1].room, seg.under?.[1].last]);
-    expect(rooms[0]).toEqual([25, false]);
-    expect(rooms.at(-1)).toEqual([75, true]);
-    expect(drawn.lanes.map((one) => one.dense)).toEqual([false, false, false]);
+    expect(lane("tests").rows).toBe(4);
+    expect(lane("tests").segs.map((seg) => seg.row)).toEqual([0, 0, 1, 1, 2, 2, 3, 3, 1, 1, 0, 0]);
+    // Each run's queue is the head of its bar, its run after it, each its own part.
+    const segs = lane("tests").segs;
+    expect(segs.slice(0, 2).map((seg) => [seg.look, seg.left, seg.width])).toEqual([
+      ["waiting", 0, 0.5],
+      ["solid", 0.5, 19.5],
+    ]);
+    // The run with no wait has a queue of no width, only drawn.
+    expect([segs[10]?.width, segs[10]?.stop, segs[11]?.stop]).toEqual([0, false, true]);
+    expect(drawn.lanes.map((one) => one.rail)).toEqual([false, false, false]);
   });
 
-  it("a lane of more rows than WORDED_ROWS draws them thin, every run its own bar, no word under", () => {
-    // A burst of tests a minute apart on a timeline of five days: each meets the one before it,
-    // and needs a row of its own.
+  it("a burst of runs one after another is one row, its words inside each bar wide enough", () => {
+    // A burst of tests a minute apart on a timeline of five days: each after the one before it,
+    // so all on one row, every run still its own bar and a part the keyboard stops at.
     const days = 5 * 86_400;
-    const burst = (count: number) =>
-      Array.from({ length: count }, (_, at) =>
-        aRun("test", `just test-rs -p p${at}`, "a", [
-          days - 3600 + at * 60,
-          days - 3600 + at * 60 + 1,
-          days - 3600 + at * 60 + 30,
-        ]),
-      );
-    const drawn = (count: number) =>
-      lanes(
-        aTimeline({
-          now: days,
-          created: 0,
-          runs: [aRun("build", "just lint-rs", "a", [0, 50, 600]), ...burst(count)],
-        }),
-      );
-    const tests = (count: number) => drawn(count).lanes.find((one) => one.key === "tests") as Lane;
-    // As many rows as WORDED_ROWS: each run's words still under its bar.
-    expect([tests(WORDED_ROWS).rows, tests(WORDED_ROWS).dense]).toEqual([WORDED_ROWS, false]);
-    expect(tests(WORDED_ROWS).segs.filter((seg) => seg.under !== null)).toHaveLength(WORDED_ROWS);
-    // One more: thin rows and no word under any of them; each run still a part the keyboard
-    // stops at, its words its own.
-    const dense = tests(WORDED_ROWS + 3);
-    expect([dense.rows, dense.dense]).toEqual([WORDED_ROWS + 3, true]);
-    expect(dense.segs.map((seg) => seg.row)).toEqual(
-      Array.from({ length: WORDED_ROWS + 3 }, (_, at) => [at, at]).flat(),
+    const burst = Array.from({ length: 40 }, (_, at) =>
+      aRun("test", `just test-rs -p p${at}`, "a", [
+        days - 3600 + at * 60,
+        days - 3600 + at * 60 + 1,
+        days - 3600 + at * 60 + 30,
+      ]),
     );
-    expect(dense.segs.every((seg) => seg.under === null)).toBe(true);
-    expect(dense.segs.filter((seg) => seg.stop).map((seg) => seg.title.split(" · ")[0])).toEqual(
-      Array.from({ length: WORDED_ROWS + 3 }, (_, at) => `Test, just test-rs -p p${at}`),
-    );
-    // The builds' lane is drawn as before, its word under its bar.
-    const builds = drawn(WORDED_ROWS + 3).lanes.find((one) => one.key === "builds") as Lane;
-    expect([builds.dense, builds.segs.some((seg) => seg.under !== null)]).toEqual([false, true]);
+    const long = aRun("test", "just test-rs -p symphony-board --test store", "a", [0, 0, 43_200]);
+    const drawn = lanes(aTimeline({ now: days, created: 0, runs: [long, ...burst] }));
+    const tests = drawn.lanes.find((one) => one.key === "tests") as Lane;
+    expect(tests.rows).toBe(1);
+    expect(tests.who).toBe("41 runs · 0 red");
+    expect(tests.segs.filter((seg) => seg.stop).map((seg) => seg.title.split(" · ")[0])).toEqual([
+      "Test, just test-rs -p symphony-board --test store",
+      ...burst.map((_, at) => `Test, just test-rs -p p${at}`),
+    ]);
+    // Thirty seconds of five days is never 30 px: no words inside; the twelve hours are 10% of
+    // the track, BAR_WORDS_PX from a 300 px track, so always.
+    expect(tests.segs.slice(2).every((seg) => seg.text.length === 0)).toBe(true);
+    expect(tests.segs[1]?.text).toEqual([
+      { text: "test-rs symphony-board store · 12 h", from: null, to: null },
+    ]);
+  });
+
+  it("a run's bar says its words from the width where it is BAR_WORDS_PX wide", () => {
+    expect(BAR_WORDS_PX).toBe(30);
+    // 10% of the track is 30 px from a 300 px track: always.
+    expect(barFit("verify · 1 m", 10)).toEqual([{ text: "verify · 1 m", from: null, to: null }]);
+    // 5% is 30 px from 600 px, 6% from 500; 7% from 450, the first of WIDTHS past 30 * 100 / 7.
+    expect(barFit("verify · 1 m", 5)).toEqual([{ text: "verify · 1 m", from: 600, to: null }]);
+    expect(barFit("verify · 1 m", 6)).toEqual([{ text: "verify · 1 m", from: 500, to: null }]);
+    expect(barFit("verify · 1 m", 7)).toEqual([{ text: "verify · 1 m", from: 450, to: null }]);
+    // 1.875% is 30 px at 1600 exactly; under it, at no width.
+    expect(barFit("x", 1.875)).toEqual([{ text: "x", from: 1600, to: null }]);
+    expect(barFit("x", 1.8)).toEqual([]);
+    // Nothing to say, or no width: nothing.
+    expect(barFit("", 50)).toEqual([]);
+    expect(barFit("x", 0)).toEqual([]);
+    expect(barFit("x", Number.NaN)).toEqual([]);
+  });
+
+  it("a run not started is its wait alone, its words and its wait inside it, a keyboard stop", () => {
+    // One ended before it started (its recorder lost), 10 to 30 minutes in, and one queued still
+    // at 50 minutes, on a timeline of 100 minutes.
+    const lost: Run = {
+      ...aRun("test", "just verify", "a", [600, 0, 1800]),
+      started: null,
+      result: "unknown",
+    };
+    const queued: Run = {
+      ...aRun("test", "just test-rs -p web", "a", [3000, 0, null]),
+      started: null,
+      result: "queued",
+    };
+    const drawn = lanes(aTimeline({ created: 0, now: 6000, runs: [lost, queued] }));
+    const tests = drawn.lanes.find((lane) => lane.key === "tests");
+    expect(tests?.who).toBe("2 runs · 0 red");
+    // Each a dashed wait from its queue to its end or now, on the one row the first frees: no
+    // part of it ran, so the wait is the part the keyboard stops at, saying the wait's length.
+    expect(
+      tests?.segs.map((seg) => [seg.look, seg.row, seg.stop, seg.text.map((fit) => fit.text)]),
+    ).toEqual([
+      ["waiting", 0, true, ["verify · 20 m"]],
+      ["waiting", 0, true, ["test-rs web · 50 m"]],
+    ]);
+    expect(tests?.segs.map((seg) => [seg.left, seg.width])).toEqual([
+      [10, 20],
+      [50, 50],
+    ]);
+    // A wait narrower than BAR_WORDS_PX at every width keeps its words to its hover and focus.
+    const brief: Run = { ...queued, queued: 5990 };
+    const narrow = lanes(aTimeline({ created: 0, now: 6000, runs: [brief] }));
+    const only = narrow.lanes.find((lane) => lane.key === "tests")?.segs;
+    expect(only?.map((seg) => [seg.stop, seg.text, seg.title])).toEqual([
+      [true, [], runTitle(brief, 6000)],
+    ]);
   });
 
   it("the owner's case reads as it ran: a 55-minute build, then another of 8, each named", () => {
@@ -1056,8 +1269,8 @@ describe("a task's timeline laid out", () => {
     const drawn = lanes(timeline);
     const lane = (key: string) => drawn.lanes.find((one) => one.key === key) as Lane;
     // The builds in a lane, the test in another, each a bar of its own: the pruned one's cold
-    // build, queued 41 s after the touched rebuild ended, would meet it, and takes a row of its
-    // own; the client's build, over it, the first row, free by then.
+    // build, queued 41 s after the touched rebuild ended, goes on in its row; the client's build,
+    // queued while it ran, takes a row of its own.
     expect(
       lane("builds")
         .segs.filter((seg) => seg.stop)
@@ -1072,11 +1285,11 @@ describe("a task's timeline laid out", () => {
         "Build, cargo install symphony-server (touch-full) · waited 0 s · ran 8 m · green · at 329c986 by glacial-ibis on Stefanos-MacBook-Pro.local",
       ],
       [
-        1,
+        0,
         "Build, cargo install symphony-server (cold-pruned) · waited 1 s · ran 34 m · green · at 329c986 by glacial-ibis on Stefanos-MacBook-Pro.local",
       ],
       [
-        0,
+        1,
         "Build, just client-update · waited 0 s · ran 15 m · green · at 329c986 by glacial-ibis on Stefanos-MacBook-Pro.local",
       ],
     ]);
@@ -1101,17 +1314,39 @@ describe("a task's timeline laid out", () => {
     ]);
   });
 
-  it("a run's label says its result unless it went green", () => {
-    const red = { ...aRun("test", "just verify", "a", [0, 1, 60]), result: "red" as const };
-    expect(short(red)).toBe("verify red");
-    const queued = { ...aRun("test", "just verify", "a", [0, 1, null]), result: "queued" as const };
-    expect(short(queued)).toBe("verify queued");
-    expect(short(aRun("test", "just verify", null, [0, 1, null]))).toBe("running");
-    // A build is named by its command as a test is: its lane says it is a build.
+  it("a run's words inside its bar are its command's distinguishing words", () => {
+    const words = (recipe: string) => runWords(aRun("test", recipe, "a", [0, 1, 60]));
+    // No `just`, no flags; a flag's value and the test filter kept.
+    expect(words("just test-rs -p symphony-board --test store")).toBe(
+      "test-rs symphony-board store",
+    );
+    expect(words("just test-rs -p symphony-board --test cli -- beat")).toBe(
+      "test-rs symphony-board cli beat",
+    );
+    expect(words("just lint-rs")).toBe("lint-rs");
+    expect(words("cargo install symphony-server (cold-full)")).toBe(
+      "cargo install symphony-server (cold-full)",
+    );
+    expect(words("cargo clippy --workspace --all-targets")).toBe("cargo clippy");
+    expect(words("  certificate   verify ")).toBe("certificate verify");
+    // Nothing left but flags or `just`: the command whole, as it ran.
+    expect(words("just")).toBe("just");
+    expect(words(" --help ")).toBe("--help");
+    expect(words("")).toBe("");
+  });
+
+  it("a runs lane's name says how many ran and how many went red", () => {
+    const run = (result: RunResult) => ({ ...aRun("test", "x", "a", [0, 1, 2]), result });
+    expect(runCounts([run("green")])).toBe("1 run · 0 red");
+    expect(runCounts([run("green"), run("red"), run("red"), run("running")])).toBe(
+      "4 runs · 2 red",
+    );
+    expect(runCounts([])).toBe("0 runs · 0 red");
+  });
+
+  it("a run's row in the list says its result unless it was a green build", () => {
     const build = aRun("build", "just lint-rs", "a", [0, 1, 60]);
-    expect(short(build)).toBe("lint-rs");
     const redBuild = { ...build, result: "red" as const };
-    expect(short(redBuild)).toBe("lint-rs red");
     // A red build says so in the list too, by its command.
     expect(runRow(redBuild, pictures(), () => 1).word).toEqual(["red", "dislike"]);
     expect(runLabel(redBuild, 120)).toBe("Build, just lint-rs · queued 2 m");
@@ -1119,11 +1354,6 @@ describe("a task's timeline laid out", () => {
     expect(runLabel(redBuild, 59)).toBe("Build, just lint-rs");
     const gate = aRun("test", "certificate verify", null, [0, 1, 60]);
     expect(runLabel(gate, 600)).toBe("Certificate verify · 0123456");
-    // A run of a recipe with no `just`, ended unknown: its first word and "ended".
-    expect(short({ ...aRun("test", "  cargo test", "a", [0, 1, 2]), result: "unknown" })).toBe(
-      "cargo ended",
-    );
-    expect(short({ ...aRun("test", "", "a", [0, 1, 2]), result: "green" })).toBe("");
     // A run nobody holds with no commit names what it runs alone.
     expect(runLabel({ ...gate, commit: null }, 0)).toBe("Certificate verify");
   });
@@ -1230,8 +1460,11 @@ describe("a task's timeline laid out", () => {
         if (seg.after === null) continue;
         const [word, , room] = seg.after;
         const drawnWord = shown([word], px) !== "";
-        const wide = [...word.text].length * CHAR_PX + GAP_PX;
-        expect(!drawnWord || wide <= (room.room / 100) * px + 0.5, `${px}`).toBe(true);
+        const bar = (room.bar / 100) * px;
+        const inset = Math.max(AFTER_PAD_PX, SEG_MIN_PX + AFTER_PAD_PX - bar);
+        const wide = textPx(word.text) + inset + GAP_PX;
+        const end = room.last ? END_PX : 0;
+        expect(!drawnWord || wide <= (room.room / 100) * px + end, `${px}`).toBe(true);
       }
     }
     // Each stage's word only where it fits: two-minute reviews say nothing, six hours of work say
@@ -1239,8 +1472,8 @@ describe("a task's timeline laid out", () => {
     const stage = drawn.lanes.find((lane) => lane.key === "stage");
     for (const seg of stage?.segs ?? []) {
       const words = shown(seg.text, 950);
-      const wide = [...words].length * CHAR_PX + PAD_PX;
-      expect(words === "" || wide <= (seg.width / 100) * 950 + 0.5).toBe(true);
+      const wide = textPx(words) + SEG_MIN_PX;
+      expect(words === "" || wide <= (seg.width / 100) * 950).toBe(true);
     }
   });
 
@@ -1266,7 +1499,7 @@ describe("a task's timeline laid out", () => {
     expect(totals(empty)).toEqual(["0 m so far · 0 review rounds · 0 bounces", null]);
     const drawn = lanes(empty);
     expect(drawn.lanes).toEqual([
-      { key: "stage", name: "Stage", who: "", rows: 1, dense: false, segs: [] },
+      { key: "stage", name: "Stage", who: "", rows: 1, rail: false, segs: [] },
     ]);
     // Nothing to draw before now: no hour marked, and now at its start (20:00 UTC, no zone).
     expect(drawn.ticks).toEqual([]);
@@ -1427,7 +1660,10 @@ describe("a task's timeline laid out", () => {
     expect(switches, "one width switches the views").toBeGreaterThan(0);
     const phone = CSS.slice(0, switches);
     const wide = CSS.slice(switches + "@media (min-width: 900px)".length);
-    expect(phone).toContain(".tl-lanes {\n  --name: 9rem;\n  --end: 5.5rem;\n  display: none;\n");
+    expect(phone).toContain(".tl-lanes {\n  display: none;\n");
+    // The name column and the end margin are every layer's over the tracks, said once.
+    expect(phone).toContain(".tl-body {\n  --name: 9rem;\n  --end: 5.5rem;\n");
+    expect(CSS.match(/--name: /g)?.length).toBe(1);
     // Wide, the list stays for assistive technology, out of sight but not display:none.
     expect(wide).toContain(
       "  .tl-list {\n    position: absolute;\n    width: 1px;\n    height: 1px;\n    overflow: hidden;\n    clip-path: inset(50%);\n",
@@ -1486,18 +1722,27 @@ describe("a task's timeline laid out", () => {
     expect(wide).toContain(
       "  .tl-machine.tl-wide,\n  .tl-rest.tl-wide {\n    display: inline;\n  }",
     );
-    // The builds' lane and the tests' are drawn alike, a row each for runs that overlap.
+    // The builds' lane and the tests' are drawn alike, a row each for runs that overlap, each run
+    // a 14 px bar, a 1 px edge of the card's colour keeping two apart.
     expect(phone).toContain(
-      '.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-track {\n  height: calc(var(--rows) * 42px + 4px);\n}',
+      '.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-track {\n  height: calc(var(--rows) * 20px + 16px);\n}',
+    );
+    expect(phone).toContain(
+      '.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg {\n  top: calc(var(--row) * 20px + 11px);\n  height: 14px;\n  padding: 0;\n  border: 0;\n  border-radius: 2px;\n  box-shadow: 0 0 0 1px var(--card);\n',
     );
     expect(CSS).not.toContain('data-lane="runs"');
-    // A lane of more rows than its runs' words are drawn for draws them thin, after the rule it
-    // overrides.
-    const thin =
-      ".tl-lane[data-dense] .tl-track {\n  height: calc(var(--rows) * 12px + 4px);\n}\n.tl-lane[data-dense] .tl-seg {\n  top: calc(var(--row) * 12px + 4px);\n  height: 8px;\n";
-    expect(phone).toContain(thin);
-    expect(CSS.indexOf(thin)).toBeGreaterThan(
-      CSS.indexOf('.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg {'),
+    expect(CSS).not.toContain("data-dense");
+    expect(CSS).not.toContain("tl-under");
+    // The name column is var(--name) wide, padding and all, so the hours' lines, drawn from
+    // var(--name), start where the tracks do.
+    expect(phone).toContain(".tl-name {\n  flex: 0 0 var(--name);\n  box-sizing: border-box;\n");
+    expect(phone).toContain(".tl-hours {\n  position: absolute;\n  left: var(--name);\n");
+    // A message is a tick on its sender's line, in a press area of 24 px.
+    expect(CSS).toContain(
+      '.tl-message-mark::before {\n  content: "";\n  display: block;\n  width: 2px;\n  height: 8px;\n',
+    );
+    expect(CSS).toContain(
+      ".tl-message-mark {\n  position: absolute;\n  z-index: 2;\n  top: 24px;\n  width: 24px;\n  height: 24px;\n  min-height: 0;\n",
     );
     // The gate states' marks are in the legend wide only, beside the lanes that draw them: a rule
     // as specific as the legend's items' own hides them on a phone.
@@ -1507,15 +1752,19 @@ describe("a task's timeline laid out", () => {
     expect(CSS).toContain(
       "@media not (prefers-color-scheme: dark) {\n  .tl-seg {\n    color: var(--foreground);\n  }\n}",
     );
-    // Each width a word is weighed at shows it from there, and its shorter one below.
+    // Each width a word is weighed at shows it from there, and its shorter one below: two rules a
+    // width, written once from WIDTHS (the sheet writes none of its own) and nothing else.
     for (const width of WIDTHS) {
-      expect(CSS).toContain(
-        `@container (max-width: ${width - 1}.5px) {\n  .tl-from-${width} {\n    display: none;\n  }\n}`,
+      expect(WIDTH_RULES).toContain(
+        `@container (width<=${width - 1}.5px){.tl-from-${width}{display:none}}`,
       );
-      expect(CSS).toContain(
-        `@container (min-width: ${width}px) {\n  .tl-to-${width} {\n    display: none;\n  }\n}`,
+      expect(WIDTH_RULES).toContain(
+        `@container (width>=${width}px){.tl-to-${width}{display:none}}`,
       );
     }
+    expect(WIDTH_RULES.match(/@container /g)).toHaveLength(2 * WIDTHS.length);
+    expect(WIDTH_RULES.match(/\{display:none\}\}/g)).toHaveLength(2 * WIDTHS.length);
+    expect(CSS).not.toContain("@container");
     // Every gate state has a pattern of its own besides its colour.
     for (const [state, pattern] of [
       ["missing", "dotted"],
@@ -1835,22 +2084,23 @@ describe("each stage's cost after its time", () => {
 
   it("tries three widths, longest first: its word, time and cost; its time and cost; its time", () => {
     const all = ["in progress 3 h 14 m $30.75", "3 h 14 m $30.75", "3 h 14 m"];
-    // 27, 15 and 8 characters: 174, 102 and 60 px with their padding, of 12 % of the track.
+    // 27, 15 and 8 characters: 183, 112 and 66 px weighed letter by letter with their padding and
+    // border, of 12 % of the track: from 1,525, 933 (a 1280 page's track, 935) and 550 px.
     const fits = fittedFirst(all, 12);
     expect(fits).toEqual([
-      { text: all[0], from: 1450, to: null },
-      { text: all[1], from: 850, to: 1450 },
-      { text: all[2], from: 500, to: 850 },
+      { text: all[0], from: 1550, to: null },
+      { text: all[1], from: 935, to: 1550 },
+      { text: all[2], from: 550, to: 935 },
     ]);
     expect(shown(fits, 1600)).toBe(all[0]);
     expect(shown(fits, 1400)).toBe(all[1]);
     expect(shown(fits, 800)).toBe(all[2]);
     expect(shown(fits, 450)).toBe("");
-    // Room for the longest at every width: it alone.
-    expect(fittedFirst(all, 60)).toEqual([{ text: all[0], from: null, to: null }]);
+    // Room for the longest at every width, 183 px of 300: it alone.
+    expect(fittedFirst(all, 61)).toEqual([{ text: all[0], from: null, to: null }]);
     // Room for its time and not its cost: the time, as with no cost.
-    expect(fittedFirst(all, 4)).toEqual([{ text: all[2], from: 1500, to: null }]);
-    expect(fittedFirst(all, 4)).toEqual(fitted("in progress 3 h 14 m", "3 h 14 m", 4));
+    expect(fittedFirst(all, 4.2)).toEqual([{ text: all[2], from: 1600, to: null }]);
+    expect(fittedFirst(all, 4.2)).toEqual(fitted("in progress 3 h 14 m", "3 h 14 m", 4.2));
     // No room for any, and none to try.
     expect(fittedFirst(all, 1)).toEqual([]);
     expect(fittedFirst([], 50)).toEqual([]);
@@ -1864,16 +2114,18 @@ describe("each stage's cost after its time", () => {
     const stage = (timeline: TaskTimeline, with_: Costs | undefined) =>
       lanes(timeline, with_).lanes.find((lane) => lane.key === "stage") as Lane;
     const texts = (px: number) => stage(pictures(), costs()).segs.map((seg) => shown(seg.text, px));
+    // The second review's 28 m are 118 px of a 1600 px track: room for its time and cost (84 px),
+    // not with its word (127 px).
     expect(texts(1600)).toEqual([
       "ready 41 m",
       "in progress 1 h 52 m $30.75",
       "review 52 m $3.78",
       "in progress 1 h 10 m $7.03",
-      "review 28 m $0.64",
+      "28 m $0.64",
       "waiting to land 1 h 15 m",
     ]);
-    // The second review's 28 m are 70 px of a 950 px track: room for its time (36 px) and not for
-    // its time and cost (72 px), so it shows its time, as with no cost.
+    // Of a 950 px track they are 70 px: room for its time (44.6 px) and not for its time and cost,
+    // so it shows its time, as with no cost.
     expect(texts(950)).toEqual([
       "ready 41 m",
       "in progress 1 h 52 m $30.75",
@@ -1882,8 +2134,9 @@ describe("each stage's cost after its time", () => {
       "28 m",
       "waiting to land 1 h 15 m",
     ]);
-    // Narrower, a stretch drops its word before its cost.
-    expect(texts(500)).toEqual(["41 m", "1 h 52 m $30.75", "52 m", "1 h 10 m", "28 m", "1 h 15 m"]);
+    // Narrower, a stretch drops its word before its cost; the second review, 37 px, has no room
+    // for its time's 44.6.
+    expect(texts(500)).toEqual(["41 m", "1 h 52 m $30.75", "52 m", "1 h 10 m", "", "1 h 15 m"]);
     // Its words always say it: whose calls, when they ran, how many, and that it is an estimate.
     const titles = stage(pictures(), costs()).segs.map((seg) => seg.title);
     expect(titles[1]).toBe(
@@ -1958,5 +2211,766 @@ describe("each stage's cost after its time", () => {
     expect(totalParts(pictures())).toEqual(["6 h 18 m so far", " · 2 review rounds · 1 bounce"]);
     expect(totalParts(pictures()).join("")).toBe(totals(pictures())[0]);
     expect(totalParts(aTimeline({ now: 60, closed: 60 }))[0]).toBe("1 m in all");
+  });
+});
+
+describe("a part of the hours shown", () => {
+  /** The pictures' hours start at 09:00 on their clock: `minutes` after it. */
+  const START = 1_794_380_400;
+  const nine = (minutes: number) => START + minutes * 60;
+  /** 12:00 to 13:00 on the pictures' clock. */
+  const NOON = { from: nine(180), to: nine(240) };
+
+  it("places every part in the view, clamped to it, and says which are outside it", () => {
+    const scale = new Scale(pictures(), NOON);
+    expect([scale.zoomed, scale.from, scale.to, scale.shown]).toEqual([
+      true,
+      nine(180),
+      nine(240),
+      3600,
+    ]);
+    // The whole hours stay the lanes' own.
+    expect([scale.start, scale.span]).toEqual([START, 22_800]);
+    expect([scale.at(nine(195)), scale.at(nine(170)), scale.at(nine(300))]).toEqual([25, 0, 100]);
+    expect(scale.width(nine(170), nine(210))).toBe(50);
+    expect(scale.place(nine(170), nine(210))).toEqual({
+      left: 0,
+      width: 50,
+      from: nine(170),
+      to: nine(210),
+      out: false,
+    });
+    expect(scale.place(nine(100), nine(120)).out).toBe(true);
+    expect(scale.place(nine(250), nine(260)).out).toBe(true);
+    // An instant at either end is in it.
+    expect([scale.shows(nine(240), nine(240)), scale.shows(nine(170), nine(180))]).toEqual([
+      true,
+      true,
+    ]);
+    // Whether a part is drawn at all is the whole hours', whatever the view.
+    expect(scale.spans(nine(100), nine(120))).toBe(true);
+    expect(scale.spans(nine(100), nine(100))).toBe(false);
+    expect(scale.spans(nine(-60), nine(-30))).toBe(false);
+    // No view, or one with no length, is the whole hours.
+    for (const whole of [
+      new Scale(pictures()),
+      new Scale(pictures(), { from: nine(9), to: nine(9) }),
+    ]) {
+      expect([whole.zoomed, whole.from, whole.to, whole.shown]).toEqual([
+        false,
+        START,
+        whole.end,
+        22_800,
+      ]);
+    }
+  });
+
+  it("marks minutes when zoomed, from a minute up, each on its own local minute", () => {
+    const labels = (view: { from: number; to: number }) =>
+      new Scale(pictures(), view).ticks(false).map((tick) => tick.label);
+    // 11:05:30 to 12:18:30: every ten minutes, from the first whole ten after the start.
+    const hour = { from: nine(125) + 30, to: nine(198) + 30 };
+    expect(labels(hour)).toEqual(["11:10", "11:20", "11:30", "11:40", "11:50", "12:00", "12:10"]);
+    const first = new Scale(pictures(), hour).ticks(false)[0];
+    expect(first?.left).toBeCloseTo(((nine(130) - hour.from) / (hour.to - hour.from)) * 100, 10);
+    // 11:10:30 to 12:10:30, begun half a minute past a whole ten: from the next whole ten, 11:10
+    // being before the hours shown.
+    expect(labels({ from: nine(130) + 30, to: nine(190) + 30 })).toEqual([
+      "11:20",
+      "11:30",
+      "11:40",
+      "11:50",
+      "12:00",
+      "12:10",
+    ]);
+    // Five minutes: every minute; three hours: every half hour; a day's hours: by the hour up.
+    expect(labels({ from: nine(60), to: nine(65) })).toEqual([
+      "10:00",
+      "10:01",
+      "10:02",
+      "10:03",
+      "10:04",
+      "10:05",
+    ]);
+    expect(labels({ from: nine(0), to: nine(180) })).toEqual([
+      "09:00",
+      "09:30",
+      "10:00",
+      "10:30",
+      "11:00",
+      "11:30",
+      "12:00",
+    ]);
+    // The whole hours keep their steps from the hour up.
+    expect(new Scale(pictures()).ticks(false).map((tick) => tick.label)).toEqual([
+      "09:00",
+      "10:00",
+      "11:00",
+      "12:00",
+      "13:00",
+      "14:00",
+      "15:00",
+    ]);
+  });
+
+  it("keeps the hours near a view's end where now is past it, and none near now in it", () => {
+    // 12:00 to 13:00, now 15:20: 13:00 is at the view's end, far from now.
+    expect(new Scale(pictures(), NOON).ticks(true).at(-1)?.label).toBe("13:00");
+    // 14:20 to 15:20, now at its end: no mark within 4 % before now.
+    const latest = new Scale(pictures(), { from: nine(320), to: nine(380) });
+    expect(latest.ticks(true).at(-1)?.label).toBe("15:10");
+  });
+
+  it("lays out the same parts at any zoom, each placed and its words fitted in the view", () => {
+    const timeline = pictures();
+    const whole = lanes(timeline);
+    const noon = lanes(timeline, undefined, NOON);
+    // The keyboard's stops and every lane's parts are the whole task's, whatever the zoom.
+    expect(stops(noon)).toBe(stops(whole));
+    expect(noon.lanes.map((lane) => [lane.key, lane.segs.length, lane.rows])).toEqual(
+      whole.lanes.map((lane) => [lane.key, lane.segs.length, lane.rows]),
+    );
+    expect(noon.gates.map((gate) => gate.spans.length)).toEqual(
+      whole.gates.map((gate) => gate.spans.length),
+    );
+    // Outside the view: ready, the first stretch of work and round 2; in it: round 1's review and
+    // the second stretch of work.
+    const stage = noon.lanes[0]?.segs ?? [];
+    expect(stage.map((seg) => seg.out)).toEqual([true, true, false, false, true, true]);
+    const review = stage[2];
+    expect([review?.left, review?.width]).toEqual([0, 45]);
+    // The second stretch of work, from 12:27 past the view's end: its words fitted to what shows.
+    const work = stage[3];
+    expect([work?.left, work?.width]).toEqual([45, 55]);
+    expect(work?.text[0]).toEqual({ text: "in progress 1 h 10 m", from: null, to: null });
+    expect(whole.lanes[0]?.segs[3]?.text[0]?.text).toBe("in progress 1 h 10 m");
+    expect(whole.lanes[0]?.segs[3]?.text[0]?.from).not.toBeNull();
+    // A verdict is said after its round's end where that end shows; round 2's ends outside.
+    const reviewer = noon.lanes.find((lane) => lane.key === "reviewer")?.segs ?? [];
+    expect(reviewer.map((seg) => seg.after?.[0].text ?? null)).toEqual([
+      null,
+      "changes",
+      null,
+      null,
+    ]);
+    expect(reviewer.map((seg) => seg.title)).toEqual(
+      whole.lanes.find((lane) => lane.key === "reviewer")?.segs.map((seg) => seg.title),
+    );
+    // Now (15:20) is past the view: no line at it; nor any tick near the end left out for it.
+    expect(noon.now).toBeNull();
+    expect(lanes(timeline, undefined, { from: nine(330), to: nine(390) }).now?.label).toBe(
+      "now 15:20",
+    );
+    const certificate = noon.gates.find((gate) => gate.name === "certificate")?.spans ?? [];
+    expect(certificate.map((span) => span.out)).toEqual([true, true, true]);
+  });
+
+  it("hatches only what of the time no run is kept of shows", () => {
+    const timeline = { ...pictures(), runs_from: nine(150) };
+    expect(lanes(timeline).notKept?.width).toBeGreaterThan(0);
+    const partly = lanes(timeline, undefined, { from: nine(120), to: nine(180) }).notKept;
+    expect([partly?.left, partly?.width]).toEqual([0, 50]);
+    expect(lanes(timeline, undefined, NOON).notKept).toBeNull();
+  });
+});
+
+describe("a quiet stretch skipped", () => {
+  /** The card's task: closed at 14:03 on 11-19 and quiet until a review at 00:57 the next day. */
+  function guards(): TaskTimeline {
+    const read = readTimeline(JSON.parse(JSON.stringify(GUARDS)));
+    if (read === null) throw new Error("the card's task is no timeline");
+    return read;
+  }
+  const QUIET = quietStretches(guards())[0] as Quiet;
+  const CUT = { skipped: [QUIET], share: BAND_SHARE };
+
+  it("says why it is quiet, how long, and its ends, a day named where it changed", () => {
+    const timeline = guards();
+    expect(QUIET.status).toBe("done");
+    expect(quietWhy(QUIET)).toBe("task done, nothing recorded");
+    expect(quietWhy({ ...QUIET, status: "ready" })).toBe("ready, nothing recorded");
+    expect(quietWhy({ ...QUIET, status: "in_progress" })).toBe("in progress, nothing recorded");
+    expect(quietWhy({ ...QUIET, status: "" })).toBe("nothing recorded");
+    expect(quietSaid(timeline, QUIET)).toBe("10 h 54 m quiet, 14:03 → 11-20 00:57");
+    expect(quietSaid(timeline, QUIET, true)).toBe("10 h 54 m quiet, 11-19 14:03 → 11-20 00:57");
+    const sameDay = { ...QUIET, to: QUIET.from + 2 * 3600 };
+    expect(quietSaid(timeline, sameDay)).toBe("2 h quiet, 14:03 → 16:03");
+    expect(quietSaid(timeline, sameDay, true)).toBe("2 h quiet, 11-19 14:03 → 11-19 16:03");
+  });
+
+  it("draws every segment's words whole, and clear of a few minutes' segment before it", () => {
+    const drawn = lanes(guards(), undefined, null, CUT);
+    const segs = (key: string) => drawn.lanes.find((lane) => lane.key === key)?.segs ?? [];
+    // The track at 900, 1280, 1440 and 1600 wide (the page draws it no wider), and wider: 1255, and
+    // the widest a word is weighed at.
+    for (const px of [555, 935, 1095, 1158, 1255, 1600]) {
+      for (const key of ["stage", "orchestrator", "executor", "reviewer"]) {
+        for (const seg of segs(key)) {
+          const words = shown(seg.text, px);
+          if (words === "") continue;
+          // Past one before it, its least width and 3 px clear take 10 px past its own padding,
+          // less as wide as the track draws the distance from that one's start.
+          const reach = seg.inset === undefined ? 0 : Math.max(0, 10 - (seg.inset * px) / 100);
+          expect(
+            textPx(words) + SEG_MIN_PX + reach,
+            `${key}: ${words} at ${px}`,
+          ).toBeLessThanOrEqual((seg.width * px) / 100);
+        }
+      }
+    }
+    // The review of two minutes at 02:44 on 11-20, drawn at its least width, and the hour after
+    // it, whose words keep past it: its "1 h 4 m" (44.1 px) gives way on a 1,050 px track, which
+    // leaves it 43.3 past the review, and from 1440 wide (a 1,095 px track) it is drawn clear of it.
+    const stage = segs("stage");
+    const after = stage.findIndex((seg) => seg.title.startsWith("in progress 1 h 4 m"));
+    const review = stage[after - 1] as Seg;
+    expect([
+      review.title.startsWith("review 2 m"),
+      (review.width * 1095) / 100 < SEG_MIN_PX,
+    ]).toEqual([true, true]);
+    expect(stage[after]?.inset).toBeCloseTo(review.width, 9);
+    expect([1050, 1095, 1158].map((px) => shown(stage[after]?.text ?? [], px))).toEqual([
+      "",
+      "1 h 4 m",
+      "1 h 4 m",
+    ]);
+    // The 39 minutes before the band, in its stage and its claim, give way at 1440 and 1600 wide,
+    // where "39 m" whole needs 44.8 px, which the system face draws 30 px wide; on a track of 1,200,
+    // wider than the page draws, they are said.
+    const late = (key: string) => segs(key).find((seg) => seg.title.includes("39 m")) as Seg;
+    for (const key of ["stage", "executor"]) {
+      expect([1095, 1158, 1200].map((px) => shown(late(key).text, px))).toEqual(["", "", "39 m"]);
+    }
+  });
+
+  it("says the first round that asked for changes from a 1280 page's track, which holds it", () => {
+    const segs =
+      lanes(guards(), undefined, null, CUT).lanes.find((lane) => lane.key === "reviewer")?.segs ??
+      [];
+    const said = segs.flatMap((seg) =>
+      seg.after === null ? [] : [[seg.title.split(":")[0], seg.after[0]]],
+    );
+    // Rounds 1 and 5 have no room at any width. Round 3's "changes" is 6.7 % of the track before
+    // the band: its word, its 6 px inset past a bar of 34 px and its 4 px gap, 60.5 px, from a
+    // 903 px track, so from 935 (TRACKS), where a step of 50 put it at 950, past a 1280 page's
+    // track. Round 4's needs 1,162 px, wider than the page draws; round 2's 738, from 750.
+    expect(said).toEqual([
+      ["round 2", { text: "approved", from: 750, to: null }],
+      ["round 3", { text: "changes", from: 935, to: null }],
+      ["round 4", { text: "changes", from: 1200, to: null }],
+      ["round 6", { text: "approved", from: null, to: null }],
+    ]);
+    const after = segs.find((seg) => seg.title.startsWith("round 3") && seg.after !== null)?.after;
+    if (!after) throw new Error("round 3 says no verdict");
+    const [, , room] = after;
+    const words = textPx("changes") + AFTER_PAD_PX + GAP_PX;
+    expect([room.last, (room.bar * 935) / 100 > SEG_MIN_PX]).toEqual([false, true]);
+    expect([902, 935].map((px) => words <= (room.room * px) / 100)).toEqual([false, true]);
+  });
+
+  it("is a row of a phone's list after the rows of the instant it begins at", () => {
+    const timeline = guards();
+    const listed = rows(timeline);
+    const at = listed.findIndex((row) => row.quiet !== undefined);
+    expect(listed.filter((row) => row.quiet !== undefined)).toHaveLength(1);
+    expect(listed[at]).toEqual({
+      start: QUIET.from,
+      day: null,
+      at: "14:03",
+      sub: false,
+      event: true,
+      tone: "muted-foreground",
+      label: "10 h 54 m quiet, 14:03 → 11-20 00:57",
+      took: null,
+      bar: null,
+      word: null,
+      title: "10 h 54 m quiet, 14:03 → 11-20 00:57: task done, nothing recorded",
+      quiet: "Task done, nothing recorded",
+    });
+    // The message it begins at is before it; the review that ends it after, under its day.
+    expect(listed[at - 1]?.start).toBe(QUIET.from);
+    expect(listed[at - 1]?.message).toBe(15678);
+    expect(listed[at + 1]?.start).toBe(QUIET.to);
+    expect(listed[at + 1]?.day).toBe("11-20");
+    // A task with no quiet stretch has no such row.
+    expect(rows(pictures()).some((row) => row.quiet !== undefined)).toBe(false);
+  });
+
+  it("is a band of its share of the track, the work either side to scale", () => {
+    const timeline = guards();
+    const scale = new Scale(timeline, null, CUT);
+    expect(scale.at(QUIET.to) - scale.at(QUIET.from)).toBeCloseTo(BAND_SHARE * 100, 9);
+    // As many percent an hour before the band as after it, and at the ends the whole track.
+    const perHour = (from: number) => scale.at(from + 3600) - scale.at(from);
+    expect(perHour(QUIET.from - 7200)).toBeCloseTo(perHour(QUIET.to + 600), 9);
+    expect(scale.at(scale.start)).toBe(0);
+    expect(scale.at(scale.end)).toBeCloseTo(100, 9);
+    // The work gets the width: an hour is wider than on the true clock.
+    expect(perHour(QUIET.from - 7200)).toBeGreaterThan(
+      new Scale(timeline).at(QUIET.from) - new Scale(timeline).at(QUIET.from - 3600),
+    );
+  });
+
+  it("says its length over it, its day after that, and why down it where it is wide enough", () => {
+    const timeline = guards();
+    const drawn = lanes(timeline, undefined, null, CUT);
+    expect(drawn.breaks).toHaveLength(1);
+    const [band] = drawn.breaks;
+    expect(band?.left).toBeCloseTo(75.68, 2);
+    expect(band?.width).toBeCloseTo(3.3, 9);
+    expect({ ...band, left: 0, width: 0 }).toEqual({
+      left: 0,
+      width: 0,
+      from: QUIET.from,
+      to: QUIET.to,
+      out: false,
+      length: { text: "+10 h 54 m", from: null, to: null },
+      day: { text: "11-20", from: null, to: null },
+      // 14 px of 3.3% of the track: from a track of 424 px.
+      words: { text: "quiet · task done, nothing recorded", from: 450, to: null },
+      title: "10 h 54 m quiet, 11-19 14:03 → 11-20 00:57, task done, nothing recorded",
+    });
+    // No hour inside the band is marked, its midnight neither: the day is the band's to say.
+    expect(drawn.ticks.map((tick) => [tick.label, tick.wide])).toEqual([
+      ["03:00", undefined],
+      ["06:00", undefined],
+      ["09:00", undefined],
+      // Half of 12:00's 36.3 px in tabular figures, half of the length's 77.4 with its padding,
+      // and a gap: 60.9 px over 13.6% of the track, from 448 px.
+      ["12:00", 450],
+      // The day's 80.7 px after the band's middle, half of 03:00's 36.4 and a gap, over 13.5%:
+      // from 762 px.
+      ["03:00", 800],
+    ]);
+    // On the true clock the same hours mark the midnight by its date.
+    expect(lanes(timeline).ticks.map((tick) => tick.label)).toContain("11-20");
+    expect(lanes(timeline).breaks).toEqual([]);
+  });
+
+  it("ends the room of a verdict said before it at its edge, which would hide the word", () => {
+    const timeline = guards();
+    const verdicts = (drawn: Lanes) =>
+      (drawn.lanes.find((lane) => lane.key === "reviewer") as Lane).segs.flatMap((seg) =>
+        seg.after === null
+          ? []
+          : [[seg.left + seg.width, seg.after[0].text, seg.after[2]] as const],
+      );
+    const [band] = lanes(timeline, undefined, null, CUT).breaks;
+    const [approved] = verdicts(lanes(timeline, undefined, null, CUT));
+    expect(approved?.[1]).toBe("approved");
+    expect((approved?.[0] ?? 0) + (approved?.[2].room ?? 0)).toBeCloseTo(band?.left ?? 0, 9);
+    expect(approved?.[2].last).toBe(false);
+    // The last round with a band after it says its verdict before the band, not in the margin.
+    const two = { ...timeline, rounds: timeline.rounds.slice(0, 2) };
+    const [last] = verdicts(lanes(two, undefined, null, CUT));
+    expect(last?.[2].last).toBe(false);
+    expect((last?.[0] ?? 0) + (last?.[2].room ?? 0)).toBeCloseTo(band?.left ?? 0, 9);
+    // On the true clock it runs to the next round, and the last into the margin.
+    const [plain] = verdicts(lanes(two));
+    expect(plain?.[2]).toEqual({
+      room: 100 - (plain?.[0] ?? 0),
+      last: true,
+      bar: expect.any(Number),
+    });
+  });
+
+  it("is drawn only where it shows, its day only where its end does", () => {
+    const timeline = guards();
+    // Two hours of the band in view, with the hour before it.
+    const view = { from: QUIET.from - 3600, to: QUIET.from + 2 * 3600 };
+    const partly = lanes(timeline, undefined, view, CUT);
+    expect(partly.breaks).toHaveLength(1);
+    expect(partly.breaks[0]?.day).toBeNull();
+    expect(partly.breaks[0]?.length?.text).toBe("+10 h 54 m");
+    // A view after it draws none.
+    const after = lanes(timeline, undefined, { from: QUIET.to + 600, to: QUIET.to + 4200 }, CUT);
+    expect(after.breaks).toEqual([]);
+  });
+
+  it("gives way where two bands meet: the later's length and day to the earlier's length", () => {
+    const timeline = guards();
+    const split = QUIET.from + 5 * 3600;
+    const two = {
+      skipped: [
+        { ...QUIET, to: split },
+        { ...QUIET, from: split + 60 },
+      ],
+      share: BAND_SHARE,
+    };
+    const [first, second] = lanes(timeline, undefined, null, two).breaks;
+    expect(first?.length).toEqual({ text: "+5 h", from: null, to: null });
+    expect(first?.day).toBeNull();
+    expect(second?.length).toBeNull();
+    expect(second?.day).toBeNull();
+    expect(second?.title).toBe(
+      "5 h 53 m quiet, 11-19 19:04 → 11-20 00:57, task done, nothing recorded",
+    );
+  });
+
+  it("draws a day from the width that clears its own length's room and the next band's length", () => {
+    const timeline = guards();
+    // Three hours, then 6 h 44 m across midnight 20 minutes on, then ten minutes 40 minutes on.
+    const a = QUIET.from + 3 * 3600;
+    const b = QUIET.to - 50 * 60;
+    const three = {
+      skipped: [
+        { ...QUIET, to: a },
+        { ...QUIET, from: a + 1200, to: b },
+        { ...QUIET, from: b + 2400 },
+      ],
+      share: BAND_SHARE,
+    };
+    const [first, second, third] = lanes(timeline, undefined, null, three).breaks;
+    expect(first?.length).toEqual({ text: "+3 h", from: null, to: null });
+    // 17.8 px of "+3 h", 34.9 of "+6 h 44 m" and a gap, over 5.0% of the track: from 1,134 px.
+    expect(second?.length).toEqual({ text: "+6 h 44 m", from: 1150, to: null });
+    // Its day's 76.8 px past its middle, 23.6 of "+10 m" and a gap, over 6.7%: from 1,559 px.
+    expect(second?.day).toEqual({ text: "11-20", from: 1600, to: null });
+    // The third's length gives way to the second's alone: 62.5 px over 6.7%, from 933 px, so from
+    // a 1280 page's track.
+    expect(third?.length).toEqual({ text: "+10 m", from: 935, to: null });
+    expect(third?.day).toBeNull();
+  });
+});
+
+describe("the lanes' weights", () => {
+  // How each face the page's sans-serif names (`--font-sans`) draws each character of the lanes'
+  // small type at 12 px, in thousandths of its size rounded up, from " " to "~" and then "·",
+  // measured once in the engines that draw them, each character as a hundred copies with kerning
+  // and ligatures off, at both weights the lanes set words in. -apple-system in WebKit (a
+  // WKWebView, the engine of Safari and the Mac app), which draws it as the system's face, its
+  // tabular figures too; Helvetica and Arial in headless Chrome, each face pinned. Segoe UI is on no
+  // Mac and is not free to fetch: its figures are Selawik's, Microsoft's open replacement made to
+  // Segoe UI's metrics (release 1.01), loaded as a web font in Chrome: its semibold for 600, its
+  // bold as that one's bound (Selawik's match was made for its regular and bold, before its
+  // semibold), its regular for 400. They are the design's advances: how Windows hints Segoe UI at
+  // 12 px is not measured here. Nor is the stack's trailing generic `sans-serif`, the face a
+  // machine with none of those draws (a Linux machine's own): it is outside the faces measured.
+  const FACES: Record<string, string> = {
+    "system 600":
+      "266 342 539 658 658 999 734 331 414 414 481 658 331 481 331 325 667 496 630 655 673 649 668 593 676 668 331 331 658 658 658 543 924 713 682 733 741 614 590 756 770 302 581 693 586 896 760 782 661 782 681 663 652 753 706 996 713 691 671 414 325 414 658 613 500 577 639 579 639 591 393 634 618 274 274 582 281 912 613 611 635 635 417 553 397 613 570 823 562 580 558 414 286 414 658 331",
+    "system 400":
+      "282 312 478 630 630 926 712 297 382 382 472 630 297 472 297 305 630 464 604 627 644 619 637 570 639 637 297 297 630 630 630 513 918 674 658 716 727 596 573 747 743 268 539 659 568 875 743 772 636 772 654 638 634 738 674 968 679 656 662 382 305 382 630 584 500 552 615 560 615 572 362 610 589 248 247 543 253 871 584 591 611 610 381 524 364 584 542 775 525 543 540 382 259 382 630 297",
+    "Helvetica 600":
+      "278 334 475 557 557 890 723 238 334 334 390 584 278 334 278 278 557 557 557 557 557 557 557 557 557 557 334 334 584 584 584 611 976 723 723 723 723 667 611 778 723 278 557 723 611 834 723 778 667 778 723 667 611 723 667 944 667 667 611 334 278 334 584 557 334 557 611 557 611 557 334 611 611 278 278 557 278 890 611 611 611 611 390 557 334 611 557 778 557 557 500 390 280 390 584 278",
+    "Helvetica 400":
+      "278 278 355 557 557 890 667 191 334 334 390 584 278 334 278 278 557 557 557 557 557 557 557 557 557 557 278 278 584 584 584 557 1016 667 667 723 723 667 611 778 723 278 500 667 557 834 723 778 667 778 723 667 611 723 667 944 667 667 611 278 278 278 470 557 334 557 557 500 557 557 278 557 557 223 223 500 223 834 557 557 557 557 334 500 278 557 500 723 500 500 500 334 260 334 584 278",
+    "Arial 600":
+      "278 334 475 557 557 890 723 238 334 334 390 584 278 334 278 278 557 557 557 557 557 557 557 557 557 557 334 334 584 584 584 611 976 723 723 723 723 667 611 778 723 278 557 723 611 834 723 778 667 778 723 667 611 723 667 944 667 667 611 334 278 334 584 557 334 557 611 557 611 557 334 611 611 278 278 557 278 890 611 611 611 611 390 557 334 611 557 778 557 557 500 390 280 390 584 334",
+    "Arial 400":
+      "278 278 355 557 557 890 667 191 334 334 390 584 278 334 278 278 557 557 557 557 557 557 557 557 557 557 278 278 584 584 584 557 1016 667 667 723 723 667 611 778 723 278 500 667 557 834 723 778 667 778 723 667 611 723 667 944 667 667 611 278 278 278 470 557 334 557 557 500 557 557 278 557 557 223 223 500 223 834 557 557 557 557 334 500 278 557 500 723 500 500 500 334 260 334 584 334",
+    "Segoe UI 600":
+      "276 313 460 592 563 852 834 272 347 347 443 700 253 403 253 426 563 563 563 563 563 563 563 563 563 563 253 253 700 700 700 442 955 684 619 623 726 524 510 703 748 300 417 626 498 938 776 757 597 757 635 551 566 711 652 982 634 589 595 347 417 347 700 416 299 529 610 475 609 536 360 609 590 271 271 539 271 898 592 604 610 609 382 435 373 592 522 773 522 521 471 347 298 347 700 253",
+    "Segoe UI bold":
+      "276 328 494 593 576 868 850 293 370 370 456 708 272 405 272 444 576 576 576 576 576 576 576 576 576 576 272 272 708 708 708 438 955 704 642 625 738 533 521 711 767 317 446 649 512 958 791 759 615 759 653 561 586 724 667 1005 656 607 607 370 437 370 708 416 314 539 621 480 620 542 384 620 603 285 285 560 285 917 605 612 621 620 398 440 390 605 542 798 553 539 480 370 327 370 708 272",
+    "Segoe UI 400":
+      "274 285 393 591 540 819 801 230 302 302 417 685 217 400 217 390 540 540 540 540 540 540 540 540 540 540 217 217 685 685 685 449 956 646 574 620 702 506 489 687 710 267 357 581 471 898 749 754 561 754 599 532 524 688 622 935 590 553 571 302 379 302 685 416 269 509 588 462 589 523 313 589 566 243 243 498 243 862 566 586 588 589 348 425 339 566 480 723 459 484 453 302 240 302 685 217",
+  };
+  const OTHERS: Record<string, string> = {
+    "system 600": "905 931 896 613 658",
+    "system 400": "805 906 875 584 630",
+    "Helvetica 600": "1000 1000 1000 557 584",
+    "Helvetica 400": "1000 1000 1000 557 584",
+    "Arial 600": "1000 1000 1000 557 584",
+    "Arial 400": "1000 1000 1000 557 584",
+    "Segoe UI 600": "853 1000 1000 500 700",
+    "Segoe UI bold": "913 1000 1000 500 708",
+    "Segoe UI 400": "733 1000 1000 500 685",
+  };
+  const DRAWN: Record<string, Record<string, number>> = {
+    system: {
+      missing: 43.15,
+      held: 24.33,
+      waived: 39.21,
+      met: 21.66,
+      unknown: 50.68,
+      "not kept before 11-19 14:03": 155.3,
+      "39 m": 29.99,
+      "1 h 4 m": 41.94,
+      "28 m": 29.8,
+      "52 m": 29.47,
+      "11 h 11 m": 51.72,
+      "ready 6 h 59 m": 88.4,
+      "review 52 m": 71.44,
+      "in progress 1 h 11 m $12.40": 159.5,
+      "waiting to land 2 d 3 h $0.84+": 175.94,
+      "claim 41 m": 62.66,
+      "round 2": 45.3,
+      "coral-badger-11": 94.46,
+      "cobalt-merlin-810": 107.44,
+      approved: 55.43,
+      changes: 49.96,
+      verdict: 41.25,
+      unpriced: 52.32,
+      "+10 h 54 m (tabular)": 67.38,
+      "+2 d 3 h (tabular)": 48.32,
+      "+1 h 11 m (tabular)": 59.49,
+      "11-20 (tabular)": 37.33,
+      "09:02 (tabular)": 33.8,
+      "11-10 (tabular)": 35.91,
+      "23:59 (tabular)": 33.8,
+      "11-11 (tabular)": 35.91,
+      "17:47 (tabular)": 33.8,
+    },
+    Helvetica: {
+      missing: 40.69,
+      held: 22.69,
+      waived: 37.36,
+      met: 20.02,
+      unknown: 48.05,
+      "not kept before 11-19 14:03": 146.57,
+      "39 m": 27.36,
+      "1 h 4 m": 41.36,
+      "28 m": 27.36,
+      "52 m": 27.36,
+      "11 h 11 m": 53.4,
+      "ready 6 h 59 m": 83.4,
+      "review 52 m": 68.05,
+      "in progress 1 h 11 m $12.40": 156.1,
+      "waiting to land 2 d 3 h $0.84+": 165.72,
+      "claim 41 m": 61.38,
+      "round 2": 44.0,
+      "coral-badger-11": 89.38,
+      "cobalt-merlin-810": 99.38,
+      approved: 54.02,
+      changes: 48.69,
+      verdict: 39.36,
+      unpriced: 50.68,
+      "+10 h 54 m (tabular)": 61.72,
+      "+2 d 3 h (tabular)": 45.04,
+      "+1 h 11 m (tabular)": 54.38,
+      "11-20 (tabular)": 30.05,
+      "09:02 (tabular)": 30.04,
+      "11-10 (tabular)": 29.82,
+      "23:59 (tabular)": 30.04,
+      "11-11 (tabular)": 28.93,
+      "17:47 (tabular)": 30.04,
+    },
+    Arial: {
+      missing: 40.69,
+      held: 22.69,
+      waived: 37.36,
+      met: 20.02,
+      unknown: 48.05,
+      "not kept before 11-19 14:03": 146.57,
+      "39 m": 27.36,
+      "1 h 4 m": 41.36,
+      "28 m": 27.36,
+      "52 m": 27.36,
+      "11 h 11 m": 53.38,
+      "ready 6 h 59 m": 83.4,
+      "review 52 m": 68.05,
+      "in progress 1 h 11 m $12.40": 156.1,
+      "waiting to land 2 d 3 h $0.84+": 165.72,
+      "claim 41 m": 61.38,
+      "round 2": 44.0,
+      "coral-badger-11": 89.38,
+      "cobalt-merlin-810": 99.38,
+      approved: 54.02,
+      changes: 48.69,
+      verdict: 39.36,
+      unpriced: 50.68,
+      "+10 h 54 m (tabular)": 61.72,
+      "+2 d 3 h (tabular)": 45.04,
+      "+1 h 11 m (tabular)": 54.38,
+      "11-20 (tabular)": 30.04,
+      "09:02 (tabular)": 30.04,
+      "11-10 (tabular)": 29.82,
+      "23:59 (tabular)": 30.04,
+      "11-11 (tabular)": 28.93,
+      "17:47 (tabular)": 30.04,
+    },
+    "Segoe UI 600": {
+      missing: 42.1,
+      held: 24.05,
+      waived: 38.85,
+      met: 21.68,
+      unknown: 51.38,
+      "not kept before 11-19 14:03": 154.91,
+      "39 m": 27.6,
+      "1 h 4 m": 41.29,
+      "28 m": 27.6,
+      "52 m": 27.6,
+      "11 h 11 m": 54.8,
+      "ready 6 h 59 m": 82.24,
+      "review 52 m": 67.08,
+      "in progress 1 h 11 m $12.40": 152.97,
+      "waiting to land 2 d 3 h $0.84+": 166.16,
+      "claim 41 m": 60.19,
+      "round 2": 43.4,
+      "coral-badger-11": 89.54,
+      "cobalt-merlin-810": 99.6,
+      approved: 52.77,
+      changes: 45.16,
+      verdict: 37.97,
+      unpriced: 48.75,
+      "+10 h 54 m (tabular)": 63.19,
+      "+2 d 3 h (tabular)": 46.21,
+      "+1 h 11 m (tabular)": 56.44,
+      "11-20 (tabular)": 31.86,
+      "09:02 (tabular)": 30.07,
+      "11-10 (tabular)": 31.86,
+      "23:59 (tabular)": 30.07,
+      "11-11 (tabular)": 31.86,
+      "17:47 (tabular)": 30.07,
+    },
+    "Segoe UI bold": {
+      missing: 43.07,
+      held: 24.57,
+      waived: 39.88,
+      met: 22.16,
+      unknown: 52.66,
+      "not kept before 11-19 14:03": 158.29,
+      "39 m": 28.11,
+      "1 h 4 m": 41.96,
+      "28 m": 28.11,
+      "52 m": 28.11,
+      "11 h 11 m": 55.77,
+      "ready 6 h 59 m": 83.79,
+      "review 52 m": 68.68,
+      "in progress 1 h 11 m $12.40": 156.04,
+      "waiting to land 2 d 3 h $0.84+": 169.75,
+      "claim 41 m": 61.46,
+      "round 2": 44.29,
+      "coral-badger-11": 91.29,
+      "cobalt-merlin-810": 101.83,
+      approved: 53.9,
+      changes: 45.91,
+      verdict: 39.05,
+      unpriced: 49.83,
+      "+10 h 54 m (tabular)": 64.25,
+      "+2 d 3 h (tabular)": 46.88,
+      "+1 h 11 m (tabular)": 57.35,
+      "11-20 (tabular)": 32.47,
+      "09:02 (tabular)": 30.88,
+      "11-10 (tabular)": 32.47,
+      "23:59 (tabular)": 30.88,
+      "11-11 (tabular)": 32.47,
+      "17:47 (tabular)": 30.88,
+    },
+    "Segoe UI 400": {
+      missing: 40.21,
+      held: 23.05,
+      waived: 36.79,
+      met: 20.69,
+      unknown: 48.85,
+      "not kept before 11-19 14:03": 148.13,
+      "39 m": 26.57,
+      "1 h 4 m": 39.94,
+      "28 m": 26.57,
+      "52 m": 26.57,
+      "11 h 11 m": 52.88,
+      "ready 6 h 59 m": 79.11,
+      "review 52 m": 63.91,
+      "in progress 1 h 11 m $12.40": 146.86,
+      "waiting to land 2 d 3 h $0.84+": 158.99,
+      "claim 41 m": 57.66,
+      "round 2": 41.61,
+      "coral-badger-11": 86.05,
+      "cobalt-merlin-810": 95.11,
+      approved: 50.52,
+      changes: 43.68,
+      verdict: 35.79,
+      unpriced: 46.61,
+      "+10 h 54 m (tabular)": 61.08,
+      "+2 d 3 h (tabular)": 44.88,
+      "+1 h 11 m (tabular)": 54.61,
+      "11-20 (tabular)": 30.69,
+      "09:02 (tabular)": 28.49,
+      "11-10 (tabular)": 30.69,
+      "23:59 (tabular)": 28.49,
+      "11-11 (tabular)": 30.69,
+      "17:47 (tabular)": 28.49,
+    },
+  };
+  /** The system face's tabular figures, as wide as each other, in thousandths of 12 px. */
+  const TABULAR: Record<string, number> = { "system 600": 658, "system 400": 630 };
+  /** The characters FACES weighs, in its order, and the ones OTHERS does. */
+  const CHARS = [...Array.from({ length: 95 }, (_, at) => String.fromCharCode(32 + at)), "·"];
+  const OTHER_CHARS = [..."…→—–×"];
+  const figures = (row: string | undefined) => (row ?? "").split(" ").map(Number);
+  const DIGIT = /^[0-9]$/;
+
+  it("weighs each character at the widest face's advance, and no wider", () => {
+    expect(Object.values(FACES).map((row) => figures(row).length)).toEqual(
+      Object.keys(FACES).map(() => CHARS.length),
+    );
+    CHARS.forEach((char, at) => {
+      const widest = Math.max(...Object.values(FACES).map((row) => figures(row)[at] as number));
+      expect(advance(char), char).toBe(widest);
+    });
+    // In tabular figures a digit weighs the widest of those where they are wider, and nothing
+    // else changes.
+    for (const char of CHARS) {
+      const tabular = DIGIT.test(char) ? Math.max(advance(char), ...Object.values(TABULAR)) : null;
+      expect(advance(char, true), char).toBe(tabular ?? advance(char));
+    }
+    expect([advance("1"), advance("1", true), advance("8"), advance("8", true)]).toEqual([
+      576, 658, 676, 676,
+    ]);
+  });
+
+  it("weighs any other character at the whole size, which no face draws wider", () => {
+    for (const [face, row] of Object.entries(OTHERS)) {
+      figures(row).forEach((one, at) => {
+        const char = OTHER_CHARS[at] as string;
+        expect(one, `${face}: ${char}`).toBeLessThanOrEqual(advance(char));
+      });
+    }
+    expect([...OTHER_CHARS, "\u0007", "😀", "中"].map((char) => advance(char))).toEqual(
+      Array(OTHER_CHARS.length + 3).fill(1000),
+    );
+    // An accented letter weighs its letter, in either figures.
+    expect([advance("é"), advance("Å"), advance("é", true)]).toEqual([
+      advance("e"),
+      advance("A"),
+      advance("e"),
+    ]);
+  });
+
+  it("lets a word through only where each face draws it whole", () => {
+    // A few thousand words of the table's characters, drawn from a seeded sequence: each face's
+    // advances, its tabular figures where the words are set in them, never weigh more than the
+    // estimate less its half pixel for the browser's rounding.
+    let seed = 1;
+    const next = () => {
+      seed = (seed * 48_271) % 2_147_483_647;
+      return seed;
+    };
+    for (let count = 0; count < 2000; count += 1) {
+      const length = 1 + (next() % 30);
+      const word = Array.from({ length }, () => CHARS[next() % CHARS.length]).join("");
+      for (const [face, row] of Object.entries(FACES)) {
+        const own = figures(row);
+        const drawn = (tabular: boolean) =>
+          ([...word].reduce((sum, char) => {
+            const one = own[CHARS.indexOf(char)] as number;
+            return sum + (tabular && DIGIT.test(char) ? (TABULAR[face] ?? one) : one);
+          }, 0) *
+            12) /
+          1000;
+        expect(drawn(false), `${face}: ${word}`).toBeLessThanOrEqual(textPx(word) - 0.5 + 1e-9);
+        expect(drawn(true), `${face}: ${word}`).toBeLessThanOrEqual(
+          textPx(word, true) - 0.5 + 1e-9,
+        );
+      }
+    }
+    // The lanes' own words as each face draws them, kerned, never wider either.
+    for (const [face, words] of Object.entries(DRAWN)) {
+      for (const [key, px] of Object.entries(words)) {
+        const tabular = key.endsWith(" (tabular)");
+        const word = tabular ? key.slice(0, -" (tabular)".length) : key;
+        expect(px, `${face}: ${word}`).toBeLessThanOrEqual(textPx(word, tabular) - 0.5);
+      }
+    }
+  });
+
+  it("weighs a verdict after its bar by the same table as a segment's words", () => {
+    // A verdict after a wide bar: its words, its inset and its gap from the next, of 10 %.
+    const room = { room: 10, last: false, bar: 50 };
+    for (const word of ["approved", "changes", "verdict"]) {
+      const from = WIDTHS.find((px) => textPx(word) + AFTER_PAD_PX + GAP_PX <= px / 10);
+      expect(label(word, room)?.from, word).toBe(from);
+    }
   });
 });

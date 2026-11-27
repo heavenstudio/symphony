@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 mod messages;
+mod quiet;
+mod zoom;
 
 const TASK: &str = "/task/visual/in-progress";
 const SLUG: &str = "visual/in-progress";
@@ -59,10 +61,37 @@ fn week() -> Value {
     week
 }
 
+/// The card's example task (docs/design/analysis/timeline-navigation.md), `tools/workflow-revision-guards`
+/// as it closed on 2026-11-20, from the analysis's mockup: 42 builds and 135 tests, the runs kept
+/// from 11-19 11:09, 60 messages, and the 10 h 54 m after it closed with nothing recorded.
+fn revision_guards() -> Value {
+    serde_json::from_str(include_str!("timeline/revision-guards.json"))
+        .expect("the card's example task")
+}
+
+/// The stand-in server at `site` answering the card's example task, its thread a page of all its
+/// messages.
+fn guards_on(site: Site) -> Site {
+    let guards = revision_guards();
+    let site = served_by(site, &guards);
+    let ids: Vec<i64> = guards["history"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|message| message["id"].as_i64().unwrap())
+        .collect();
+    site.set_json("/api/task-history", &messages::thread(&guards, &ids, None));
+    site
+}
+
 /// The stand-in server answering the look-parity task's page and thread, no offer to the owner, and
 /// `timeline` for its timeline.
 fn served(timeline: &Value) -> Site {
-    let site = site();
+    served_by(site(), timeline)
+}
+
+/// [`served`], from `site`: the client it serves.
+fn served_by(site: Site, timeline: &Value) -> Site {
     let content = look_parity::responses();
     for path in ["/api/task-page", "/api/task-history"] {
         site.set_json(path, &content[path]);
@@ -120,6 +149,25 @@ fn open(chrome: &mut super::chrome::Chrome, site: &Site, width: u32, rows: usize
     assert!(
         chrome.wait_for(&drawn, SHOWN),
         "the timeline's {rows} rows were not drawn: {:?}",
+        chrome.eval("document.querySelector('article.task')?.innerText")
+    );
+    chrome.frames();
+}
+
+/// Open the task's page at `width` and wait for its lanes (wide) or its list (on a phone) to be
+/// drawn, however many steps the timeline has.
+fn open_drawn(chrome: &mut super::chrome::Chrome, site: &Site, width: u32) {
+    view(chrome, width, width < 900);
+    chrome.open(&site.url(TASK));
+    let part = if width < 900 { ".tl-list" } else { ".tl-lanes" };
+    assert!(
+        chrome.wait_for(
+            &format!(
+                "document.querySelector('.tl-drawn {part}')?.getBoundingClientRect().height > 0"
+            ),
+            SHOWN
+        ),
+        "the timeline was not drawn: {:?}",
         chrome.eval("document.querySelector('article.task')?.innerText")
     );
     chrome.frames();
@@ -335,6 +383,12 @@ fn a_runs_hover_and_focus_say_its_command_its_wait_and_its_run_time_apart() {
         ))
     };
     assert_eq!(said(&mut chrome, "builds"), json!([LINT]));
+    // A run 30 px wide or more says its distinguishing words and its length inside its bar, cut
+    // to fit there.
+    assert_eq!(
+        chrome.eval(RUN_WORDS),
+        json!({"shown": ["verify · 24 m", "verify · 23 m", "certificate verify · 24 m", "certificate verify · 18 m"], "held": true})
+    );
     assert_eq!(
         said(&mut chrome, "tests")[0],
         json!(VERIFY),
@@ -344,7 +398,7 @@ fn a_runs_hover_and_focus_say_its_command_its_wait_and_its_run_time_apart() {
     // A pointer resting on the test's part reads all of it, as on the queue before it.
     let selector = ".tl-lane[data-lane=tests] [role=img]";
     let under = chrome.eval(&format!(
-        "(() => {{ const b = document.querySelector({}).getBoundingClientRect(); const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return [at.title, document.querySelector('.tl-lane[data-lane=tests] .tl-waiting').title]; }})()",
+        "(() => {{ const b = document.querySelector({}).getBoundingClientRect(); const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return [at.closest('[title]').title, document.querySelector('.tl-lane[data-lane=tests] .tl-waiting').title]; }})()",
         json!(selector)
     ));
     assert_eq!(under, json!([VERIFY, VERIFY]));
@@ -441,8 +495,8 @@ fn on_a_phone_a_runs_row_says_all_of_it_in_every_box() {
         "before the tap: {before}, then {focused}"
     );
     assert_eq!(chrome.eval(EVERY_STEP_SHOWN), json!(true), "a step cut off");
-    // A box that clips, its totals on two lines over a note of the runs no longer kept, and a run
-    // whose words take five lines: they are whole, the box as tall as before.
+    // A box that clips, its totals on two lines, a row more for the runs kept from a time, and a
+    // run whose words take five lines: they are whole, the box as tall as before.
     let mut long = fixture();
     let host = "a-long-machine-name-of-the-studio-in-the-back-room.local";
     for run in long["runs"].as_array_mut().unwrap() {
@@ -454,8 +508,8 @@ fn on_a_phone_a_runs_row_says_all_of_it_in_every_box() {
     let Some(mut chrome) = super::chrome() else {
         return;
     };
-    open(&mut chrome, &site, 390, 13);
-    assert!(drawn(&mut chrome, ".tl-note"));
+    open(&mut chrome, &site, 390, 14);
+    assert!(drawn(&mut chrome, ".tl-kept"));
     tap(&mut chrome, ".tl-list > li:last-of-type");
     chrome.frames();
     let focused = chrome.eval(LAST_ROW);
@@ -484,14 +538,16 @@ fn on_a_phone_a_runs_row_says_all_of_it_in_every_box() {
     assert_eq!(chrome.eval(EVERY_STEP_SHOWN), json!(true));
 }
 
-/// Each two parts of different runs in one lane of runs whose boxes meet or overlap: none, where
-/// each run is a bar of its own.
-const MERGED: &str = "(() => { const met = []; for (const lane of document.querySelectorAll('.tl-lane[data-lane=builds], .tl-lane[data-lane=tests]')) { const parts = [...lane.querySelectorAll('.tl-seg')].map(e => [e.title, e.getBoundingClientRect()]); for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) { const [a, r] = parts[i], [b, s] = parts[j]; if (a !== b && r.left < s.right + 1 && s.left < r.right + 1 && r.top < s.bottom && s.top < r.bottom) met.push([a, b]); } } return met; })()";
+/// The pairs of runs in one row of a runs lane drawn over each other by more than a bar's least
+/// width (2 px) makes them: none, as a run takes the first row free when it is queued, so runs in
+/// one row never overlap in time. Runs seconds apart may share a pixel at a timeline's scale.
+const MERGED: &str = "(() => { const met = []; for (const lane of document.querySelectorAll('.tl-lane[data-lane=builds], .tl-lane[data-lane=tests]')) { const parts = [...lane.querySelectorAll('.tl-seg')].map(e => [e.title, e.getBoundingClientRect()]); for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) { const [a, r] = parts[i], [b, s] = parts[j]; if (a !== b && r.top < s.bottom && s.top < r.bottom && Math.min(r.right, s.right) - Math.max(r.left, s.left) > 2.5) met.push([a, b]); } } return met; })()";
 
 /// Four tests at once, and one queued half a minute after another's end, each drawn as a bar of its
-/// own in the tests' lane: a row each where they overlap or meet, as many rows as they need.
+/// own in the tests' lane: a row each where they overlap, as many rows as they need, and the one
+/// after another's end in that one's row.
 #[test]
-fn runs_that_overlap_or_meet_are_each_drawn_as_a_bar_of_its_own() {
+fn runs_that_overlap_take_a_row_each_and_runs_one_after_another_share_one() {
     let mut timeline = fixture();
     let made = timeline["created"].as_f64().unwrap();
     let run = |phase: &str, label: &str, from: f64, to: f64| json!({"phase": phase, "label": label, "by": "quiet-wren", "commit": "9ac5149", "host": "studio", "queued": made + from * 60.0, "started": made + from * 60.0 + 30.0, "ended": made + to * 60.0, "result": "green"});
@@ -501,7 +557,7 @@ fn runs_that_overlap_or_meet_are_each_drawn_as_a_bar_of_its_own() {
         run("test", "just test-rs -p b", 70.0, 190.0),
         run("test", "just test-rs -p c", 80.0, 180.0),
         run("test", "just test-rs -p d", 90.0, 170.0),
-        // Half a minute after c's end: it would read as c's bar, so it takes another row.
+        // Half a minute after c's end: in c's row, free again.
         run("test", "just test-rs -p e", 180.5, 250.0),
         run("test", "just verify", 260.0, 300.0),
     ]);
@@ -512,14 +568,18 @@ fn runs_that_overlap_or_meet_are_each_drawn_as_a_bar_of_its_own() {
         chrome.eval("[...document.querySelectorAll('.tl-lane[data-lane=builds], .tl-lane[data-lane=tests]')].map(lane => [lane.dataset.lane, lane.style.getPropertyValue('--rows'), lane.querySelectorAll('[role=img]').length])"),
         json!([["builds", "1", 1], ["tests", "4", 6]])
     );
+    assert_eq!(
+        chrome.eval("[...document.querySelectorAll('.tl-lane[data-lane=tests] .tl-seg[role=img]')].map(e => e.style.getPropertyValue('--row'))"),
+        json!(["0", "1", "2", "3", "2", "0"])
+    );
     for width in [900, 1280, 1600] {
         view(&mut chrome, width, false);
         assert_eq!(chrome.eval(MERGED), json!([]), "at {width} px");
         assert_eq!(chrome.eval(EVERY_STEP_SHOWN), json!(true), "at {width} px");
     }
-    // A burst of forty tests a minute apart on a timeline of a week: each meets the one before it
-    // and takes a row, more rows than words are drawn for, so they are drawn thin, every run still
-    // a bar of its own and a part the keyboard stops at, no word under any.
+    // A burst of forty tests a minute apart on a timeline of a week: each after the one before it,
+    // all on one row, every run still a bar of its own and a part the keyboard stops at, each too
+    // narrow for words inside it.
     let mut timeline = week();
     let now = timeline["now"].as_f64().unwrap();
     let burst: Vec<Value> = (0..40)
@@ -532,8 +592,8 @@ fn runs_that_overlap_or_meet_are_each_drawn_as_a_bar_of_its_own() {
     let site = served(&timeline);
     open(&mut chrome, &site, 1280, 90);
     assert_eq!(
-        chrome.eval("(() => { const lane = document.querySelector('.tl-lane[data-lane=tests]'); return [lane.hasAttribute('data-dense'), lane.style.getPropertyValue('--rows'), lane.querySelectorAll('[role=img]').length, lane.querySelectorAll('.tl-under').length, Math.round(lane.querySelector('.tl-track').getBoundingClientRect().height)]; })()"),
-        json!([true, "40", 40, 0, 40 * 12 + 4])
+        chrome.eval("(() => { const lane = document.querySelector('.tl-lane[data-lane=tests]'); return [lane.style.getPropertyValue('--rows'), lane.querySelectorAll('[role=img]').length, [...lane.querySelectorAll('.tl-fit')].filter(e => e.getClientRects().length > 0).length, Math.round(lane.querySelector('.tl-track').getBoundingClientRect().height)]; })()"),
+        json!(["1", 40, 0, 36])
     );
     for width in [900, 1280, 1600] {
         view(&mut chrome, width, false);
@@ -541,27 +601,369 @@ fn runs_that_overlap_or_meet_are_each_drawn_as_a_bar_of_its_own() {
     }
 }
 
-/// The pairs of words drawn in one track of the lanes whose boxes meet: none, where every word is
+/// The words drawn inside the runs' bars, and whether each is in a bar at least 30 px wide that
+/// cuts it with an ellipsis.
+const RUN_WORDS: &str = "(() => { const shown = [...document.querySelectorAll('.tl-lane[data-lane=builds] .tl-seg .tl-fit, .tl-lane[data-lane=tests] .tl-seg .tl-fit')].filter(e => e.getClientRects().length > 0); return {shown: shown.map(e => e.textContent), held: shown.every(e => { const bar = e.parentElement; return bar.getBoundingClientRect().width >= 29.5 && getComputedStyle(bar).textOverflow === 'ellipsis' && getComputedStyle(bar).overflow === 'hidden'; })}; })()";
+
+/// Each runs lane: its key, its rows, its name's counts and its track's height.
+const RUN_LANES: &str = "[...document.querySelectorAll('.tl-lane[data-lane=builds], .tl-lane[data-lane=tests]')].map(lane => [lane.dataset.lane, lane.style.getPropertyValue('--rows'), lane.querySelector('.tl-name small').textContent, Math.round(lane.querySelector('.tl-track').getBoundingClientRect().height)])";
+
+/// The card's example task on a desk: its 177 builds and tests on one row of builds and two of
+/// tests, each lane's name saying its counts, every run a bar of its own at its time; the time
+/// no run is kept of hatched over both lanes up to the first kept, saying so; and nothing
+/// scrolls sideways.
+#[test]
+fn the_cards_task_draws_its_runs_on_one_or_two_rows_and_hatches_the_time_not_kept() {
+    let site = guards_on(site());
+    let Some(mut chrome) = chrome() else { return };
+    open_drawn(&mut chrome, &site, 1440);
+    assert_eq!(
+        chrome.eval(RUN_LANES),
+        json!([
+            ["builds", "1", "42 runs · 12 red", 36],
+            ["tests", "2", "135 runs · 34 red", 56]
+        ])
+    );
+    assert_eq!(chrome.eval(MERGED), json!([]));
+    // Each run's bar is at its time: its left the share of the track its start is of the hours.
+    let off = chrome.eval("(() => { const lanes = [...document.querySelectorAll('.tl-lane[data-lane=builds] .tl-seg, .tl-lane[data-lane=tests] .tl-seg')]; return Math.max(...lanes.map(e => { const t = e.parentElement.getBoundingClientRect(); return Math.abs(e.getBoundingClientRect().left - (t.left + parseFloat(e.style.left) / 100 * t.width)); })); })()");
+    assert!(
+        off.as_f64().unwrap() < 0.5,
+        "a bar is {off} px off its time"
+    );
+    // The hatch: both lanes, from the task's making to the first run kept, which no bar is before;
+    // its words whole, no sentence over the lanes.
+    let hatch = chrome.eval("(() => { const hatches = [...document.querySelectorAll('.tl-notkept')]; const first = Math.min(...[...document.querySelectorAll('.tl-lane[data-lane=builds] .tl-seg, .tl-lane[data-lane=tests] .tl-seg')].map(e => e.getBoundingClientRect().left)); return {count: hatches.length, lanes: hatches.map(h => h.closest('.tl-lane').dataset.lane), words: hatches.map(h => [...h.querySelectorAll('.tl-fit')].filter(e => e.getClientRects().length > 0).map(e => e.textContent)), end: Math.round(Math.max(...hatches.map(h => h.getBoundingClientRect().right)) - first), title: hatches[0].title}; })()");
+    assert_eq!(
+        hatch,
+        json!({"count": 2, "lanes": ["builds", "tests"], "words": [["not kept before 11-19 11:09"], ["not kept before 11-19 11:09"]], "end": 0, "title": "Builds and tests before 11-19 11:09 are not kept"})
+    );
+    assert_eq!(chrome.eval(CUT), json!([]));
+    assert_eq!(
+        chrome.eval("[...document.querySelectorAll('.tl-head .tl-note')].map(e => e.textContent)"),
+        json!([])
+    );
+    // No run of 27 hours' worth is 30 px wide at 1440: no words in any bar.
+    assert_eq!(chrome.eval(RUN_WORDS)["shown"], json!([]));
+    assert_eq!(
+        chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
+        json!(true)
+    );
+}
+
+/// Where each message's tick is against its lane: its x off its time, its middle off its lane's
+/// line, how far its drawn tick's top is below its lane's lowest bar, its press area, and the
+/// board's and others' lane's height.
+const TICKS: &str = "(() => { const marks = [...document.querySelectorAll('.tl-message-mark')]; const worst = (f) => Math.max(...marks.map(f)); return {count: marks.length, time: worst(m => { const t = m.parentElement.getBoundingClientRect(), b = m.getBoundingClientRect(); return Math.abs(b.left + b.width / 2 - (t.left + parseFloat(m.style.left) / 100 * t.width)); }), line: worst(m => { const r = m.parentElement.querySelector('.tl-rail').getBoundingClientRect(), b = m.getBoundingClientRect(); return Math.abs(b.top + b.height / 2 - (r.top + r.height / 2)); }), over: worst(m => { const b = m.getBoundingClientRect(), tick = b.top + b.height / 2 - 4; return Math.max(0, ...[...m.parentElement.querySelectorAll('.tl-seg')].map(s => s.getBoundingClientRect().bottom - tick)); }), press: Math.min(...marks.map(m => Math.min(m.getBoundingClientRect().width, m.getBoundingClientRect().height))), board: Math.round(document.querySelector('.tl-lane[data-lane=other] .tl-track').getBoundingClientRect().height), lines: [...document.querySelectorAll('.tl-lane[data-rail]')].map(l => l.dataset.lane)}; })()";
+
+/// The card's example task's messages on a desk: each a tick on its sender's lane's dotted line,
+/// at its time and under the bars, in a press area of its own of 24 px; the board's and others'
+/// lane a 22 px line alone; and each hour's line where its label says it, on the tracks' own
+/// start.
+#[test]
+fn messages_are_ticks_under_the_bars_and_the_hour_lines_meet_their_labels() {
+    let site = guards_on(site());
+    let Some(mut chrome) = chrome() else { return };
+    for width in [1440, 960] {
+        open_drawn(&mut chrome, &site, width);
+        let ticks = chrome.eval(TICKS);
+        assert_eq!(
+            [&ticks["count"], &ticks["board"], &ticks["lines"]],
+            [
+                &json!(60),
+                &json!(22),
+                &json!(["orchestrator", "executor", "reviewer", "other"])
+            ],
+            "{width}: {ticks}"
+        );
+        for (what, most) in [("time", 0.5), ("line", 0.75), ("over", 0.0)] {
+            assert!(
+                ticks[what].as_f64().unwrap() <= most,
+                "{width}: a tick's {what} is off by {}: {ticks}",
+                ticks[what]
+            );
+        }
+        assert!(ticks["press"].as_f64().unwrap() >= 24.0, "{width}: {ticks}");
+        // Each hour's line drawn is where its label's middle is, a line shown where its label is
+        // (one that gives way to a band's words, neither), and the layers start where the tracks
+        // do.
+        let hours = chrome.eval("(() => { const seen = e => e.getClientRects().length > 0, lines = [...document.querySelectorAll('.tl-hours .tl-hour')].filter(seen), labels = [...document.querySelectorAll('.tl-axis .tl-tick:not(.tl-nowtag)')].filter(seen); const track = document.querySelector('.tl-lane[data-lane=stage] .tl-track').getBoundingClientRect(); return {count: [lines.length, labels.length], off: Math.max(...lines.map((l, at) => { const b = labels[at].getBoundingClientRect(); return Math.abs(l.getBoundingClientRect().left - (b.left + b.width / 2)); })), hours: document.querySelector('.tl-hours').getBoundingClientRect().left - track.left, arrows: document.querySelector('.tl-address-track')?.getBoundingClientRect().left - track.left}; })()");
+        let lines = hours["count"][0].as_u64().unwrap();
+        assert!(
+            lines > 3 && hours["count"][1] == json!(lines),
+            "{width}: {hours}"
+        );
+        assert!(hours["off"].as_f64().unwrap() < 0.5, "{width}: {hours}");
+        assert!(
+            hours["hours"].as_f64().unwrap().abs() < 0.5,
+            "{width}: {hours}"
+        );
+    }
+}
+
+/// Where the selected message's marks are: its tick, the arrow's line and ends, the ring at its
+/// end and its recipient's line, the guide, the hours line's foot and its words there.
+fn selected_marks(chrome: &mut super::chrome::Chrome, id: i64) -> Value {
+    chrome.eval(&format!(r#"(() => {{
+        const mid = b => b ? [b.left + b.width / 2, b.top + b.height / 2] : null;
+        const mark = document.querySelector('.tl-message-mark[data-message="{id}"]');
+        const arrow = document.querySelector('.tl-address-arrow');
+        const a = arrow?.getBoundingClientRect();
+        const to = arrow ? document.querySelector(`[data-lane="${{arrow.dataset.to}}"] .tl-rail`).getBoundingClientRect() : null;
+        const guide = document.querySelector('.tl-address-guide')?.getBoundingClientRect();
+        const said = document.querySelector('.tl-address-said');
+        const axis = document.querySelector('.tl-axis .tl-track').getBoundingClientRect();
+        const s = said?.getBoundingClientRect();
+        return {{
+            pressed: mark.getAttribute('aria-pressed'), tick: mid(mark.getBoundingClientRect()),
+            ends: arrow ? [arrow.dataset.from, arrow.dataset.to] : null,
+            line: a ? [a.left + a.width / 2, a.top, a.bottom] : null,
+            recipient: to ? to.top + to.height / 2 : null,
+            ring: mid(document.querySelector('.tl-address-ring')?.getBoundingClientRect()),
+            around: document.querySelector('.tl-address-ring')?.classList.contains('tl-ring-around') ?? null,
+            guide: guide ? [guide.left, guide.top] : null, foot: document.querySelector('.tl-axis').getBoundingClientRect().bottom,
+            said: said?.textContent ?? null, inside: s ? s.left >= axis.left - 0.5 && s.right <= axis.right + 0.5 : null,
+        }};
+    }})()"#))
+}
+
+/// A selected message of the card's example task: a filled dot on its tick and one arrow straight
+/// to a ring on its addressed lane's line at its instant, its address and time on the hours line
+/// with a dashed guide down to it; one whose two ends are one lane a ring around its tick and no
+/// arrow, the hours line naming both ends.
+#[test]
+fn a_selected_tick_points_at_a_ring_on_its_recipients_line_and_says_its_address_on_the_hours() {
+    let site = guards_on(site());
+    let Some(mut chrome) = chrome() else { return };
+    open_drawn(&mut chrome, &site, 1440);
+    // The reviewer's verdict to the executor, picked from the chooser: up to the executor's line.
+    messages::pick(&mut chrome, 15396);
+    let marks = selected_marks(&mut chrome, 15396);
+    assert_eq!(
+        [
+            &marks["pressed"],
+            &marks["ends"],
+            &marks["around"],
+            &marks["said"],
+            &marks["inside"]
+        ],
+        [
+            &json!("true"),
+            &json!(["reviewer", "executor"]),
+            &json!(false),
+            &json!("#15396 · gilded-gecko-838 → @executor · 11:31 · verdict"),
+            &json!(true)
+        ],
+        "{marks}"
+    );
+    let f = |path: &[usize]| {
+        let mut at = &marks[["tick", "line", "ring"][path[0]]];
+        for index in &path[1..] {
+            at = &at[*index];
+        }
+        at.as_f64().unwrap()
+    };
+    let near = |a: f64, b: f64, what: &str| {
+        assert!((a - b).abs() < 0.75, "{what}: {a} against {b}: {marks}")
+    };
+    let recipient = marks["recipient"].as_f64().unwrap();
+    near(f(&[1, 0]), f(&[0, 0]), "the arrow's line through the tick");
+    near(f(&[1, 2]), f(&[0, 1]), "the arrow from the tick, up");
+    near(f(&[1, 1]), recipient, "the arrow to the recipient's line");
+    near(f(&[2, 0]), f(&[0, 0]), "the ring at the tick's instant");
+    near(f(&[2, 1]), recipient, "the ring on the recipient's line");
+    near(
+        marks["guide"][0].as_f64().unwrap(),
+        f(&[0, 0]),
+        "the guide over the tick",
+    );
+    near(
+        marks["guide"][1].as_f64().unwrap(),
+        marks["foot"].as_f64().unwrap(),
+        "the guide from the hours' foot",
+    );
+    // A tap on another tick picks it: the executor's to the orchestrator, by its press area.
+    tap(&mut chrome, ".tl-message-mark[data-message='17040']");
+    assert!(chrome.wait_for("document.querySelector('.tl-message-details h3')?.textContent.startsWith('Message #17040 ')", SHOWN));
+    assert_eq!(
+        selected_marks(&mut chrome, 17040)["ends"],
+        json!(["executor", "reviewer"])
+    );
+    // A verdict to everyone after the task closed: its two ends are the board's and others' lane.
+    messages::pick(&mut chrome, 17313);
+    let ringed = selected_marks(&mut chrome, 17313);
+    assert_eq!(
+        [&ringed["ends"], &ringed["around"], &ringed["said"]],
+        [
+            &Value::Null,
+            &json!(true),
+            &json!("#17313 · coral-badger-11 → Everyone on task · 04:34 · verdict")
+        ],
+        "{ringed}"
+    );
+    let tick = &ringed["tick"];
+    for at in 0..2 {
+        assert!(
+            (ringed["ring"][at].as_f64().unwrap() - tick[at].as_f64().unwrap()).abs() < 0.75,
+            "{ringed}"
+        );
+    }
+    assert!(
+        ringed["guide"][1].as_f64().unwrap() - ringed["foot"].as_f64().unwrap() < 0.75,
+        "{ringed}"
+    );
+    assert_eq!(
+        chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
+        json!(true)
+    );
+}
+
+/// Each message row of the phone's list: its height, how far its time's, its diamond's and its
+/// words' middles are apart, and whether a press on its time reaches its button.
+const MESSAGE_ROWS: &str = "(() => { const rows = [...document.querySelectorAll('.tl-list .tl-message')]; const mid = e => { const b = e.getBoundingClientRect(); return b.top + b.height / 2; }; return {count: rows.length, heights: [...new Set(rows.map(r => Math.round(r.getBoundingClientRect().height * 2) / 2))], apart: Math.max(...rows.map(r => { const m = [r.querySelector('.tl-at'), r.querySelector('.tl-mark'), r.querySelector('.tl-message-row')].map(mid); return Math.max(...m) - Math.min(...m); })), pressed: rows.every(r => { r.scrollIntoView({block: 'center'}); const b = r.querySelector('.tl-at').getBoundingClientRect(); return document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2)?.closest('.tl-message-row') === r.querySelector('.tl-message-row'); })}; })()";
+
+/// The card's example task on a phone: a message is one line of 28 px, its time, its diamond and
+/// its words level, the whole row its press area; the runs kept from 11-19 11:09 is a row at
+/// that time before the first run, in place of a sentence; and nothing scrolls sideways.
+#[test]
+fn on_a_phone_a_message_is_one_line_and_the_runs_kept_from_a_time_is_a_row() {
+    let site = guards_on(site());
+    let Some(mut chrome) = chrome() else { return };
+    open_drawn(&mut chrome, &site, 390);
+    tap(&mut chrome, ".tl-more");
+    let rows = chrome.eval(MESSAGE_ROWS);
+    assert_eq!(
+        [&rows["count"], &rows["heights"], &rows["pressed"]],
+        [&json!(60), &json!([28]), &json!(true)],
+        "{rows}"
+    );
+    assert!(rows["apart"].as_f64().unwrap() <= 1.0, "{rows}");
+    assert_eq!(
+        chrome.eval("(() => { const items = [...document.querySelectorAll('.tl-list > .tl-row')]; const kept = items.findIndex(r => r.classList.contains('tl-kept')); const run = items.findIndex(r => r.classList.contains('tl-sub') && !r.classList.contains('tl-event')); return [items[kept]?.querySelector('.tl-at').textContent, items[kept]?.querySelector('.tl-label').textContent, kept < run, document.querySelectorAll('.tl-kept').length, [...document.querySelectorAll('.tl-head .tl-note')].length]; })()"),
+        json!(["11:09", "Builds and tests kept from here on", true, 1, 0])
+    );
+    // A press on a row's time, where the row's button reaches, chooses its message.
+    let at = chrome.eval("(() => { const e = document.querySelector('.tl-message-row[data-message=\"15266\"]').closest('li').querySelector('.tl-at'); e.scrollIntoView({block: 'center'}); const b = e.getBoundingClientRect(); return {x: b.left + b.width / 2, y: b.top + b.height / 2}; })()");
+    for kind in ["mousePressed", "mouseReleased"] {
+        chrome.call(
+            "Input.dispatchMouseEvent",
+            json!({"type": kind, "x": at["x"], "y": at["y"], "button": "left", "clickCount": 1}),
+        );
+    }
+    assert!(chrome.wait_for("document.querySelector('.tl-message-details h3')?.textContent.startsWith('Message #15266 ')", SHOWN));
+    assert_eq!(
+        chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
+        json!(true)
+    );
+}
+
+/// The pairs of words drawn in one track of the lanes whose boxes meet, a run's words measured as
+/// its bar cuts them: none, where every word is
 /// whole in its own box ([`CUT`]).
-const OVERPRINT: &str = "(() => { const met = []; for (const track of document.querySelectorAll('.tl-lanes .tl-track')) { const words = [...track.querySelectorAll('.tl-fit, .tl-tick')].filter(e => e.getClientRects().length > 0 && e.textContent.trim() !== '').map(e => [e.textContent.trim(), e.getBoundingClientRect()]); for (let i = 0; i < words.length; i++) for (let j = i + 1; j < words.length; j++) { const [a, r] = words[i], [b, s] = words[j]; if (r.left < s.right - 0.5 && s.left < r.right - 0.5 && r.top < s.bottom - 0.5 && s.top < r.bottom - 0.5) met.push([a, b]); } } return met; })()";
+const OVERPRINT: &str = "(() => { const met = []; const drawn = e => { const r = e.getBoundingClientRect(), bar = e.parentElement.closest('[data-lane=builds] .tl-seg, [data-lane=tests] .tl-seg'); if (!bar) return r; const b = bar.getBoundingClientRect(); return {left: Math.max(r.left, b.left), right: Math.min(r.right, b.right), top: Math.max(r.top, b.top), bottom: Math.min(r.bottom, b.bottom)}; }; for (const track of document.querySelectorAll('.tl-lanes .tl-track')) { const words = [...track.querySelectorAll('.tl-fit, .tl-tick')].filter(e => e.getClientRects().length > 0 && e.textContent.trim() !== '').map(e => [e.textContent.trim(), drawn(e)]); for (let i = 0; i < words.length; i++) for (let j = i + 1; j < words.length; j++) { const [a, r] = words[i], [b, s] = words[j]; if (r.left < s.right - 0.5 && s.left < r.right - 0.5 && r.top < s.bottom - 0.5 && s.top < r.bottom - 0.5) met.push([a, b]); } } return met; })()";
 
-/// The parts of the lanes drawn with words wider than they are, cut short.
-const CUT: &str = "[...document.querySelectorAll('.tl-lanes .tl-seg, .tl-lanes .tl-after, .tl-lanes .tl-under, .tl-lanes .tl-g')].filter(e => e.getClientRects().length > 0 && e.textContent.trim() !== '' && e.scrollWidth > e.clientWidth + 1).map(e => e.textContent)";
+/// The parts of the lanes drawn with words wider than they are, cut short: the words as drawn (a
+/// Range over them, to the fraction of a pixel an ellipsis already takes) reaching past their box's
+/// padding. A run's bar alone cuts its words to fit, and is not counted.
+const CUT: &str = "[...document.querySelectorAll('.tl-lanes .tl-seg, .tl-lanes .tl-after, .tl-lanes .tl-g, .tl-lanes .tl-notkept .tl-fit')].filter(e => !e.closest('[data-lane=builds], [data-lane=tests]') || e.matches('.tl-notkept .tl-fit')).filter(e => e.getClientRects().length > 0 && e.innerText.trim() !== '').filter(e => { const words = document.createRange(); words.selectNodeContents(e); const w = words.getBoundingClientRect(), b = e.getBoundingClientRect(), s = getComputedStyle(e); return w.right > b.right - parseFloat(s.borderRightWidth) - parseFloat(s.paddingRight) + 0.01 || w.left < b.left + parseFloat(s.borderLeftWidth) + parseFloat(s.paddingLeft) - 0.01; }).map(e => e.innerText)";
 
+/// The words of a segment or of a label after one that another segment of their track is drawn
+/// over (a segment of a few minutes drawn at its least width reaching into the next), each with the
+/// segment over it: none. A runs lane's bars cut their words to fit, and are not counted.
+const COVERED: &str = "(() => { const met = []; for (const track of document.querySelectorAll('.tl-lanes .tl-track')) { if (track.closest('[data-lane=builds], [data-lane=tests]')) continue; const segs = [...track.querySelectorAll('.tl-seg')].filter(e => e.getClientRects().length > 0); for (const e of track.querySelectorAll('.tl-seg, .tl-after')) { if (e.getClientRects().length === 0 || e.innerText.trim() === '') continue; const words = document.createRange(); words.selectNodeContents(e); const w = words.getBoundingClientRect(); for (const seg of segs) { if (seg === e) continue; const b = seg.getBoundingClientRect(); if (b.left < w.right - 0.5 && w.left < b.right - 0.5 && b.top < w.bottom - 0.5 && w.top < b.bottom - 0.5) met.push([e.innerText.trim(), seg.title]); } } } return met; })()";
+
+/// Each label after a bar that is drawn: its words, how far past its bar as drawn they start, and
+/// how far before the next segment of its track they end (null where none follows them).
+const AFTER: &str = "[...document.querySelectorAll('.tl-lanes .tl-after')].filter(e => e.getClientRects().length > 0).map(e => { const r = document.createRange(); r.selectNodeContents(e); const words = r.getBoundingClientRect(), bar = e.previousElementSibling.getBoundingClientRect(); const next = [...e.parentElement.querySelectorAll('.tl-seg')].map(s => s.getBoundingClientRect().left).filter(left => left >= words.left); return [e.textContent, words.left - bar.right, next.length === 0 ? null : Math.min(...next) - words.right]; })";
+
+/// No word of the lanes is drawn over another, under another segment or cut short, at any width,
+/// for the fixture, a week and the card's task. Each label after a bar starts its padding past the bar as drawn, which a
+/// round of a few minutes draws wider than its time, and ends its gap (`GAP_PX`, timeline-layout.ts)
+/// or more before the next segment, as its words are weighed at the widest face's advances
+/// (`textPx`); a label with no room is not drawn, as the card's reviewer's "changes" is not, 4 % of
+/// the track before the next round.
 #[test]
 fn no_word_of_the_lanes_is_drawn_over_another_at_any_width_for_the_fixture_or_a_week() {
-    for (name, timeline, rows) in [("the fixture", fixture(), 13), ("a week", week(), 50)] {
-        let site = served(&timeline);
+    // The labels after a bar at each width: the fixture's and a week's at every one, the card's
+    // task's as its quiet stretch skipped gives its work the width, each verdict from the width its
+    // room holds it before the next round or the band (a 555 px track at 900 wide, 935 at 1280,
+    // 1,095 at 1440, 1,158 at 1600): the first "changes" from a 903 px track, so from a 1280
+    // page's, which is one of the widths a word is weighed at (timeline-layout.ts `TRACKS`); the
+    // second from 1,162, wider than the page draws.
+    let card = |width: u32| -> &'static [&'static str] {
+        match width {
+            ..1100 => &["approved"],
+            1100..1280 => &["approved", "approved"],
+            _ => &["approved", "changes", "approved"],
+        }
+    };
+    // The track at each width: at 1280, 1440 and 1600 one of `TRACKS`, which a layout that moved
+    // it would leave a word hidden there until the next step of 50.
+    let track = |width: u32| match width {
+        900 => 555,
+        960 => 615,
+        1100 => 755,
+        1280 => 935,
+        1440 => 1095,
+        _ => 1158,
+    };
+    let fixed = |labels: &'static [&'static str]| move |_: u32| labels;
+    for (name, timeline, labels) in [
+        (
+            "the fixture",
+            fixture(),
+            Box::new(fixed(&["changes", "approved"]))
+                as Box<dyn Fn(u32) -> &'static [&'static str]>,
+        ),
+        ("a week", week(), Box::new(fixed(&["changes"]))),
+        ("the card's task", revision_guards(), Box::new(card)),
+    ] {
+        let site = if name == "the card's task" {
+            guards_on(site())
+        } else {
+            served(&timeline)
+        };
         let Some(mut chrome) = chrome() else { return };
-        open(&mut chrome, &site, 1280, rows);
-        for width in [900, 1100, 1280, 1600] {
+        open_drawn(&mut chrome, &site, 1280);
+        for width in [900, 960, 1100, 1280, 1440, 1600] {
             view(&mut chrome, width, false);
+            assert_eq!(
+                chrome.eval(
+                    "document.querySelector('.tl-lane[data-lane=stage] .tl-track').getBoundingClientRect().width"
+                ),
+                json!(track(width)),
+                "{name} at {width} px: the track's width"
+            );
             assert_eq!(chrome.eval(OVERPRINT), json!([]), "{name} at {width} px");
             assert_eq!(
                 chrome.eval(CUT),
                 json!([]),
                 "{name} at {width} px: a word cut short"
             );
+            assert_eq!(
+                chrome.eval(COVERED),
+                json!([]),
+                "{name} at {width} px: a word under another segment"
+            );
+            let after = chrome.eval(AFTER);
+            let drawn: Vec<&str> = (after.as_array().unwrap().iter())
+                .map(|label| label[0].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                drawn,
+                labels(width),
+                "{name} at {width} px: the labels after a bar"
+            );
+            for label in after.as_array().unwrap() {
+                assert!(
+                    label[1].as_f64().unwrap() >= 5.5,
+                    "{name} at {width} px: a label's words start inside or at its bar: {label}"
+                );
+                assert!(
+                    label[2].as_f64().is_none_or(|gap| gap >= 4.0),
+                    "{name} at {width} px: a label's words within its gap of the next: {label}"
+                );
+            }
             assert_eq!(
                 chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
                 json!(true),
@@ -861,8 +1263,12 @@ fn a_wide_box_holds_every_lane_with_no_show_all_and_the_next_visit_reserves_it_a
             (0.0..48.0).contains(&gap.as_f64().unwrap()),
             "{rows} steps: the brief starts {gap} px under the box"
         );
+        // The next visit reserves the height drawn in whole pixels, rounded up.
+        let whole = chrome.eval(
+            "Math.ceil(document.getElementById('timeline-slot').getBoundingClientRect().height)",
+        );
         let before = placeholder_drawn(&mut chrome, &site);
-        assert_eq!(before["box"][1], drawn, "{rows} steps: the next visit");
+        assert_eq!(before["box"][1], whole, "{rows} steps: the next visit");
         site.hold_route(symphony_api::TASK_TIMELINE_PATH, false);
         let arrived =
             format!("document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === {rows}");
@@ -871,11 +1277,14 @@ fn a_wide_box_holds_every_lane_with_no_show_all_and_the_next_visit_reserves_it_a
         // The height is kept in whole pixels, the timeline's own a fraction under it: what is under
         // the box may move by less than one.
         let after = places(&mut chrome);
+        let height =
+            chrome.eval("document.getElementById('timeline-slot').getBoundingClientRect().height");
         assert!(
             ["brief", "thread"].iter().all(|part| {
                 (after[part].as_f64().unwrap() - before[part].as_f64().unwrap()).abs() < 1.0
-            }) && after["box"] == before["box"],
-            "{rows} steps: the timeline moved the page: {before} then {after}"
+            }) && after["box"][0] == before["box"][0]
+                && (height.as_f64().unwrap() - before["box"][1].as_f64().unwrap()).abs() < 1.0,
+            "{rows} steps: the timeline moved the page: {before} then {after}, {height} px"
         );
         chrome.eval("document.getElementById('timeline').scrollIntoView()");
         chrome.frames();
@@ -1289,7 +1698,7 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
     };
     std::fs::create_dir_all(&out).unwrap();
     let symphony = binaries::built("symphony");
-    let shoot = |site: &Site, view: &[&str], picture: PathBuf| {
+    let shoot_after = |site: &Site, view: &[&str], steps: &[&str], picture: PathBuf| {
         let done = Command::new(&symphony)
             .args(["shot", "--timeout", "120", &site.url(TASK)])
             .args(view)
@@ -1298,11 +1707,9 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
                 ".tl-drawn",
                 "--eval",
                 "document.getElementById('timeline').scrollIntoView()",
-                "--pause",
-                "300",
-                "--report",
-                "--out",
             ])
+            .args(steps)
+            .args(["--pause", "300", "--report", "--out"])
             .arg(&picture)
             .env("SYMPHONY_CHROME", &browser)
             .output()
@@ -1320,6 +1727,8 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
             String::from_utf8_lossy(&done.stdout).trim()
         );
     };
+    let shoot =
+        |site: &Site, view: &[&str], picture: PathBuf| shoot_after(site, view, &[], picture);
     let phone = [
         ("phone-light", &["--phone", "--scheme", "light"][..]),
         ("phone-dark", &["--phone", "--scheme", "dark"]),
@@ -1336,6 +1745,156 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
         for (name, view) in phone.iter().chain(&wide) {
             shoot(&site, view, out.join(format!("timeline-{task}-{name}.png")));
         }
+    }
+    // The card's example task, before (the client `SYMPHONY_TIMELINE_BEFORE` names, a build's
+    // `public/`, else the committed one) and after (this build), on a phone and 1440 wide as the
+    // card's pictures are, 1600 wide, where its reviewer's label is weighed closest to its room,
+    // and 1280 wide, light and dark, where its first "changes" shows from its track; after, a
+    // message selected, zoomed, on the true clock and zoomed across its quiet stretch's band, and
+    // a phone's row of that stretch.
+    let committed = std::env::var_os("SYMPHONY_TIMELINE_BEFORE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../symphony-server/client/public")
+        });
+    let card = [
+        (
+            "wide-light",
+            &["--size", "1440x1100", "--scheme", "light"][..],
+        ),
+        ("wide-dark", &["--size", "1440x1100", "--scheme", "dark"]),
+        (
+            "wide-1600-light",
+            &["--size", "1600x1100", "--scheme", "light"],
+        ),
+    ];
+    let common = [
+        (
+            "wide-1280-light",
+            &["--size", "1280x900", "--scheme", "light"][..],
+        ),
+        (
+            "wide-1280-dark",
+            &["--size", "1280x900", "--scheme", "dark"],
+        ),
+    ];
+    for (version, site) in [
+        (
+            "before",
+            guards_on(Site::start(
+                &committed,
+                &super::common::fixture("board.json"),
+            )),
+        ),
+        ("after", guards_on(site())),
+    ] {
+        for (name, view) in phone.iter().chain(&card).chain(&common) {
+            shoot(
+                &site,
+                view,
+                out.join(format!("timeline-guards-{version}-{name}.png")),
+            );
+        }
+    }
+    let site = guards_on(site());
+    for (name, view) in card {
+        shoot_after(
+            &site,
+            view,
+            &["--click", ".tl-message-mark[data-message='15396']"],
+            out.join(format!("timeline-guards-after-selected-{name}.png")),
+        );
+        // Zoomed to the first review, 11:22 to 11:31, by a double click on its bar, then out
+        // three times from it, the verdict's message selected: 10:53 to 12:01 with the overview.
+        let review = "document.querySelector('.tl-lane[data-lane=stage] .tl-seg:nth-of-type(3)')";
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--eval",
+                &format!("{review}.dispatchEvent(new MouseEvent('dblclick', {{bubbles: true}}))"),
+                "--wait-for",
+                ".tl-overview",
+                "--eval",
+                &format!("{review}.focus()"),
+                "--key",
+                "-",
+                "--key",
+                "-",
+                "--key",
+                "-",
+                "--click",
+                ".tl-message-mark[data-message='15396']",
+            ],
+            out.join(format!("timeline-guards-after-zoomed-{name}.png")),
+        );
+        // The first review zoomed in once more, to the least, five minutes, where + cannot act.
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--eval",
+                &format!("{review}.dispatchEvent(new MouseEvent('dblclick', {{bubbles: true}}))"),
+                "--wait-for",
+                ".tl-overview",
+                "--click",
+                ".tl-zoom button[aria-label='Zoom in']",
+                "--wait-for",
+                ".tl-zoom button[aria-label='Zoom in']:disabled",
+            ],
+            out.join(format!("timeline-guards-after-least-{name}.png")),
+        );
+        // A mouse held mid-drag across the hours from 08:00 to 12:30, its band drawn: the
+        // pointer's events sent to the lanes, which capture none of a pointer the page made.
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--eval",
+                "(() => { Element.prototype.setPointerCapture = () => {}; const h = document.querySelector('.tl-lanes .tl-hours').getBoundingClientRect(), s = document.querySelector('.tl-lane[data-lane=stage] .tl-track').getBoundingClientRect(), lanes = document.querySelector('.tl-lanes'); const fire = (type, f) => lanes.dispatchEvent(new PointerEvent(type, {bubbles: true, clientX: h.left + f * h.width, clientY: s.top + s.height / 2, pointerType: 'mouse', button: 0, buttons: 1, pointerId: 1})); fire('pointerdown', 7 / 27.58); fire('pointermove', 9 / 27.58); fire('pointermove', 11.5 / 27.58); })()",
+                "--wait-for",
+                ".tl-band",
+            ],
+            out.join(format!("timeline-guards-after-band-{name}.png")),
+        );
+        // The quiet stretch on the true clock, the switch pressed off.
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--click",
+                ".tl-skip",
+                "--wait-for",
+                ".tl-skip[aria-pressed='false']",
+            ],
+            out.join(format!("timeline-guards-after-true-clock-{name}.png")),
+        );
+        // ⌘ + wheel about the review that ends the quiet stretch: zoomed across its band.
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--eval",
+                "(() => { const b = document.querySelector('.tl-lane[data-lane=stage] .tl-seg[data-from=\"1795132641.4\"]').getBoundingClientRect(); document.querySelector('.tl-lanes').dispatchEvent(new WheelEvent('wheel', {bubbles: true, cancelable: true, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, deltaY: -300, ctrlKey: true})); })()",
+                "--wait-for",
+                ".tl-overview .tl-ov-break",
+            ],
+            out.join(format!("timeline-guards-after-across-{name}.png")),
+        );
+    }
+    // On a phone, the list shown whole and the quiet stretch's row in the middle of the screen.
+    for (name, view) in phone {
+        shoot_after(
+            &site,
+            view,
+            &[
+                "--click",
+                ".tl-more",
+                "--eval",
+                "document.querySelector('.tl-list .tl-quiet').scrollIntoView({block: 'center'})",
+            ],
+            out.join(format!("timeline-guards-after-quiet-{name}.png")),
+        );
     }
     let site = served(&fixture());
     site.drop_route(symphony_api::TASK_TIMELINE_PATH, true);

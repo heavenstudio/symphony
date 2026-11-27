@@ -2,6 +2,7 @@ import { isValidElement, type KeyboardEvent, type ReactElement, type ReactNode }
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
+import GUARDS from "../../symphony-web-tests/tests/browser/timeline/revision-guards.json";
 import { whenShown } from "./feed";
 import type { Shown } from "./parts";
 import { Failure, NO_ANSWER as POST_UNANSWERED } from "./request";
@@ -28,9 +29,29 @@ import {
   watchCrossings,
 } from "./timeline";
 import { readTaskTokens, totalWords } from "./timeline-cost";
-import { failed, lanes, nextRead, readTimeline, stops, WORDED_ROWS } from "./timeline-layout";
+import { BAND_SHARE } from "./timeline-cut";
+import {
+  failed,
+  lanes,
+  nextRead,
+  readTimeline,
+  stops,
+  type View,
+  WIDTH_RULES,
+} from "./timeline-layout";
+import {
+  type Heard,
+  handoff,
+  keyView,
+  OverviewStrip,
+  quietCount,
+  sayAgain,
+  ZoomBar,
+} from "./timeline-navigate";
+import { quietStretches, SKIPPING, type Skipping } from "./timeline-quiet";
+import { LEAST_SHOWN, leastShown, wholeOf } from "./timeline-zoom";
 import { NOT_IN_TIME } from "./trouble";
-import type { TaskTimeline, TaskTokens } from "./wire";
+import type { TaskTimeline, TaskTokens, TimelineMessage } from "./wire";
 
 // React's effects stood in for, as no DOM runs here: each effect a hook sets is kept to be run by
 // its test, and a state a test gives (`states`, in the order the hooks ask) stands for what an
@@ -94,10 +115,10 @@ function elements(
 type Props = Record<string, unknown> & { children?: ReactNode };
 
 /** Press `element` as a click would: its handler, which it must have. */
-function press(element: ReactElement<Props> | undefined): void {
+function press(element: ReactElement<Props> | undefined, event?: unknown): void {
   const onClick = element?.props.onClick;
   if (typeof onClick !== "function") throw new Error("nothing to press");
-  onClick();
+  onClick(event);
 }
 
 /** The page's document: shown or hidden, its events, no element of the project's. */
@@ -155,8 +176,9 @@ describe("the timeline drawn", () => {
     for (const lane of ["stage", "executor", "reviewer", "builds", "tests"]) {
       expect(drawn).toContain(`data-lane="${lane}"`);
     }
-    expect(drawn).toContain("<b>Builds</b><small>studio</small>");
-    expect(drawn).toContain("<b>Tests</b><small>studio</small>");
+    // Each runs lane's name says its counts.
+    expect(drawn).toContain("<b>Builds</b><small>1 run · 0 red</small>");
+    expect(drawn).toContain("<b>Tests</b><small>4 runs · 0 red</small>");
     expect(count(drawn, 'class="tl-lane tl-gate"')).toBe(4);
     // What runs now: striped in the list and in its lane, and the legend says so.
     expect(count(drawn, "tl-work tl-running")).toBe(1);
@@ -268,10 +290,15 @@ describe("the timeline drawn", () => {
     expect(drawn).toContain(
       '<div class="tl-lane tl-gates-head"><span class="tl-name"><b>Gates</b></span></div><div class="tl-lane tl-gate" data-gate="certificate"><span class="tl-name">certificate</span>',
     );
+    // A verdict starts past its bar as drawn, and shows where its letters fit.
     expect(drawn).toContain(
-      'class="tl-after tl-fit" aria-hidden="true" style="--c:var(--dislike);left:',
+      '<span class="tl-after tl-fit tl-from-400" aria-hidden="true" style="--c:var(--dislike);left:54.47%;max-width:18.42%;padding-left:max(6px, calc(20px - 8.95%))">changes</span>',
     );
-    expect(drawn).toContain('class="tl-under tl-fit tl-from-');
+    // A run's words inside its bar, at the widths where it is wide enough.
+    expect(drawn).toMatch(
+      /class="tl-seg" style="--c:var\(--like\);--row:0;left:[0-9.]+%;width:[0-9.]+%" title="Test, just verify · waited 6 m · ran 24 m[^"]*"[^>]*><span class="tl-fit tl-from-[0-9]+">verify · 24 m<\/span><\/span>/,
+    );
+    expect(drawn).not.toContain("tl-under");
     expect(drawn).toContain("max-width:calc(");
     expect(drawn).toContain(
       '<li><span class="tl-key tl-key-work"></span>worked or ran</li><li><span class="tl-key tl-key-wait"></span>queued or waiting</li><li><span class="tl-key tl-key-running"></span>running now</li><li class="tl-wide"><span class="tl-key tl-g tl-g-met"></span>gate met</li>',
@@ -326,13 +353,12 @@ describe("the timeline drawn", () => {
     expect(tests).not.toContain('data-lane="builds"');
   });
 
-  it("a lane of more rows than WORDED_ROWS is marked for its thin rows, and no other lane", () => {
-    expect(html(pictures())).not.toContain("data-dense");
+  it("runs that overlap take a row each, and a lane with no message has no line", () => {
     // The fixture's verify, run again a minute apart from 10:52, each going on until the last has
     // begun: each takes a row of its own.
     const verify = pictures().runs[1];
     if (verify === undefined) throw new Error("the fixture has no verify");
-    const again = Array.from({ length: WORDED_ROWS + 1 }, (_, at) => ({
+    const again = Array.from({ length: 7 }, (_, at) => ({
       ...verify,
       queued: verify.queued + at * 60,
       started: verify.queued + at * 60 + 1,
@@ -342,11 +368,11 @@ describe("the timeline drawn", () => {
       ...pictures(),
       runs: [pictures().runs[0], ...again] as (typeof verify)[],
     });
-    expect(drawn).toContain(
-      `<div class="tl-lane" data-lane="tests" data-dense="" style="--rows:${WORDED_ROWS + 1}">`,
-    );
+    expect(drawn).toContain('<div class="tl-lane" data-lane="tests" style="--rows:7">');
     expect(drawn).toContain('<div class="tl-lane" data-lane="builds" style="--rows:1">');
-    expect(count(drawn, "data-dense")).toBe(1);
+    expect(drawn).not.toContain("data-rail");
+    expect(drawn).not.toContain("tl-rail");
+    expect(drawn).not.toContain("tl-notkept");
   });
 
   it("offers all of a clipped list, the latest again once shown, and the focused part's detail", () => {
@@ -358,11 +384,21 @@ describe("the timeline drawn", () => {
     );
     expect(clipped.startsWith('<div class="tl-drawn tl-clipped">')).toBe(true);
     expect(clipped).toContain(
-      '<button class="dx-button tl-more" data-style="outline" data-size="default" type="button" aria-expanded="false">Show all 13 steps</button>',
+      '<button class="dx-button tl-more" data-style="outline" data-size="default" type="button" aria-expanded="false">Show all 14 steps</button>',
     );
+    // The time no run is kept of is a row at its end in the list, and hatched over the runs
+    // lanes, in place of a sentence over them.
+    expect(clipped).not.toContain("no longer kept");
     expect(clipped).toContain(
-      '<p class="tl-note">Builds and tests before 11-11 10:25 are no longer kept.</p>',
+      '<li class="tl-row tl-sub tl-event tl-kept" style="--c:var(--muted-foreground)" title="Builds and tests before 11-11 10:25 are not kept"><span class="tl-at">10:25</span><span class="tl-mark" aria-hidden="true"></span><span class="tl-label">Builds and tests kept from here on</span></li>',
     );
+    expect(
+      count(
+        clipped,
+        '<span class="tl-notkept" aria-hidden="true" title="Builds and tests before 11-11 10:25 are not kept" style="left:0.53%;width:21.84%"><span class="tl-fit',
+      ),
+    ).toBe(2);
+    expect(clipped).toContain(">not kept before 11-11 10:25</span>");
     expect(clipped).toContain('id="tl-stop-3" tabindex="0"');
     expect(clipped).toContain('id="tl-stop-0" tabindex="-1"');
     const all = renderToStaticMarkup(
@@ -672,8 +708,9 @@ describe("the timeline's host", () => {
     const onDrawn = vi.fn();
     renderToStaticMarkup(<TimelineView timeline={pictures()} onDrawn={onDrawn} />);
     // The style sheet is put before the draw is measured, which it lays out.
-    // Selection adds one layout effect for the phone row, plus attempt lifetime and thread-read effects.
-    expect([react.layouts.length, react.effects.length]).toEqual([3, 3]);
+    // Selection adds one layout effect for the phone row, plus attempt lifetime and thread-read effects;
+    // a chosen message brought into view, and the zoomable lanes' wheel, one effect each.
+    expect([react.layouts.length, react.effects.length]).toEqual([3, 5]);
     expect(react.layouts[0]).toBe(putStyle);
     // No element was drawn here: nothing to measure, nothing said.
     react.layouts[1]?.();
@@ -923,8 +960,9 @@ describe("the timeline measured", () => {
     expect(head).toHaveLength(2);
     expect(head[0]).toMatchObject({ tag: "style", id: "timeline-style" });
     expect(head[1]).toBe(theme);
-    // Its text is the sheet's, which Vitest empties.
-    expect(typeof head[0]?.textContent).toBe("string");
+    // Its text is the sheet's, which Vitest empties, then the width steps, in the one element put
+    // in the page in the layout effect, so they hold from the timeline's first paint.
+    expect(head[0]?.textContent).toBe(WIDTH_RULES);
   });
 
   it("draws a clipped list from its end, all of it once asked, and neither else", () => {
@@ -983,5 +1021,409 @@ describe("the lanes' keyboard", () => {
     expect(press("End")).toBe(1);
     expect(choose).toHaveBeenLastCalledWith(9);
     expect(asked).toEqual(["tl-stop-4", "tl-stop-9"]);
+  });
+});
+
+describe("the timeline zoomed", () => {
+  /** The pictures' hours start at 09:00 on their clock: `minutes` after it. */
+  const START = 1_794_380_400;
+  const nine = (minutes: number) => START + minutes * 60;
+  const NOON: View = { from: nine(180), to: nine(240) };
+  const WHOLE: View = { from: START, to: nine(380) };
+
+  /** The timeline drawn wide with `view`, set through `set`, or with no zoom at all. */
+  function draw(
+    timeline: TaskTimeline,
+    zoom?: { view: View | null; set?: (v: View | null) => void },
+  ) {
+    return renderToStaticMarkup(
+      <TimelineDrawn
+        timeline={timeline}
+        all={false}
+        clipped={false}
+        detail=""
+        stops={spiedStops()}
+        toggle={() => {}}
+        zoom={zoom === undefined ? undefined : { view: zoom.view, set: zoom.set ?? (() => {}) }}
+      />,
+    );
+  }
+
+  it("a task too short to zoom into draws as it did, with no toolbar", () => {
+    // Made half a minute after its hour and closed two minutes later: its hours are under five
+    // minutes long.
+    const brief: TaskTimeline = {
+      ...pictures(),
+      created: START + 30,
+      now: START + 150,
+      closed: START + 150,
+      stages: [
+        { status: "in_progress", from: START + 30, to: START + 150, by: "quiet-wren" },
+        { status: "done", from: START + 150, to: null, by: "quiet-wren" },
+      ],
+      claims: [],
+      rounds: [],
+      runs: [],
+      gates: [],
+    };
+    const before = draw(brief);
+    expect(draw(brief, { view: null })).toBe(before);
+    expect(draw(brief, { view: { from: START + 30, to: START + 90 } })).toBe(before);
+    expect(before).not.toContain("tl-zoom");
+    expect(before).toContain('<div class="tl-lanes" role="group" aria-label="Lanes">');
+  });
+
+  it("opens on the whole task: a toolbar line above the lanes, and no overview", () => {
+    const drawn = draw(pictures(), { view: null });
+    // Whole task and − cannot act there: not drawn, their places kept, + alone where it is when
+    // zoomed.
+    expect(drawn).toContain(
+      '<div class="tl-zoom"><span class="tl-zoom-group" role="group" aria-label="Zoom"><button class="dx-button tl-idle" data-style="outline" data-size="sm" type="button" disabled="">Whole task</button><button class="dx-button tl-idle" data-style="outline" data-size="sm" type="button" aria-label="Zoom out" title="Zoom out" disabled="">−</button><button class="dx-button" data-style="outline" data-size="sm" type="button" aria-label="Zoom in" title="Zoom in">+</button></span><span class="tl-range">11-11 09:00 → 11-11 15:20 · 6 h 20 m</span><span class="tl-said" aria-live="polite"></span></div>',
+    );
+    expect(drawn).toContain(
+      '<div class="tl-lanes tl-zoomable" id="tl-lanes" role="group" aria-label="Lanes">',
+    );
+    expect(drawn).not.toContain("tl-overview");
+    expect(drawn).not.toContain("tl-out");
+    // The toolbar is above the lanes, in the box's body.
+    expect(drawn.indexOf("tl-zoom")).toBeLessThan(drawn.indexOf("tl-lanes"));
+    // A stage's bar says its instants, which a double click zooms to; no other bar does.
+    expect(count(drawn, "data-from=")).toBe(6);
+    expect(drawn).toContain(`data-from="${pictures().created}" data-to="${nine(43)}"`);
+    // Unzoomed lanes, or a task too short, say none.
+    expect(draw(pictures())).not.toContain("data-from=");
+  });
+
+  it("zoomed, says the hours shown of the whole, draws the overview, and hides what is outside", () => {
+    const drawn = draw(pictures(), { view: NOON });
+    expect(drawn).toContain(
+      '<span class="tl-range">11-11 12:00 → 11-11 13:00 · 1 h of 6 h 20 m</span>',
+    );
+    expect(drawn).toContain('type="button">Whole task</button>');
+    expect(drawn).not.toContain("disabled");
+    expect(drawn).not.toContain("tl-idle");
+    expect(drawn).toContain('<div class="tl-overview">');
+    expect(drawn).toContain(
+      'class="tl-ov-window" role="scrollbar" tabindex="0" aria-label="Hours shown" aria-controls="tl-lanes" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="47" aria-valuetext="11-11 12:00 → 11-11 13:00 · 1 h of 6 h 20 m" style="left:47.37%;width:15.79%"',
+    );
+    // The overview sits between the toolbar and the lanes.
+    expect(drawn.indexOf("tl-zoom")).toBeLessThan(drawn.indexOf("tl-overview"));
+    expect(drawn.indexOf("tl-overview")).toBeLessThan(drawn.indexOf("tl-lanes"));
+    // Every stop is still drawn, the ones outside the view unseen.
+    const total = stops(lanes(pictures()));
+    expect(count(drawn, 'id="tl-stop-')).toBe(total);
+    expect(drawn).toContain('class="tl-seg tl-out"');
+    expect(drawn).toContain('id="tl-stop-0"');
+    expect(drawn).toContain("tl-g tl-g-missing tl-out");
+    // The hours marked are the view's, every ten minutes.
+    expect(drawn).toContain('<span class="tl-tick" style="left:0.00%">12:00</span>');
+    expect(drawn).toContain('<span class="tl-tick" style="left:16.67%">12:10</span>');
+    // Now is past the view: not marked.
+    expect(drawn).not.toContain("tl-now");
+  });
+
+  it("at a zoom's least, + cannot zoom further and is not drawn, its place kept", () => {
+    const least = draw(pictures(), { view: { from: nine(180), to: nine(180) + LEAST_SHOWN } });
+    expect(least).toContain(
+      '<button class="dx-button tl-idle" data-style="outline" data-size="sm" type="button" aria-label="Zoom in" title="Zoom in" disabled="">+</button>',
+    );
+    expect(count(least, "tl-idle")).toBe(1);
+    expect(least).toContain("· 5 m of 6 h 20 m");
+    expect([
+      leastShown(null, WHOLE),
+      leastShown(NOON, WHOLE),
+      leastShown({ from: START, to: START + LEAST_SHOWN }, WHOLE),
+    ]).toEqual([false, false, true]);
+  });
+
+  it("each of the toolbar's buttons sets the view it says", () => {
+    const set = vi.fn();
+    const buttons = (view: View | null) =>
+      elements(ZoomBar({ timeline: pictures(), nav: { whole: WHOLE, view, set } }), (one) =>
+        ["Whole task", "−", "+"].includes(one.props.children as string),
+      );
+    const [whole, out, inward] = buttons(NOON);
+    press(whole, pressed(false).event);
+    press(out, pressed(false).event);
+    press(inward, pressed(false).event);
+    // Each a press, its range said.
+    expect(set.mock.calls).toEqual([
+      [null, true],
+      [{ from: nine(150), to: nine(270) }, true],
+      [{ from: nine(195), to: nine(225) }, true],
+    ]);
+    // From the whole task, + zooms to its middle half.
+    set.mockClear();
+    press(buttons(null)[2], pressed(false).event);
+    expect(set.mock.calls).toEqual([[{ from: nine(95), to: nine(285) }, true]]);
+  });
+
+  it("says a range again where it is the one said before it", () => {
+    const first = sayAgain(undefined, "11-11 12:00 → 11-11 13:00 · 1 h of 6 h 20 m");
+    const again = sayAgain(first, first.text);
+    expect([first, again]).toEqual([
+      { text: first.text, times: 1 },
+      { text: first.text, times: 2 },
+    ]);
+    expect(sayAgain(again, "11-11 09:00 → 11-11 15:20 · 6 h 20 m").times).toBe(3);
+    /** What the readout's live region holds once `said` is said. */
+    const region = (said?: Heard) =>
+      elements(
+        ZoomBar({ timeline: pictures(), nav: { whole: WHOLE, view: NOON, set: vi.fn(), said } }),
+        (one) => one.props.className === "tl-said",
+      )[0]?.props.children as ReactElement<Props> | undefined;
+    // Nothing said yet: the region is empty.
+    expect(region()).toBeFalsy();
+    // Each range said is drawn anew, the same words under a key of its own, so a reader hears it.
+    const [once, twice] = [region(first), region(again)];
+    expect([once?.key, once?.props.children]).toEqual(["1", first.text]);
+    expect([twice?.key, twice?.props.children]).toEqual(["2", first.text]);
+  });
+
+  /** A press's event on a toolbar button with the focus or not, and the buttons it focused. */
+  function pressed(focused: boolean) {
+    const focus: string[] = [];
+    const button: { ownerDocument: { activeElement: unknown }; parentElement: unknown } = {
+      ownerDocument: { activeElement: null },
+      parentElement: {
+        querySelector: (selector: string) => ({ focus: () => focus.push(selector) }),
+      },
+    };
+    if (focused) button.ownerDocument.activeElement = button;
+    return { event: { currentTarget: button }, focus };
+  }
+
+  it("hands the focus on from a button that hides itself to the one that now acts", () => {
+    const set = vi.fn();
+    const buttons = (view: View | null) =>
+      elements(ZoomBar({ timeline: pictures(), nav: { whole: WHOLE, view, set } }), (one) =>
+        ["Whole task", "−", "+"].includes(one.props.children as string),
+      );
+    /** The buttons the press of the `at`th button with the focus, on `view`, focused. */
+    const focused = (view: View, at: number) => {
+      const click = pressed(true);
+      press(buttons(view)[at], click.event);
+      return click.focus;
+    };
+    const ZOOM_IN = ['[aria-label="Zoom in"]'];
+    // Whole task always ends on the whole task: to +.
+    expect(focused(NOON, 0)).toEqual(ZOOM_IN);
+    // − to the whole task: to +; short of it, it stays.
+    expect(focused({ from: nine(90), to: nine(290) }, 1)).toEqual(ZOOM_IN);
+    expect(focused(NOON, 1)).toEqual([]);
+    // + to the least: to −; short of it, it stays.
+    expect(focused({ from: nine(180), to: nine(188) }, 2)).toEqual(['[aria-label="Zoom out"]']);
+    expect(focused(NOON, 2)).toEqual([]);
+    // A press with the focus elsewhere (a mouse's, where it takes none) moves no focus.
+    const elsewhere = pressed(false);
+    press(buttons(NOON)[0], elsewhere.event);
+    expect(elsewhere.focus).toEqual([]);
+    expect(set).toHaveBeenCalledTimes(6);
+    expect([
+      handoff("whole", null, WHOLE),
+      handoff("out", null, WHOLE),
+      handoff("out", NOON, WHOLE),
+      handoff("in", { from: START, to: START + LEAST_SHOWN }, WHOLE),
+      handoff("in", NOON, WHOLE),
+    ]).toEqual(["in", "in", null, "out", null]);
+  });
+
+  it("+ and − zoom and 0 shows the whole task; a modifier's key is the browser's", () => {
+    expect(keyView("+", false, NOON, WHOLE)).toEqual({ view: { from: nine(195), to: nine(225) } });
+    expect(keyView("=", false, NOON, WHOLE)).toEqual(keyView("+", false, NOON, WHOLE));
+    expect(keyView("-", false, NOON, WHOLE)).toEqual({ view: { from: nine(150), to: nine(270) } });
+    expect(keyView("_", false, NOON, WHOLE)).toEqual(keyView("-", false, NOON, WHOLE));
+    expect(keyView("−", false, NOON, WHOLE)).toEqual(keyView("-", false, NOON, WHOLE));
+    expect(keyView("0", false, NOON, WHOLE)).toEqual({ view: null });
+    expect(keyView("-", false, null, WHOLE)).toEqual({ view: null });
+    expect(keyView("+", true, NOON, WHOLE)).toBeNull();
+    expect(keyView("0", true, NOON, WHOLE)).toBeNull();
+    expect(keyView("ArrowRight", false, NOON, WHOLE)).toBeNull();
+    expect(keyView("a", false, NOON, WHOLE)).toBeNull();
+  });
+
+  it("the overview draws the whole task's stages and runs, the outside dimmed", () => {
+    const strip = renderToStaticMarkup(
+      <OverviewStrip
+        timeline={pictures()}
+        view={NOON}
+        nav={{ whole: WHOLE, view: NOON, set: () => {} }}
+      />,
+    );
+    expect(count(strip, 'class="tl-ov-stage"')).toBe(6);
+    expect(count(strip, 'class="tl-ov-run"')).toBe(5);
+    expect(strip).toContain(
+      '<span class="tl-ov-dim" aria-hidden="true" style="left:0;width:47.37%"></span><span class="tl-ov-dim" aria-hidden="true" style="left:63.16%;right:0"></span>',
+    );
+    expect(strip).toContain(
+      '<span class="tl-ov-edge tl-ov-start" data-hold="start" aria-hidden="true"></span><span class="tl-ov-edge tl-ov-end" data-hold="end" aria-hidden="true"></span>',
+    );
+    expect(wholeOf(pictures())).toEqual(WHOLE);
+  });
+
+  it("a message chosen outside the hours shown has no arrow nor address drawn; its tick is unseen", () => {
+    const message = (id: number, at: number): TimelineMessage => ({
+      id,
+      at,
+      sender: "quiet-wren",
+      recipient: "@orchestrator",
+      kind: "msg",
+      from: { state: "known", candidates: [{ role: "executor", by: "quiet-wren", source: "t" }] },
+      to: {
+        state: "known",
+        candidates: [{ role: "orchestrator", by: "glacial-merlin", source: "t" }],
+      },
+      after_close: false,
+    });
+    const messages = [message(7, nine(100)), message(8, nine(200))];
+    const timeline: TaskTimeline = {
+      ...pictures(),
+      history: { sources_complete: true, sources: [], roles: [], messages },
+    };
+    const drawWith = (selected: number) =>
+      renderToStaticMarkup(
+        <TimelineDrawn
+          timeline={timeline}
+          all={false}
+          clipped={false}
+          detail=""
+          stops={spiedStops()}
+          toggle={() => {}}
+          selection={{ messages, selected, choose: () => {} }}
+          zoom={{ view: NOON, set: () => {} }}
+        />,
+      );
+    const outside = drawWith(7);
+    expect(outside).toContain('class="tl-message-mark tl-out" data-message="7"');
+    expect(outside).toContain('class="tl-message-mark" data-message="8"');
+    expect(outside).not.toContain("tl-address-said");
+    expect(outside).not.toContain("tl-address-track");
+    const inside = drawWith(8);
+    expect(inside).toContain("tl-address-said");
+    expect(inside).toContain("tl-address-track");
+  });
+});
+
+describe("the quiet stretches skipped", () => {
+  /** The card's quiet stretch's ends, as the server answers them. */
+  const QUIET_FROM = 1795093413.1;
+  const QUIET_TO = 1795132641.4;
+
+  /** The card's task, quiet from 14:03 on 11-19 to 00:57 the next day. */
+  function guards(): TaskTimeline {
+    const read = readTimeline(JSON.parse(JSON.stringify(GUARDS)));
+    if (read === null) throw new Error("the card's task is no timeline");
+    return read;
+  }
+
+  /** `timeline` drawn wide on the whole task, its quiet stretches skipped as `skipping`; with no
+   * way to change what is skipped where `skip` is false. */
+  function draw(timeline: TaskTimeline, skipping: Skipping = SKIPPING, skip = true) {
+    return renderToStaticMarkup(
+      <TimelineDrawn
+        timeline={timeline}
+        all={false}
+        clipped={false}
+        detail=""
+        stops={spiedStops()}
+        toggle={() => {}}
+        zoom={{
+          view: null,
+          set: () => {},
+          quiet: quietStretches(timeline),
+          skipping,
+          skip: skip ? () => {} : undefined,
+        }}
+      />,
+    );
+  }
+
+  it("draws a band that says its length, its day after it and why, the switch on with its count", () => {
+    const drawn = draw(guards());
+    expect(drawn).toContain(
+      '<button class="dx-button tl-skip" data-style="ghost" data-size="sm" type="button" aria-pressed="true"><span class="tl-skip-box" aria-hidden="true"></span>Skip quiet stretches<span class="tl-skip-count">1 · 10 h 54 m</span></button>',
+    );
+    expect(drawn).toContain(
+      '<span class="tl-range">11-19 01:00 → 11-20 04:34 · 1 d 3 h · 10 h 54 m skipped</span>',
+    );
+    const title = "10 h 54 m quiet, 11-19 14:03 → 11-20 00:57, task done, nothing recorded";
+    expect(count(drawn, 'class="tl-break"')).toBe(1);
+    expect(drawn).toContain(
+      `<button type="button" class="tl-break" data-start="${QUIET_FROM}" data-end="${QUIET_TO}" title="${title}" aria-label="Show on the true clock: ${title}" style="left:75.68%;width:3.30%">`,
+    );
+    expect(count(drawn, '<svg class="tl-edge')).toBe(2);
+    expect(drawn).toContain("quiet · task done, nothing recorded");
+    expect(drawn).toContain(
+      '<span class="tl-break-length tl-fit" style="left:77.33%">+10 h 54 m<span class="tl-break-day tl-fit">11-20</span></span>',
+    );
+    // The legend says what a band is, wide alone.
+    expect(drawn).toContain(
+      '<li class="tl-wide"><span class="tl-key tl-key-quiet"></span>quiet stretch skipped: nothing recorded</li>',
+    );
+    // The bands are over the tracks, after the hours' lines.
+    expect(drawn.indexOf('class="tl-hours"')).toBeLessThan(drawn.indexOf('class="tl-breaks"'));
+    // The phone's list says the stretch as a row of its own.
+    expect(drawn).toContain(
+      '<li class="tl-row tl-quiet" title="10 h 54 m quiet, 14:03 → 11-20 00:57: task done, nothing recorded"><b>10 h 54 m quiet, 14:03 → 11-20 00:57</b><small>Task done, nothing recorded</small></li>',
+    );
+  });
+
+  it("marks each band on the overview, dashed at its share", () => {
+    const timeline = guards();
+    const whole = wholeOf(timeline);
+    const cut = { skipped: quietStretches(timeline), share: BAND_SHARE };
+    const view = { from: whole.from, to: whole.from + 3600 };
+    const strip = renderToStaticMarkup(
+      <OverviewStrip timeline={timeline} view={view} nav={{ whole, view, cut, set: () => {} }} />,
+    );
+    expect(strip).toContain(
+      '<span class="tl-ov-break" aria-hidden="true" style="left:75.68%;width:3.30%"></span>',
+    );
+    const plain = renderToStaticMarkup(
+      <OverviewStrip timeline={timeline} view={view} nav={{ whole, view, set: () => {} }} />,
+    );
+    expect(plain).not.toContain("tl-ov-break");
+  });
+
+  it("switched off, draws the true clock, the switch still there to turn it on", () => {
+    const drawn = draw(guards(), { on: false, opened: [] });
+    expect(drawn).toContain(
+      'type="button" aria-pressed="false"><span class="tl-skip-box" aria-hidden="true"></span>Skip quiet stretches',
+    );
+    expect(drawn).not.toContain('class="tl-break"');
+    expect(drawn).not.toContain("tl-key-quiet");
+    expect(drawn).toContain('<span class="tl-range">11-19 01:00 → 11-20 04:34 · 1 d 3 h</span>');
+    // Its row stays in the phone's list: the list is the true clock always.
+    expect(drawn).toContain('class="tl-row tl-quiet"');
+  });
+
+  it("draws no band and no switch for a task with no quiet stretch, nor where neither can act", () => {
+    const none = draw(pictures());
+    expect(none).not.toContain("tl-skip");
+    expect(none).not.toContain("tl-break");
+    expect(none).not.toContain("tl-quiet");
+    expect(none).not.toContain("skipped");
+    const fixed = draw(guards(), SKIPPING, false);
+    expect(fixed).not.toContain("tl-skip");
+    expect(fixed).not.toContain("tl-break");
+    // The row says what happened whatever the lanes draw.
+    expect(fixed).toContain("tl-quiet");
+  });
+
+  it("the switch's press says what it does: every stretch on the true clock, or all skipped", () => {
+    const press_ = vi.fn();
+    const timeline = guards();
+    const [button] = elements(
+      ZoomBar({
+        timeline,
+        nav: { whole: wholeOf(timeline), view: null, set: () => {} },
+        quiet: { count: 1, total: 39228, on: true, press: press_ },
+      }),
+      (one) => one.props.className === "tl-skip",
+    );
+    expect(button?.props["aria-pressed"]).toBe(true);
+    press(button);
+    expect(press_).toHaveBeenCalledTimes(1);
+    expect([quietCount(1, 39228), quietCount(3, 90_000)]).toEqual(["1 · 10 h 54 m", "3 · 1 d 1 h"]);
   });
 });

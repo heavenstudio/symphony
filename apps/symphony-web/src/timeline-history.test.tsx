@@ -5,6 +5,7 @@ import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
 import { arrowPlace, stopsOf, TimelineDrawn } from "./timeline";
 import {
   address,
+  addressAt,
   endpointLane,
   endpointWords,
   historyWords,
@@ -153,6 +154,78 @@ describe("recorded timeline history", () => {
       "other",
     ]);
   });
+  it("gives every lane a message can start or end at a line at its foot, and no other lane", () => {
+    const t = timeline();
+    t.runs = [
+      {
+        phase: "test",
+        label: "just verify",
+        by: "two",
+        commit: null,
+        host: "",
+        queued: 10,
+        started: 11,
+        ended: 20,
+        result: "green",
+      },
+    ];
+    expect(lanes(t).lanes.map((l) => [l.key, l.name, l.who, l.rail])).toEqual([
+      ["stage", "Stage", "", false],
+      ["orchestrator", "Orchestrator", "recorded role holds", true],
+      ["executor", "Executor", "holder unknown", true],
+      ["other", "Board & others", "", true],
+      ["tests", "Tests", "1 run · 0 red", false],
+    ]);
+    // With no message, no line and no board's lane, though the orchestrator's holds are drawn.
+    t.history = { ...history(), messages: [] };
+    expect(lanes(t).lanes.map((l) => [l.key, l.rail])).toEqual([
+      ["stage", false],
+      ["orchestrator", false],
+      ["tests", false],
+    ]);
+  });
+  it("says a selected message on the hours line by its number, its ends, its time and a verdict", () => {
+    expect(addressAt(msg(), "11:31")).toBe("#4 · one → @executor · 11:31");
+    expect(addressAt({ ...msg(15396), kind: "verdict" }, "11:31")).toBe(
+      "#15396 · one → @executor · 11:31 · verdict",
+    );
+    expect(addressAt({ ...msg(5), recipient: null }, "00:01")).toBe(
+      "#5 · one → Everyone on task · 00:01",
+    );
+  });
+  it("draws a tick on its sender's line, the selected one's words on the hours line", () => {
+    const t = timeline();
+    const draw = (selected: number | null) =>
+      renderToStaticMarkup(
+        <TimelineDrawn
+          timeline={t}
+          selection={{ messages: [msg()], selected, choose: vi.fn() }}
+          wide
+          all
+          clipped={false}
+          detail=""
+          stops={stopsOf(0, vi.fn(), vi.fn())}
+          toggle={vi.fn()}
+        />,
+      );
+    const none = draw(null);
+    expect(none).toContain(
+      '<div class="tl-lane" data-lane="orchestrator" data-rail="" style="--rows:1">',
+    );
+    expect(none).toContain('<div class="tl-lane" data-lane="other" data-rail="" style="--rows:1">');
+    expect((none.match(/<span class="tl-rail" aria-hidden="true"><\/span>/g) ?? []).length).toBe(3);
+    // The tick is on its sender's lane alone, after its line.
+    expect(none).toMatch(
+      /data-lane="orchestrator"[\s\S]*?<span class="tl-rail" aria-hidden="true"><\/span><button type="button" class="tl-message-mark" data-message="4" style="left:55.56%"/,
+    );
+    expect((none.match(/tl-message-mark/g) ?? []).length).toBe(1);
+    expect(none).not.toContain("tl-address-said");
+    const one = draw(4);
+    expect(one).toContain(
+      '<span class="tl-address-said" style="left:55.56%;transform:translateX(-55.56%)">#4 · one → @executor · 02:00</span>',
+    );
+    expect(one).toContain('<div class="tl-address-track" aria-hidden="true"></div>');
+  });
   it("keeps the calendar day on a message after closure", () => {
     const t = timeline();
     t.history = { ...history(), messages: [{ ...msg(9, 90000), after_close: true }] };
@@ -198,27 +271,42 @@ describe("recorded timeline history", () => {
 });
 
 describe("a selected message's arrow", () => {
-  // A layer starting at the name column, as `.tl-address-track` does, and tracks that start past
-  // it: the arrow is placed by what is drawn, never by the layer's own percent.
+  // A layer starting at the name column, as `.tl-address-track` does, and lines that start past it:
+  // the arrow is placed by what is drawn, never by the layer's own percent.
   const layer = { left: 144, top: 300, width: 1048, height: 240 };
   const mark = { left: 268.25, top: 344, width: 24, height: 24 };
-  const track = (top: number) => ({ left: 152, top, width: 1040, height: 36 });
-  it("runs down through its mark's middle to the middle of its recipient's track", () => {
-    expect(arrowPlace(layer, mark, track(386))).toEqual({ left: 136.25, from: 56, to: 104 });
+  // A lane's line, a dotted border 1 px tall.
+  const rail = (top: number) => ({ left: 152, top, width: 1040, height: 1 });
+  const hours = { left: 152, top: 300, width: 1040, height: 22 };
+  it("runs down through its tick's middle to its recipient's line, its guide from the hours' foot", () => {
+    expect(arrowPlace(layer, mark, rail(403.5), hours)).toEqual({
+      left: 136.25,
+      from: 56,
+      to: 104,
+      top: 22,
+    });
   });
-  it("runs up to a recipient above its sender, and stays on one lane's middle for its own", () => {
-    expect(arrowPlace(layer, mark, track(302))).toEqual({ left: 136.25, from: 56, to: 20 });
-    expect(arrowPlace(layer, mark, track(338))).toEqual({ left: 136.25, from: 56, to: 56 });
+  it("runs up to a recipient above its sender, and stays on its own line for one lane", () => {
+    expect(arrowPlace(layer, mark, rail(319.5), hours)).toEqual({
+      left: 136.25,
+      from: 56,
+      to: 20,
+      top: 22,
+    });
+    expect(arrowPlace(layer, mark, rail(355.5), hours)?.to).toBe(56);
   });
-  it("follows a mark shrunk about its middle by a press", () => {
+  it("follows a tick shrunk about its middle by a press", () => {
     const held = { left: 268.61, top: 344.36, width: 23.28, height: 23.28 };
-    const place = arrowPlace(layer, held, track(386));
+    const place = arrowPlace(layer, held, rail(403.5), hours);
     expect(place?.left).toBeCloseTo(136.25, 10);
     expect(place?.from).toBeCloseTo(56, 10);
   });
-  it("is none while its mark or its recipient's track is not drawn", () => {
-    expect(arrowPlace(layer, undefined, track(386))).toBeNull();
-    expect(arrowPlace(layer, mark, undefined)).toBeNull();
+  it("starts its guide at the layer's top with no hours drawn", () => {
+    expect(arrowPlace(layer, mark, rail(403.5), undefined)?.top).toBe(0);
+  });
+  it("is none while its tick or its recipient's line is not drawn", () => {
+    expect(arrowPlace(layer, undefined, rail(403.5), hours)).toBeNull();
+    expect(arrowPlace(layer, mark, undefined, hours)).toBeNull();
   });
 });
 

@@ -15,11 +15,18 @@
 // The task's tokens are another part of the page (task-live.ts's `tokensPart`), which the box
 // hands on as it came: once read, the task's estimated cost follows its total time and each stage
 // stretch's its own (timeline-cost.ts); until then, and for a task with none, no cost is drawn.
+//
+// Wide, the task's quiet stretches (timeline-quiet.ts) are skipped, each a band through every lane
+// that a press draws on the true clock; the toolbar's switch skips them all or none. Which are
+// skipped is the page's own, as its view is: each visit opens with them all skipped. On a phone each
+// is a row of the list.
 
 import {
   type CSSProperties,
+  Fragment,
   type JSX,
   type KeyboardEvent,
+  type MouseEvent,
   type Ref,
   useEffect,
   useLayoutEffect,
@@ -27,20 +34,22 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { Button } from "./button";
 import { whenShown } from "./feed";
 import type { Shown as Answer } from "./parts";
 import { Failure, said } from "./request";
 import STYLE from "./timeline.css?inline";
 import { carried, costFigure, readTaskTokens, tookTokens, totalWords } from "./timeline-cost";
-import { address, endpointLane, historyWords, messagesOf } from "./timeline-history";
+import { BAND_SHARE } from "./timeline-cut";
+import { address, addressAt, endpointLane, historyWords, messagesOf } from "./timeline-history";
 import {
   type Bar,
+  type Break,
   type Fit,
   failed,
   fitClass,
-  keptNote,
+  insetCss,
   type Lanes,
   LONGEST_WAIT,
   lanes as laneLayout,
@@ -48,6 +57,7 @@ import {
   lookClass,
   machineSeconds,
   nextRead,
+  type Placed as PartPlaced,
   placeTotals,
   type Row,
   readTimeline,
@@ -56,18 +66,44 @@ import {
   Scale,
   type Seg,
   type Shown,
+  type SkippedCut,
+  segIndentCss,
   showAll,
   stops,
   took,
   totalParts,
   totals,
+  type View,
+  WIDTH_RULES,
 } from "./timeline-layout";
 import { MessagePanel, type MessageSelection, type ThreadAccess } from "./timeline-messages";
+import {
+  type Heard,
+  LANES_ID,
+  type LanesHandlers,
+  type Navigation,
+  OverviewStrip,
+  percent,
+  type QuietSwitch,
+  sayAgain,
+  useNavigation,
+  ZoomBar,
+} from "./timeline-navigate";
+import {
+  opened,
+  type Quiet,
+  quietStretches,
+  SKIPPING,
+  type Skipping,
+  skipOn,
+  skippedOf,
+  switched,
+} from "./timeline-quiet";
+import { clampView, readout, revealed, wholeOf, zoomable } from "./timeline-zoom";
 // biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: readAgain reads the timeline again each period while the task is open, where the feed's event of a change, or a clock tick for the times shown, is the wait
 import { sleep } from "./timing";
 import { NOT_IN_TIME } from "./trouble";
 import type { TaskTimeline, TaskTokens, TimelineMessage } from "./wire";
-import { fixed } from "./words";
 
 /** The id of the page's box the timeline is drawn in (timeline-slot.tsx's, not imported here). */
 const SLOT = "timeline-slot";
@@ -83,12 +119,14 @@ export const NOT_A_TIMELINE = "the server's answer is not a timeline";
 /** What a read says where the server has no timeline for the task: nothing tries it again. */
 export const NO_TIMELINE = "the board has no timeline for this task";
 
-/** Put the timeline's style sheet in the page once: no first visit carries it. */
+/** Put the timeline's style sheet in the page once, its width steps (WIDTH_RULES) in the same
+ * element after it, before the timeline's first paint (a layout effect): no first visit carries
+ * it. */
 export function putStyle(): void {
   if (document.getElementById(STYLE_ID)) return;
   const element = document.createElement("style");
   element.id = STYLE_ID;
-  element.textContent = STYLE;
+  element.textContent = STYLE + WIDTH_RULES;
   // Before the project's theme, as the shell links a kind's sheets: the theme's rules win.
   document.head.insertBefore(element, document.head.querySelector("[data-symphony-theme]"));
 }
@@ -261,7 +299,6 @@ export function drawnClass(all: boolean, clipped: boolean): string {
 
 /** A style of custom properties and others, written as the Dioxus page wrote it. */
 const style = (properties: Record<string, string>) => properties as CSSProperties;
-const percent = (value: number) => `${fixed(value, 2)}%`;
 
 /** What a part of the lanes the keyboard stops at does: its focus, its blur, its keys. */
 export interface Stops {
@@ -307,17 +344,32 @@ export function stopsOf(
 /**
  * The attributes and handlers of the lanes' part `index` of `count`: one stop of one arrow-key
  * group (the first, until another is chosen), its words for assistive technology, and its whole
- * detail shown in the legend's place under the lanes while it has the focus.
+ * detail shown in the legend's place under the lanes while it has the focus. A part outside the
+ * hours shown (`part`) comes into view as it takes the focus (`reveal`).
  */
-function stopOf(index: number, count: number, title: string, at: Stops) {
+function stopOf(
+  index: number,
+  count: number,
+  title: string,
+  at: Stops,
+  part?: PartPlaced,
+  reveal?: (from: number, to: number) => void,
+) {
   return {
     id: `tl-stop-${index}`,
     tabIndex: at.active === index ? 0 : -1,
     role: "img",
     "aria-label": title,
-    onFocus: () => at.focus(index, title),
+    onFocus: () => {
+      at.focus(index, title);
+      if (part?.out) reveal?.(part.from, part.to);
+    },
     onBlur: () => at.blur(),
-    onKeyDown: (event: KeyboardEvent<HTMLElement>) => at.key(event, index, count),
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      // A key that keeps the focus where it is (Home on the first) brings it into view too.
+      if (part?.out && stopFor(event.key, index, count) === index) reveal?.(part.from, part.to);
+      at.key(event, index, count);
+    },
   };
 }
 
@@ -331,14 +383,14 @@ function BarView({ bar, word }: { bar: Bar; word: [string, string] | null }) {
       {bar.wait > 0 && (
         <span
           className="tl-wait"
-          aria-hidden="true"
+          aria-hidden
           style={style({ "--c": `var(--${bar.waitTone})`, width: percent(bar.wait) })}
         />
       )}
       {bar.work > 0 && (
         <span
           className={bar.running ? "tl-work tl-running" : "tl-work"}
-          aria-hidden="true"
+          aria-hidden
           style={style({ width: percent(bar.work) })}
         />
       )}
@@ -367,8 +419,27 @@ function RowView({
   selection?: MessageSelection | undefined;
   wide: boolean;
 }) {
-  const kind = !row.sub ? "tl-row" : row.event ? "tl-row tl-sub tl-event" : "tl-row tl-sub";
+  const kind = !row.sub
+    ? "tl-row"
+    : row.message !== undefined
+      ? "tl-row tl-sub tl-event tl-message"
+      : row.kept
+        ? "tl-row tl-sub tl-event tl-kept"
+        : row.event
+          ? "tl-row tl-sub tl-event"
+          : "tl-row tl-sub";
   const told = isTold(row);
+  if (row.quiet !== undefined) {
+    return (
+      <>
+        {row.day !== null && <li className="tl-day">{row.day}</li>}
+        <li className="tl-row tl-quiet" title={row.title}>
+          <b>{row.label}</b>
+          <small>{row.quiet}</small>
+        </li>
+      </>
+    );
+  }
   return (
     <>
       {row.day !== null && <li className="tl-day">{row.day}</li>}
@@ -379,7 +450,7 @@ function RowView({
         tabIndex={told ? -1 : undefined}
       >
         <span className="tl-at">{row.at}</span>
-        <span className="tl-mark" aria-hidden="true" />
+        <span className="tl-mark" aria-hidden />
         {row.message !== undefined ? (
           <button
             type="button"
@@ -399,7 +470,7 @@ function RowView({
         )}
         {row.bar !== null && <BarView bar={row.bar} word={row.word} />}
         {told && (
-          <span className="tl-facts" aria-hidden="true">
+          <span className="tl-facts" aria-hidden>
             {row.title}
           </span>
         )}
@@ -408,17 +479,37 @@ function RowView({
   );
 }
 
-function SegView({ seg, stop }: { seg: Seg; stop: object }) {
+/** A part outside the hours shown: kept for the keyboard, unseen and untouched. */
+const outClass = (part: PartPlaced, names: string) => (part.out ? `${names} tl-out` : names);
+
+function SegView({
+  seg,
+  stop,
+  zooms,
+}: {
+  seg: Seg;
+  stop: object;
+  /** Whether a double click zooms to it (a stage's), which says its instants for it. */
+  zooms?: boolean;
+}) {
   const right = seg.left + seg.width;
   const placed = style({
     "--c": `var(--${seg.tone})`,
     "--row": String(seg.row),
     left: percent(seg.left),
     width: percent(seg.width),
+    ...(seg.inset === undefined ? {} : { textIndent: segIndentCss(seg.inset) }),
   });
   return (
     <>
-      <span className={lookClass(seg.look)} style={placed} title={seg.title} {...stop}>
+      <span
+        className={outClass(seg, lookClass(seg.look))}
+        style={placed}
+        title={seg.title}
+        data-from={zooms ? seg.from : undefined}
+        data-to={zooms ? seg.to : undefined}
+        {...stop}
+      >
         {seg.text.map((fit, at) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: a segment's words have no identity but their place
           <FitView key={at} fit={fit} />
@@ -427,32 +518,23 @@ function SegView({ seg, stop }: { seg: Seg; stop: object }) {
       {seg.after && (
         <span
           className={`tl-after ${fitClass(seg.after[0])}`}
-          aria-hidden="true"
+          aria-hidden
           style={style({
             "--c": `var(--${seg.after[1]})`,
             left: percent(right),
             maxWidth: roomCss(seg.after[2]),
+            paddingLeft: insetCss(seg.after[2]),
           })}
         >
           {seg.after[0].text}
         </span>
       )}
-      {seg.under && (
-        <span
-          className={`tl-under ${fitClass(seg.under[0])}`}
-          aria-hidden="true"
-          style={style({
-            "--row": String(seg.row),
-            left: percent(seg.left),
-            maxWidth: roomCss(seg.under[1]),
-          })}
-        >
-          {seg.under[0].text}
-        </span>
-      )}
     </>
   );
 }
+
+/** The lanes of runs, which the time no run is kept of is hatched over. */
+const RUNS = ["builds", "tests"];
 
 /** A drawn box, as `getBoundingClientRect` gives it. */
 interface Box {
@@ -462,36 +544,52 @@ interface Box {
   height: number;
 }
 
-/** A selected message's arrow in its layer: its line's x, and the y of its sender's and its
- * recipient's ends, from the layer's corner. */
+/** A selected message's marks in their layer: its tick's x; the y of its sender's line, where its
+ * tick is, and of its recipient's; and the y of the hours line's foot, where its guide starts;
+ * each from the layer's corner. */
 interface ArrowPlace {
   left: number;
   from: number;
   to: number;
+  top: number;
 }
 
+/** How far above a ring around a tick, in pixels, its guide stops: the ring's radius and a gap. */
+const RING_CLEAR = 11;
+
 /**
- * Where the selected message's arrow is drawn in `layer`: down through the middle of its mark
- * (`mark`, its sender's end), to the middle of its recipient's track (`recipient`), each as drawn,
- * so it meets the mark wherever the lanes put the tracks. None while either is not drawn.
+ * Where the selected message's marks are drawn in `layer`: through the middle of its tick (`mark`,
+ * on its sender's line), to the middle of its recipient's line (`rail`), each as drawn, so the
+ * arrow meets both marks wherever the lanes put them, and its guide down from the hours' foot
+ * (`hours`). None while the tick or the line is not drawn.
  */
 export function arrowPlace(
   layer: Box,
   mark: Box | undefined,
-  recipient: Box | undefined,
+  rail: Box | undefined,
+  hours: Box | undefined,
 ): ArrowPlace | null {
-  if (!mark || !recipient) return null;
+  if (!mark || !rail) return null;
   return {
     left: mark.left + mark.width / 2 - layer.left,
     from: mark.top + mark.height / 2 - layer.top,
-    to: recipient.top + recipient.height / 2 - layer.top,
+    to: rail.top + rail.height / 2 - layer.top,
+    top: hours === undefined ? 0 : hours.top + hours.height - layer.top,
   };
 }
 
+/**
+ * The selected message's arrow, from its tick straight to a ring on its recipient's line at the
+ * same instant, and a dashed guide from the hours line, where its address is said, down to it. A
+ * message whose two ends are one lane draws no arrow: a ring around its tick, so an arrow always
+ * joins two lanes.
+ */
 function AddressArrow({ selected, at }: { selected: TimelineMessage; at: number }) {
   const root = useRef<HTMLDivElement>(null);
   const [arrow, setArrow] = useState<ArrowPlace | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the mark moves with its time's place on the hours (`at`), which the effect reads from the page
+  const from = endpointLane(selected.from, selected.sender);
+  const to = endpointLane(selected.to, selected.recipient);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the tick moves with its time's place on the hours (`at`), which the effect reads from the page
   useLayoutEffect(() => {
     const layer = root.current;
     const lanes = layer?.closest(".tl-lanes");
@@ -506,34 +604,108 @@ function AddressArrow({ selected, at }: { selected: TimelineMessage; at: number 
           lanes
             .querySelector(`.tl-message-mark[data-message="${selected.id}"]`)
             ?.getBoundingClientRect(),
-          lanes
-            .querySelector(
-              `[data-lane="${endpointLane(selected.to, selected.recipient)}"] .tl-track`,
-            )
-            ?.getBoundingClientRect(),
+          lanes.querySelector(`[data-lane="${to}"] .tl-rail`)?.getBoundingClientRect(),
+          lanes.querySelector(".tl-axis")?.getBoundingClientRect(),
         ),
       );
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(lanes);
     return () => observer.disconnect();
-  }, [selected, at]);
+  }, [selected, at, to]);
+  const same = from === to;
+  const upper =
+    arrow === null ? 0 : same ? arrow.from - RING_CLEAR : Math.min(arrow.from, arrow.to);
   return (
-    <div className="tl-address-track" aria-hidden="true" ref={root}>
+    <div className="tl-address-track" aria-hidden ref={root}>
       {arrow && (
-        <span
-          className={`tl-address-arrow ${arrow.to < arrow.from ? "tl-arrow-up" : ""}`}
-          data-from={endpointLane(selected.from, selected.sender)}
-          data-to={endpointLane(selected.to, selected.recipient)}
-          style={{
-            left: arrow.left,
-            top: Math.min(arrow.from, arrow.to),
-            height: Math.max(Math.abs(arrow.to - arrow.from), 12),
-          }}
-        />
+        <>
+          <span
+            className="tl-address-guide"
+            style={{ left: arrow.left, top: arrow.top, height: Math.max(upper - arrow.top, 0) }}
+          />
+          {same ? (
+            <span
+              className="tl-address-ring tl-ring-around"
+              data-at={from}
+              style={{ left: arrow.left, top: arrow.from }}
+            />
+          ) : (
+            <>
+              <span
+                className={`tl-address-arrow ${arrow.to < arrow.from ? "tl-arrow-up" : ""}`}
+                data-from={from}
+                data-to={to}
+                style={{
+                  left: arrow.left,
+                  top: Math.min(arrow.from, arrow.to),
+                  height: Math.abs(arrow.to - arrow.from),
+                }}
+              />
+              <span className="tl-address-ring" style={{ left: arrow.left, top: arrow.to }} />
+            </>
+          )}
+        </>
       )}
     </div>
   );
+}
+
+interface LanesProps {
+  lanes: Lanes;
+  at: Stops;
+  timeline: TaskTimeline;
+  selection?: MessageSelection | undefined;
+  /** Draws a band's stretch on the true clock, the band pressed. */
+  open?: ((band: Break, pressed: HTMLElement) => void) | undefined;
+}
+
+/** The id of the zigzag a band's edges are drawn with. */
+const ZIGZAG = "tl-zigzag";
+
+/** The quiet stretches skipped, a band each through every lane over the tracks, its edges zigzagged
+ * and its words down it, the bars that run through it drawn under it: a press draws its stretch on
+ * the true clock. */
+function BreaksView({ breaks, open }: { breaks: Break[]; open: LanesProps["open"] }) {
+  return (
+    <div className="tl-breaks">
+      <svg className="tl-zigzags" aria-hidden width="0" height="0">
+        <defs>
+          <pattern id={ZIGZAG} width="6" height="8" patternUnits="userSpaceOnUse">
+            <path className="tl-zigzag" d="M1 0L5 4L1 8" fill="none" />
+          </pattern>
+        </defs>
+      </svg>
+      {breaks.map((band) => (
+        <button
+          key={band.from}
+          type="button"
+          className="tl-break"
+          data-start={band.from}
+          data-end={band.to}
+          title={band.title}
+          aria-label={`Show on the true clock: ${band.title}`}
+          style={style({ left: percent(band.left), width: percent(band.width) })}
+          onClick={(event: MouseEvent<HTMLButtonElement>) => open?.(band, event.currentTarget)}
+        >
+          {["tl-edge-start", "tl-edge-end"].map((edge) => (
+            <svg key={edge} className={`tl-edge ${edge}`} aria-hidden>
+              <rect width="100%" height="100%" fill={`url(#${ZIGZAG})`} />
+            </svg>
+          ))}
+          {band.words && <FitView fit={band.words} />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The lanes of a task long enough to zoom into: what a wheel, a pointer, a touch and a key do to
+ * the view (`nav`), and the band a drag across the hours draws. */
+function NavigableLanes(props: LanesProps & { nav: Navigation }) {
+  const root = useRef<HTMLDivElement>(null);
+  const { band, handlers } = useNavigation(root, props.nav);
+  return <LanesView {...props} root={root} band={band} handlers={handlers} />;
 }
 
 function LanesView({
@@ -541,15 +713,29 @@ function LanesView({
   at,
   timeline,
   selection,
-}: {
-  lanes: Lanes;
-  at: Stops;
-  timeline: TaskTimeline;
-  selection?: MessageSelection | undefined;
+  open,
+  nav,
+  root,
+  band,
+  handlers,
+}: LanesProps & {
+  /** The view and how to change it, where the task is long enough to zoom into. */
+  nav?: Navigation | undefined;
+  root?: Ref<HTMLDivElement> | undefined;
+  /** A drag across the hours, from and to as fractions of the hours shown. */
+  band?: [number, number] | null | undefined;
+  handlers?: LanesHandlers | undefined;
 }) {
-  const scale = new Scale(timeline);
-  const selected = selection?.messages.find((m) => m.id === selection.selected);
+  const view = nav?.view ?? null;
+  const scale = new Scale(timeline, view, nav?.cut);
+  const found = selection?.messages.find((m) => m.id === selection.selected);
+  // A message chosen outside the hours shown has no tick drawn to point from.
+  const selected = found && scale.shows(found.at, found.at) ? found : undefined;
   const count = stops(lanes);
+  const notKept = lanes.notKept;
+  const reveal = nav
+    ? (from: number, to: number) => nav.set(revealed(nav.view, nav.whole, from, to, nav.cut))
+    : undefined;
   let index = 0;
   const next = () => index++;
   const laneRows = lanes.lanes.map((lane) => (
@@ -557,7 +743,7 @@ function LanesView({
       key={lane.key}
       className="tl-lane"
       data-lane={lane.key}
-      data-dense={lane.dense ? "" : undefined}
+      data-rail={lane.rail ? "" : undefined}
       style={style({ "--rows": String(lane.rows) })}
     >
       <span className="tl-name">
@@ -565,28 +751,47 @@ function LanesView({
         {lane.who !== "" && <small>{lane.who}</small>}
       </span>
       <span className="tl-track">
+        {notKept && RUNS.includes(lane.key) && (
+          <span
+            className="tl-notkept"
+            aria-hidden
+            title={notKept.title}
+            style={style({ left: percent(notKept.left), width: percent(notKept.width) })}
+          >
+            {notKept.label && <FitView fit={notKept.label} />}
+          </span>
+        )}
         {lane.segs.map((seg, place) => (
           <SegView
             // biome-ignore lint/suspicious/noArrayIndexKey: a lane's segments have no identity but their place
             key={place}
             seg={seg}
-            stop={seg.stop ? stopOf(next(), count, seg.title, at) : { "aria-hidden": "true" }}
+            stop={
+              seg.stop ? stopOf(next(), count, seg.title, at, seg, reveal) : { "aria-hidden": true }
+            }
+            zooms={nav !== undefined && lane.key === "stage"}
           />
         ))}
-        {selection?.messages
-          .filter((m) => endpointLane(m.from, m.sender) === lane.key)
-          .map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              className="tl-message-mark"
-              data-message={m.id}
-              style={{ left: percent(scale.at(m.at)) }}
-              aria-label={`Message #${m.id}: ${address(m)}`}
-              aria-pressed={selection.selected === m.id}
-              onClick={() => selection.choose(m.id)}
-            />
-          ))}
+        {lane.rail && <span className="tl-rail" aria-hidden />}
+        {lane.rail &&
+          selection?.messages
+            .filter((m) => endpointLane(m.from, m.sender) === lane.key)
+            .map((m) => {
+              const out = !scale.shows(m.at, m.at);
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={out ? "tl-message-mark tl-out" : "tl-message-mark"}
+                  data-message={m.id}
+                  style={{ left: percent(scale.at(m.at)) }}
+                  aria-label={`Message #${m.id}: ${address(m)}`}
+                  aria-pressed={selection.selected === m.id}
+                  onClick={() => selection.choose(m.id)}
+                  onFocus={out ? () => reveal?.(m.at, m.at) : undefined}
+                />
+              );
+            })}
       </span>
     </div>
   ));
@@ -599,10 +804,10 @@ function LanesView({
           <span
             // biome-ignore lint/suspicious/noArrayIndexKey: a gate's states have no identity but their place
             key={spanAt}
-            className={`tl-g tl-g-${span.state}`}
+            className={outClass(span, `tl-g tl-g-${span.state}`)}
             style={style({ left: percent(span.left), width: percent(span.width) })}
             title={span.title}
-            {...stopOf(next(), count, span.title, at)}
+            {...stopOf(next(), count, span.title, at, span, reveal)}
           >
             {span.word && <FitView fit={span.word} />}
           </span>
@@ -612,26 +817,82 @@ function LanesView({
   ));
   return (
     // biome-ignore lint/a11y/useSemanticElements: a group of the lanes' parts, as the Dioxus page draws it
-    <div className="tl-lanes" role="group" aria-label="Lanes">
-      <div className="tl-hours" aria-hidden="true">
+    <div
+      className={nav ? "tl-lanes tl-zoomable" : "tl-lanes"}
+      id={nav ? LANES_ID : undefined}
+      role="group"
+      aria-label="Lanes"
+      ref={root}
+      {...handlers}
+    >
+      {band && (
+        <div className="tl-band-track" aria-hidden>
+          <span
+            className="tl-band"
+            style={style({
+              left: percent(Math.min(...band) * 100),
+              width: percent(Math.abs(band[1] - band[0]) * 100),
+            })}
+          />
+        </div>
+      )}
+      <div className="tl-hours" aria-hidden>
         {lanes.ticks.map((tick, at) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: an hour's line has no identity but its place
-          <span key={at} className="tl-hour" style={style({ left: percent(tick.left) })} />
+          // An hour's line shows where its label does.
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: an hour's line has no identity but its place
+            key={at}
+            className={tick.wide === undefined ? "tl-hour" : `tl-hour tl-from-${tick.wide}`}
+            style={style({ left: percent(tick.left) })}
+          />
         ))}
         {lanes.now && <span className="tl-now" style={style({ left: percent(lanes.now.left) })} />}
       </div>
-      <div className="tl-lane tl-axis" aria-hidden="true">
+      {lanes.breaks.length > 0 && <BreaksView breaks={lanes.breaks} open={open} />}
+      <div className="tl-lane tl-axis" aria-hidden>
         <span className="tl-name" />
         <span className="tl-track">
           {lanes.ticks.map((tick, at) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: an hour's label has no identity but its place
-            <span key={at} className="tl-tick" style={style({ left: percent(tick.left) })}>
+            <span
+              // biome-ignore lint/suspicious/noArrayIndexKey: an hour's label has no identity but its place
+              key={at}
+              className={tick.wide === undefined ? "tl-tick" : `tl-tick tl-from-${tick.wide}`}
+              style={style({ left: percent(tick.left) })}
+            >
               {tick.label}
             </span>
+          ))}
+          {lanes.breaks.map((band) => (
+            <Fragment key={band.from}>
+              {band.length && (
+                <span
+                  className={`tl-break-length ${fitClass(band.length)}`}
+                  style={style({ left: percent(band.left + band.width / 2) })}
+                >
+                  {band.length.text}
+                  {band.day && (
+                    <span className={`tl-break-day ${fitClass(band.day)}`}>{band.day.text}</span>
+                  )}
+                </span>
+              )}
+            </Fragment>
           ))}
           {lanes.now && (
             <span className="tl-tick tl-nowtag" style={style({ left: percent(lanes.now.left) })}>
               {lanes.now.label}
+            </span>
+          )}
+          {selected && (
+            // Its address on the hours line, over the hours' words, kept inside the track: it
+            // moves left of its instant by as much of its width as its instant is of the hours.
+            <span
+              className="tl-address-said"
+              style={style({
+                left: percent(scale.at(selected.at)),
+                transform: `translateX(-${percent(scale.at(selected.at))})`,
+              })}
+            >
+              {addressAt(selected, scale.clock(selected.at))}
             </span>
           )}
         </span>
@@ -671,6 +932,27 @@ export interface DrawnProps {
   selection?: MessageSelection | undefined;
   /** The phone list stays readable by assistive technology wide, without invisible tab stops. */
   wide?: boolean;
+  /** The part of the hours the lanes show and how to change it: none draws the whole task with no
+   * toolbar, as a task too short to zoom into is drawn. */
+  zoom?: Zoom | undefined;
+}
+
+/** The view the lanes show (none for the whole task) and what sets it; the task's quiet stretches,
+ * which of them are skipped and what changes it; and the range last said to assistive technology
+ * and what says one. */
+export interface Zoom {
+  view: View | null;
+  set: (view: View | null) => void;
+  quiet?: readonly Quiet[] | undefined;
+  skipping?: Skipping | undefined;
+  skip?: ((skipping: Skipping) => void) | undefined;
+  said?: Heard | undefined;
+  say?: ((said: string) => void) | undefined;
+}
+
+/** The cut the lanes are drawn on: the quiet stretches `skipping` skips, each a band. */
+export function cutOf(quiet: readonly Quiet[], skipping: Skipping): SkippedCut {
+  return { skipped: skippedOf(quiet, skipping), share: BAND_SHARE };
 }
 
 /**
@@ -689,7 +971,46 @@ export function TimelineDrawn({
   body,
   selection,
   wide = false,
+  zoom,
 }: DrawnProps) {
+  const whole = wholeOf(timeline);
+  // A band and the switch are drawn only where their press can act.
+  const skip = zoom?.skip;
+  const quiet = (skip && zoom?.quiet) || [];
+  const skipping = zoom?.skipping ?? SKIPPING;
+  const cut = zoom && zoomable(whole) ? cutOf(quiet, skipping) : undefined;
+  const nav: Navigation | undefined =
+    zoom && zoomable(whole)
+      ? {
+          whole,
+          view: clampView(zoom.view, whole, cut),
+          cut,
+          said: zoom.said,
+          set: (next, say) => {
+            zoom.set(next);
+            if (say) zoom.say?.(readout(timeline, clampView(next, whole, cut), cut));
+          },
+        }
+      : undefined;
+  const view = nav?.view ?? null;
+  const quietSwitch: QuietSwitch | undefined =
+    nav && quiet.length > 0
+      ? {
+          count: quiet.length,
+          total: quiet.reduce((sum, stretch) => sum + stretch.to - stretch.from, 0),
+          on: skipOn(quiet, skipping),
+          press: () => skip?.(switched(quiet, skipping)),
+        }
+      : undefined;
+  // A band pressed draws its stretch on the true clock; the focus it had goes to the switch.
+  const open = (band: Break, pressed: HTMLElement) => {
+    const stretch = quiet.find((each) => each.from === band.from);
+    if (!stretch) return;
+    const focused = pressed.ownerDocument.activeElement === pressed;
+    const lanes = pressed.closest(".tl-body");
+    flushSync(() => skip?.(opened(skipping, stretch)));
+    if (focused) lanes?.querySelector<HTMLElement>(".tl-skip")?.focus();
+  };
   const [first, machine] = totals(timeline);
   const [length, rest] = totalParts(timeline);
   // A task that took no tokens says no cost anywhere, and draws as one whose tokens are not read.
@@ -706,9 +1027,8 @@ export function TimelineDrawn({
     ["Phases", placeTotals(timeline, "phase")],
     ["States", placeTotals(timeline, "state")],
   ] as const;
-  const note = keptNote(timeline);
   const steps = rowLayout(timeline, costs);
-  const drawn = laneLayout(timeline, costs);
+  const drawn = laneLayout(timeline, costs, view, cut);
   const running = timeline.runs.some((run) => run.result === "running");
   return (
     <div className={drawnClass(all, clipped)} data-selected={selection?.selected ?? undefined}>
@@ -752,7 +1072,7 @@ export function TimelineDrawn({
           )}
         </p>
         {spent && (
-          <p className="tl-note tl-cost-said" aria-hidden="true">
+          <p className="tl-note tl-cost-said" aria-hidden>
             {words}
           </p>
         )}
@@ -760,7 +1080,6 @@ export function TimelineDrawn({
           ([name, spent]) =>
             spent !== null && <p key={name} className="tl-totals">{`${name}: ${spent}`}</p>,
         )}
-        {note !== null && <p className="tl-note">{note}</p>}
       </div>
       <div className="tl-body" id={BODY} ref={body}>
         <ol className="tl-list" aria-label="Steps">
@@ -773,7 +1092,20 @@ export function TimelineDrawn({
             />
           ))}
         </ol>
-        <LanesView lanes={drawn} at={at} timeline={timeline} selection={selection} />
+        {nav && <ZoomBar timeline={timeline} nav={nav} quiet={quietSwitch} />}
+        {nav && view && <OverviewStrip timeline={timeline} view={view} nav={nav} />}
+        {nav ? (
+          <NavigableLanes
+            lanes={drawn}
+            at={at}
+            timeline={timeline}
+            selection={selection}
+            open={open}
+            nav={nav}
+          />
+        ) : (
+          <LanesView lanes={drawn} at={at} timeline={timeline} selection={selection} />
+        )}
       </div>
       <div className="tl-foot">
         <ul className="tl-legend">
@@ -791,6 +1123,12 @@ export function TimelineDrawn({
               running now
             </li>
           )}
+          {drawn.breaks.length > 0 && (
+            <li className="tl-wide">
+              <span className="tl-key tl-key-quiet" />
+              quiet stretch skipped: nothing recorded
+            </li>
+          )}
           {legendStates(drawn).map((state) => (
             <li key={state} className="tl-wide">
               <span className={`tl-key tl-g tl-g-${state}`} />
@@ -801,7 +1139,7 @@ export function TimelineDrawn({
         {/* Only while a part of the lanes has the focus, in the legend's place: a line of its own
             would grow the box and move what is under it. */}
         {detail !== "" && (
-          <p className="tl-detail tl-wide" aria-hidden="true">
+          <p className="tl-detail tl-wide" aria-hidden>
             {detail}
           </p>
         )}
@@ -827,7 +1165,9 @@ export interface ViewProps {
 
 /**
  * The timeline drawn and measured: after each draw, each crossing of 900 px and each "Show all"
- * or "Show the latest", whether its steps overflow the box, and the height it took.
+ * or "Show the latest", whether its steps overflow the box, and the height it took, kept only
+ * while the whole task is shown, as each visit opens on it. Its view is its own: the whole task
+ * until the reader zooms, a message chosen outside the hours shown bringing it into view.
  */
 export function TimelineView({
   timeline,
@@ -837,6 +1177,9 @@ export function TimelineView({
   details,
 }: ViewProps): JSX.Element {
   const [selected, setSelected] = useState<number | null>(null);
+  const [view, setView] = useState<View | null>(null);
+  const [skipping, setSkipping] = useState<Skipping>(SKIPPING);
+  const [heard, setHeard] = useState<Heard>();
   const [loading, setLoading] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -870,6 +1213,9 @@ export function TimelineView({
   const projected = timeline.history
     ? { ...timeline, history: { ...timeline.history, messages } }
     : timeline;
+  const quiet = quietStretches(projected);
+  const shownAt = useRef(view);
+  shownAt.current = view;
   // Thread reads remain in the page's store. Read one existing cursor at a time, until the
   // selected entry is present; failed or unchanging cursors stop with an explicit retry.
   const entries = thread?.entries;
@@ -907,11 +1253,19 @@ export function TimelineView({
   // chunk comes.
   useLayoutEffect(putStyle, []);
   useEffect(() => watchCrossings(() => setCrossings((count) => count + 1)), []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a message chosen comes into view once, when it is chosen; the reader may move away from it after
+  useEffect(() => {
+    const chosen = messages.find((m) => m.id === selected);
+    if (chosen === undefined) return;
+    const whole = wholeOf(projected);
+    const cut = cutOf(quiet, skipping);
+    setView((shown) => revealed(clampView(shown, whole, cut), whole, chosen.at, chosen.at, cut));
+  }, [selected]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: measured again for each answer drawn and each crossing of 900 px
   useLayoutEffect(() => {
-    const over = measured(body.current, all, clipped, (wide, natural) =>
-      said.current?.(wide, natural),
-    );
+    const over = measured(body.current, all, clipped, (wide, natural) => {
+      if (shownAt.current === null) said.current?.(wide, natural);
+    });
     if (over !== null) setClipped(over);
   }, [timeline, crossings, all, clipped]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: history updates, width crossings, collapse and expansion reflow the selected row
@@ -966,6 +1320,15 @@ export function TimelineView({
         stops={stopsOf(active, setActive, setDetail)}
         toggle={() => setAll((shown) => !shown)}
         body={body}
+        zoom={{
+          view,
+          set: setView,
+          quiet,
+          skipping,
+          skip: setSkipping,
+          said: heard,
+          say: (text) => setHeard((last) => sayAgain(last, text)),
+        }}
       />
       {panel && details ? createPortal(panel, details) : panel}
     </>
